@@ -1,0 +1,11 @@
+// examples/hello.roze
+// The first Roze program! 🌹
+
+func main() {
+    // This will be compiled to Java!
+    println("Hello from Roze! 🌹");
+    println("Created by Firoze");
+
+    let name = "Roze";
+    println("Welcome to " + name + " language!");
+}

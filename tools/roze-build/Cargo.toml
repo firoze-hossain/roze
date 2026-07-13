@@ -1,0 +1,13 @@
+[package]
+name = "roze-build"
+version = "0.1.0"
+edition = "2021"
+description = "Build system for Roze"
+
+[[bin]]
+name = "roze-build"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }

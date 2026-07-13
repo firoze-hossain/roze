@@ -1,0 +1,13 @@
+[package]
+name = "roze-pkg"
+version = "0.1.0"
+edition = "2021"
+description = "Package manager for Roze"
+
+[[bin]]
+name = "roze-pkg"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }

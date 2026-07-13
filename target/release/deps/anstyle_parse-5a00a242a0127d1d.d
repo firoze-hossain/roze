@@ -1,0 +1,11 @@
+/home/firoze/projects/others/roze/target/release/deps/anstyle_parse-5a00a242a0127d1d.d: /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/lib.rs /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/params.rs /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/state/mod.rs /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/state/definitions.rs /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/state/table.rs
+
+/home/firoze/projects/others/roze/target/release/deps/libanstyle_parse-5a00a242a0127d1d.rlib: /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/lib.rs /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/params.rs /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/state/mod.rs /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/state/definitions.rs /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/state/table.rs
+
+/home/firoze/projects/others/roze/target/release/deps/libanstyle_parse-5a00a242a0127d1d.rmeta: /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/lib.rs /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/params.rs /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/state/mod.rs /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/state/definitions.rs /home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/state/table.rs
+
+/home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/lib.rs:
+/home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/params.rs:
+/home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/state/mod.rs:
+/home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/state/definitions.rs:
+/home/firoze/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-parse-1.0.0/src/state/table.rs:

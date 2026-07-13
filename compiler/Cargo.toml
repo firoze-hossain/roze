@@ -1,0 +1,15 @@
+[package]
+name = "roze-compiler"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "roze"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+colored = { workspace = true }
+clap = { workspace = true }
+thiserror = { workspace = true }
+bytecode = "0.3"  # Latest version is 0.3.0

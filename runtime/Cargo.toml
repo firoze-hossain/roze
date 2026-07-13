@@ -1,0 +1,10 @@
+[package]
+name = "roze-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "Runtime for Roze programming language"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]

@@ -1,3 +1,4 @@
+// compiler/src/main.rs
 use std::fs;
 use clap::{Parser as ClapParser, Subcommand};
 use colored::*;
@@ -28,14 +29,17 @@ struct Cli {
 enum Commands {
     /// Build a Roze file
     Build {
-        #[arg(value_name = "FILE")]
+        /// Input file (optional, defaults to main.roze)
+        #[arg(value_name = "FILE", default_value = "src/main.roze")]
         file: String,
+        /// Output directory
         #[arg(short, long)]
         output: Option<String>,
     },
     /// Run a Roze file
     Run {
-        #[arg(value_name = "FILE")]
+        /// Input file (optional, defaults to main.roze)
+        #[arg(value_name = "FILE", default_value = "src/main.roze")]
         file: String,
     },
 }

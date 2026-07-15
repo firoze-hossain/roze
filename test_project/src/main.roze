@@ -1,0 +1,15 @@
+// main.roze - Entry point for your Roze application
+// Created by Firoze
+// Project: test_project
+
+func main() {
+    let project_name = "test_project";
+    let author = "Firoze";
+
+    println("🌹 Hello from " + project_name + "!");
+    println("Welcome to Roze programming language!");
+    println("Created by " + author);
+
+    let message = "This project was created with `roze new`";
+    println(message);
+}

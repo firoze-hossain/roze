@@ -1,0 +1,6 @@
+# Roze project configuration
+name = "test_project"
+version = "0.1.0"
+description = "A Roze project"
+authors = ["Firoze"]
+main = "src/main.roze"

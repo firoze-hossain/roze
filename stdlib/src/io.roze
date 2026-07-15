@@ -1,0 +1,44 @@
+// stdlib/src/io.roze
+// Input/Output functions
+
+// Print to console without newline
+func print(x) {
+    // Native implementation
+    println(x);
+}
+
+// Print to console with newline
+func println(x) {
+    // Native implementation
+}
+
+// Read a line from console
+func read_line() -> string {
+    // Will be implemented in native code
+    return "";
+}
+
+// Read all input
+func read_all() -> string {
+    // Will be implemented in native code
+    return "";
+}
+
+// File operations
+func file_read(path: string) -> string {
+    // Will be implemented in native code
+    return "";
+}
+
+func file_write(path: string, content: string) {
+    // Will be implemented in native code
+}
+
+func file_exists(path: string) -> bool {
+    // Will be implemented in native code
+    return false;
+}
+
+func file_delete(path: string) {
+    // Will be implemented in native code
+}

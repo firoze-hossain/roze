@@ -1,0 +1,65 @@
+// stdlib/src/core.roze
+// Core types and functions for Roze
+
+// String utilities
+func string_length(s: string) -> int {
+    // Will be implemented in native code
+    return 0;
+}
+
+func string_concat(a: string, b: string) -> string {
+    return a + b;
+}
+
+func string_to_upper(s: string) -> string {
+    // Will be implemented in native code
+    return s;
+}
+
+func string_to_lower(s: string) -> string {
+    // Will be implemented in native code
+    return s;
+}
+
+// Math utilities
+func abs(x: int) -> int {
+    if x < 0 {
+        return -x;
+    }
+    return x;
+}
+
+func max(a: int, b: int) -> int {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+func min(a: int, b: int) -> int {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+// Type checking
+func is_number(x) -> bool {
+    // Will be implemented in native code
+    return false;
+}
+
+func is_string(x) -> bool {
+    // Will be implemented in native code
+    return false;
+}
+
+// Conversion
+func to_string(x) -> string {
+    return "" + x;
+}
+
+func to_int(s: string) -> int {
+    // Will be implemented in native code
+    return 0;
+}

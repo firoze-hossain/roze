@@ -1,0 +1,6 @@
+func main() {
+    let x = 10;
+    let y = 20;
+    let sum = x + y;
+    println("10 + 20 = " + sum);
+}

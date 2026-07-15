@@ -1,0 +1,57 @@
+// tests/test_runner.roze
+// Simple test runner for Roze
+
+func assert(condition: bool, message: string) {
+    if !condition {
+        println("❌ Test failed: " + message);
+    } else {
+        println("✅ Test passed: " + message);
+    }
+}
+
+func test_math() {
+    println("Testing math...");
+
+    let x = 10;
+    let y = 20;
+    let sum = x + y;
+    assert(sum == 30, "10 + 20 == 30");
+
+    let diff = y - x;
+    assert(diff == 10, "20 - 10 == 10");
+
+    let product = x * y;
+    assert(product == 200, "10 * 20 == 200");
+
+    let quotient = y / x;
+    assert(quotient == 2, "20 / 10 == 2");
+}
+
+func test_strings() {
+    println("Testing strings...");
+
+    let hello = "Hello";
+    let world = "World";
+    let combined = hello + " " + world;
+    assert(combined == "Hello World", "String concatenation");
+}
+
+func test_variables() {
+    println("Testing variables...");
+
+    let x = 10;
+    let y = x + 5;
+    assert(y == 15, "Variable assignment and math");
+}
+
+func main() {
+    println("🌹 Running Roze tests...");
+    println("");
+
+    test_math();
+    test_strings();
+    test_variables();
+
+    println("");
+    println("✅ All tests completed!");
+}

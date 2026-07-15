@@ -5,9 +5,11 @@ use colored::*;
 mod lexer;
 mod parser;
 mod codegen;
+mod semantic;
 
 use lexer::tokenize;
 use parser::parse;
+use semantic::check_types;
 
 #[derive(ClapParser)]
 #[command(name = "roze")]
@@ -78,6 +80,15 @@ fn build_file(filename: &str, debug: bool) -> anyhow::Result<()> {
     // Parse
     let program = parse(tokens)?;
     println!("{} {} statements", "🌳 Parser:".green(), program.statements.len());
+
+    // Type check
+    match check_types(&program) {
+        Ok(_) => println!("{}", "✅ Type checking passed!".green()),
+        Err(e) => {
+            println!("{} {}", "❌ Type error:".red(), e);
+            return Err(e);
+        }
+    }
 
     // Generate Java code
     codegen::compile_to_java(program, filename)?;

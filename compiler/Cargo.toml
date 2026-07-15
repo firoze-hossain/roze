@@ -12,4 +12,6 @@ anyhow = { workspace = true }
 colored = { workspace = true }
 clap = { workspace = true }
 thiserror = { workspace = true }
-bytecode = "0.3"  # Latest version is 0.3.0
+
+[lib]
+path = "src/lib.rs"

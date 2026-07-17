@@ -4,7 +4,23 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="1d0862cf-b805-4c44-9f31-7f55f485dc89" name="Changes" comment="" />
+    <list default="true" id="1d0862cf-b805-4c44-9f31-7f55f485dc89" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/ide/vscode/language-configuration.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ide/vscode/package.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ide/vscode/snippets/roze.code-snippets" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ide/vscode/src/extension.ts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ide/vscode/syntaxes/roze.tmLanguage.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ide/vscode/tsconfig.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tools/roze-build/src/build.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tools/roze-build/src/config.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tools/roze-build/src/watcher.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test_project/main.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/tools/roze-build/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/tools/roze-build/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tools/roze-build/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/tools/roze-build/src/main.rs" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -13,6 +29,18 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;firoze-hossain&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/firoze-hossain/roze.git&quot;,
+    &quot;accountId&quot;: &quot;6de71cd2-4dc1-40c9-b395-8bf80a353476&quot;
+  }
+}</component>
   <component name="MacroExpansionManager">
     <option name="directoryName" value="A8rHs4BZ" />
   </component>
@@ -20,6 +48,9 @@
   &quot;associatedIndex&quot;: 1
 }</component>
   <component name="ProjectId" id="3GSCPjVIRTfBrlFZ89VzgG7ZSCq" />
+  <component name="ProjectLevelVcsManager">
+    <ConfirmationsSetting value="2" id="Add" />
+  </component>
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
@@ -29,12 +60,16 @@
     "ModuleVcsDetector.initialDetectionPerformed": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "git-widget-placeholder": "master",
     "kotlin-language-version-configured": "true",
+    "last_opened_file_path": "/home/firoze/projects/others/roze",
     "nodejs_package_manager_path": "npm",
     "onboarding.tips.debug.path": "/home/firoze/projects/others/roze/src/main/java/org/example/Main.java",
     "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
     "settings.editor.selected.configurable": "preferences.pluginManager",
+    "ts.external.directory.path": "/opt/jetbrains/idea-IU-253.30387.90/plugins/javascript-plugin/jsLanguageServicesImpl/external",
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
@@ -64,6 +99,9 @@
       <workItem from="1783955566441" duration="2357000" />
       <workItem from="1783957959751" duration="15000" />
       <workItem from="1783957991880" duration="4987000" />
+      <workItem from="1784131967403" duration="2213000" />
+      <workItem from="1784136808423" duration="8000" />
+      <workItem from="1784302128721" duration="1462000" />
     </task>
     <servers />
   </component>

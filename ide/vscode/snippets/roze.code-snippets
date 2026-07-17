@@ -1,0 +1,95 @@
+{
+  "Hello World": {
+    "prefix": "hello",
+    "body": [
+      "func main() {",
+      "    println(\"Hello from Roze! 🌹\");",
+      "}"
+    ],
+    "description": "Hello World program"
+  },
+  "Function": {
+    "prefix": "func",
+    "body": [
+      "func ${1:name}(${2:param}) {",
+      "    ${3:// body}",
+      "}"
+    ],
+    "description": "Function definition"
+  },
+  "Main Function": {
+    "prefix": "main",
+    "body": [
+      "func main() {",
+      "    ${1:// code}",
+      "}"
+    ],
+    "description": "Main function"
+  },
+  "If Statement": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition} {",
+      "    ${2:// code}",
+      "}"
+    ],
+    "description": "If statement"
+  },
+  "If-Else Statement": {
+    "prefix": "ifelse",
+    "body": [
+      "if ${1:condition} {",
+      "    ${2:// code}",
+      "} else {",
+      "    ${3:// code}",
+      "}"
+    ],
+    "description": "If-else statement"
+  },
+  "For Loop": {
+    "prefix": "for",
+    "body": [
+      "for ${1:i} = 0; ${1:i} < ${2:n}; ${1:i}++ {",
+      "    ${3:// code}",
+      "}"
+    ],
+    "description": "For loop"
+  },
+  "While Loop": {
+    "prefix": "while",
+    "body": [
+      "while ${1:condition} {",
+      "    ${2:// code}",
+      "}"
+    ],
+    "description": "While loop"
+  },
+  "Class": {
+    "prefix": "class",
+    "body": [
+      "class ${1:Name} {",
+      "    let ${2:field};",
+      "",
+      "    new(${3:param}) {",
+      "        ${4:// constructor}",
+      "    }",
+      "}"
+    ],
+    "description": "Class definition"
+  },
+  "Import": {
+    "prefix": "import",
+    "body": "import ${1:package};",
+    "description": "Import statement"
+  },
+  "Println": {
+    "prefix": "println",
+    "body": "println(${1:message});",
+    "description": "Print with newline"
+  },
+  "Let Variable": {
+    "prefix": "let",
+    "body": "let ${1:name} = ${2:value};",
+    "description": "Variable declaration"
+  }
+}

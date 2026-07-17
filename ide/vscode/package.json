@@ -1,0 +1,92 @@
+{
+  "name": "roze-language",
+  "displayName": "Roze Language",
+  "description": "Roze programming language support for VS Code",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:roze"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "roze",
+        "aliases": ["Roze", "roze"],
+        "extensions": [".roze"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "roze",
+        "scopeName": "source.roze",
+        "path": "./syntaxes/roze.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "roze",
+        "path": "./snippets/roze.code-snippets"
+      }
+    ],
+    "commands": [
+      {
+        "command": "roze.build",
+        "title": "Roze: Build Project"
+      },
+      {
+        "command": "roze.run",
+        "title": "Roze: Run Project"
+      },
+      {
+        "command": "roze.new",
+        "title": "Roze: New Project"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "roze.build",
+        "key": "ctrl+shift+b",
+        "when": "editorLangId == roze"
+      },
+      {
+        "command": "roze.run",
+        "key": "ctrl+shift+r",
+        "when": "editorLangId == roze"
+      }
+    ],
+    "configuration": {
+      "title": "Roze",
+      "properties": {
+        "roze.compilerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Roze compiler executable"
+        },
+        "roze.formatOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Format code on save"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.0.0"
+  }
+}

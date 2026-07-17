@@ -4,8 +4,16 @@ import * as child_process from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 
+let lspClient: vscode.LanguageClient | undefined;
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('🌹 Roze Language extension activated!');
+
+    // Start LSP if enabled
+    const config = vscode.workspace.getConfiguration('roze');
+    if (config.get('lspEnabled')) {
+        startLanguageServer(context);
+    }
 
     // Register build command
     let buildCommand = vscode.commands.registerCommand('roze.build', async () => {
@@ -41,6 +49,15 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+    // Register restart command
+    let restartCommand = vscode.commands.registerCommand('roze.restart', async () => {
+        if (lspClient) {
+            await lspClient.stop();
+            startLanguageServer(context);
+            vscode.window.showInformationMessage('🌹 Roze Language Server restarted');
+        }
+    });
+
     // Register format on save
     let formatOnSave = vscode.workspace.onDidSaveTextDocument(async (document) => {
         if (document.languageId === 'roze') {
@@ -63,59 +80,83 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    // Register syntax errors
-    let diagnosticCollection = vscode.languages.createDiagnosticCollection('roze');
-
-    // Simple linter - checks for common issues
-    let linter = vscode.workspace.onDidSaveTextDocument((document) => {
-        if (document.languageId === 'roze') {
-            const diagnostics: vscode.Diagnostic[] = [];
-            const text = document.getText();
-
-            // Check for common issues
-            const lines = text.split('\n');
-            lines.forEach((line, index) => {
-                // Check for missing semicolons (simple check)
-                if (line.trim() && !line.trim().endsWith('{') && !line.trim().endsWith('}') &&
-                    !line.trim().endsWith(';') && !line.trim().startsWith('//') &&
-                    !line.trim().startsWith('/*') && !line.trim().endsWith('*/')) {
-                    if (line.trim().match(/^(let|println|return|if|for|while)/)) {
-                        const range = new vscode.Range(
-                            new vscode.Position(index, line.length - 1),
-                            new vscode.Position(index, line.length)
-                        );
-                        const diagnostic = new vscode.Diagnostic(
-                            range,
-                            'Missing semicolon?',
-                            vscode.DiagnosticSeverity.Warning
-                        );
-                        diagnostics.push(diagnostic);
-                    }
-                }
-            });
-
-            diagnosticCollection.set(document.uri, diagnostics);
-        }
-    });
-
     // Status bar item
     let statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right);
     statusBar.text = '🌹 Roze';
-    statusBar.tooltip = 'Roze Language';
-    statusBar.command = 'roze.build';
+    statusBar.tooltip = 'Roze Language - LSP Active';
+    statusBar.command = 'roze.restart';
     statusBar.show();
 
     context.subscriptions.push(
         buildCommand,
         runCommand,
         newCommand,
+        restartCommand,
         formatOnSave,
-        linter,
-        diagnosticCollection,
         statusBar
     );
 }
 
+function startLanguageServer(context: vscode.ExtensionContext) {
+    // Find the LSP binary
+    const lspPath = findLspBinary();
+    if (!lspPath) {
+        vscode.window.showWarningMessage('Roze LSP binary not found. Install with: cargo build --release -p roze-lsp');
+        return;
+    }
+
+    // Server options
+    const serverOptions: vscode.ServerOptions = {
+        run: { command: lspPath, transport: vscode.TransportKind.stdio },
+        debug: { command: lspPath, transport: vscode.TransportKind.stdio }
+    };
+
+    // Client options
+    const clientOptions: vscode.LanguageClientOptions = {
+        documentSelector: [{ scheme: 'file', language: 'roze' }],
+        synchronize: {
+            fileEvents: vscode.workspace.createFileSystemWatcher('**/*.roze')
+        },
+        initializationOptions: {},
+        diagnosticCollectionName: 'roze'
+    };
+
+    // Create and start the client
+    lspClient = new vscode.LanguageClient(
+        'rozeLsp',
+        'Roze Language Server',
+        serverOptions,
+        clientOptions
+    );
+
+    lspClient.start();
+    vscode.window.showInformationMessage('🌹 Roze Language Server started');
+}
+
+function findLspBinary(): string | undefined {
+    // Check in the project root
+    const possiblePaths = [
+        path.join(__dirname, '../../../target/release/roze-lsp'),
+        path.join(__dirname, '../target/release/roze-lsp'),
+        'roze-lsp'
+    ];
+
+    for (const p of possiblePaths) {
+        try {
+            if (fs.existsSync(p) || child_process.spawnSync('which', [p]).status === 0) {
+                return p;
+            }
+        } catch {
+            // Continue
+        }
+    }
+
+    return undefined;
+}
+
 export function deactivate() {
+    if (lspClient) {
+        lspClient.stop();
+    }
     console.log('🌹 Roze Language extension deactivated!');
 }

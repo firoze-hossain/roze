@@ -5,6 +5,7 @@ members = [
     "stdlib",
     "tools/roze-build",
     "tools/roze-pkg",
+    "tools/roze-lsp",
 ]
 resolver = "2"
 

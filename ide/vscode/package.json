@@ -49,6 +49,10 @@
       {
         "command": "roze.new",
         "title": "Roze: New Project"
+      },
+      {
+        "command": "roze.restart",
+        "title": "Roze: Restart Language Server"
       }
     ],
     "keybindings": [
@@ -75,6 +79,11 @@
           "type": "boolean",
           "default": true,
           "description": "Format code on save"
+        },
+        "roze.lspEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Language Server Protocol support"
         }
       }
     }

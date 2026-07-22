@@ -46,11 +46,28 @@ pub enum Statement {
     Function {
         name: String,
         params: Vec<FunctionParam>,
+        return_type: Option<String>,
         body: Box<Statement>,
         location: Location,
     },
     Import {
         path: String,
+        location: Location,
+    },
+    If {
+        condition: Box<Expression>,
+        then_branch: Box<Statement>,
+        else_branch: Option<Box<Statement>>,
+        location: Location,
+    },
+    While {
+        condition: Box<Expression>,
+        body: Box<Statement>,
+        location: Location,
+    },
+    Assign {
+        name: String,
+        value: Box<Expression>,
         location: Location,
     },
 }

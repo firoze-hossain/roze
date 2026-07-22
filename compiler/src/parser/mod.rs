@@ -76,13 +76,32 @@ impl Parser {
 
         match &self.current().token {
             Token::Import => self.parse_import(),
-            Token::Func => {
-                println!("DEBUG: Found Func token at line {}", self.current().line);
-                self.parse_function()
-            }
+            Token::Func => self.parse_function(),
             Token::Let => self.parse_let(),
             Token::Return => self.parse_return(),
             Token::LeftBrace => self.parse_block(),
+            Token::If => self.parse_if(),
+            Token::While => self.parse_while(),
+            Token::Identifier(name) if matches!(
+                self.tokens.get(self.position + 1).map(|t| &t.token),
+                Some(Token::Equals)
+            ) => {
+                let name = name.clone();
+                self.advance(); // Skip identifier
+                self.advance(); // Skip '='
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                let value = self.parse_expression()?;
+                if self.match_token(&Token::Semicolon) {
+                    // Semicolon consumed
+                }
+                Ok(Statement::Assign {
+                    name,
+                    value: Box::new(value),
+                    location,
+                })
+            }
             _ => {
                 // Parse as expression statement
                 let expr = self.parse_expression()?;
@@ -119,7 +138,6 @@ impl Parser {
         // Skip 'func' token
         if self.check(&Token::Func) {
             self.advance();
-            println!("DEBUG: Advanced past Func token");
         } else {
             return Err(anyhow!("Expected 'func' keyword at line {}", self.current().line));
         }
@@ -127,11 +145,7 @@ impl Parser {
         // Skip any whitespace/newlines
         while self.check(&Token::Newline) {
             self.advance();
-            println!("DEBUG: Skipped newline after func");
         }
-
-        // Get function name - MUST be an identifier
-        println!("DEBUG: Current token before expecting identifier: {:?}", self.current().token);
 
         // Use check for identifier type instead of expect
         if !self.check(&Token::Identifier(String::new())) {
@@ -145,7 +159,6 @@ impl Parser {
             _ => return Err(anyhow!("Invalid function name at line {}", name_token.line)),
         };
         self.advance();
-        println!("DEBUG: Found function name: {}", name);
 
         // Skip newlines before parenthesis
         while self.check(&Token::Newline) {
@@ -157,7 +170,6 @@ impl Parser {
             return Err(anyhow!("Expected '(' after function name at line {}", self.current().line));
         }
         self.advance();
-        println!("DEBUG: Found opening parenthesis");
 
         let mut params = Vec::new();
 
@@ -222,7 +234,31 @@ impl Parser {
             return Err(anyhow!("Expected ')' after parameters at line {}", self.current().line));
         }
         self.advance();
-        println!("DEBUG: Found closing parenthesis");
+
+        // Skip newlines before an optional return type / body
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        // Optional return type: '-> TypeName'
+        let return_type = if self.check(&Token::Arrow) {
+            self.advance(); // Skip '->'
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if !self.check(&Token::Identifier(String::new())) {
+                return Err(anyhow!("Expected return type after '->' at line {}", self.current().line));
+            }
+            let type_token = self.current().clone();
+            let type_name = match &type_token.token {
+                Token::Identifier(t) => Some(t.clone()),
+                _ => None,
+            };
+            self.advance();
+            type_name
+        } else {
+            None
+        };
 
         // Skip newlines before body
         while self.check(&Token::Newline) {
@@ -235,6 +271,7 @@ impl Parser {
         Ok(Statement::Function {
             name,
             params,
+            return_type,
             body: Box::new(body),
             location,
         })
@@ -335,6 +372,78 @@ impl Parser {
         self.advance(); // Skip '}'
 
         Ok(Statement::Block { statements, location })
+    }
+
+    fn parse_if(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // Skip 'if'
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        // Condition is a plain expression; parentheses around it are optional
+        // (e.g. both `if x > 0 {` and `if (x > 0) {` are accepted, since
+        // parse_primary already handles a parenthesized sub-expression).
+        let condition = self.parse_expression()?;
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let then_branch = self.parse_block()?;
+
+        // Skip newlines before checking for 'else'
+        let mut lookahead = self.position;
+        while lookahead < self.tokens.len() && matches!(self.tokens[lookahead].token, Token::Newline) {
+            lookahead += 1;
+        }
+
+        let else_branch = if lookahead < self.tokens.len() && matches!(self.tokens[lookahead].token, Token::Else) {
+            self.position = lookahead;
+            self.advance(); // Skip 'else'
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&Token::If) {
+                // 'else if ...' chains into another If statement
+                Some(Box::new(self.parse_if()?))
+            } else {
+                Some(Box::new(self.parse_block()?))
+            }
+        } else {
+            None
+        };
+
+        Ok(Statement::If {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch,
+            location,
+        })
+    }
+
+    fn parse_while(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // Skip 'while'
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let condition = self.parse_expression()?;
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let body = self.parse_block()?;
+
+        Ok(Statement::While {
+            condition: Box::new(condition),
+            body: Box::new(body),
+            location,
+        })
     }
 
     fn parse_expression(&mut self) -> Result<Expression> {

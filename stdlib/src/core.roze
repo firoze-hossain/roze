@@ -1,65 +1,46 @@
 // stdlib/src/core.roze
-// Core types and functions for Roze
+//
+// Core (string, math) reference for Roze.
+//
+// STATUS: every function below is implemented as a compiler INTRINSIC --
+// the Roze compiler recognizes calls to these names directly (see
+// compiler/src/codegen/jvm.rs and compiler/src/semantic/mod.rs) and emits
+// real JVM standard-library calls for them (String.length(), Math.abs(),
+// etc). They're available in every program automatically; no `import` is
+// required, and this file is never actually read by the compiler.
+//
+// Why intrinsics instead of real Roze functions: Roze doesn't have
+// method-call syntax yet (no `value.method()`), so there's currently no
+// way to reach the host runtime's string operations (length, case
+// conversion, parsing) from Roze source at all. Intercepting known
+// function names at the call site is the pragmatic way to expose them
+// until Roze gets its own method-call syntax and/or a real module system
+// (see ROADMAP.md) that could bring a file like this one into a program
+// for real.
+//
+// The signatures below exist purely as documentation of what's available
+// and what each function expects/returns. abs/max/min are the one
+// genuine exception worth noting: their logic (an if/else) is simple
+// enough to compile as ordinary Roze with no native call needed at all --
+// they just also happen to be registered as intrinsics for consistency
+// and to guarantee they're always available without depending on a
+// module system that doesn't exist yet.
 
-// String utilities
-func string_length(s: string) -> int {
-    // Will be implemented in native code
-    return 0;
-}
+// ---- String utilities ----
+// string_length(s)      -> int     : number of UTF-16 code units in s
+// string_concat(a, b)   -> string  : a followed by b (equivalent to a + b)
+// string_to_upper(s)    -> string  : s converted to upper case
+// string_to_lower(s)    -> string  : s converted to lower case
 
-func string_concat(a: string, b: string) -> string {
-    return a + b;
-}
+// ---- Math utilities ----
+// abs(x)      -> int : absolute value of x
+// max(a, b)   -> int : the larger of a and b
+// min(a, b)   -> int : the smaller of a and b
 
-func string_to_upper(s: string) -> string {
-    // Will be implemented in native code
-    return s;
-}
+// ---- Type checking ----
+// is_number(x) -> bool : true if x is a number at runtime
+// is_string(x) -> bool : true if x is a string at runtime
 
-func string_to_lower(s: string) -> string {
-    // Will be implemented in native code
-    return s;
-}
-
-// Math utilities
-func abs(x: int) -> int {
-    if x < 0 {
-        return -x;
-    }
-    return x;
-}
-
-func max(a: int, b: int) -> int {
-    if a > b {
-        return a;
-    }
-    return b;
-}
-
-func min(a: int, b: int) -> int {
-    if a < b {
-        return a;
-    }
-    return b;
-}
-
-// Type checking
-func is_number(x) -> bool {
-    // Will be implemented in native code
-    return false;
-}
-
-func is_string(x) -> bool {
-    // Will be implemented in native code
-    return false;
-}
-
-// Conversion
-func to_string(x) -> string {
-    return "" + x;
-}
-
-func to_int(s: string) -> int {
-    // Will be implemented in native code
-    return 0;
-}
+// ---- Conversion ----
+// to_string(x) -> string : x rendered as a string
+// to_int(s)    -> int    : s parsed as an integer (throws if not a valid integer)

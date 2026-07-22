@@ -36,6 +36,8 @@ pub fn compile_to_java(program: Program, input_file: &str) -> Result<()> {
 
 pub fn run_java(class_name: &str) -> Result<()> {
     let status = Command::new("java")
+        .arg("-Dstdout.encoding=UTF-8")
+        .arg("-Dstderr.encoding=UTF-8")
         .arg(class_name)
         .status()?;
 

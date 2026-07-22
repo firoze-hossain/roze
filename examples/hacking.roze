@@ -1,0 +1,4 @@
+// examples/hacking.roze
+// Placeholder: security/systems tooling (raw sockets, binary parsing,
+// low-level protocol work) needs a native backend with direct memory
+// access, which doesn't exist yet. See ROADMAP.md ("The bigger picture").

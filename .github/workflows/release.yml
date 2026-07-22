@@ -1,0 +1,16 @@
+name: Release
+
+# NOTE: this is intentionally a placeholder. A real release workflow needs
+# decisions this project hasn't made yet: versioning scheme, which
+# platforms to publish prebuilt `roze` binaries for, and where they'd be
+# published (GitHub Releases? a package registry?). Wire this up once
+# those are settled -- see ROADMAP.md.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Release automation not configured yet -- see ROADMAP.md"

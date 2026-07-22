@@ -1,1 +1,0 @@
-/home/firoze/projects/others/roze/target/release/roze-pkg: /home/firoze/projects/others/roze/tools/roze-pkg/src/dependency.rs /home/firoze/projects/others/roze/tools/roze-pkg/src/main.rs /home/firoze/projects/others/roze/tools/roze-pkg/src/project.rs /home/firoze/projects/others/roze/tools/roze-pkg/src/template.rs

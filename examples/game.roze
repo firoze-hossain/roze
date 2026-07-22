@@ -1,0 +1,4 @@
+// examples/game.roze
+// Placeholder: games typically need a native (non-JVM) backend for
+// performance and low-level graphics/input access, which doesn't exist
+// yet. See ROADMAP.md ("The bigger picture").

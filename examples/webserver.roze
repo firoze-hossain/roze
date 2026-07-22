@@ -1,0 +1,4 @@
+// examples/webserver.roze
+// Placeholder: an HTTP server needs the Web (HTTP/JSON) stdlib planned
+// for Phase 3, which is blocked on the module system in Phase 1.5.
+// See ROADMAP.md.

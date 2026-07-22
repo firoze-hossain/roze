@@ -1,0 +1,54 @@
+// examples/core_demo.roze
+// Demonstrates if/else/while/assignment and the Core (string, math)
+// intrinsics -- everything in this file actually compiles and runs.
+// Try it: roze run examples/core_demo.roze
+
+func classify(x: int) -> string {
+    if x > 0 {
+        return "positive";
+    } else if x < 0 {
+        return "negative";
+    } else {
+        return "zero";
+    }
+}
+
+func countdown(n: int) {
+    let i = n;
+    while i > 0 {
+        println(i);
+        i = i - 1;
+    }
+}
+
+func main() {
+    let name = "Roze";
+    println("Hello, " + name + "!");
+
+    // String intrinsics
+    println(string_to_upper(name));
+    println(string_to_lower(name));
+    println(string_length(name));
+    println(string_concat("foo", "bar"));
+
+    // Math intrinsics
+    println(abs(-42));
+    println(max(3, 9));
+    println(min(3, 9));
+
+    // Conversion
+    println(to_string(123));
+    println(to_int("456") + 1);
+
+    // Runtime type checks
+    println(is_number(5));
+    println(is_string("hi"));
+
+    // Control flow
+    println(classify(10));
+    println(classify(-5));
+    println(classify(0));
+
+    println("counting down:");
+    countdown(3);
+}

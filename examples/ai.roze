@@ -1,0 +1,4 @@
+// examples/ai.roze
+// Placeholder: AI/ML workloads need real numeric arrays and either a
+// native backend or FFI into existing tensor libraries (BLAS/ONNX/etc),
+// neither of which exist yet. See ROADMAP.md ("The bigger picture").

@@ -1,7 +1,8 @@
 // compiler/src/semantic/mod.rs
+use crate::error::RozeError;
 use crate::parser::ast::*;
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -41,6 +42,30 @@ impl Type {
             Type::Function { .. } => "Object".to_string(),
         }
     }
+}
+
+impl std::fmt::Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Int => write!(f, "int"),
+            Type::String => write!(f, "string"),
+            Type::Bool => write!(f, "bool"),
+            Type::Void => write!(f, "void"),
+            Type::Unknown => write!(f, "<unknown>"),
+            Type::Function { .. } => write!(f, "function"),
+        }
+    }
+}
+
+/// Two types are "compatible" for assignment/return purposes if they're
+/// equal, or if either side is Unknown -- meaning we don't have enough
+/// static information to say either way, so we don't block it. This is
+/// intentionally permissive rather than a full inference engine: it
+/// catches the clear-cut cases (assigning a string into an int variable,
+/// returning a string from a function declared `-> int`) without
+/// rejecting legitimate code that flows through an untyped parameter.
+fn types_compatible(expected: &Type, actual: &Type) -> bool {
+    expected == actual || matches!(expected, Type::Unknown) || matches!(actual, Type::Unknown)
 }
 
 #[derive(Debug, Clone)]
@@ -84,7 +109,11 @@ impl SymbolTable {
     pub fn define(&mut self, name: &str, type_: Type, line: usize, column: usize) -> Result<()> {
         let frame = self.scopes.last_mut().expect("SymbolTable always has at least one scope");
         if frame.contains_key(name) {
-            return Err(anyhow!("Symbol '{}' already defined in this scope at line {}", name, line));
+            return Err(RozeError::type_error(
+                format!("'{}' is already defined in this scope", name),
+                line,
+                column,
+            ).with_length(name.chars().count()).into());
         }
         frame.insert(name.to_string(), Symbol {
             name: name.to_string(),
@@ -142,6 +171,12 @@ pub struct TypeChecker {
     pub functions: HashMap<String, FunctionSig>,
     pub current_function: Option<String>,
     pub current_return_type: Type,
+    /// True while checking `main`'s body -- codegen always hard-codes
+    /// `main` to Java's `public static void main(String[] args)`
+    /// regardless of any declared return type, so we enforce that at the
+    /// Roze level too instead of letting a mismatch surface later as a
+    /// confusing javac error.
+    pub in_main: bool,
     pub errors: Vec<String>,
 }
 
@@ -156,6 +191,7 @@ impl TypeChecker {
             functions,
             current_function: None,
             current_return_type: Type::Void,
+            in_main: false,
             errors: Vec::new(),
         }
     }
@@ -183,11 +219,20 @@ impl TypeChecker {
     pub fn check_statement(&mut self, stmt: &Statement) -> Result<()> {
         match stmt {
             Statement::Function { name, params, return_type, body, location } => {
+                if name == "main" && return_type.is_some() {
+                    return Err(RozeError::type_error(
+                        "'main' always returns void and cannot declare a return type",
+                        location.line,
+                        location.column,
+                    ).with_hint("remove the '-> ...' after main()'s parameter list").into());
+                }
+
                 let outer_function = self.current_function.replace(name.clone());
                 let outer_return_type = std::mem::replace(
                     &mut self.current_return_type,
                     return_type.as_deref().map(Type::from_name).unwrap_or(Type::Void),
                 );
+                let outer_in_main = std::mem::replace(&mut self.in_main, name == "main");
 
                 self.symbol_table.push_scope();
                 for param in params {
@@ -200,6 +245,7 @@ impl TypeChecker {
                 self.symbol_table.pop_scope();
                 self.current_function = outer_function;
                 self.current_return_type = outer_return_type;
+                self.in_main = outer_in_main;
             }
             Statement::Let { name, value, location } => {
                 let value_type = self.check_expression(value)?;
@@ -208,14 +254,40 @@ impl TypeChecker {
             Statement::Expression { expr, .. } => {
                 self.check_expression(expr)?;
             }
-            Statement::Return { value, .. } => {
-                if let Some(expr) = value {
-                    // We type-check the returned expression, but don't yet
-                    // cross-check it against `current_return_type`. Full
-                    // return-type enforcement (and unifying it with the
-                    // function's declared type) is a reasonable next step,
-                    // tracked separately -- see ROADMAP.
-                    self.check_expression(expr)?;
+            Statement::Return { value, location } => {
+                match value {
+                    Some(expr) => {
+                        let actual = self.check_expression(expr)?;
+                        if !types_compatible(&self.current_return_type, &actual) {
+                            let fn_name = self.current_function.as_deref().unwrap_or("<anonymous>");
+                            return Err(RozeError::type_error(
+                                format!(
+                                    "'{}' is declared to return {}, but this returns {}",
+                                    fn_name, self.current_return_type, actual
+                                ),
+                                location.line,
+                                location.column,
+                            ).with_hint(format!(
+                                "either change the returned value's type, or change the function's declared return type ('-> {}')",
+                                actual
+                            )).into());
+                        }
+                    }
+                    None => {
+                        // A bare `return;` is only valid if the function
+                        // isn't supposed to produce a value.
+                        if !matches!(self.current_return_type, Type::Void | Type::Unknown) {
+                            let fn_name = self.current_function.as_deref().unwrap_or("<anonymous>");
+                            return Err(RozeError::type_error(
+                                format!(
+                                    "'{}' is declared to return {}, but this 'return;' doesn't return a value",
+                                    fn_name, self.current_return_type
+                                ),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                    }
                 }
             }
             Statement::Block { statements, .. } => {
@@ -241,15 +313,35 @@ impl TypeChecker {
                 // don't pull in another file's declarations. See ROADMAP.
             }
             Statement::Assign { name, value, location } => {
-                self.check_expression(value)?;
-                if self.symbol_table.lookup(name).is_none() {
-                    return Err(anyhow!("Cannot assign to undefined variable '{}' at line {}", name, location.line));
+                let value_type = self.check_expression(value)?;
+                match self.symbol_table.lookup(name) {
+                    None => {
+                        return Err(RozeError::type_error(
+                            format!("Cannot assign to undefined variable '{}'", name),
+                            location.line,
+                            location.column,
+                        ).with_length(name.chars().count()).into());
+                    }
+                    Some(symbol) => {
+                        // Reassignment preserves the variable's original
+                        // declared type -- `let x = 5;` followed later by
+                        // `x = "hi";` is a type error, the same as it
+                        // would be at the `let`.
+                        if !types_compatible(&symbol.type_, &value_type) {
+                            return Err(RozeError::type_error(
+                                format!(
+                                    "Cannot assign a value of type {} to '{}', which was declared as {}",
+                                    value_type, name, symbol.type_
+                                ),
+                                location.line,
+                                location.column,
+                            ).with_hint(format!(
+                                "'{}' was declared with type {} at line {}; its type can't change on reassignment",
+                                name, symbol.type_, symbol.line
+                            )).into());
+                        }
+                    }
                 }
-                // Note: we don't yet enforce that the assigned value's type
-                // matches the variable's original declared type -- Roze
-                // doesn't have a `let mut` / immutability distinction yet
-                // either, so any existing variable can be reassigned. Both
-                // are reasonable next steps (see ROADMAP).
             }
         }
         Ok(())
@@ -265,7 +357,11 @@ impl TypeChecker {
                 if let Some(symbol) = self.symbol_table.lookup(name) {
                     Ok(symbol.type_.clone())
                 } else {
-                    Err(anyhow!("Undefined variable '{}' at line {}", name, location.line))
+                    Err(RozeError::type_error(
+                        format!("Undefined variable '{}'", name),
+                        location.line,
+                        location.column,
+                    ).with_length(name.chars().count()).into())
                 }
             }
             Expression::Unary { operand, .. } => self.check_expression(operand),
@@ -285,7 +381,11 @@ impl TypeChecker {
                             // rejecting code that may well be valid.
                             Ok(Type::Unknown)
                         } else {
-                            Err(anyhow!("Cannot add types {:?} and {:?} at line {}", left_type, right_type, location.line))
+                            Err(RozeError::type_error(
+                                format!("Cannot add {} and {}", left_type, right_type),
+                                location.line,
+                                location.column,
+                            ).into())
                         }
                     }
                     BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Divide => {
@@ -293,7 +393,11 @@ impl TypeChecker {
                         if numeric_ok(&left_type) && numeric_ok(&right_type) {
                             Ok(Type::Int)
                         } else {
-                            Err(anyhow!("Cannot perform arithmetic on {:?} and {:?} at line {}", left_type, right_type, location.line))
+                            Err(RozeError::type_error(
+                                format!("Cannot perform arithmetic on {} and {}", left_type, right_type),
+                                location.line,
+                                location.column,
+                            ).into())
                         }
                     }
                     BinaryOperator::Equal | BinaryOperator::NotEqual |
@@ -313,7 +417,11 @@ impl TypeChecker {
                     if let Some(sig) = self.functions.get(name) {
                         return Ok(sig.return_type.clone());
                     }
-                    return Err(anyhow!("Call to undefined function '{}' at line {}", name, location.line));
+                    return Err(RozeError::type_error(
+                        format!("Call to undefined function '{}'", name),
+                        location.line,
+                        location.column,
+                    ).with_length(name.chars().count()).into());
                 }
                 Ok(Type::Unknown)
             }
@@ -329,7 +437,7 @@ pub fn check_types(program: &Program) -> Result<()> {
         for error in &checker.errors {
             eprintln!("{}", error);
         }
-        return Err(anyhow!("Type checking failed"));
+        return Err(anyhow::anyhow!("Type checking failed"));
     }
     Ok(())
 }

@@ -1,8 +1,17 @@
 pub mod ast;
 
+use crate::error::RozeError;
 use crate::lexer::token::{Token, TokenWithLocation};
 use ast::*;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
+
+/// The display width of a token, used to size the `^^^` underline in error
+/// reports so it spans the actual offending token instead of a single
+/// character. `Token` already implements `Display` with the exact text a
+/// person would see in their source, so this just measures that.
+fn token_len(token: &Token) -> usize {
+    token.to_string().chars().count().max(1)
+}
 
 pub struct Parser {
     tokens: Vec<TokenWithLocation>,
@@ -35,9 +44,28 @@ impl Parser {
         }
     }
 
+    /// Builds a parse error pointing at whatever token is currently
+    /// unconsumed, with the underline sized to that token's width.
+    fn error(&self, message: impl Into<String>) -> anyhow::Error {
+        let tok = self.current();
+        RozeError::parser(message, tok.line, tok.column)
+            .with_length(token_len(&tok.token))
+            .into()
+    }
+
+    /// Same as `error`, but for a specific (already-consumed) token,
+    /// needed when the problem is with a token we've already advanced
+    /// past rather than the current one.
+    fn error_at(&self, message: impl Into<String>, tok: &TokenWithLocation) -> anyhow::Error {
+        RozeError::parser(message, tok.line, tok.column)
+            .with_length(token_len(&tok.token))
+            .into()
+    }
+
     fn expect(&mut self, token_type: Token, message: &str) -> Result<TokenWithLocation> {
         if self.position >= self.tokens.len() {
-            return Err(anyhow!("Unexpected end of file: {}", message));
+            let (line, column) = self.tokens.last().map(|t| (t.line, t.column)).unwrap_or((1, 1));
+            return Err(RozeError::parser(format!("Unexpected end of file: {}", message), line, column).into());
         }
 
         let current_token = self.current().clone();
@@ -46,8 +74,7 @@ impl Parser {
             self.advance();
             Ok(current_token)
         } else {
-            Err(anyhow!("{} at line {}: expected {:?}, found {:?}",
-                message, current_token.line, token_type, current_token.token))
+            Err(self.error(format!("{}: expected {}, found {}", message, token_type, current_token.token)))
         }
     }
 
@@ -126,7 +153,7 @@ impl Parser {
         let path_token = self.expect(Token::String(String::new()), "Expected import path")?;
         let path = match path_token.token {
             Token::String(s) => s,
-            _ => return Err(anyhow!("Invalid import path")),
+            _ => return Err(self.error_at("Invalid import path", &path_token)),
         };
 
         Ok(Statement::Import { path, location })
@@ -139,7 +166,7 @@ impl Parser {
         if self.check(&Token::Func) {
             self.advance();
         } else {
-            return Err(anyhow!("Expected 'func' keyword at line {}", self.current().line));
+            return Err(self.error("Expected 'func' keyword"));
         }
 
         // Skip any whitespace/newlines
@@ -149,14 +176,14 @@ impl Parser {
 
         // Use check for identifier type instead of expect
         if !self.check(&Token::Identifier(String::new())) {
-            return Err(anyhow!("Expected function name at line {}, found {:?}",
-                self.current().line, self.current().token));
+            return Err(self.error(format!("Expected a function name, found {}", self.current().token))
+                .context_hint("function declarations look like: func name(...) { ... }"));
         }
 
         let name_token = self.current().clone();
         let name = match &name_token.token {
             Token::Identifier(n) => n.clone(),
-            _ => return Err(anyhow!("Invalid function name at line {}", name_token.line)),
+            _ => return Err(self.error_at("Invalid function name", &name_token)),
         };
         self.advance();
 
@@ -167,7 +194,7 @@ impl Parser {
 
         // Expect opening parenthesis
         if !self.check(&Token::LeftParen) {
-            return Err(anyhow!("Expected '(' after function name at line {}", self.current().line));
+            return Err(self.error("Expected '(' after function name"));
         }
         self.advance();
 
@@ -186,13 +213,13 @@ impl Parser {
 
             // Get parameter name
             if !self.check(&Token::Identifier(String::new())) {
-                return Err(anyhow!("Expected parameter name at line {}", self.current().line));
+                return Err(self.error("Expected a parameter name"));
             }
 
             let param_token = self.current().clone();
             let param_name = match &param_token.token {
                 Token::Identifier(n) => n.clone(),
-                _ => return Err(anyhow!("Invalid parameter name")),
+                _ => return Err(self.error_at("Invalid parameter name", &param_token)),
             };
             self.advance();
 
@@ -200,7 +227,7 @@ impl Parser {
             let param_type = if self.check(&Token::Colon) {
                 self.advance();
                 if !self.check(&Token::Identifier(String::new())) {
-                    return Err(anyhow!("Expected type at line {}", self.current().line));
+                    return Err(self.error("Expected a type name after ':'"));
                 }
                 let type_token = self.current().clone();
                 let type_name = match &type_token.token {
@@ -231,7 +258,7 @@ impl Parser {
 
         // Expect closing parenthesis
         if !self.check(&Token::RightParen) {
-            return Err(anyhow!("Expected ')' after parameters at line {}", self.current().line));
+            return Err(self.error("Expected ')' after parameters"));
         }
         self.advance();
 
@@ -247,7 +274,7 @@ impl Parser {
                 self.advance();
             }
             if !self.check(&Token::Identifier(String::new())) {
-                return Err(anyhow!("Expected return type after '->' at line {}", self.current().line));
+                return Err(self.error("Expected a return type after '->'"));
             }
             let type_token = self.current().clone();
             let type_name = match &type_token.token {
@@ -287,13 +314,13 @@ impl Parser {
         }
 
         if !self.check(&Token::Identifier(String::new())) {
-            return Err(anyhow!("Expected variable name at line {}", self.current().line));
+            return Err(self.error("Expected a variable name after 'let'"));
         }
 
         let name_token = self.current().clone();
-        let name = match name_token.token {
+        let name = match name_token.token.clone() {
             Token::Identifier(n) => n,
-            _ => return Err(anyhow!("Invalid variable name")),
+            _ => return Err(self.error_at("Invalid variable name", &name_token)),
         };
         self.advance();
 
@@ -303,7 +330,8 @@ impl Parser {
         }
 
         if !self.check(&Token::Equals) {
-            return Err(anyhow!("Expected '=' at line {}", self.current().line));
+            return Err(self.error("Expected '=' after variable name")
+                .context_hint(format!("did you mean: let {} = ...;", name)));
         }
         self.advance();
 
@@ -346,7 +374,8 @@ impl Parser {
         let location = Location::new(self.current().line, self.current().column);
 
         if !self.check(&Token::LeftBrace) {
-            return Err(anyhow!("Expected '{{' at line {}", self.current().line));
+            return Err(self.error("Expected '{' to start a block")
+                .context_hint("if/while/function bodies need to be wrapped in { ... }"));
         }
         self.advance(); // Skip '{'
 
@@ -367,7 +396,8 @@ impl Parser {
         }
 
         if !self.check(&Token::RightBrace) {
-            return Err(anyhow!("Expected '}}' at line {}", self.current().line));
+            return Err(self.error("Expected '}' to close this block")
+                .context_hint("reached the end of the file while still inside a block -- check for a missing '}'"));
         }
         self.advance(); // Skip '}'
 
@@ -663,7 +693,7 @@ impl Parser {
                     }
 
                     if !self.check(&Token::RightParen) {
-                        return Err(anyhow!("Expected ')' after arguments at line {}", self.current().line));
+                        return Err(self.error(format!("Expected ')' after arguments to '{}(...)'", name)));
                     }
                     self.advance(); // Skip ')'
 
@@ -686,14 +716,35 @@ impl Parser {
                 self.advance();
                 let expr = self.parse_expression()?;
                 if !self.check(&Token::RightParen) {
-                    return Err(anyhow!("Expected ')' at line {}", self.current().line));
+                    return Err(self.error("Expected ')' to close this parenthesized expression"));
                 }
                 self.advance();
                 Ok(expr)
             }
-            _ => {
-                Err(anyhow!("Unexpected token at line {}: {:?}", self.current().line, self.current().token))
+            Token::Error => {
+                Err(RozeError::lexer("Unrecognized character", current_token.line, current_token.column).into())
             }
+            other => {
+                Err(RozeError::parser(format!("Unexpected token: {}", other), current_token.line, current_token.column)
+                    .with_length(token_len(&other))
+                    .into())
+            }
+        }
+    }
+}
+
+/// Small ergonomic helper so error sites can chain `.context_hint(...)`
+/// straight onto `self.error(...)` without unwrapping and re-wrapping the
+/// `anyhow::Error` by hand.
+trait WithHint {
+    fn context_hint(self, hint: impl Into<String>) -> Self;
+}
+
+impl WithHint for anyhow::Error {
+    fn context_hint(self, hint: impl Into<String>) -> Self {
+        match self.downcast::<RozeError>() {
+            Ok(roze_err) => roze_err.with_hint(hint).into(),
+            Err(other) => other,
         }
     }
 }

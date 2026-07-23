@@ -28,7 +28,11 @@ impl<'a> Lexer<'a> {
     }
 
     fn advance(&mut self) {
-        self.current_char = self.chars.next();
+        // Update line/column based on the character we're leaving behind
+        // (if any), *before* fetching the next one. Doing this the other
+        // way around -- checking the newly-fetched character for '\n' --
+        // resets the column one character too early, making the first
+        // real character after every newline report the wrong column.
         if let Some(c) = self.current_char {
             if c == '\n' {
                 self.line += 1;
@@ -36,8 +40,9 @@ impl<'a> Lexer<'a> {
             } else {
                 self.column += 1;
             }
-            self.position += 1;
         }
+        self.current_char = self.chars.next();
+        self.position += 1;
     }
 
     fn peek_char(&mut self) -> Option<char> {

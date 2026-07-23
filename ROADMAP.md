@@ -11,19 +11,17 @@ code.
 |---|---|---|
 | Lexer | ✅ Done | Tokenizes comments, strings, numbers, all operators, and keywords including `if`/`else`/`while`/`for`/`class` (the latter two aren't used by the parser yet). |
 | Parser | ✅ Done for the currently-supported grammar | Now handles `func` (with typed params and `-> ReturnType`), `let`, assignment, `return`, blocks, `if`/`else`/`else if`, `while`, and expressions with normal precedence. `for` and `class` are tokenized but intentionally not parsed yet (see Phase 1.5). |
-| Type checker | ⚠️ Basic, working | Tracks real parameter/return types (previously discarded), scoped variable lookup, and catches undefined-variable/undefined-function errors. Does **not** yet enforce that a `return` matches the function's declared return type, or that reassignment preserves a variable's original type -- both listed below. |
+| Type checker | ✅ Done | Tracks real parameter/return types, scoped variable lookup, and catches undefined-variable/undefined-function errors. Now also enforces that every `return` matches the function's declared return type (including a bare `return;` in a non-void function), that reassignment preserves a variable's original declared type, and that `main` doesn't declare a return type (it's always void, matching what codegen hard-codes). |
 | JVM codegen | ✅ Done for the currently-supported grammar | Emits **every** top-level function (previously only `main` was emitted -- calling any second function was a silent miscompile), using real declared/inferred types instead of guessing from variable names. Generates `if`/`while`/assignment. |
 | Core (string, math) | ✅ Done | `string_length`, `string_concat`, `string_to_upper`, `string_to_lower`, `abs`, `max`, `min`, `to_string`, `to_int`, `is_number`, `is_string` -- implemented as compiler intrinsics mapped to real JVM calls, available in every program with no import. See `stdlib/src/core.roze` for the reference doc. |
-| Error messages | ⬜ Not started | Errors currently print a Rust `anyhow` message and a Rust stack trace. A real "Roze-flavored" error with a source snippet, a `^^^` pointer, and a plain-English message is Phase 1.5 work, not Phase 2 -- it's higher-leverage now, while the grammar is still small, than after more syntax lands. |
+| Error messages | ✅ Done | Real "Roze-flavored" errors: a plain-English message, a `-->` pointer at `file:line:column`, the offending source line, and a `^^^` underline sized to the actual token -- for lexer, parser, and type errors alike. `main()` never lets a raw Rust `anyhow` Debug dump or panic backtrace reach the user; every failure path is caught and rendered through `RozeError::report`. Fixed two real off-by-one bugs in the lexer's column tracking along the way (the very first character of the file, and the first character after *every* newline, were both reported one column too high) -- these had been silently wrong since before any code actually displayed columns to a person. |
 
-### Phase 1.5 (new -- do this before Phase 2)
+### Phase 1.5 (do this before Phase 2)
 
-These are small, and they unblock everything else more than any Phase 2
-item does:
+Return-type enforcement and real error messages (below) are now done.
+What's left, still small and still higher-leverage than any Phase 2 item:
 
 - [ ] `for` loops (tokenized already; needs parser + codegen, same shape as `while`)
-- [ ] Return-type enforcement (`check_statement`'s `Return` case currently type-checks the expression but doesn't compare it to `current_return_type`)
-- [ ] Human-readable errors with source spans (see above)
 - [ ] A minimal module system: right now `import "x";` **parses but does nothing** -- nothing gets pulled in. Without this, `stdlib/` can't actually be used by a program, and "Standard Library" in Phase 3 has nowhere to attach.
 - [ ] Test suite: there are currently zero automated tests for the compiler itself (`tests/test_runner.roze` is a `.roze` script, not wired to `cargo test`). Add `cargo test` coverage per compiler stage, plus golden-output tests that compile+run a `.roze` fixture and assert stdout -- exactly the kind of test that would have caught every bug fixed in this pass automatically instead of by manual inspection.
 

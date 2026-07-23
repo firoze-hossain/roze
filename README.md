@@ -32,6 +32,10 @@ Currently working:
 - Variables (`let`), functions (with typed parameters and return types),
   `if`/`else`/`else if`, `while`, assignment
 - Arithmetic, comparison, and boolean expressions
+- Real error messages: a plain-English message, a `-->` pointer at
+  `file:line:column`, the offending source line, and a `^^^` underline --
+  for lexer, parser, and type errors alike
+- Type checking that enforces return types (including on reassignment)
 - A small built-in **Core** library, always available with no import:
   `string_length`, `string_concat`, `string_to_upper`, `string_to_lower`,
   `abs`, `max`, `min`, `to_string`, `to_int`, `is_number`, `is_string`

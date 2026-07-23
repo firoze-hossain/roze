@@ -1,0 +1,20 @@
+name = "my_project"
+version = "0.1.0"
+main = "src/main.roze"
+sources = ["src/**/*.roze"]
+
+[dependencies]
+
+[dev_dependencies]
+
+[build]
+optimize = false
+debug = true
+output_dir = "target/debug"
+target = "jvm"
+
+[release]
+optimize = true
+debug = false
+output_dir = "target/release"
+target = "jvm"

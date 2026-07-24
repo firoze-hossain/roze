@@ -1,0 +1,13 @@
+func main() {
+    println(string_to_upper("roze"));
+    println(string_to_lower("ROZE"));
+    println(string_length("roze"));
+    println(string_concat("foo", "bar"));
+    println(abs(-42));
+    println(max(3, 9));
+    println(min(3, 9));
+    println(to_string(123));
+    println(to_int("456") + 1);
+    println(is_number(5));
+    println(is_string("hi"));
+}

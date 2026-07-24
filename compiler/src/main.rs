@@ -8,6 +8,7 @@ mod parser;
 mod codegen;
 mod semantic;
 mod error;
+mod imports;
 
 use lexer::tokenize;
 use parser::parse;
@@ -101,6 +102,17 @@ fn build_file(filename: &str, debug: bool) -> Result<(), ()> {
     };
     println!("{} {} statements", "🌳 Parser:".green(), program.statements.len());
 
+    // Resolve imports (pulls in another file's/the bundled Core module's
+    // top-level functions -- see imports.rs)
+    let base_dir = std::path::Path::new(filename).parent().unwrap_or_else(|| std::path::Path::new("."));
+    let program = match imports::resolve_imports(program, base_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            report_error(&e, filename, &source);
+            return Err(());
+        }
+    };
+
     // Type check
     if let Err(e) = check_types(&program) {
         report_error(&e, filename, &source);
@@ -143,6 +155,11 @@ fn run_file(filename: &str) -> Result<(), ()> {
 /// internal error) gets a plain one-line message -- never a raw Rust
 /// Debug dump or backtrace.
 fn report_error(err: &anyhow::Error, filename: &str, source: &str) {
+    if err.downcast_ref::<error::AlreadyReported>().is_some() {
+        // Already printed in full, against its own file/source (e.g. a
+        // syntax error inside an imported module) -- nothing more to do.
+        return;
+    }
     if let Some(roze_err) = err.downcast_ref::<RozeError>() {
         eprintln!("{}", roze_err.report(filename, source));
     } else {

@@ -15,6 +15,7 @@ pub enum ErrorKind {
     Lexer,
     Parser,
     Type,
+    Module,
 }
 
 impl ErrorKind {
@@ -23,6 +24,7 @@ impl ErrorKind {
             ErrorKind::Lexer => "Lexer error",
             ErrorKind::Parser => "Parse error",
             ErrorKind::Type => "Type error",
+            ErrorKind::Module => "Import error",
         }
     }
 }
@@ -63,6 +65,10 @@ impl RozeError {
 
     pub fn type_error(message: impl Into<String>, line: usize, column: usize) -> Self {
         Self::new(ErrorKind::Type, message, line, column)
+    }
+
+    pub fn module(message: impl Into<String>, line: usize, column: usize) -> Self {
+        Self::new(ErrorKind::Module, message, line, column)
     }
 
     pub fn with_length(mut self, length: usize) -> Self {
@@ -154,3 +160,63 @@ impl fmt::Display for RozeError {
 }
 
 impl std::error::Error for RozeError {}
+
+/// A sentinel for when an error has already been printed in full against
+/// its *own* file and source (e.g. a syntax error inside an imported
+/// module, which needs to be reported against that module's source, not
+/// the top-level file currently being built) -- lets the failure still
+/// propagate through the normal `Result` plumbing without the top-level
+/// error handler printing a second, redundant, and differently-sourced
+/// message on top of it.
+#[derive(Debug)]
+pub struct AlreadyReported;
+
+impl fmt::Display for AlreadyReported {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(see error above)")
+    }
+}
+
+impl std::error::Error for AlreadyReported {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_includes_message_location_and_source_line() {
+        let err = RozeError::parser("Unexpected token: @", 2, 15).with_length(1);
+        let source = "func main() {\n    let x = 5 @ 3;\n}\n";
+        let report = err.report("test.roze", source);
+
+        assert!(report.contains("Parse error"));
+        assert!(report.contains("test.roze:2:15"));
+        assert!(report.contains("let x = 5 @ 3;"));
+        assert!(report.contains('^'));
+    }
+
+    #[test]
+    fn report_includes_hint_when_present() {
+        let err = RozeError::parser("Expected '}'", 1, 1).with_hint("check for a missing brace");
+        let report = err.report("test.roze", "x");
+        assert!(report.contains("check for a missing brace"));
+    }
+
+    #[test]
+    fn report_clamps_to_last_line_at_end_of_file() {
+        let err = RozeError::parser("Expected '}'", 5, 1); // line 5 doesn't exist
+        let source = "func main() {\n    println(\"hi\");\n";
+        let report = err.report("test.roze", source);
+        assert!(report.contains("println(\"hi\");"), "should show the last real line:\n{}", report);
+        assert!(report.contains("end of file"));
+    }
+
+    #[test]
+    fn underline_width_matches_token_length() {
+        let err = RozeError::parser("bad", 1, 1).with_length(4);
+        let report = err.report("test.roze", "true false");
+        // 4 carets for a 4-character token ("true").
+        assert!(report.contains("^^^^"), "expected a 4-wide underline:\n{}", report);
+        assert!(!report.contains("^^^^^"), "underline should be exactly 4 wide:\n{}", report);
+    }
+}

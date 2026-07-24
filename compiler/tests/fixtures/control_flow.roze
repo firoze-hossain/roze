@@ -1,0 +1,21 @@
+func classify(x: int) -> string {
+    if x > 0 {
+        return "positive";
+    } else if x < 0 {
+        return "negative";
+    } else {
+        return "zero";
+    }
+}
+
+func main() {
+    println(classify(5));
+    println(classify(-5));
+    println(classify(0));
+
+    let i = 0;
+    while i < 3 {
+        println(i);
+        i = i + 1;
+    }
+}

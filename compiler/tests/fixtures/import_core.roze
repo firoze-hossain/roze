@@ -1,0 +1,11 @@
+import "core";
+
+func main() {
+    println(clamp(15, 0, 10));
+    println(clamp(-5, 0, 10));
+    println(sign(-42));
+    println(sign(7));
+    println(sign(0));
+    println(square(6));
+    println(repeat("ab", 3));
+}

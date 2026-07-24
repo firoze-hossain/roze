@@ -1,0 +1,11 @@
+func main() {
+    for let i = 0; i < 5; i = i + 1 {
+        println(i);
+    }
+
+    let total = 0;
+    for let j = 1; j <= 10; j = j + 1 {
+        total = total + j;
+    }
+    println("sum=" + total);
+}

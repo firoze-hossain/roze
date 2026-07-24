@@ -109,6 +109,7 @@ impl Parser {
             Token::LeftBrace => self.parse_block(),
             Token::If => self.parse_if(),
             Token::While => self.parse_while(),
+            Token::For => self.parse_for(),
             Token::Identifier(name) if matches!(
                 self.tokens.get(self.position + 1).map(|t| &t.token),
                 Some(Token::Equals)
@@ -155,6 +156,10 @@ impl Parser {
             Token::String(s) => s,
             _ => return Err(self.error_at("Invalid import path", &path_token)),
         };
+
+        if self.check(&Token::Semicolon) {
+            self.advance(); // Optional semicolon
+        }
 
         Ok(Statement::Import { path, location })
     }
@@ -476,6 +481,152 @@ impl Parser {
         })
     }
 
+    /// `for <init>; <condition>; <update> { <body> }`
+    ///
+    /// e.g. `for let i = 0; i < 10; i = i + 1 { println(i); }`
+    ///
+    /// Unlike most statements in this grammar, the semicolons here are
+    /// structurally required (they're what separates the three clauses),
+    /// not just an optional line-ending -- so this doesn't reuse
+    /// `parse_let`/the generic assignment-statement path, both of which
+    /// treat their trailing semicolon as optional.
+    fn parse_for(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // Skip 'for'
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let init = Box::new(self.parse_for_init_clause()?);
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        if !self.check(&Token::Semicolon) {
+            return Err(self.error("Expected ';' after the for-loop's init clause")
+                .context_hint("for loops look like: for let i = 0; i < 10; i = i + 1 { ... }"));
+        }
+        self.advance(); // Skip ';'
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let condition = Box::new(self.parse_expression()?);
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        if !self.check(&Token::Semicolon) {
+            return Err(self.error("Expected ';' after the for-loop's condition")
+                .context_hint("for loops look like: for let i = 0; i < 10; i = i + 1 { ... }"));
+        }
+        self.advance(); // Skip ';'
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let update = Box::new(self.parse_for_update_clause()?);
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let body = Box::new(self.parse_block()?);
+
+        Ok(Statement::For {
+            init,
+            condition,
+            update,
+            body,
+            location,
+        })
+    }
+
+    /// The for-loop's init clause: either `let name = expr` (declares a
+    /// new loop variable, scoped to the loop) or `name = expr`
+    /// (reassigns an existing variable).
+    fn parse_for_init_clause(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+
+        if self.check(&Token::Let) {
+            self.advance(); // Skip 'let'
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if !self.check(&Token::Identifier(String::new())) {
+                return Err(self.error("Expected a variable name after 'let'"));
+            }
+            let name_token = self.current().clone();
+            let name = match name_token.token.clone() {
+                Token::Identifier(n) => n,
+                _ => return Err(self.error_at("Invalid variable name", &name_token)),
+            };
+            self.advance();
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if !self.check(&Token::Equals) {
+                return Err(self.error("Expected '=' after variable name"));
+            }
+            self.advance();
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            let value = self.parse_expression()?;
+            Ok(Statement::Let { name, value: Box::new(value), location })
+        } else if matches!(self.current().token, Token::Identifier(_)) {
+            let name = match self.current().token.clone() {
+                Token::Identifier(n) => n,
+                _ => unreachable!(),
+            };
+            self.advance();
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if !self.check(&Token::Equals) {
+                return Err(self.error(format!("Expected '=' after '{}'", name)));
+            }
+            self.advance();
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            let value = self.parse_expression()?;
+            Ok(Statement::Assign { name, value: Box::new(value), location })
+        } else {
+            Err(self.error("Expected a for-loop init clause, e.g. 'let i = 0'"))
+        }
+    }
+
+    /// The for-loop's update clause: always `name = expr` (e.g. `i = i + 1`).
+    fn parse_for_update_clause(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+
+        if matches!(self.current().token, Token::Identifier(_)) {
+            let name = match self.current().token.clone() {
+                Token::Identifier(n) => n,
+                _ => unreachable!(),
+            };
+            self.advance();
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if !self.check(&Token::Equals) {
+                return Err(self.error(format!("Expected '=' after '{}'", name)));
+            }
+            self.advance();
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            let value = self.parse_expression()?;
+            Ok(Statement::Assign { name, value: Box::new(value), location })
+        } else {
+            Err(self.error("Expected a for-loop update clause, e.g. 'i = i + 1'"))
+        }
+    }
+
     fn parse_expression(&mut self) -> Result<Expression> {
         self.parse_or()
     }
@@ -752,4 +903,141 @@ impl WithHint for anyhow::Error {
 pub fn parse(tokens: Vec<TokenWithLocation>) -> Result<Program> {
     let mut parser = Parser::new(tokens);
     parser.parse()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::tokenize;
+
+    fn parse_source(src: &str) -> Result<Program> {
+        parse(tokenize(src))
+    }
+
+    #[test]
+    fn parses_a_simple_function() {
+        let program = parse_source("func main() { println(\"hi\"); }").unwrap();
+        assert_eq!(program.statements.len(), 1);
+        match &program.statements[0] {
+            Statement::Function { name, params, return_type, .. } => {
+                assert_eq!(name, "main");
+                assert!(params.is_empty());
+                assert!(return_type.is_none());
+            }
+            other => panic!("expected a Function statement, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_typed_params_and_return_type() {
+        let program = parse_source("func add(a: int, b: int) -> int { return a + b; }").unwrap();
+        match &program.statements[0] {
+            Statement::Function { params, return_type, .. } => {
+                assert_eq!(params.len(), 2);
+                assert_eq!(params[0].type_name.as_deref(), Some("int"));
+                assert_eq!(return_type.as_deref(), Some("int"));
+            }
+            other => panic!("expected a Function statement, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_if_else_if_else_chain() {
+        let program = parse_source(
+            "func f() { if a { } else if b { } else { } }"
+        ).unwrap();
+        let body = match &program.statements[0] {
+            Statement::Function { body, .. } => body.as_ref(),
+            _ => panic!("expected a function"),
+        };
+        let inner = match body {
+            Statement::Block { statements, .. } => &statements[0],
+            _ => panic!("expected a block body"),
+        };
+        match inner {
+            Statement::If { else_branch, .. } => {
+                match else_branch.as_deref() {
+                    Some(Statement::If { else_branch: inner_else, .. }) => {
+                        assert!(inner_else.is_some(), "expected a final 'else' block");
+                    }
+                    other => panic!("expected the else-branch to be another If (else-if), got {:?}", other),
+                }
+            }
+            other => panic!("expected an If statement, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_while_loop() {
+        let program = parse_source("func f() { while x < 10 { x = x + 1; } }").unwrap();
+        let body = match &program.statements[0] {
+            Statement::Function { body, .. } => body.as_ref(),
+            _ => panic!("expected a function"),
+        };
+        match body {
+            Statement::Block { statements, .. } => {
+                assert!(matches!(statements[0], Statement::While { .. }));
+            }
+            _ => panic!("expected a block body"),
+        }
+    }
+
+    #[test]
+    fn parses_for_loop_clauses() {
+        let program = parse_source("func f() { for let i = 0; i < 5; i = i + 1 { } }").unwrap();
+        let body = match &program.statements[0] {
+            Statement::Function { body, .. } => body.as_ref(),
+            _ => panic!("expected a function"),
+        };
+        let for_stmt = match body {
+            Statement::Block { statements, .. } => &statements[0],
+            _ => panic!("expected a block body"),
+        };
+        match for_stmt {
+            Statement::For { init, update, .. } => {
+                assert!(matches!(init.as_ref(), Statement::Let { .. }));
+                assert!(matches!(update.as_ref(), Statement::Assign { .. }));
+            }
+            other => panic!("expected a For statement, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_assignment() {
+        let program = parse_source("func f() { x = 5; }").unwrap();
+        let body = match &program.statements[0] {
+            Statement::Function { body, .. } => body.as_ref(),
+            _ => panic!("expected a function"),
+        };
+        match body {
+            Statement::Block { statements, .. } => {
+                assert!(matches!(statements[0], Statement::Assign { .. }));
+            }
+            _ => panic!("expected a block body"),
+        }
+    }
+
+    #[test]
+    fn parses_import_with_and_without_semicolon() {
+        assert!(parse_source("import \"core\";").is_ok());
+        assert!(parse_source("import \"core\"").is_ok());
+    }
+
+    #[test]
+    fn unclosed_block_is_an_error() {
+        let result = parse_source("func main() { println(\"hi\");");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn missing_return_type_after_arrow_is_an_error() {
+        let result = parse_source("func f() -> { }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn unexpected_token_is_an_error() {
+        let result = parse_source("func f() { let x = 5 @ 3; }");
+        assert!(result.is_err());
+    }
 }

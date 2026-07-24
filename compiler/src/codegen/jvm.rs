@@ -175,7 +175,10 @@ impl JavaSourceGenerator {
                 // functions are collected and emitted directly in `generate`.
             }
             Statement::Import { .. } => {
-                // No module system yet -- see ROADMAP.
+                // Imports are already resolved into real functions before
+                // this stage even runs (see imports::resolve_imports),
+                // so in practice there's nothing left to do here -- this
+                // arm only exists in case that ever changes.
             }
             Statement::Assign { name, value, .. } => {
                 source.push_str(&format!("{}{} = ", indent_str, name));
@@ -194,8 +197,43 @@ impl JavaSourceGenerator {
                 scope.pop();
                 source.push_str(&format!("{}}}\n", indent_str));
             }
+            Statement::For { init, condition, update, body, .. } => {
+                source.push_str(&format!("{}for (", indent_str));
+                scope.push(HashMap::new());
+                self.generate_for_clause(source, init, scope)?;
+                source.push_str("; ");
+                self.generate_expression(source, condition, scope)?;
+                source.push_str("; ");
+                self.generate_for_clause(source, update, scope)?;
+                source.push_str(") {\n");
+                self.generate_statement(source, body, indent + 1, scope)?;
+                scope.pop();
+                source.push_str(&format!("{}}}\n", indent_str));
+            }
         }
 
+        Ok(())
+    }
+
+    /// Renders a for-loop's init or update clause inline inside the
+    /// Java `for (...)` header -- i.e. like `generate_statement`'s
+    /// `Let`/`Assign` cases, but without the indent prefix or trailing
+    /// `;\n` those emit as full statements. The parser guarantees a
+    /// for-loop's init/update are always `Let` or `Assign`.
+    fn generate_for_clause(&self, source: &mut String, stmt: &Statement, scope: &mut Scope) -> Result<()> {
+        match stmt {
+            Statement::Let { name, value, .. } => {
+                let java_type = self.infer_type(value, scope);
+                source.push_str(&format!("{} {} = ", java_type, name));
+                self.generate_expression(source, value, scope)?;
+                scope.last_mut().expect("scope always has a frame").insert(name.clone(), java_type);
+            }
+            Statement::Assign { name, value, .. } => {
+                source.push_str(&format!("{} = ", name));
+                self.generate_expression(source, value, scope)?;
+            }
+            _ => unreachable!("for-loop init/update is always Let or Assign (enforced by the parser)"),
+        }
         Ok(())
     }
 
@@ -347,32 +385,55 @@ impl JavaSourceGenerator {
             Expression::Binary { left, operator, right, .. } => {
                 let left_type = self.infer_type(left, scope);
                 let right_type = self.infer_type(right, scope);
-                let is_string_concat = matches!(operator, BinaryOperator::Add)
-                    && (left_type == "String" || right_type == "String");
+                let is_primitive = |t: &str| t == "int" || t == "boolean";
 
-                source.push('(');
-                self.generate_expression(source, left, scope)?;
-                if is_string_concat {
-                    source.push_str(" + ");
+                let use_equals_method = matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                    && (!is_primitive(&left_type) || !is_primitive(&right_type));
+
+                if use_equals_method {
+                    // Java's `==`/`!=` on a non-primitive type is
+                    // reference identity, not content equality -- two
+                    // distinct String objects with identical content
+                    // (e.g. the result of runtime concatenation vs. a
+                    // literal) would silently compare unequal. Route
+                    // through Objects.equals instead, which is
+                    // content-based and null-safe.
+                    if matches!(operator, BinaryOperator::NotEqual) {
+                        source.push('!');
+                    }
+                    source.push_str("java.util.Objects.equals(");
+                    self.generate_expression(source, left, scope)?;
+                    source.push_str(", ");
+                    self.generate_expression(source, right, scope)?;
+                    source.push(')');
                 } else {
-                    let op = match operator {
-                        BinaryOperator::Add => " + ",
-                        BinaryOperator::Subtract => " - ",
-                        BinaryOperator::Multiply => " * ",
-                        BinaryOperator::Divide => " / ",
-                        BinaryOperator::Equal => " == ",
-                        BinaryOperator::NotEqual => " != ",
-                        BinaryOperator::LessThan => " < ",
-                        BinaryOperator::GreaterThan => " > ",
-                        BinaryOperator::LessEqual => " <= ",
-                        BinaryOperator::GreaterEqual => " >= ",
-                        BinaryOperator::And => " && ",
-                        BinaryOperator::Or => " || ",
-                    };
-                    source.push_str(op);
+                    let is_string_concat = matches!(operator, BinaryOperator::Add)
+                        && (left_type == "String" || right_type == "String");
+
+                    source.push('(');
+                    self.generate_expression(source, left, scope)?;
+                    if is_string_concat {
+                        source.push_str(" + ");
+                    } else {
+                        let op = match operator {
+                            BinaryOperator::Add => " + ",
+                            BinaryOperator::Subtract => " - ",
+                            BinaryOperator::Multiply => " * ",
+                            BinaryOperator::Divide => " / ",
+                            BinaryOperator::Equal => " == ",
+                            BinaryOperator::NotEqual => " != ",
+                            BinaryOperator::LessThan => " < ",
+                            BinaryOperator::GreaterThan => " > ",
+                            BinaryOperator::LessEqual => " <= ",
+                            BinaryOperator::GreaterEqual => " >= ",
+                            BinaryOperator::And => " && ",
+                            BinaryOperator::Or => " || ",
+                        };
+                        source.push_str(op);
+                    }
+                    self.generate_expression(source, right, scope)?;
+                    source.push(')');
                 }
-                self.generate_expression(source, right, scope)?;
-                source.push(')');
             }
             Expression::Unary { operator, operand, .. } => {
                 let op = match operator {
@@ -488,5 +549,105 @@ impl JavaSourceGenerator {
             source.push_str("))");
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::tokenize;
+    use crate::parser::parse;
+
+    fn generate(src: &str) -> String {
+        let program = parse(tokenize(src)).expect("fixture should parse");
+        JavaSourceGenerator::new(program, "Fixture".to_string())
+            .generate()
+            .expect("fixture should generate")
+    }
+
+    #[test]
+    fn emits_every_function_not_just_main() {
+        let java = generate("func greet() { println(\"hi\"); } func main() { greet(); }");
+        assert!(java.contains("static void greet"), "greet() should be emitted:\n{}", java);
+        assert!(java.contains("static void main"), "main() should be emitted:\n{}", java);
+        assert!(java.contains("greet();"), "main() should call greet():\n{}", java);
+    }
+
+    #[test]
+    fn uses_declared_types_not_name_guessing() {
+        // Previously, codegen guessed a variable's Java type from its
+        // *name* (only x/y/z/i/j/k were ever treated as int). A variable
+        // holding a string, named like one of those letters, must still
+        // come out as String.
+        let java = generate("func main() { let x = \"hello\"; println(x); }");
+        assert!(java.contains("String x ="), "expected 'String x =', got:\n{}", java);
+    }
+
+    #[test]
+    fn if_else_if_chain_generates_valid_shape() {
+        let java = generate("func f(x: int) -> int { if x > 0 { return 1; } else if x < 0 { return -1; } else { return 0; } } func main() { }");
+        assert!(java.contains("if (") && java.contains("} else if (") && java.contains("} else {"), "unexpected if/else shape:\n{}", java);
+    }
+
+    #[test]
+    fn while_loop_generates_java_while() {
+        let java = generate("func main() { let i = 0; while i < 3 { i = i + 1; } }");
+        assert!(java.contains("while ("), "expected a while loop:\n{}", java);
+    }
+
+    #[test]
+    fn for_loop_generates_java_for() {
+        let java = generate("func main() { for let i = 0; i < 3; i = i + 1 { println(i); } }");
+        assert!(java.contains("for (int i = 0;"), "expected a Java for-loop header:\n{}", java);
+    }
+
+    #[test]
+    fn string_intrinsics_map_to_real_java_calls() {
+        let java = generate("func main() { println(string_to_upper(\"hi\")); println(string_length(\"hi\")); }");
+        assert!(java.contains(".toUpperCase()"), "expected toUpperCase():\n{}", java);
+        assert!(java.contains(".length()"), "expected length():\n{}", java);
+    }
+
+    #[test]
+    fn math_intrinsics_map_to_java_math() {
+        let java = generate("func main() { println(abs(-5)); println(max(1, 2)); println(min(1, 2)); }");
+        assert!(java.contains("Math.abs("));
+        assert!(java.contains("Math.max("));
+        assert!(java.contains("Math.min("));
+    }
+
+    #[test]
+    fn intrinsic_named_function_is_never_emitted_as_a_real_method() {
+        // Even if a program somehow declares its own `abs`, it must not
+        // get emitted as a real Java method -- the call-site rewrite to
+        // Math.abs() always takes priority.
+        let java = generate("func abs(x: int) -> int { return x; } func main() { println(abs(-5)); }");
+        assert!(!java.contains("static int abs"), "an 'abs' method should never be emitted:\n{}", java);
+        assert!(java.contains("Math.abs("), "the call site should still use Math.abs():\n{}", java);
+    }
+
+    #[test]
+    fn string_equality_compares_content_not_reference() {
+        // Java's == on Strings is reference identity; a naive codegen
+        // would emit `combined == "Hello World"` which silently gives the
+        // wrong answer at runtime for a non-interned (e.g. runtime
+        // concatenation) result. Must route through content equality.
+        let java = generate("func main() { let a = \"Hello\"; let b = a + \"!\"; println(b == \"Hello!\"); }");
+        assert!(java.contains("Objects.equals("), "expected content equality via Objects.equals:\n{}", java);
+        assert!(!java.contains("== \"Hello!\""), "must not use reference equality (==) on strings:\n{}", java);
+    }
+
+    #[test]
+    fn int_equality_still_uses_primitive_operator() {
+        // No need to pay for Objects.equals boxing when both sides are
+        // already primitives -- plain == is correct and cheaper.
+        let java = generate("func main() { let a = 5; println(a == 5); }");
+        assert!(java.contains("(a == 5)"), "expected plain == for int comparison:\n{}", java);
+    }
+
+    #[test]
+    fn no_main_falls_back_to_placeholder() {
+        let java = generate("func helper() { println(\"hi\"); }");
+        assert!(java.contains("No main function found"));
     }
 }

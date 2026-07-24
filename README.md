@@ -30,8 +30,12 @@ Roze compiles to Java source, which is then run through `javac`/`java`.
 Currently working:
 
 - Variables (`let`), functions (with typed parameters and return types),
-  `if`/`else`/`else if`, `while`, assignment
-- Arithmetic, comparison, and boolean expressions
+  `if`/`else`/`else if`, `while`, `for` (C-style), assignment
+- A minimal module system: `import "core";` pulls in a handful of real
+  utility functions (`clamp`, `sign`, `square`, ...); `import "your_file";`
+  pulls in another `.roze` file's functions
+- Arithmetic, comparison, and boolean expressions (string `==`/`!=`
+  compare content, not object identity)
 - Real error messages: a plain-English message, a `-->` pointer at
   `file:line:column`, the offending source line, and a `^^^` underline --
   for lexer, parser, and type errors alike
@@ -41,10 +45,12 @@ Currently working:
   `abs`, `max`, `min`, `to_string`, `to_int`, `is_number`, `is_string`
 - `println`
 
-Not yet implemented: `for` loops, arrays/collections, structs/classes,
-a module/import system, and a real standard library beyond Core. See
-[ROADMAP.md](./ROADMAP.md) for the full picture, including which pieces
-are genuinely done vs. in progress.
+Not yet implemented: arrays/collections, structs/classes, and a real
+standard library beyond Core. Also, Roze identifiers that happen to
+match a Java reserved word (e.g. a function named `assert`) currently
+fail to compile -- see ROADMAP.md. See [ROADMAP.md](./ROADMAP.md) for
+the full picture, including which pieces are genuinely done vs. in
+progress.
 
 ## Building
 
@@ -56,6 +62,13 @@ cargo build --release
 
 This builds the `roze` compiler binary (and the other workspace tools:
 `roze-build`, `roze-pkg`, `roze-lsp`).
+
+Run the test suite (unit tests plus end-to-end tests that build and run
+real `.roze` programs -- needs the JDK from above too):
+
+```bash
+cargo test --workspace
+```
 
 ## Using the compiler
 

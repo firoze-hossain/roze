@@ -275,3 +275,96 @@ pub fn tokenize(input: &str) -> Vec<TokenWithLocation> {
     let mut lexer = Lexer::new(input);
     lexer.tokenize()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokenizes_basic_keywords_and_identifiers() {
+        let tokens = tokenize("func main");
+        assert_eq!(tokens[0].token, Token::Func);
+        assert_eq!(tokens[1].token, Token::Identifier("main".to_string()));
+        assert_eq!(tokens[2].token, Token::EOF);
+    }
+
+    #[test]
+    fn tokenizes_two_character_operators_greedily() {
+        let tokens = tokenize("== != <= >= -> && ||");
+        assert_eq!(tokens[0].token, Token::EqualsEquals);
+        assert_eq!(tokens[1].token, Token::NotEquals);
+        assert_eq!(tokens[2].token, Token::LessEqual);
+        assert_eq!(tokens[3].token, Token::GreaterEqual);
+        assert_eq!(tokens[4].token, Token::Arrow);
+        assert_eq!(tokens[5].token, Token::And);
+        assert_eq!(tokens[6].token, Token::Or);
+    }
+
+    #[test]
+    fn skips_line_and_block_comments() {
+        let tokens = tokenize("1 // a comment\n2 /* block */ 3");
+        let non_eof: Vec<&Token> = tokens.iter().map(|t| &t.token).filter(|t| **t != Token::EOF).collect();
+        assert_eq!(non_eof, vec![
+            &Token::Number("1".to_string()),
+            &Token::Number("2".to_string()),
+            &Token::Number("3".to_string()),
+        ]);
+    }
+
+    #[test]
+    fn resolves_string_escapes() {
+        let tokens = tokenize(r#""a\nb\tc\"d""#);
+        match &tokens[0].token {
+            Token::String(s) => assert_eq!(s, "a\nb\tc\"d"),
+            other => panic!("expected a String token, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn unrecognized_character_becomes_error_token() {
+        let tokens = tokenize("@");
+        assert_eq!(tokens[0].token, Token::Error);
+    }
+
+    /// The very first character of a file must be column 1, not 2. The
+    /// lexer's constructor primes `current_char` with an initial
+    /// `advance()` call; a previous version of that call incremented
+    /// `column` before ever reading the first character, so this exact
+    /// case silently reported column 2 for years before anything ever
+    /// rendered a column number to a person.
+    #[test]
+    fn first_character_of_file_is_column_one() {
+        let tokens = tokenize("x");
+        assert_eq!(tokens[0].line, 1);
+        assert_eq!(tokens[0].column, 1);
+    }
+
+    /// The first character after *any* newline must be column 1. A
+    /// previous version of `advance()` decided whether to reset the
+    /// column by checking the character it had just arrived at, rather
+    /// than the one it was leaving behind -- so the reset happened one
+    /// character too early, and the first real character of every line
+    /// after the first was reported one column too high.
+    #[test]
+    fn first_character_after_newline_is_column_one() {
+        let tokens = tokenize("x\n@");
+        // tokens[0] = 'x' (line 1), tokens[1] = '@' (line 2)
+        assert_eq!(tokens[1].line, 2);
+        assert_eq!(tokens[1].column, 1);
+    }
+
+    #[test]
+    fn column_tracks_correctly_mid_line() {
+        let tokens = tokenize("    let x = 5 @ 3;");
+        // '@' is the 15th character (1-indexed): 4 spaces + "let x = 5 " (10 chars) = 14, so '@' is at column 15.
+        let at_token = tokens.iter().find(|t| t.token == Token::Error).expect("expected an Error token for '@'");
+        assert_eq!(at_token.column, 15);
+    }
+
+    #[test]
+    fn line_increments_once_per_newline() {
+        let tokens = tokenize("a\nb\nc");
+        let lines: Vec<usize> = tokens.iter().filter(|t| t.token != Token::EOF).map(|t| t.line).collect();
+        assert_eq!(lines, vec![1, 2, 3]);
+    }
+}

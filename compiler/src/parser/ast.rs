@@ -70,6 +70,13 @@ pub enum Statement {
         value: Box<Expression>,
         location: Location,
     },
+    For {
+        init: Box<Statement>,
+        condition: Box<Expression>,
+        update: Box<Statement>,
+        body: Box<Statement>,
+        location: Location,
+    },
 }
 
 #[derive(Debug, Clone)]

@@ -1,0 +1,8 @@
+func main() {
+    let hello = "Hello";
+    let world = "World";
+    let combined = hello + " " + world;
+    println(combined == "Hello World");
+    println(combined == "something else");
+    println(combined != "something else");
+}

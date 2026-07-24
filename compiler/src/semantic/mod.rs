@@ -308,9 +308,22 @@ impl TypeChecker {
                 self.check_expression(condition)?;
                 self.check_statement(body)?;
             }
+            Statement::For { init, condition, update, body, .. } => {
+                // A scope of its own so the init clause's variable (e.g.
+                // `let i` in `for let i = 0; ...`) is visible to the
+                // condition/update/body but doesn't leak past the loop.
+                self.symbol_table.push_scope();
+                self.check_statement(init)?;
+                self.check_expression(condition)?;
+                self.check_statement(update)?;
+                self.check_statement(body)?;
+                self.symbol_table.pop_scope();
+            }
             Statement::Import { .. } => {
-                // No module system yet -- import statements parse but
-                // don't pull in another file's declarations. See ROADMAP.
+                // Imports are already resolved into real functions before
+                // type-checking even runs (see imports::resolve_imports),
+                // so in practice there's nothing left to do here -- this
+                // arm only exists in case that ever changes.
             }
             Statement::Assign { name, value, location } => {
                 let value_type = self.check_expression(value)?;
@@ -440,4 +453,90 @@ pub fn check_types(program: &Program) -> Result<()> {
         return Err(anyhow::anyhow!("Type checking failed"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::tokenize;
+    use crate::parser::parse;
+
+    fn check_source(src: &str) -> Result<()> {
+        let program = parse(tokenize(src)).expect("fixture should parse");
+        check_types(&program)
+    }
+
+    #[test]
+    fn valid_program_passes() {
+        assert!(check_source("func main() { let x = 5; println(x); }").is_ok());
+    }
+
+    #[test]
+    fn undefined_variable_is_an_error() {
+        assert!(check_source("func main() { println(x); }").is_err());
+    }
+
+    #[test]
+    fn undefined_function_is_an_error() {
+        assert!(check_source("func main() { totally_made_up(1); }").is_err());
+    }
+
+    #[test]
+    fn return_type_mismatch_is_an_error() {
+        let result = check_source("func f() -> int { return \"not a number\"; } func main() { }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn matching_return_type_is_ok() {
+        let result = check_source("func f() -> int { return 5; } func main() { }");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn bare_return_in_non_void_function_is_an_error() {
+        let result = check_source("func f() -> int { return; } func main() { }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn bare_return_in_void_function_is_ok() {
+        let result = check_source("func f() { return; } func main() { }");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn reassignment_changing_type_is_an_error() {
+        let result = check_source("func main() { let x = 5; x = \"five\"; }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reassignment_preserving_type_is_ok() {
+        let result = check_source("func main() { let x = 5; x = 10; }");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn main_declaring_return_type_is_an_error() {
+        let result = check_source("func main() -> int { }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn intrinsics_are_callable_without_definition() {
+        let result = check_source(
+            "func main() { println(abs(-5)); println(string_length(\"hi\")); }"
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn for_loop_variable_is_scoped_to_the_loop() {
+        // `i` from the for-loop's init clause must be visible inside the
+        // loop body/condition/update...
+        assert!(check_source("func main() { for let i = 0; i < 3; i = i + 1 { println(i); } }").is_ok());
+        // ...but must NOT leak out past the loop.
+        assert!(check_source("func main() { for let i = 0; i < 3; i = i + 1 { } println(i); }").is_err());
+    }
 }

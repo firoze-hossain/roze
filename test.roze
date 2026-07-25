@@ -1,0 +1,14 @@
+func main() {
+    let fruits = list_new();
+    list_push(fruits, "apple");
+    list_push(fruits, "banana");
+    for let i = 0; i < list_length(fruits); i = i + 1 {
+        println(list_get(fruits, i));
+    }
+
+    write_file("notes.txt", "hello world");
+    println(read_file("notes.txt"));
+    delete_file("notes.txt");
+
+    println(http_get("https://example.com"));
+}

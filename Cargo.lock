@@ -1032,11 +1032,11 @@ dependencies = [
  "crossbeam",
  "glob",
  "notify",
+ "roze-compiler",
  "serde",
  "serde_json",
  "toml",
  "walkdir",
- "which",
 ]
 
 [[package]]
@@ -1047,6 +1047,7 @@ dependencies = [
  "clap",
  "colored",
  "thiserror 1.0.69",
+ "which",
 ]
 
 [[package]]
@@ -1058,11 +1059,11 @@ dependencies = [
  "env_logger",
  "log",
  "ropey",
+ "roze-compiler",
  "serde",
  "serde_json",
  "tokio",
  "tower-lsp",
- "which",
 ]
 
 [[package]]
@@ -1074,12 +1075,12 @@ dependencies = [
  "colored",
  "dirs",
  "fs_extra",
+ "roze-compiler",
  "serde",
  "serde_json",
  "tempfile",
  "toml",
  "walkdir",
- "which",
 ]
 
 [[package]]

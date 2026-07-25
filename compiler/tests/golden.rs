@@ -49,10 +49,35 @@ fn run_fixture(fixture: &str) -> (String, String, bool) {
 /// Golden tests care about the *program's* output, not the compiler's own
 /// progress messages ("🔤 Lexer: N tokens", etc). Everything the program
 /// itself printed comes after the "🚀 Running: <name>" line.
+///
+/// Also normalizes line endings: Java's `println` emits the platform
+/// line separator (`\r\n` on Windows, `\n` elsewhere), but the expected
+/// strings in these tests are written once, in Unix style. Without this,
+/// every test here fails on Windows despite the program's output being
+/// perfectly correct -- a difference in line-ending convention, not a
+/// compiler bug.
 fn program_output(stdout: &str) -> String {
-    match stdout.split_once("🚀 Running:") {
+    let after_running = match stdout.split_once("🚀 Running:") {
         Some((_, after)) => after.split_once('\n').map(|(_, rest)| rest.to_string()).unwrap_or_default(),
         None => stdout.to_string(),
+    };
+    after_running.replace("\r\n", "\n")
+}
+
+#[cfg(test)]
+mod program_output_tests {
+    use super::program_output;
+
+    #[test]
+    fn normalizes_windows_line_endings() {
+        let windows_style = "🌹 Roze Compiler v0.1\r\n📁 Compiling: x.roze\r\n🚀 Running: x\r\nhello\r\nworld\r\n";
+        assert_eq!(program_output(windows_style).trim_end(), "hello\nworld");
+    }
+
+    #[test]
+    fn leaves_unix_line_endings_unchanged() {
+        let unix_style = "🌹 Roze Compiler v0.1\n📁 Compiling: x.roze\n🚀 Running: x\nhello\nworld\n";
+        assert_eq!(program_output(unix_style).trim_end(), "hello\nworld");
     }
 }
 

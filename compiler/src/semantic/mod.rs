@@ -212,6 +212,34 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         // ---- IO: network ----
         ("http_get", vec![Type::String], Type::String),
         ("http_post", vec![Type::String, Type::String], Type::String),
+
+        // ---- Web: JSON ----
+        // encode accepts anything (int/string/bool/list/map, nested);
+        // decode's result type depends on the JSON text, so it's Unknown
+        // -- the same design as list/map element access.
+        ("json_encode", vec![Type::Unknown], Type::String),
+        ("json_decode", vec![Type::String], Type::Unknown),
+
+        // ---- Web: HTTP server ----
+        // A request is just a `map` (with "method"/"path"/"body" keys),
+        // reusing the existing Map intrinsics rather than needing a new
+        // type -- see stdlib/src/io.roze for the full design rationale
+        // (Roze has no closures, so this is a synchronous accept/respond
+        // loop you write yourself, not a callback-based server).
+        ("http_server_start", vec![Type::Int], Type::Unknown),
+        ("http_server_accept", vec![Type::Unknown], Type::Map),
+        ("http_server_respond", vec![Type::Map, Type::Int, Type::String], Type::Void),
+        ("http_server_stop", vec![Type::Unknown], Type::Void),
+
+        // ---- Database (SQL) ----
+        // Roze has no bundled JDBC driver (the JDK itself doesn't ship
+        // one for any real database), so these work with whatever
+        // driver you put on the classpath yourself via `roze build
+        // --classpath`/`roze run --classpath` -- see stdlib/src/sql.roze.
+        ("sql_connect", vec![Type::String], Type::Unknown),
+        ("sql_query", vec![Type::Unknown, Type::String], Type::List),
+        ("sql_execute", vec![Type::Unknown, Type::String], Type::Int),
+        ("sql_close", vec![Type::Unknown], Type::Void),
     ]
 }
 
@@ -636,6 +664,48 @@ mod tests {
                 let lines = read_lines(\"a\"); \
                 println(http_get(\"http://example.com\")); \
                 println(http_post(\"http://example.com\", \"body\")); \
+            }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn json_intrinsics_type_check() {
+        let result = check_source(
+            "func main() { \
+                let m = map_new(); \
+                map_put(m, \"a\", 1); \
+                let encoded = json_encode(m); \
+                let decoded = json_decode(encoded); \
+                println(decoded); \
+            }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn http_server_intrinsics_type_check() {
+        let result = check_source(
+            "func main() { \
+                let server = http_server_start(8080); \
+                let req = http_server_accept(server); \
+                println(map_get(req, \"method\")); \
+                http_server_respond(req, 200, \"ok\"); \
+                http_server_stop(server); \
+            }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn sql_intrinsics_type_check() {
+        let result = check_source(
+            "func main() { \
+                let conn = sql_connect(\"jdbc:h2:mem:x\"); \
+                sql_execute(conn, \"CREATE TABLE t (x INT)\"); \
+                let rows = sql_query(conn, \"SELECT * FROM t\"); \
+                println(list_length(rows)); \
+                sql_close(conn); \
             }"
         );
         assert!(result.is_ok(), "{:?}", result);

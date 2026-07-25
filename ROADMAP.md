@@ -214,13 +214,64 @@ that use them, not just by writing the feature and assuming it works.
     localhost (raw `TcpListener`, no new dependency) so `http_get`/
     `http_post` are exercised against genuine network I/O without
     depending on external network access.
-- [ ] Web (`HTTP`, `JSON`) -- `http_get`/`http_post` above cover the
-  client side; a JSON encode/decode pair (probably also intrinsics,
-  parsing into/out of nested `list`/`map` values) is the natural next
-  piece, plus an HTTP *server* story if "Spring-Boot-style enterprise
-  servers" (see below) is going to mean anything concrete on the JVM
-  backend.
-- [ ] Database (`SQL`)
+- [x] **Web (`HTTP`, `JSON`)**. `http_get`/`http_post` (Phase 3 IO) cover
+  the client side. Added:
+  - `json_encode`/`json_decode`, working directly with the existing
+    `list`/`map` values (a JSON object decodes to a `map`, a JSON array
+    to a `list`) rather than a separate JSON-value type. There is no
+    JSON support anywhere in the standard JDK -- unlike `java.sql` or
+    `java.net.http`, this genuinely doesn't exist as a JDK API at all --
+    so this is a small hand-written recursive-descent parser/encoder,
+    embedded the same way the file-IO helpers are.
+  - An HTTP *server*: `http_server_start`/`accept`/`respond`/`stop`.
+    Roze has no closures/lambdas, so there's no way to hand the server
+    a per-request callback the way most frameworks (including Spring
+    Boot) do -- this is a synchronous accept/respond loop you write
+    yourself instead, with the request handed back as a plain `map`
+    (reusing the Map intrinsics rather than inventing a "request"
+    type). No concurrency: one request is fully handled before the
+    next is accepted. A real limitation for anything under load, but a
+    genuine, working starting point rather than nothing.
+  - Found and fixed a real gap while testing this: `list_get`/`map_get`/
+    etc. assumed their receiver was already statically typed
+    `java.util.List`/`Map`, which breaks the moment a value's real type
+    can't be known until runtime -- exactly the case for `json_decode`
+    (statically `Object`, since a JSON array vs. object vs. string isn't
+    knowable from the call site alone). Fixed with type-aware casting
+    helpers that only cast when the static type isn't already right.
+  - Tested for real: the JSON test encodes a nested map (with a list
+    inside), decodes it back, and checks the values; the HTTP server
+    test spawns the compiled server as a real subprocess, waits for a
+    "ready" marker (printed right after the socket binds, so there's no
+    arbitrary sleep-based race), then sends genuine GET and POST
+    requests via a raw `TcpStream` and checks the responses.
+- [x] **Database (`SQL`)**: `sql_connect`/`sql_query`/`sql_execute`/
+  `sql_close`, on top of the JDK's own `java.sql` API. The harder
+  problem here isn't the intrinsics themselves, it's that **the JDK
+  ships no database driver at all, for any database** -- `java.sql` is
+  only interfaces. There's no way around this without Roze having some
+  form of dependency/classpath management, which it doesn't. Rather
+  than fake it, `roze build`/`roze run` gained a `--classpath` flag:
+  point it at a JDBC driver jar (H2, SQLite, Postgres, ...) and
+  `DriverManager` finds it automatically (JDBC 4+ drivers self-register
+  via `META-INF/services`, so Roze never needs to name the driver class).
+  This is the first Roze feature that's explicitly BYO-dependency, which
+  is an honest reflection of where the language's dependency story
+  actually is right now (see `roze-pkg`'s "libs/" stub-generation in
+  Phase 2, which doesn't yet fetch or wire in real jars either).
+  - Found and fixed the same class of gap as above: `sql_connect`
+    returns a statically-`Object`-typed value (there's no dedicated
+    Connection type), so `sql_query`/`execute`/`close` need an explicit
+    cast to `java.sql.Connection` at each call site.
+  - Tested for real against an actual database, not just structurally:
+    downloaded a genuine H2 (pure-Java, in-memory) driver jar, created a
+    table, inserted rows, queried, updated, and verified the update
+    took effect. This test is gated on a `ROZE_TEST_JDBC_JAR`
+    environment variable pointing at a driver jar, so it doesn't require
+    committing a binary jar to the repo or always having network access
+    to fetch one -- it skips with a clear message if the variable isn't
+    set, and CI sets it (downloading H2 fresh each run) so this is
+    genuinely exercised on every push, not just locally.
 
 ## The bigger picture: one language, many targets
 
@@ -309,9 +360,12 @@ Concretely:
 2. ~~Phase 2~~ -- done: unified the LSP's parser with the compiler's,
    smoke-tested and fixed real bugs in `roze-build`/`roze-pkg`, added a
    genuine LSP protocol test standing in for a VS Code smoke test.
-3. ~~Phase 3 (Core, Collections, IO)~~ -- done, as compiler intrinsics.
-   Web (JSON)/DB remain, and are natural next additions to the same
-   intrinsic-based approach.
+3. ~~Phase 3~~ -- fully done: Core, Collections, IO, Web (JSON + HTTP
+   server), and Database, all as compiler intrinsics. SQL is the first
+   feature with an external dependency of its own (bring your own JDBC
+   driver via `--classpath`), which is worth keeping in mind as a
+   precedent for how "real" library dependencies might work in general
+   once `roze-pkg` grows past generating stub files.
 4. **Native backend design** (memory model decision + LLVM/Cranelift
    spike), so systems/games/desktop work has *somewhere to go* instead of
    being permanently "later." This is now the most consequential

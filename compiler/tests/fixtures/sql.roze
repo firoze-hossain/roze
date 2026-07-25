@@ -1,0 +1,26 @@
+func main() {
+    let conn = sql_connect("jdbc:h2:mem:golden_test_db");
+
+    sql_execute(conn, "CREATE TABLE users (id INT, name VARCHAR(50), age INT)");
+    sql_execute(conn, "INSERT INTO users VALUES (1, 'Alice', 30)");
+    sql_execute(conn, "INSERT INTO users VALUES (2, 'Bob', 25)");
+
+    let rows = sql_query(conn, "SELECT * FROM users ORDER BY id");
+    println(list_length(rows));
+
+    let row0 = list_get(rows, 0);
+    println(map_get(row0, "NAME"));
+    println(map_get(row0, "AGE"));
+
+    let row1 = list_get(rows, 1);
+    println(map_get(row1, "NAME"));
+
+    let affected = sql_execute(conn, "UPDATE users SET age = 31 WHERE name = 'Alice'");
+    println(affected);
+
+    let updated = sql_query(conn, "SELECT age FROM users WHERE name = 'Alice'");
+    println(map_get(list_get(updated, 0), "AGE"));
+
+    sql_close(conn);
+    println("done");
+}

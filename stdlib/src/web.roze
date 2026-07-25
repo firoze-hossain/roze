@@ -1,0 +1,73 @@
+// stdlib/src/web.roze
+//
+// Web (JSON, HTTP server) reference for Roze.
+//
+// STATUS: every function below is a compiler INTRINSIC, the same way
+// Core's string/math functions are (see stdlib/src/core.roze) -- the
+// compiler recognizes these names directly (see
+// compiler/src/codegen/jvm.rs) and maps them to real code. They're
+// available in every program automatically, with no import required,
+// and this file is never actually read by the compiler.
+//
+// The HTTP *client* functions (http_get, http_post) live in
+// stdlib/src/io.roze instead, alongside file IO -- this file covers
+// JSON and the HTTP *server* side.
+
+// ---- JSON ----
+//
+// There is no JSON support anywhere in the standard JDK (not even an
+// API, unlike java.sql or java.net.http), so this is a small hand-
+// written encoder/decoder rather than a wrapper around something
+// already in the JVM. It works directly with the same untyped
+// list/map values the Collections intrinsics use, so a decoded JSON
+// object is immediately usable with map_get, a decoded array with
+// list_get, and so on -- no separate "JSON value" type.
+//
+// json_encode(value)  -> string : value (a string/bool/number/list/map,
+//                                 possibly nested) rendered as JSON text
+// json_decode(json)   -> ?      : json parsed back into the same shapes
+//                                 (JSON object -> map, JSON array ->
+//                                 list, string/bool/null passed through,
+//                                 a number -> Integer/Long/Double
+//                                 depending on its shape -- Roze has no
+//                                 float type, so a decoded float is an
+//                                 untyped Double, usable with
+//                                 to_string but not int-specific
+//                                 intrinsics like abs/max/min)
+
+// ---- HTTP server ----
+//
+// Roze has no closures/lambdas yet, so there's no way to hand the
+// server a per-request callback the way most web frameworks do.
+// Instead, this is a synchronous accept/respond loop that you write
+// yourself: `http_server_accept` blocks until a request arrives and
+// hands it back as a plain `map` (so map_get/map_has work on it
+// directly -- no separate "request" type either), and you call
+// `http_server_respond` when you're ready to answer it. No
+// concurrency: one request is fully handled before the next is
+// accepted, which is a real limitation for anything under real load,
+// but is a genuine, working starting point.
+//
+// http_server_start(port)             -> ?    : starts listening on port
+// http_server_accept(server)          -> map   : blocks for the next request;
+//                                                 the map has "method", "path",
+//                                                 and "body" keys
+// http_server_respond(req, status, body) -> void : sends a response and
+//                                                    closes that connection
+// http_server_stop(server)            -> void : stops listening
+
+// Example:
+//
+// func main() {
+//     let server = http_server_start(8080);
+//     println("listening on 8080");
+//     while true {
+//         let req = http_server_accept(server);
+//         println(map_get(req, "method") + " " + map_get(req, "path"));
+//         if map_get(req, "path") == "/hello" {
+//             http_server_respond(req, 200, json_encode(map_new()));
+//         } else {
+//             http_server_respond(req, 404, "not found");
+//         }
+//     }
+// }

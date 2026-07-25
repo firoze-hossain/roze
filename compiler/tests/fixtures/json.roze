@@ -1,0 +1,23 @@
+func main() {
+    let person = map_new();
+    map_put(person, "name", "Alice");
+    map_put(person, "age", 30);
+
+    let hobbies = list_new();
+    list_push(hobbies, "reading");
+    list_push(hobbies, "cycling");
+    map_put(person, "hobbies", hobbies);
+
+    let encoded = json_encode(person);
+    let decoded = json_decode(encoded);
+    println(map_get(decoded, "name"));
+    println(map_get(decoded, "age"));
+    let decoded_hobbies = map_get(decoded, "hobbies");
+    println(list_get(decoded_hobbies, 0));
+    println(list_get(decoded_hobbies, 1));
+
+    let arr = json_decode("[1, 2, 3, \"four\"]");
+    println(list_length(arr));
+    println(list_get(arr, 0));
+    println(list_get(arr, 3));
+}

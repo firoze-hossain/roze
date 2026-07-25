@@ -46,7 +46,29 @@ fn run_fixture(fixture: &str) -> (String, String, bool) {
     )
 }
 
-/// Golden tests care about the *program's* output, not the compiler's own
+/// Like `run_fixture`, but passes `--classpath` through to `roze run`
+/// (needed for the SQL intrinsics, which require a JDBC driver on the
+/// classpath -- see sql_connect_query_execute_against_a_real_database).
+fn run_fixture_with_classpath(fixture: &str, classpath: &str) -> (String, String, bool) {
+    let dir = scratch_dir(fixture.trim_end_matches(".roze"));
+    std::fs::copy(fixtures_dir().join(fixture), dir.join(fixture))
+        .unwrap_or_else(|e| panic!("failed to copy fixture {}: {}", fixture, e));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("run")
+        .arg(fixture)
+        .arg("--classpath")
+        .arg(classpath)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+
+    (
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+        output.status.success(),
+    )
+}
 /// progress messages ("🔤 Lexer: N tokens", etc). Everything the program
 /// itself printed comes after the "🚀 Running: <name>" line.
 ///
@@ -341,4 +363,118 @@ fn network_http_get_and_post_against_a_local_server() {
         program_output(&stdout).trim_end(),
         "hello from GET /hello\necho: some data"
     );
+}
+
+#[test]
+fn json_encode_and_decode() {
+    let (stdout, stderr, ok) = run_fixture("json.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "Alice\n30\nreading\ncycling\n4\n1\nfour";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
+fn http_server_accepts_and_responds_to_real_client_requests() {
+    use std::io::{BufRead, BufReader, Read, Write};
+
+    // Reserve a free port by briefly binding it in this test process,
+    // then release it immediately for the Roze server subprocess to
+    // bind -- a standard (if not airtight) pattern for picking a free
+    // port to hand to a child process.
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+
+    let dir = scratch_dir("http_server");
+    let source = format!(
+        "func main() {{\n    \
+            let server = http_server_start({port});\n    \
+            println(\"SERVER_READY\");\n    \
+            let req1 = http_server_accept(server);\n    \
+            http_server_respond(req1, 200, \"hello from roze server\");\n    \
+            let req2 = http_server_accept(server);\n    \
+            http_server_respond(req2, 201, \"got: \" + map_get(req2, \"body\"));\n    \
+            http_server_stop(server);\n\
+        }}\n",
+        port = port,
+    );
+    std::fs::write(dir.join("server_test.roze"), source).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("run")
+        .arg("server_test.roze")
+        .current_dir(&dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn the roze binary");
+
+    // Wait for the "SERVER_READY" marker (printed right after the
+    // ServerSocket is bound, so the port is genuinely already accepting
+    // connections into its backlog by the time we see it) rather than
+    // an arbitrary sleep.
+    let stdout_pipe = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout_pipe);
+    let mut saw_ready = false;
+    for _ in 0..200 {
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            break;
+        }
+        if line.trim() == "SERVER_READY" {
+            saw_ready = true;
+            break;
+        }
+    }
+    assert!(saw_ready, "server never printed its ready marker");
+
+    // First request: plain GET.
+    let mut client1 = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect (GET)");
+    client1.write_all(b"GET /greet HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();
+    let mut response1 = String::new();
+    client1.read_to_string(&mut response1).unwrap();
+    assert!(response1.contains("200"), "expected a 200 status, got:\n{}", response1);
+    assert!(response1.ends_with("hello from roze server"), "unexpected body:\n{}", response1);
+
+    // Second request: POST with a body, echoed back by the server.
+    let body = "some payload";
+    let mut client2 = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect (POST)");
+    let request2 = format!(
+        "POST /submit HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    client2.write_all(request2.as_bytes()).unwrap();
+    let mut response2 = String::new();
+    client2.read_to_string(&mut response2).unwrap();
+    assert!(response2.contains("201"), "expected a 201 status, got:\n{}", response2);
+    assert!(response2.ends_with("got: some payload"), "unexpected body:\n{}", response2);
+
+    let status = child.wait().expect("failed to wait on the server process");
+    assert!(status.success(), "the roze server process should exit cleanly after handling both requests");
+}
+
+/// SQL is the one intrinsic family that fundamentally needs something
+/// Roze can't provide itself: a real JDBC driver on the classpath (the
+/// JDK ships no database driver at all, for any database -- see
+/// stdlib/src/sql.roze). Rather than either committing a driver jar to
+/// this repo or skipping SQL testing entirely, this test is gated on an
+/// environment variable pointing at one: set `ROZE_TEST_JDBC_JAR` to a
+/// driver jar's path (e.g. an H2 jar) to actually exercise it. The CI
+/// workflow downloads one and sets this for exactly that reason -- see
+/// .github/workflows/test.yml. Without it, the test explicitly skips
+/// (with a clear message) rather than silently reporting a pass for
+/// something that was never run.
+#[test]
+fn sql_connect_query_execute_against_a_real_database() {
+    let jar = match std::env::var("ROZE_TEST_JDBC_JAR") {
+        Ok(path) if !path.is_empty() => path,
+        _ => {
+            eprintln!("skipping sql_connect_query_execute_against_a_real_database: set ROZE_TEST_JDBC_JAR to a JDBC driver jar (e.g. an H2 jar) to run it");
+            return;
+        }
+    };
+
+    let (stdout, stderr, ok) = run_fixture_with_classpath("sql.roze", &jar);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "2\nAlice\n30\nBob\n1\n31\ndone";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
 }

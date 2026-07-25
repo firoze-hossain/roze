@@ -96,6 +96,393 @@ const IO_HELPER_METHODS: &str = r#"
     }
 "#;
 
+/// JSON encode/decode helpers. There is no JSON support in the standard
+/// JDK at all (not even an API, unlike java.sql or java.net.http) --
+/// every JVM program either hand-rolls one or pulls in a third-party
+/// library, and Roze has no dependency/classpath story for the latter
+/// (see the SQL helpers below for where that does become unavoidable).
+/// A minimal recursive-descent parser and matching encoder is a small
+/// enough, well-bounded thing to embed directly.
+///
+/// Encoding maps Roze's untyped values onto JSON in the obvious way:
+/// String -> JSON string, Boolean -> true/false, any Number -> a JSON
+/// number, `list` -> JSON array, `map` -> JSON object (keys coerced to
+/// strings via toString, same as JSON itself requires), null -> null,
+/// anything else -> its toString() as a JSON string.
+///
+/// Decoding produces the same shapes back: JSON objects/arrays become
+/// `map`/`list` (so json_decode's result composes directly with the
+/// existing map_get/list_get intrinsics), JSON strings/booleans/null
+/// become String/Boolean/null, and JSON numbers become Integer/Long/
+/// Double depending on shape -- Roze has no float type, so a decoded
+/// float is an Unknown-typed Double, usable via to_string but not via
+/// int-specific intrinsics like abs/max/min.
+const JSON_HELPER_METHODS: &str = r#"
+    private static String __roze_json_encode(Object value) {
+        StringBuilder sb = new StringBuilder();
+        __roze_json_encode_value(value, sb);
+        return sb.toString();
+    }
+
+    private static void __roze_json_encode_value(Object value, StringBuilder sb) {
+        if (value == null) {
+            sb.append("null");
+        } else if (value instanceof String) {
+            __roze_json_encode_string((String) value, sb);
+        } else if (value instanceof Boolean || value instanceof Integer || value instanceof Long || value instanceof Double || value instanceof Float) {
+            sb.append(value.toString());
+        } else if (value instanceof java.util.List) {
+            sb.append('[');
+            java.util.List<?> list = (java.util.List<?>) value;
+            for (int i = 0; i < list.size(); i++) {
+                if (i > 0) sb.append(',');
+                __roze_json_encode_value(list.get(i), sb);
+            }
+            sb.append(']');
+        } else if (value instanceof java.util.Map) {
+            sb.append('{');
+            java.util.Map<?, ?> map = (java.util.Map<?, ?>) value;
+            boolean first = true;
+            for (java.util.Map.Entry<?, ?> entry : map.entrySet()) {
+                if (!first) sb.append(',');
+                first = false;
+                __roze_json_encode_string(String.valueOf(entry.getKey()), sb);
+                sb.append(':');
+                __roze_json_encode_value(entry.getValue(), sb);
+            }
+            sb.append('}');
+        } else {
+            __roze_json_encode_string(value.toString(), sb);
+        }
+    }
+
+    private static void __roze_json_encode_string(String s, StringBuilder sb) {
+        sb.append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '"') {
+                sb.append("\\\"");
+            } else if (c == '\\') {
+                sb.append("\\\\");
+            } else if (c == '\n') {
+                sb.append("\\n");
+            } else if (c == '\r') {
+                sb.append("\\r");
+            } else if (c == '\t') {
+                sb.append("\\t");
+            } else if (c < 0x20) {
+                sb.append(String.format("\\u%04x", (int) c));
+            } else {
+                sb.append(c);
+            }
+        }
+        sb.append('"');
+    }
+
+    private static Object __roze_json_decode(String json) {
+        int[] pos = new int[]{0};
+        return __roze_json_parse_value(json, pos);
+    }
+
+    private static void __roze_json_skip_ws(String s, int[] pos) {
+        while (pos[0] < s.length() && Character.isWhitespace(s.charAt(pos[0]))) pos[0]++;
+    }
+
+    private static Object __roze_json_parse_value(String s, int[] pos) {
+        __roze_json_skip_ws(s, pos);
+        char c = s.charAt(pos[0]);
+        if (c == '{') return __roze_json_parse_object(s, pos);
+        if (c == '[') return __roze_json_parse_array(s, pos);
+        if (c == '"') return __roze_json_parse_string(s, pos);
+        if (c == 't') { pos[0] += 4; return Boolean.TRUE; }
+        if (c == 'f') { pos[0] += 5; return Boolean.FALSE; }
+        if (c == 'n') { pos[0] += 4; return null; }
+        return __roze_json_parse_number(s, pos);
+    }
+
+    private static java.util.Map __roze_json_parse_object(String s, int[] pos) {
+        java.util.Map<Object, Object> map = new java.util.HashMap<Object, Object>();
+        pos[0]++;
+        __roze_json_skip_ws(s, pos);
+        if (s.charAt(pos[0]) == '}') { pos[0]++; return map; }
+        while (true) {
+            __roze_json_skip_ws(s, pos);
+            String key = __roze_json_parse_string(s, pos);
+            __roze_json_skip_ws(s, pos);
+            pos[0]++;
+            Object value = __roze_json_parse_value(s, pos);
+            map.put(key, value);
+            __roze_json_skip_ws(s, pos);
+            char c = s.charAt(pos[0]);
+            if (c == ',') { pos[0]++; continue; }
+            if (c == '}') { pos[0]++; break; }
+            throw new RuntimeException("Invalid JSON: expected ',' or '}' at position " + pos[0]);
+        }
+        return map;
+    }
+
+    private static java.util.List __roze_json_parse_array(String s, int[] pos) {
+        java.util.List<Object> list = new java.util.ArrayList<Object>();
+        pos[0]++;
+        __roze_json_skip_ws(s, pos);
+        if (s.charAt(pos[0]) == ']') { pos[0]++; return list; }
+        while (true) {
+            Object value = __roze_json_parse_value(s, pos);
+            list.add(value);
+            __roze_json_skip_ws(s, pos);
+            char c = s.charAt(pos[0]);
+            if (c == ',') { pos[0]++; continue; }
+            if (c == ']') { pos[0]++; break; }
+            throw new RuntimeException("Invalid JSON: expected ',' or ']' at position " + pos[0]);
+        }
+        return list;
+    }
+
+    private static String __roze_json_parse_string(String s, int[] pos) {
+        pos[0]++;
+        StringBuilder sb = new StringBuilder();
+        while (s.charAt(pos[0]) != '"') {
+            char c = s.charAt(pos[0]);
+            if (c == '\\') {
+                pos[0]++;
+                char esc = s.charAt(pos[0]);
+                if (esc == '"') sb.append('"');
+                else if (esc == '\\') sb.append('\\');
+                else if (esc == '/') sb.append('/');
+                else if (esc == 'n') sb.append('\n');
+                else if (esc == 't') sb.append('\t');
+                else if (esc == 'r') sb.append('\r');
+                else if (esc == 'b') sb.append('\b');
+                else if (esc == 'f') sb.append('\f');
+                else if (esc == 'u') {
+                    String hex = s.substring(pos[0] + 1, pos[0] + 5);
+                    sb.append((char) Integer.parseInt(hex, 16));
+                    pos[0] += 4;
+                } else {
+                    sb.append(esc);
+                }
+                pos[0]++;
+            } else {
+                sb.append(c);
+                pos[0]++;
+            }
+        }
+        pos[0]++;
+        return sb.toString();
+    }
+
+    private static Object __roze_json_parse_number(String s, int[] pos) {
+        int start = pos[0];
+        if (s.charAt(pos[0]) == '-') pos[0]++;
+        while (pos[0] < s.length() && Character.isDigit(s.charAt(pos[0]))) pos[0]++;
+        boolean isDouble = false;
+        if (pos[0] < s.length() && s.charAt(pos[0]) == '.') {
+            isDouble = true;
+            pos[0]++;
+            while (pos[0] < s.length() && Character.isDigit(s.charAt(pos[0]))) pos[0]++;
+        }
+        if (pos[0] < s.length() && (s.charAt(pos[0]) == 'e' || s.charAt(pos[0]) == 'E')) {
+            isDouble = true;
+            pos[0]++;
+            if (pos[0] < s.length() && (s.charAt(pos[0]) == '+' || s.charAt(pos[0]) == '-')) pos[0]++;
+            while (pos[0] < s.length() && Character.isDigit(s.charAt(pos[0]))) pos[0]++;
+        }
+        String numStr = s.substring(start, pos[0]);
+        if (isDouble) {
+            return Double.parseDouble(numStr);
+        }
+        try {
+            return Integer.parseInt(numStr);
+        } catch (NumberFormatException e) {
+            return Long.parseLong(numStr);
+        }
+    }
+"#;
+
+/// A minimal, synchronous, single-connection-at-a-time HTTP server:
+/// `http_server_start` binds a socket, `http_server_accept` blocks for
+/// the next request and returns it as a plain `map` (so it composes
+/// directly with the existing map_get/map_has intrinsics -- no new type
+/// needed), and `http_server_respond` writes a response and closes that
+/// connection. This shape exists specifically because Roze has no
+/// closures/lambdas yet, so there's no way for user code to hand the
+/// server a per-request callback the way frameworks like Spring Boot
+/// do -- an explicit accept/respond loop the user writes themselves is
+/// the pragmatic alternative. No concurrency: one request is fully
+/// handled before the next is accepted. See stdlib/src/io.roze.
+const HTTP_SERVER_HELPER_METHODS: &str = r#"
+    private static java.net.ServerSocket __roze_http_server_start(int port) {
+        try {
+            return new java.net.ServerSocket(port);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static int __roze_find_header_end(byte[] data) {
+        for (int i = 0; i + 3 < data.length; i++) {
+            if (data[i] == '\r' && data[i + 1] == '\n' && data[i + 2] == '\r' && data[i + 3] == '\n') {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static java.util.Map __roze_http_server_accept(java.net.ServerSocket server) {
+        try {
+            java.net.Socket socket = server.accept();
+            java.io.InputStream in = socket.getInputStream();
+            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+            byte[] chunk = new byte[8192];
+            int headerEnd = -1;
+            while (headerEnd < 0) {
+                int n = in.read(chunk);
+                if (n <= 0) break;
+                buffer.write(chunk, 0, n);
+                headerEnd = __roze_find_header_end(buffer.toByteArray());
+            }
+            byte[] all = buffer.toByteArray();
+            String headerText = new String(all, 0, Math.max(headerEnd, 0), "UTF-8");
+            String[] lines = headerText.split("\r\n");
+            String[] requestLineParts = lines.length > 0 ? lines[0].split(" ") : new String[0];
+            String method = requestLineParts.length > 0 ? requestLineParts[0] : "GET";
+            String path = requestLineParts.length > 1 ? requestLineParts[1] : "/";
+
+            int contentLength = 0;
+            for (String line : lines) {
+                if (line.toLowerCase().startsWith("content-length:")) {
+                    contentLength = Integer.parseInt(line.substring(line.indexOf(':') + 1).trim());
+                }
+            }
+
+            int bodyStart = headerEnd + 4;
+            java.io.ByteArrayOutputStream bodyBuffer = new java.io.ByteArrayOutputStream();
+            if (bodyStart < all.length) {
+                bodyBuffer.write(all, bodyStart, all.length - bodyStart);
+            }
+            while (bodyBuffer.size() < contentLength) {
+                int n = in.read(chunk);
+                if (n <= 0) break;
+                bodyBuffer.write(chunk, 0, n);
+            }
+            String body = bodyBuffer.toString("UTF-8");
+
+            java.util.Map<Object, Object> request = new java.util.HashMap<Object, Object>();
+            request.put("method", method);
+            request.put("path", path);
+            request.put("body", body);
+            request.put("__socket", socket);
+            return request;
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static String __roze_http_status_text(int status) {
+        if (status == 200) return "OK";
+        if (status == 201) return "Created";
+        if (status == 204) return "No Content";
+        if (status == 301) return "Moved Permanently";
+        if (status == 302) return "Found";
+        if (status == 400) return "Bad Request";
+        if (status == 401) return "Unauthorized";
+        if (status == 403) return "Forbidden";
+        if (status == 404) return "Not Found";
+        if (status == 500) return "Internal Server Error";
+        return "Unknown";
+    }
+
+    private static void __roze_http_server_respond(java.util.Map request, int status, String body) {
+        try {
+            java.net.Socket socket = (java.net.Socket) request.get("__socket");
+            byte[] bodyBytes = body.getBytes("UTF-8");
+            String header = "HTTP/1.1 " + status + " " + __roze_http_status_text(status) + "\r\n"
+                + "Content-Type: text/plain; charset=utf-8\r\n"
+                + "Content-Length: " + bodyBytes.length + "\r\n"
+                + "Connection: close\r\n\r\n";
+            java.io.OutputStream out = socket.getOutputStream();
+            out.write(header.getBytes("UTF-8"));
+            out.write(bodyBytes);
+            out.flush();
+            socket.close();
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void __roze_http_server_stop(java.net.ServerSocket server) {
+        try {
+            server.close();
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+"#;
+
+/// SQL helpers, built on the JDK's own `java.sql` API (part of the
+/// standard library since Java 1.1). Unlike every other intrinsic in
+/// this file, these depend on something Roze can't provide itself: an
+/// actual JDBC *driver* implementation for whatever database you want
+/// to talk to. The JDK ships the java.sql interfaces only, never a
+/// driver -- there is no such thing as a batteries-included database
+/// connection in plain Java, for any database. `DriverManager` auto-
+/// discovers whatever driver is on the classpath at runtime (JDBC 4+
+/// drivers self-register via META-INF/services, so no explicit
+/// `Class.forName(...)` is needed here), which is why `roze build`/
+/// `roze run` gained a `--classpath` flag alongside this feature: point
+/// it at a driver jar (H2, SQLite, Postgres, ...) and `sql_connect`
+/// works with that database's URL scheme. See stdlib/src/sql.roze.
+const SQL_HELPER_METHODS: &str = r#"
+    private static java.sql.Connection __roze_sql_connect(String url) {
+        try {
+            return java.sql.DriverManager.getConnection(url);
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static java.util.List __roze_sql_query(java.sql.Connection conn, String sql) {
+        try {
+            java.sql.Statement stmt = conn.createStatement();
+            java.sql.ResultSet rs = stmt.executeQuery(sql);
+            java.sql.ResultSetMetaData meta = rs.getMetaData();
+            int columnCount = meta.getColumnCount();
+            java.util.List<Object> rows = new java.util.ArrayList<Object>();
+            while (rs.next()) {
+                java.util.Map<Object, Object> row = new java.util.HashMap<Object, Object>();
+                for (int i = 1; i <= columnCount; i++) {
+                    row.put(meta.getColumnLabel(i), rs.getObject(i));
+                }
+                rows.add(row);
+            }
+            rs.close();
+            stmt.close();
+            return rows;
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static int __roze_sql_execute(java.sql.Connection conn, String sql) {
+        try {
+            java.sql.Statement stmt = conn.createStatement();
+            int affected = stmt.executeUpdate(sql);
+            stmt.close();
+            return affected;
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void __roze_sql_close(java.sql.Connection conn) {
+        try {
+            conn.close();
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+"#;
+
 /// Returns the Java return type for a built-in Core (string/math)
 /// intrinsic, or None if `name` isn't one. Keep this in sync with
 /// `semantic::builtin_signatures`.
@@ -138,6 +525,19 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
 
         "http_get" => Some("String"),
         "http_post" => Some("String"),
+
+        "json_encode" => Some("String"),
+        "json_decode" => Some(OBJECT_TYPE),
+
+        "http_server_start" => Some("java.net.ServerSocket"),
+        "http_server_accept" => Some("java.util.Map"),
+        "http_server_respond" => Some("void"),
+        "http_server_stop" => Some("void"),
+
+        "sql_connect" => Some(OBJECT_TYPE),
+        "sql_query" => Some("java.util.List"),
+        "sql_execute" => Some("int"),
+        "sql_close" => Some("void"),
 
         _ => None,
     }
@@ -269,6 +669,9 @@ impl JavaSourceGenerator {
         }
 
         source.push_str(IO_HELPER_METHODS);
+        source.push_str(JSON_HELPER_METHODS);
+        source.push_str(HTTP_SERVER_HELPER_METHODS);
+        source.push_str(SQL_HELPER_METHODS);
         source.push_str("}\n");
 
         Ok(source)
@@ -665,19 +1068,19 @@ impl JavaSourceGenerator {
                 source.push_str("new java.util.ArrayList()");
             }
             "list_push" if arguments.len() == 2 => {
-                self.generate_receiver(source, &arguments[0], scope)?;
+                self.generate_list_receiver(source, &arguments[0], scope)?;
                 source.push_str(".add(");
                 self.generate_expression(source, &arguments[1], scope)?;
                 source.push(')');
             }
             "list_get" if arguments.len() == 2 => {
-                self.generate_receiver(source, &arguments[0], scope)?;
+                self.generate_list_receiver(source, &arguments[0], scope)?;
                 source.push_str(".get(");
                 self.generate_index_arg(source, &arguments[1], scope)?;
                 source.push(')');
             }
             "list_set" if arguments.len() == 3 => {
-                self.generate_receiver(source, &arguments[0], scope)?;
+                self.generate_list_receiver(source, &arguments[0], scope)?;
                 source.push_str(".set(");
                 self.generate_index_arg(source, &arguments[1], scope)?;
                 source.push_str(", ");
@@ -689,17 +1092,17 @@ impl JavaSourceGenerator {
                 // List.remove has both remove(int) and remove(Object)
                 // overloads, and a boxed Integer argument binds to
                 // remove(Object) -- remove-by-equality, not by index.
-                self.generate_receiver(source, &arguments[0], scope)?;
+                self.generate_list_receiver(source, &arguments[0], scope)?;
                 source.push_str(".remove(");
                 self.generate_index_arg(source, &arguments[1], scope)?;
                 source.push(')');
             }
             "list_length" if arguments.len() == 1 => {
-                self.generate_receiver(source, &arguments[0], scope)?;
+                self.generate_list_receiver(source, &arguments[0], scope)?;
                 source.push_str(".size()");
             }
             "list_is_empty" if arguments.len() == 1 => {
-                self.generate_receiver(source, &arguments[0], scope)?;
+                self.generate_list_receiver(source, &arguments[0], scope)?;
                 source.push_str(".isEmpty()");
             }
 
@@ -708,7 +1111,7 @@ impl JavaSourceGenerator {
                 source.push_str("new java.util.HashMap()");
             }
             "map_put" if arguments.len() == 3 => {
-                self.generate_receiver(source, &arguments[0], scope)?;
+                self.generate_map_receiver(source, &arguments[0], scope)?;
                 source.push_str(".put(");
                 self.generate_expression(source, &arguments[1], scope)?;
                 source.push_str(", ");
@@ -716,29 +1119,29 @@ impl JavaSourceGenerator {
                 source.push(')');
             }
             "map_get" if arguments.len() == 2 => {
-                self.generate_receiver(source, &arguments[0], scope)?;
+                self.generate_map_receiver(source, &arguments[0], scope)?;
                 source.push_str(".get(");
                 self.generate_expression(source, &arguments[1], scope)?;
                 source.push(')');
             }
             "map_has" if arguments.len() == 2 => {
-                self.generate_receiver(source, &arguments[0], scope)?;
+                self.generate_map_receiver(source, &arguments[0], scope)?;
                 source.push_str(".containsKey(");
                 self.generate_expression(source, &arguments[1], scope)?;
                 source.push(')');
             }
             "map_remove" if arguments.len() == 2 => {
-                self.generate_receiver(source, &arguments[0], scope)?;
+                self.generate_map_receiver(source, &arguments[0], scope)?;
                 source.push_str(".remove(");
                 self.generate_expression(source, &arguments[1], scope)?;
                 source.push(')');
             }
             "map_size" if arguments.len() == 1 => {
-                self.generate_receiver(source, &arguments[0], scope)?;
+                self.generate_map_receiver(source, &arguments[0], scope)?;
                 source.push_str(".size()");
             }
             "map_is_empty" if arguments.len() == 1 => {
-                self.generate_receiver(source, &arguments[0], scope)?;
+                self.generate_map_receiver(source, &arguments[0], scope)?;
                 source.push_str(".isEmpty()");
             }
 
@@ -796,6 +1199,70 @@ impl JavaSourceGenerator {
                 source.push(')');
             }
 
+            // ---- Web: JSON ----
+            "json_encode" if arguments.len() == 1 => {
+                source.push_str("__roze_json_encode(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push(')');
+            }
+            "json_decode" if arguments.len() == 1 => {
+                source.push_str("__roze_json_decode(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push(')');
+            }
+
+            // ---- Web: HTTP server ----
+            "http_server_start" if arguments.len() == 1 => {
+                source.push_str("__roze_http_server_start(");
+                self.generate_int_arg(source, &arguments[0], scope)?;
+                source.push(')');
+            }
+            "http_server_accept" if arguments.len() == 1 => {
+                source.push_str("__roze_http_server_accept(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push(')');
+            }
+            "http_server_respond" if arguments.len() == 3 => {
+                source.push_str("__roze_http_server_respond(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push_str(", ");
+                self.generate_int_arg(source, &arguments[1], scope)?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2], scope)?;
+                source.push(')');
+            }
+            "http_server_stop" if arguments.len() == 1 => {
+                source.push_str("__roze_http_server_stop(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push(')');
+            }
+
+            // ---- Database (SQL) ----
+            "sql_connect" if arguments.len() == 1 => {
+                source.push_str("__roze_sql_connect(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push(')');
+            }
+            "sql_query" if arguments.len() == 2 => {
+                source.push_str("__roze_sql_query(((java.sql.Connection)(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push_str(")), ");
+                self.generate_expression(source, &arguments[1], scope)?;
+                source.push(')');
+            }
+            "sql_execute" if arguments.len() == 2 => {
+                source.push_str("__roze_sql_execute(((java.sql.Connection)(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push_str(")), ");
+                self.generate_expression(source, &arguments[1], scope)?;
+                source.push(')');
+            }
+            "sql_close" if arguments.len() == 1 => {
+                source.push_str("__roze_sql_close((java.sql.Connection)(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push_str("))");
+            }
+
             "println" => {
                 source.push_str("System.out.println(");
                 self.generate_println_args(source, arguments, scope)?;
@@ -842,6 +1309,38 @@ impl JavaSourceGenerator {
         self.generate_expression(source, expr, scope)?;
         source.push(')');
         Ok(())
+    }
+
+    /// Like `generate_receiver`, but for a value used as a `List`: casts
+    /// to `java.util.List` unless the expression's static type is
+    /// already known to be one. Needed because not every list-shaped
+    /// value is statically typed `java.util.List` -- notably, anything
+    /// coming out of `json_decode` is statically `Object` (its shape
+    /// depends on the JSON text, not on anything the type checker can
+    /// see), so `.get()`/`.size()`/etc need an explicit cast to resolve.
+    fn generate_list_receiver(&self, source: &mut String, expr: &Expression, scope: &Scope) -> Result<()> {
+        let t = self.infer_type(expr, scope);
+        if t == "java.util.List" {
+            self.generate_receiver(source, expr, scope)
+        } else {
+            source.push_str("((java.util.List)(");
+            self.generate_expression(source, expr, scope)?;
+            source.push_str("))");
+            Ok(())
+        }
+    }
+
+    /// Like `generate_list_receiver`, for `Map`.
+    fn generate_map_receiver(&self, source: &mut String, expr: &Expression, scope: &Scope) -> Result<()> {
+        let t = self.infer_type(expr, scope);
+        if t == "java.util.Map" {
+            self.generate_receiver(source, expr, scope)
+        } else {
+            source.push_str("((java.util.Map)(");
+            self.generate_expression(source, expr, scope)?;
+            source.push_str("))");
+            Ok(())
+        }
     }
 
     /// Like `generate_int_arg`, but guarantees a genuine primitive `int`
@@ -1071,5 +1570,72 @@ mod tests {
     fn backslash_and_quote_are_still_escaped() {
         let java = generate(r#"func main() { println("a\\b\"c"); }"#);
         assert!(java.contains(r#""a\\b\"c""#), "expected escaped backslash and quote, got:\n{}", java);
+    }
+
+    // ---- Web: JSON ----
+
+    #[test]
+    fn json_intrinsics_delegate_to_helper_methods() {
+        let java = generate("func main() { let m = map_new(); json_encode(m); json_decode(\"{}\"); }");
+        assert!(java.contains("__roze_json_encode("));
+        assert!(java.contains("__roze_json_decode("));
+        assert!(java.contains("private static String __roze_json_encode"));
+        assert!(java.contains("private static Object __roze_json_decode"));
+    }
+
+    #[test]
+    fn json_decode_result_is_castable_for_list_and_map_ops() {
+        // json_decode's result is statically Object (its real shape
+        // depends on the JSON text) -- list_get/map_get etc. must cast
+        // rather than assume it's already java.util.List/Map.
+        let java = generate("func main() { let d = json_decode(\"[]\"); list_length(d); }");
+        assert!(java.contains("(java.util.List)("), "expected an explicit List cast for a json_decode result:\n{}", java);
+    }
+
+    // ---- Web: HTTP server ----
+
+    #[test]
+    fn http_server_intrinsics_delegate_to_helper_methods() {
+        let java = generate(
+            "func main() { let s = http_server_start(8080); let r = http_server_accept(s); http_server_respond(r, 200, \"ok\"); http_server_stop(s); }"
+        );
+        assert!(java.contains("__roze_http_server_start("));
+        assert!(java.contains("__roze_http_server_accept("));
+        assert!(java.contains("__roze_http_server_respond("));
+        assert!(java.contains("__roze_http_server_stop("));
+        assert!(java.contains("private static java.net.ServerSocket __roze_http_server_start"));
+    }
+
+    #[test]
+    fn http_server_accept_returns_a_plain_map() {
+        // The request is deliberately just a `map`, so it composes with
+        // the existing map_get/map_has intrinsics with no new type.
+        let java = generate("func main() { let s = http_server_start(8080); let r = http_server_accept(s); println(map_get(r, \"path\")); }");
+        assert!(java.contains("java.util.Map r ="), "expected the request to be declared as java.util.Map:\n{}", java);
+    }
+
+    // ---- Database (SQL) ----
+
+    #[test]
+    fn sql_intrinsics_delegate_to_helper_methods_with_connection_cast() {
+        // sql_connect returns a statically-Object-typed value (no
+        // dedicated Connection type exists), so every other sql_*
+        // intrinsic must cast it to java.sql.Connection at the call
+        // site, or javac rejects passing an Object where Connection is
+        // declared.
+        let java = generate(
+            "func main() { let c = sql_connect(\"jdbc:x\"); sql_execute(c, \"a\"); sql_query(c, \"b\"); sql_close(c); }"
+        );
+        assert!(java.contains("__roze_sql_connect("));
+        assert!(java.contains("(java.sql.Connection)("), "expected an explicit Connection cast:\n{}", java);
+        assert!(java.contains("private static java.sql.Connection __roze_sql_connect"));
+        assert!(java.contains("private static java.util.List __roze_sql_query"));
+        assert!(java.contains("private static int __roze_sql_execute"));
+    }
+
+    #[test]
+    fn sql_query_returns_a_list_of_maps_shape() {
+        let java = generate("func main() { let c = sql_connect(\"jdbc:x\"); let rows = sql_query(c, \"SELECT 1\"); }");
+        assert!(java.contains("java.util.List rows ="), "expected sql_query's result to be typed as java.util.List:\n{}", java);
     }
 }

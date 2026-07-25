@@ -30,6 +30,11 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Download H2 database (for the SQL intrinsics golden test)
+        run: |
+          curl -fsSL -o /tmp/h2.jar https://github.com/h2database/h2database/releases/download/version-2.4.240/h2-2.4.240.jar
+          echo "ROZE_TEST_JDBC_JAR=/tmp/h2.jar" >> "$GITHUB_ENV"
+
       - name: cargo test (workspace)
         run: cargo test --workspace
 

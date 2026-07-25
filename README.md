@@ -51,6 +51,14 @@ Currently working:
 - **IO**: `read_file`/`write_file`/`append_file`/`file_exists`/
   `delete_file`/`read_lines`, and `http_get`/`http_post` -- see
   `stdlib/src/io.roze`
+- **Web**: `json_encode`/`json_decode` (working directly with
+  `list`/`map` values), plus a synchronous HTTP server
+  (`http_server_start`/`accept`/`respond`/`stop`) -- see
+  `stdlib/src/web.roze`
+- **Database**: `sql_connect`/`sql_query`/`sql_execute`/`sql_close` on
+  top of `java.sql` -- bring your own JDBC driver via `roze run
+  app.roze --classpath driver.jar` (the JDK ships no driver for any
+  database) -- see `stdlib/src/sql.roze`
 - `println`
 
 Not yet implemented: array-literal syntax, generics, structs/classes,

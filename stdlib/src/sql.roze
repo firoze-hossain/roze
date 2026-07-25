@@ -1,0 +1,50 @@
+// stdlib/src/sql.roze
+//
+// Database (SQL) reference for Roze.
+//
+// STATUS: every function below is a compiler INTRINSIC, backed by the
+// JDK's own java.sql API (see compiler/src/codegen/jvm.rs). They're
+// available in every program automatically, with no import required,
+// and this file is never actually read by the compiler.
+//
+// Unlike every other intrinsic family, these depend on something Roze
+// can't provide by itself: an actual JDBC *driver*. The JDK ships the
+// java.sql interfaces only -- there is no bundled driver for any
+// database, ever, in plain Java. To use these, pass a driver jar on
+// the classpath:
+//
+//   roze run myapp.roze --classpath /path/to/h2-2.4.240.jar
+//   roze run myapp.roze --classpath /path/to/postgresql-42.7.jar
+//   roze build myapp.roze --classpath /path/to/sqlite-jdbc-3.53.jar
+//
+// (On Windows, use ';' to separate multiple classpath entries; ':' on
+// Linux/Mac, if you ever need more than one jar.) Once the driver is on
+// the classpath, DriverManager finds it automatically -- Roze never
+// needs to name the specific driver class.
+//
+// sql_connect(url)       -> ?    : opens a connection (e.g. "jdbc:h2:mem:test",
+//                                  "jdbc:sqlite:my.db", "jdbc:postgresql://host/db")
+// sql_query(conn, sql)   -> list : runs a SELECT; each row comes back as a
+//                                  map from column name to value
+// sql_execute(conn, sql) -> int  : runs an INSERT/UPDATE/DELETE/DDL statement,
+//                                  returns the number of rows affected
+// sql_close(conn)        -> void : closes the connection
+//
+// Errors (a bad connection string, a SQL syntax error, a missing
+// driver) surface as a runtime crash rather than a Roze-level error
+// value, the same as file/network IO -- see ROADMAP.md.
+
+// Example (with an H2 driver jar on the classpath):
+//
+// func main() {
+//     let conn = sql_connect("jdbc:h2:mem:mydb");
+//     sql_execute(conn, "CREATE TABLE users (id INT, name VARCHAR(50))");
+//     sql_execute(conn, "INSERT INTO users VALUES (1, 'Alice')");
+//
+//     let rows = sql_query(conn, "SELECT * FROM users");
+//     for let i = 0; i < list_length(rows); i = i + 1 {
+//         println(map_get(list_get(rows, i), "NAME"));
+//     }
+//
+//     sql_close(conn);
+// }

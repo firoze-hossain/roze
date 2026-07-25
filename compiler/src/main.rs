@@ -38,12 +38,21 @@ enum Commands {
         /// Output directory
         #[arg(short, long)]
         output: Option<String>,
+        /// Extra classpath entries for javac (e.g. a JDBC driver jar for
+        /// sql_connect/sql_query/sql_execute -- see stdlib/src/sql.roze).
+        /// Use your platform's path separator (';' on Windows, ':'
+        /// elsewhere) to list more than one.
+        #[arg(long)]
+        classpath: Option<String>,
     },
     /// Run a Roze file
     Run {
         /// Input file (optional, defaults to main.roze)
         #[arg(value_name = "FILE", default_value = "src/main.roze")]
         file: String,
+        /// Extra classpath entries for javac/java (see `build --classpath`)
+        #[arg(long)]
+        classpath: Option<String>,
     },
 }
 
@@ -51,8 +60,9 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Build { file, output: _ } => build_file(&file, cli.debug),
-        Commands::Run { file } => build_file(&file, cli.debug).and_then(|_| run_file(&file)),
+        Commands::Build { file, output: _, classpath } => build_file(&file, cli.debug, classpath.as_deref()),
+        Commands::Run { file, classpath } => build_file(&file, cli.debug, classpath.as_deref())
+            .and_then(|_| run_file(&file, classpath.as_deref())),
     };
 
     // Every error is already reported (with a full source snippet, when
@@ -66,7 +76,7 @@ fn main() {
     }
 }
 
-fn build_file(filename: &str, debug: bool) -> Result<(), ()> {
+fn build_file(filename: &str, debug: bool, classpath: Option<&str>) -> Result<(), ()> {
     println!("{}", "🌹 Roze Compiler v0.1".bright_magenta());
     println!("{} {}", "📁 Compiling:".cyan(), filename);
 
@@ -121,7 +131,7 @@ fn build_file(filename: &str, debug: bool) -> Result<(), ()> {
     println!("{}", "✅ Type checking passed!".green());
 
     // Generate Java code
-    if let Err(e) = codegen::compile_to_java(program, filename) {
+    if let Err(e) = codegen::compile_to_java(program, filename, classpath) {
         report_error(&e, filename, &source);
         return Err(());
     }
@@ -131,12 +141,12 @@ fn build_file(filename: &str, debug: bool) -> Result<(), ()> {
     Ok(())
 }
 
-fn run_file(filename: &str) -> Result<(), ()> {
+fn run_file(filename: &str, classpath: Option<&str>) -> Result<(), ()> {
     let class_name = codegen::class_name_from_path(filename);
 
     println!("{} {}", "🚀 Running:".yellow(), class_name);
 
-    if let Err(e) = codegen::run_java(&class_name) {
+    if let Err(e) = codegen::run_java(&class_name, classpath) {
         eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);
         return Err(());
     }

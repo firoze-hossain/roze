@@ -68,19 +68,78 @@ list in codegen and escaping any identifier that collides with one
 definition and every use site -- a reasonably small, well-scoped next
 fix, not attempted here to keep this pass focused on `for`/imports/tests.
 
-## Phase 2: Developer Experience
+## Phase 2: Developer Experience -- done
 
 The original doc marked this whole phase "Not Started," but `roze-build`,
-`roze-pkg`, and `roze-lsp` all already have substantial real
-implementations (the LSP tool alone is ~600 lines across `analyzer.rs`,
-`diagnostics.rs`, and `parser.rs`). They weren't deeply audited in this
-pass -- that's the natural next focus once Phase 1.5 lands, since some of
-them (e.g. the LSP's own parser) may need to be reconciled with the fixes
-made here rather than duplicating parser logic a second time.
+`roze-pkg`, and `roze-lsp` all already had substantial real
+implementations. All three items below are now done, and all three
+turned up genuine bugs -- not just gaps -- found by actually running
+these tools end to end rather than reading the code.
 
-- [ ] Audit `roze-lsp`'s parser vs. `compiler`'s parser (right now there appear to be two independent Roze parsers in this workspace -- worth unifying so fixes only need to happen once)
-- [ ] `roze build` / `roze pkg` end-to-end smoke test
-- [ ] VS Code extension smoke test against a real `.roze` file
+- [x] **Unified `roze-lsp`'s parser with `compiler`'s.** There really
+  were two independent Roze parsers in this workspace. The LSP's own was
+  a hand-rolled, line-by-line heuristic scanner: naive
+  `split_whitespace()` plus manual brace-counting, no real tokenization
+  at all. It would misparse a `{`/`}` inside a string literal, couldn't
+  handle a multi-line function signature, and "detected" classes via a
+  bare `line.starts_with("class")` even though the real compiler doesn't
+  parse classes into anything at all. Diagnostics were similarly
+  heuristic: "does this line end in `=`?" (false-positives on any
+  multi-line expression), "are parens balanced *on this line*?"
+  (false-positives on any multi-line call) -- and neither could catch a
+  single *real* Roze error (undefined variable, wrong return type,
+  actual syntax error). Replaced both with a thin adapter over the real
+  `roze_compiler` lexer/parser/type-checker (`tools/roze-lsp/src/parser.rs`,
+  `diagnostics.rs`), so every grammar fix made to the compiler (like
+  `for` loops) is automatically reflected in the editor experience
+  instead of needing to be hand-ported to a second parser that only
+  drifts further from reality over time. 13 unit tests.
+
+- [x] **`roze-build` / `roze-pkg` end-to-end smoke test**, which found:
+  - `roze-build`'s `find_compiler()` had an off-by-one: it moved to the
+    *parent* directory before ever checking anything, so it could never
+    find a compiler sitting in the current directory's own
+    `target/release/`. That failure was then silently swallowed into a
+    useless `"roze"` string fallback, which failed later with a raw
+    **Rust panic backtrace** -- the same class of bug fixed in the main
+    compiler's `main()` early on, just never applied here.
+  - `roze-pkg` had an *independent*, differently-buggy `find_compiler()`
+    of its own (hardcoded "go up 3 directories," landing one level too
+    high for a normal `cargo build --release` layout) -- the same
+    unification problem as the LSP's parser, just for compiler-discovery
+    logic instead of grammar. Both are now replaced with one shared,
+    tested implementation in `compiler::toolchain`.
+  - `roze-pkg`'s `DependencyManager` never loaded existing dependencies
+    from `roze.toml` on construction, so every command started from an
+    empty map. Practical effect: `roze-pkg add` on a second dependency
+    silently **deleted the first one** (since saving always overwrites
+    with the in-memory map), and `roze-pkg remove` could never find
+    anything, since it was always comparing against a map that had never
+    been told what already existed. This was the most serious bug found
+    in this pass -- silent data loss, not just a crash.
+  - `roze-build` also left a stray generated `.java` file behind in the
+    project root instead of moving it to the output directory like the
+    `.class` file.
+  - 7 regression tests added across both tools (4 for compiler-discovery,
+    3 for dependency persistence), plus the `main()` backtrace fix
+    applied to both.
+  - Minor, not fixed: `roze-pkg remove` doesn't clean up the
+    `libs/<name>/` directory `install` created for that dependency, so a
+    stale stub lingers on disk after removal. Low severity (doesn't
+    affect correctness of what's declared in `roze.toml`), noted here
+    rather than left silently unmentioned.
+
+- [x] **VS Code extension smoke test.** The extension itself (see
+  `ide/vscode`) is thin boilerplate that spawns the `roze-lsp` binary and
+  forwards messages between the editor UI and it, so the meaningful test
+  is of the server's actual protocol behavior -- not achievable with a
+  real VS Code GUI in this environment, but achievable completely
+  otherwise: `tools/roze-lsp/tests/protocol_smoke.rs` speaks genuine LSP
+  JSON-RPC-over-stdio to the compiled binary (the exact same transport
+  VS Code uses) and exercises a full session -- initialize, a broken
+  program's diagnostics (checked against a real position), a valid
+  program using `for`/imports (checked for *zero* false positives),
+  documentSymbol, hover, completion, and clean shutdown.
 
 ## Phase 3: Standard Library
 
@@ -177,14 +236,13 @@ Concretely:
 
 1. ~~Phase 1.5~~ -- done: `for`, return-type checking, real errors,
    module system, test suite.
-2. **Phase 3 (Core is done; Collections/IO next)**, using the new module
+2. ~~Phase 2~~ -- done: unified the LSP's parser with the compiler's,
+   smoke-tested and fixed real bugs in `roze-build`/`roze-pkg`, added a
+   genuine LSP protocol test standing in for a VS Code smoke test.
+3. **Phase 3 (Core is done; Collections/IO next)**, using the new module
    system, in parallel with:
-3. **Native backend design** (memory model decision + LLVM/Cranelift
+4. **Native backend design** (memory model decision + LLVM/Cranelift
    spike), so systems/games/desktop work has *somewhere to go* instead of
    being permanently "later."
-4. **Phase 2 audit** (reconcile the LSP's parser with the compiler's,
-   smoke-test the existing build/package tools) -- this can happen
-   whenever there's a lull, since it's mostly validating what already
-   exists rather than building something new.
 5. Everything else (Web/DB stdlib, WASM, embedded, self-hosting) follows
    naturally once the above are in place.

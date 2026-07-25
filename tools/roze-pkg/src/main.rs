@@ -70,37 +70,24 @@ enum Commands {
     Update,
 }
 
-fn main() -> Result<()> {
+fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::New { name, template, author, path } => {
-            cmd_new(&name, &template, &author, path)?;
-        }
-        Commands::Build { release } => {
-            cmd_build(release)?;
-        }
-        Commands::Run { args } => {
-            cmd_run(args)?;
-        }
-        Commands::Add { name, version } => {
-            cmd_add(&name, &version)?;
-        }
-        Commands::Remove { name } => {
-            cmd_remove(&name)?;
-        }
-        Commands::Install => {
-            cmd_install()?;
-        }
-        Commands::Test => {
-            cmd_test()?;
-        }
-        Commands::Update => {
-            cmd_update()?;
-        }
-    }
+    let result = match cli.command {
+        Commands::New { name, template, author, path } => cmd_new(&name, &template, &author, path),
+        Commands::Build { release } => cmd_build(release),
+        Commands::Run { args } => cmd_run(args),
+        Commands::Add { name, version } => cmd_add(&name, &version),
+        Commands::Remove { name } => cmd_remove(&name),
+        Commands::Install => cmd_install(),
+        Commands::Test => cmd_test(),
+        Commands::Update => cmd_update(),
+    };
 
-    Ok(())
+    if let Err(e) = result {
+        eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);
+        std::process::exit(1);
+    }
 }
 
 fn cmd_new(name: &str, template_name: &str, author: &str, path: Option<PathBuf>) -> Result<()> {
@@ -197,8 +184,6 @@ fn cmd_remove(name: &str) -> Result<()> {
 }
 
 fn cmd_install() -> Result<()> {
-    println!("📦 {}", "Installing dependencies...".green());
-
     let project_dir = std::env::current_dir()?;
     let dep_manager = DependencyManager::new(project_dir);
     dep_manager.install_all()?;
@@ -241,62 +226,10 @@ fn load_project_config() -> Result<ProjectConfig> {
 }
 
 fn find_compiler() -> Result<PathBuf> {
-    // Get the current executable's directory
-    let exe_path = std::env::current_exe()?;
-    let exe_dir = exe_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
-
-    // Go up from the package manager: tools/roze-pkg -> tools -> project_root
-    let mut current = exe_dir.clone();
-    for _ in 0..3 {
-        if let Some(parent) = current.parent() {
-            current = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-    let project_root = current;
-
-    // 1. Check in the main target/release FIRST (this is where it actually is!)
-    let project_compiler = project_root.join("target/release/roze");
-    if project_compiler.exists() {
-        return Ok(project_compiler);
-    }
-
-    // 2. Check in the compiler's target/release
-    let compiler_dir = project_root.join("compiler/target/release/roze");
-    if compiler_dir.exists() {
-        return Ok(compiler_dir);
-    }
-
-    // 3. Check in current working directory
-    let cwd = std::env::current_dir()?;
-    let cwd_compiler = cwd.join("target/release/roze");
-    if cwd_compiler.exists() {
-        return Ok(cwd_compiler);
-    }
-
-    // 4. Check if there's a roze binary in PATH
-    if let Ok(path) = which::which("roze") {
-        return Ok(path);
-    }
-
-    // 5. Check one level up from current directory
-    if let Some(parent) = cwd.parent() {
-        let parent_compiler = parent.join("target/release/roze");
-        if parent_compiler.exists() {
-            return Ok(parent_compiler);
-        }
-    }
-
-    Err(anyhow::anyhow!(
-        "Could not find Roze compiler.\n\
-         Tried locations:\n\
-         - {}\n\
-         - {}\n\
-         - {}\n\
-         Please ensure it's built with: cargo build --release -p roze-compiler",
-        project_compiler.display(),
-        compiler_dir.display(),
-        cwd_compiler.display()
-    ))
+    // Shared with roze-build -- see compiler::toolchain for why (this
+    // used to be implemented separately here, and independently buggily:
+    // it walked up a hardcoded 3 directories from its own executable's
+    // location, which lands one level too high for a normal
+    // `cargo build --release` layout).
+    roze_compiler::toolchain::find_roze_binary()
 }

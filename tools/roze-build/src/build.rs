@@ -14,12 +14,15 @@ pub struct Builder {
 }
 
 impl Builder {
-    pub fn new(config: BuildConfig, release: bool) -> Self {
-        Self {
+    pub fn new(config: BuildConfig, release: bool) -> Result<Self> {
+        Ok(Self {
             config,
             release,
-            compiler_path: Self::find_compiler().unwrap_or_else(|_| PathBuf::from("roze")),
-        }
+            // Finding the `roze` binary is shared logic with roze-pkg --
+            // see compiler::toolchain for why (it used to be implemented
+            // separately, and buggily, in each tool).
+            compiler_path: roze_compiler::toolchain::find_roze_binary()?,
+        })
     }
 
     pub fn build(&mut self) -> Result<()> {
@@ -89,7 +92,7 @@ impl Builder {
             return Err(anyhow!("Failed to compile: {}", file.display()));
         }
 
-        // Move compiled class file to output directory
+        // Move compiled outputs to the output directory
         let class_name = file
             .file_stem()
             .unwrap_or_default()
@@ -102,26 +105,12 @@ impl Builder {
             fs::rename(&class_file, &dest)?;
         }
 
+        let java_file = PathBuf::from(format!("{}.java", class_name));
+        if java_file.exists() {
+            let dest = output_dir.join(&java_file);
+            fs::rename(&java_file, &dest)?;
+        }
+
         Ok(())
-    }
-
-    fn find_compiler() -> Result<PathBuf> {
-        // Check if there's a roze binary in PATH
-        if let Ok(path) = which::which("roze") {
-            return Ok(path);
-        }
-
-        // Check in the project root
-        let current_dir = std::env::current_dir()?;
-        let mut path = current_dir.clone();
-        for _ in 0..4 {
-            path = path.parent().unwrap_or(&path).to_path_buf();
-            let compiler = path.join("target/release/roze");
-            if compiler.exists() {
-                return Ok(compiler);
-            }
-        }
-
-        Err(anyhow!("Could not find Roze compiler"))
     }
 }

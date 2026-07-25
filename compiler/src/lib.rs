@@ -5,3 +5,4 @@ pub mod codegen;
 pub mod semantic;
 pub mod error;
 pub mod imports;
+pub mod toolchain;

@@ -12,6 +12,7 @@ anyhow = { workspace = true }
 colored = { workspace = true }
 clap = { workspace = true }
 thiserror = { workspace = true }
+which = "6.0"
 
 [lib]
 path = "src/lib.rs"

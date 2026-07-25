@@ -13,6 +13,18 @@ mod diagnostics;
 use analyzer::Analyzer;
 use diagnostics::DiagnosticEngine;
 
+/// Best-effort directory for a document, used to resolve `import "...";`
+/// statements relative to the right place. Falls back to "." for
+/// non-file URIs (e.g. an unsaved/untitled buffer) rather than failing --
+/// diagnostics should still work for everything except an import that
+/// genuinely needs a real path.
+fn base_dir_for(uri: &Url) -> PathBuf {
+    uri.to_file_path()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 #[derive(Debug, Clone)]
 struct Document {
     uri: Url,
@@ -113,7 +125,7 @@ impl LanguageServer for Backend {
 
         self.workspace.open_document(uri.clone(), text.clone(), version);
 
-        let diagnostics = self.workspace.diagnostic_engine.check(&text);
+        let diagnostics = self.workspace.diagnostic_engine.check(&text, &base_dir_for(&uri));
         self.client
             .publish_diagnostics(uri, diagnostics, None)
             .await;
@@ -127,7 +139,7 @@ impl LanguageServer for Backend {
             let text = change.text.clone();
             self.workspace.update_document(&uri, text.clone(), version);
 
-            let diagnostics = self.workspace.diagnostic_engine.check(&text);
+            let diagnostics = self.workspace.diagnostic_engine.check(&text, &base_dir_for(&uri));
             self.client
                 .publish_diagnostics(uri, diagnostics, None)
                 .await;

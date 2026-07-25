@@ -51,42 +51,43 @@ enum Commands {
     Init,
 }
 
-fn main() -> Result<()> {
+fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Build { release, clean, watch } => {
+    let result = match cli.command {
+        Commands::Build { release, clean, watch } => (|| {
             if clean {
                 cmd_clean()?;
             }
             if watch {
-                cmd_watch(release)?;
+                cmd_watch(release)
             } else {
-                cmd_build(release)?;
+                cmd_build(release)
             }
-        }
-        Commands::Clean => {
-            cmd_clean()?;
-        }
-        Commands::Run { args, release } => {
-            cmd_run(args, release)?;
-        }
-        Commands::Watch => {
-            cmd_watch(false)?;
-        }
-        Commands::Init => {
-            cmd_init()?;
-        }
-    }
+        })(),
+        Commands::Clean => cmd_clean(),
+        Commands::Run { args, release } => cmd_run(args, release),
+        Commands::Watch => cmd_watch(false),
+        Commands::Init => cmd_init(),
+    };
 
-    Ok(())
+    // Print a clean, single-line error rather than letting Rust's default
+    // Termination handler dump an anyhow Debug report -- which, for a
+    // plain `fn main() -> Result<()>`, includes a full Rust panic-style
+    // stack backtrace. That's meaningless noise for what are typically
+    // ordinary failures here (compiler not found, a source file failed
+    // to build, javac/java missing) and actively unhelpful to a user.
+    if let Err(e) = result {
+        eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);
+        std::process::exit(1);
+    }
 }
 
 fn cmd_build(release: bool) -> Result<()> {
     println!("🔨 {}", "Building project...".green());
 
     let config = BuildConfig::load()?;
-    let mut builder = Builder::new(config, release);
+    let mut builder = Builder::new(config, release)?;
     builder.build()?;
 
     println!("✅ {}", "Build successful!".bright_green());
@@ -97,7 +98,7 @@ fn cmd_clean() -> Result<()> {
     println!("🧹 {}", "Cleaning build artifacts...".yellow());
 
     let config = BuildConfig::load()?;
-    let mut builder = Builder::new(config, false);
+    let mut builder = Builder::new(config, false)?;
     builder.clean()?;
 
     println!("✅ {}", "Clean complete!".bright_green());
@@ -141,7 +142,7 @@ fn cmd_watch(release: bool) -> Result<()> {
     println!("👁️ {}", "Watching for changes...".yellow());
 
     let config = BuildConfig::load()?;
-    let builder = Builder::new(config, release);
+    let builder = Builder::new(config, release)?;
     let watcher = Watcher::new(builder);
     watcher.watch()?;
 

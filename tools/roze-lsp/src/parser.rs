@@ -1,8 +1,32 @@
-// src/parser.rs
+// tools/roze-lsp/src/parser.rs
+//
+// A thin adapter over the real Roze compiler's lexer + parser
+// (roze_compiler::lexer / roze_compiler::parser), replacing what used to
+// be a hand-rolled, line-by-line heuristic scanner here: naive
+// `split_whitespace()` plus manual brace-counting, no real tokenization
+// at all. That old scanner would misparse a `{`/`}` inside a string
+// literal, couldn't handle a multi-line function signature, and
+// "detected" classes via a bare `line.starts_with("class")` even though
+// the real compiler doesn't parse classes at all yet -- so it would
+// happily report symbols the compiler could never actually build.
+//
+// Reusing the real compiler here means every grammar fix made to
+// `compiler` (like `for` loops, or fixing `-> ReturnType` parsing) is
+// automatically reflected in the editor experience too, instead of
+// needing to be hand-ported to a second, separate parser that drifts
+// further from reality over time.
+use roze_compiler::lexer::tokenize;
+use roze_compiler::parser::ast::{Program, Statement};
+use roze_compiler::parser::parse as compiler_parse;
+
 #[derive(Debug, Clone)]
 pub struct Ast {
     pub functions: Vec<Function>,
     pub variables: Vec<Variable>,
+    /// Roze doesn't have classes/structs yet (the real parser tokenizes
+    /// `class` but doesn't parse it into anything -- see ROADMAP.md), so
+    /// this is always empty. Kept only so callers matching on this shape
+    /// don't need to change.
     pub classes: Vec<Class>,
     pub imports: Vec<String>,
 }
@@ -12,6 +36,8 @@ pub struct Function {
     pub name: String,
     pub params: Vec<String>,
     pub return_type: Option<String>,
+    /// 0-indexed, matching LSP `Position` conventions (the compiler's own
+    /// `Location` is 1-indexed, for human-readable error messages).
     pub line: usize,
     pub column: usize,
 }
@@ -33,7 +59,15 @@ pub struct Class {
     pub column: usize,
 }
 
+/// Parses `source` with the real compiler front-end. Returns `None` if it
+/// doesn't even tokenize/parse into a `Program` (e.g. the user is
+/// mid-edit and has an unclosed brace right now) -- callers that want the
+/// actual syntax error with a position should use `DiagnosticEngine`
+/// instead, which surfaces it properly rather than just giving up.
 pub fn parse(source: &str) -> Option<Ast> {
+    let tokens = tokenize(source);
+    let program: Program = compiler_parse(tokens).ok()?;
+
     let mut ast = Ast {
         functions: Vec::new(),
         variables: Vec::new(),
@@ -41,151 +75,137 @@ pub fn parse(source: &str) -> Option<Ast> {
         imports: Vec::new(),
     };
 
-    let lines: Vec<&str> = source.lines().collect();
-    let mut i = 0;
-
-    while i < lines.len() {
-        let line = lines[i].trim();
-
-        if line.is_empty() || line.starts_with("//") || line.starts_with("/*") {
-            i += 1;
-            continue;
-        }
-
-        if line.starts_with("import") {
-            if let Some(path) = line.strip_prefix("import").map(|s| s.trim().trim_end_matches(';')) {
-                ast.imports.push(path.to_string());
-            }
-            i += 1;
-            continue;
-        }
-
-        if line.starts_with("func") {
-            if let Some(func) = parse_function(&lines, &mut i) {
-                ast.functions.push(func);
-            }
-            continue;
-        }
-
-        if line.starts_with("class") {
-            if let Some(class) = parse_class(&lines, &mut i) {
-                ast.classes.push(class);
-            }
-            continue;
-        }
-
-        if line.starts_with("let") {
-            if let Some(var) = parse_variable(line) {
-                ast.variables.push(var);
-            }
-        }
-
-        i += 1;
-    }
-
+    collect_statements(&program.statements, &mut ast);
     Some(ast)
 }
 
-fn parse_function(lines: &[&str], index: &mut usize) -> Option<Function> {
-    let line = lines[*index].trim();
-    let parts: Vec<&str> = line.split_whitespace().collect();
-
-    if parts.len() < 2 {
-        return None;
+/// Recursively walks statements (both top-level and nested inside
+/// function bodies / if / while / for) collecting functions, variables,
+/// and imports as it goes. Functions are only meaningful when found here
+/// at any level, since Roze doesn't support nested function declarations
+/// today; if that changes, this already handles them correctly since
+/// there's no special-casing of "top level" here at all.
+fn collect_statements(statements: &[Statement], ast: &mut Ast) {
+    for stmt in statements {
+        collect_statement(stmt, ast);
     }
-
-    let name = parts[1].to_string();
-    let mut params = Vec::new();
-
-    if let Some(param_start) = line.find('(') {
-        if let Some(param_end) = line.find(')') {
-            let param_str = &line[param_start + 1..param_end];
-            if !param_str.is_empty() {
-                params = param_str.split(',').map(|s| s.trim().to_string()).collect();
-            }
-        }
-    }
-
-    *index += 1;
-    let mut brace_count = 1;
-    while *index < lines.len() && brace_count > 0 {
-        brace_count += lines[*index].chars().filter(|&c| c == '{').count();
-        brace_count -= lines[*index].chars().filter(|&c| c == '}').count();
-        *index += 1;
-    }
-
-    Some(Function {
-        name,
-        params,
-        return_type: None,
-        line: *index - 1,
-        column: 0,
-    })
 }
 
-fn parse_class(lines: &[&str], index: &mut usize) -> Option<Class> {
-    let line = lines[*index].trim();
-    let parts: Vec<&str> = line.split_whitespace().collect();
-
-    if parts.len() < 2 {
-        return None;
-    }
-
-    let name = parts[1].trim_end_matches('{').to_string();
-    let mut fields = Vec::new();
-    let mut methods = Vec::new();
-
-    *index += 1;
-    let mut brace_count = 1;
-
-    while *index < lines.len() && brace_count > 0 {
-        let body_line = lines[*index].trim();
-
-        if body_line.starts_with("let") {
-            if let Some(var) = parse_variable(body_line) {
-                fields.push(var);
-            }
-        } else if body_line.starts_with("func") {
-            if let Some(func) = parse_function(lines, index) {
-                methods.push(func);
-                continue;
+fn collect_statement(stmt: &Statement, ast: &mut Ast) {
+    match stmt {
+        Statement::Function { name, params, return_type, body, location } => {
+            ast.functions.push(Function {
+                name: name.clone(),
+                params: params.iter()
+                    .map(|p| match &p.type_name {
+                        Some(t) => format!("{}: {}", p.name, t),
+                        None => p.name.clone(),
+                    })
+                    .collect(),
+                return_type: return_type.clone(),
+                line: location.line.saturating_sub(1),
+                column: location.column.saturating_sub(1),
+            });
+            // Descend into the body too, so `let`s declared inside a
+            // function still show up as variables -- matching the old
+            // scanner's behavior, which didn't distinguish scope either
+            // (a genuinely scope-aware symbol table is a reasonable next
+            // step, not attempted here).
+            collect_statement(body, ast);
+        }
+        Statement::Let { name, location, .. } => {
+            ast.variables.push(Variable {
+                name: name.clone(),
+                type_: None,
+                line: location.line.saturating_sub(1),
+                column: location.column.saturating_sub(1),
+            });
+        }
+        Statement::Import { path, .. } => {
+            ast.imports.push(path.clone());
+        }
+        Statement::Block { statements, .. } => collect_statements(statements, ast),
+        Statement::If { then_branch, else_branch, .. } => {
+            collect_statement(then_branch, ast);
+            if let Some(else_stmt) = else_branch {
+                collect_statement(else_stmt, ast);
             }
         }
-
-        brace_count += lines[*index].chars().filter(|&c| c == '{').count();
-        brace_count -= lines[*index].chars().filter(|&c| c == '}').count();
-        *index += 1;
+        Statement::While { body, .. } => collect_statement(body, ast),
+        Statement::For { init, body, .. } => {
+            // The loop's own `let i = 0;` init clause is a real variable
+            // declaration too.
+            collect_statement(init, ast);
+            collect_statement(body, ast);
+        }
+        Statement::Expression { .. } | Statement::Return { .. } | Statement::Assign { .. } => {}
     }
-
-    Some(Class {
-        name,
-        fields,
-        methods,
-        line: *index - 1,
-        column: 0,
-    })
 }
 
-fn parse_variable(line: &str) -> Option<Variable> {
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.len() < 2 {
-        return None;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_top_level_function_with_correct_position() {
+        let ast = parse("func add(a: int, b: int) -> int {\n    return a + b;\n}\n").unwrap();
+        assert_eq!(ast.functions.len(), 1);
+        let f = &ast.functions[0];
+        assert_eq!(f.name, "add");
+        assert_eq!(f.return_type.as_deref(), Some("int"));
+        assert_eq!(f.params, vec!["a: int".to_string(), "b: int".to_string()]);
+        // `func` starts at line 1, column 1 in the compiler's 1-indexed
+        // Location -- 0-indexed for LSP, so (0, 0).
+        assert_eq!(f.line, 0);
+        assert_eq!(f.column, 0);
     }
 
-    let name = parts[1].trim_end_matches(';').to_string();
-    let mut type_ = None;
-
-    if let Some(colon_pos) = line.find(':') {
-        let after_colon = &line[colon_pos + 1..].trim();
-        if let Some(equal_pos) = after_colon.find('=') {
-            type_ = Some(after_colon[..equal_pos].trim().to_string());
-        }
+    #[test]
+    fn does_not_get_confused_by_braces_inside_strings() {
+        // The old line-scanner's brace-counting would miscount here.
+        let ast = parse("func f() {\n    println(\"{ not a real brace }\");\n}\n").unwrap();
+        assert_eq!(ast.functions.len(), 1);
     }
 
-    Some(Variable {
-        name,
-        type_,
-        line: 0,
-        column: 0,
-    })
+    #[test]
+    fn finds_variables_declared_inside_a_function_body() {
+        let ast = parse("func main() {\n    let x = 5;\n    let y = 10;\n}\n").unwrap();
+        let names: Vec<&str> = ast.variables.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, vec!["x", "y"]);
+    }
+
+    #[test]
+    fn finds_variables_nested_inside_if_and_while() {
+        let ast = parse("func main() {\n    if true {\n        let a = 1;\n    }\n    while true {\n        let b = 2;\n    }\n}\n").unwrap();
+        let names: Vec<&str> = ast.variables.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn finds_for_loop_init_variable() {
+        let ast = parse("func main() {\n    for let i = 0; i < 3; i = i + 1 {\n        let doubled = i * 2;\n    }\n}\n").unwrap();
+        let names: Vec<&str> = ast.variables.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, vec!["i", "doubled"]);
+    }
+
+    #[test]
+    fn collects_import_paths() {
+        let ast = parse("import \"core\";\nfunc main() { }\n").unwrap();
+        assert_eq!(ast.imports, vec!["core".to_string()]);
+    }
+
+    #[test]
+    fn classes_are_always_empty_since_the_language_has_none_yet() {
+        // Deliberately not testing "class Foo { ... }" text here: unlike
+        // the old scanner, this parser doesn't pretend classes parse just
+        // because the word "class" appears -- there is currently no
+        // Statement::Class in the real AST at all.
+        let ast = parse("func main() { }\n").unwrap();
+        assert!(ast.classes.is_empty());
+    }
+
+    #[test]
+    fn unparseable_source_returns_none_rather_than_a_wrong_guess() {
+        assert!(parse("func main() {").is_none());
+    }
 }

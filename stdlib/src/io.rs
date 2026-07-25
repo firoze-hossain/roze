@@ -1,5 +1,11 @@
 //! Input/Output operations for Roze
 //!
+//! NOTE: this file is not currently wired into the compiler at all, and
+//! is unrelated to Roze's actual IO support. Real file/network IO is
+//! implemented as compiler intrinsics backed by real JVM calls -- see
+//! compiler/src/codegen/jvm.rs and stdlib/src/io.roze for the real,
+//! working implementation and its documentation.
+//!
 //! This module provides console I/O and file operations
 
 use std::io::Write;

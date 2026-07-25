@@ -1,5 +1,11 @@
 //! Core functionality for Roze standard library
 //!
+//! NOTE: this file is not currently wired into the compiler at all, and
+//! is unrelated to Roze's actual Core support. Real Core (string, math)
+//! is implemented as compiler intrinsics -- see
+//! compiler/src/codegen/jvm.rs and stdlib/src/core.roze for the real,
+//! working implementation and its documentation.
+//!
 //! This module provides basic types and functions
 
 pub mod types {

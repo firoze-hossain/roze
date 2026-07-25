@@ -1,0 +1,59 @@
+// stdlib/src/collections.roze
+//
+// Collections (List, Map) reference for Roze.
+//
+// STATUS: every function below is a compiler INTRINSIC, the same way
+// Core's string/math functions are (see stdlib/src/core.roze) -- the
+// compiler recognizes these names directly (see
+// compiler/src/codegen/jvm.rs) and maps them to real JVM
+// java.util.ArrayList / java.util.HashMap calls. They're available in
+// every program automatically, with no import required, and this file
+// is never actually read by the compiler.
+//
+// Why functions instead of `list[0]` / real generics: Roze doesn't have
+// array-literal or index-operator syntax, or generics, yet. A `list`
+// holds untyped (Object-boxed) elements -- `list_get` always returns an
+// untyped value, the same way an untyped function parameter does. There's
+// also no `for-each` loop yet; iterate with a C-style `for` and
+// `list_length`, e.g.:
+//
+//   for let i = 0; i < list_length(items); i = i + 1 {
+//       println(list_get(items, i));
+//   }
+//
+// See ROADMAP.md for where real array syntax and generics fit into the
+// bigger picture.
+
+// ---- List ----
+// list_new()             -> list : a new, empty list
+// list_push(l, item)     -> bool : appends item to the end of l
+// list_get(l, index)     -> ?    : the element at index
+// list_set(l, index, v)  -> ?    : replaces the element at index with v, returns the old value
+// list_remove(l, index)  -> ?    : removes and returns the element at index
+// list_length(l)         -> int  : the number of elements in l
+// list_is_empty(l)       -> bool : true if l has no elements
+
+// ---- Map ----
+// map_new()          -> map  : a new, empty map
+// map_put(m, k, v)   -> ?    : associates key k with value v, returns the previous value (or nothing, if there wasn't one)
+// map_get(m, k)      -> ?    : the value associated with key k
+// map_has(m, k)      -> bool : true if m has an entry for key k
+// map_remove(m, k)   -> ?    : removes and returns the value associated with key k
+// map_size(m)        -> int  : the number of entries in m
+// map_is_empty(m)    -> bool : true if m has no entries
+
+// Example:
+//
+// func main() {
+//     let fruits = list_new();
+//     list_push(fruits, "apple");
+//     list_push(fruits, "banana");
+//     for let i = 0; i < list_length(fruits); i = i + 1 {
+//         println(list_get(fruits, i));
+//     }
+//
+//     let ages = map_new();
+//     map_put(ages, "alice", 30);
+//     println(map_get(ages, "alice"));
+//     println(map_has(ages, "bob"));
+// }

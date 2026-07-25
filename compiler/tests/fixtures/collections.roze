@@ -1,0 +1,26 @@
+func main() {
+    let items = list_new();
+    list_push(items, "apple");
+    list_push(items, "banana");
+    list_push(items, "cherry");
+
+    println(list_length(items));
+    println(list_get(items, 0));
+    list_set(items, 1, "blueberry");
+    println(list_get(items, 1));
+    list_remove(items, 0);
+    println(list_length(items));
+    println(list_get(items, 0));
+    println(list_is_empty(items));
+
+    let ages = map_new();
+    map_put(ages, "alice", 30);
+    map_put(ages, "bob", 25);
+    println(map_size(ages));
+    println(map_get(ages, "alice"));
+    println(map_has(ages, "bob"));
+    println(map_has(ages, "carol"));
+    map_remove(ages, "alice");
+    println(map_size(ages));
+    println(map_is_empty(ages));
+}

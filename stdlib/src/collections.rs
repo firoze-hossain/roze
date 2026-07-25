@@ -1,5 +1,14 @@
 //! Collections library for Roze
 //!
+//! NOTE: this file is not currently wired into the compiler at all, and
+//! is unrelated to Roze's actual List/Map support. Real Collections are
+//! implemented as compiler intrinsics backed by java.util.ArrayList/
+//! HashMap -- see compiler/src/codegen/jvm.rs and
+//! stdlib/src/collections.roze for the real, working implementation and
+//! its documentation. This Rust-side generic ArrayList was an earlier,
+//! abandoned design direction, kept here for reference but not used by
+//! anything.
+//!
 //! This module provides data structures like ArrayList, HashMap, etc.
 
 pub mod list {

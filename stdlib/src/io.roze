@@ -1,44 +1,40 @@
 // stdlib/src/io.roze
-// Input/Output functions
+//
+// IO (file, network) reference for Roze.
+//
+// STATUS: every function below is a compiler INTRINSIC, the same way
+// Core's string/math functions are (see stdlib/src/core.roze) -- the
+// compiler recognizes these names directly (see
+// compiler/src/codegen/jvm.rs) and maps them to real JVM calls. They're
+// available in every program automatically, with no import required,
+// and this file is never actually read by the compiler.
+//
+// Errors (file not found, permission denied, a network request that
+// fails) surface as a runtime crash rather than a Roze-level error
+// value -- Roze doesn't have a Result/Option type yet to report failure
+// any other way. See ROADMAP.md.
 
-// Print to console without newline
-func print(x) {
-    // Native implementation
-    println(x);
-}
+// ---- File ----
+// read_file(path)            -> string : the file's full contents
+// write_file(path, content)  -> void   : overwrites the file with content
+// append_file(path, content) -> void   : appends content to the end of the file
+// file_exists(path)          -> bool   : true if a file exists at path
+// delete_file(path)          -> bool   : true if a file existed and was deleted
+// read_lines(path)           -> list   : the file's contents, one string per line
 
-// Print to console with newline
-func println(x) {
-    // Native implementation
-}
+// ---- Network ----
+// http_get(url)         -> string : the response body of a GET request
+// http_post(url, body)  -> string : the response body of a POST request
+//                                   (sent with Content-Type: application/json)
 
-// Read a line from console
-func read_line() -> string {
-    // Will be implemented in native code
-    return "";
-}
-
-// Read all input
-func read_all() -> string {
-    // Will be implemented in native code
-    return "";
-}
-
-// File operations
-func file_read(path: string) -> string {
-    // Will be implemented in native code
-    return "";
-}
-
-func file_write(path: string, content: string) {
-    // Will be implemented in native code
-}
-
-func file_exists(path: string) -> bool {
-    // Will be implemented in native code
-    return false;
-}
-
-func file_delete(path: string) {
-    // Will be implemented in native code
-}
+// Example:
+//
+// func main() {
+//     write_file("notes.txt", "hello");
+//     append_file("notes.txt", "\nworld");
+//     println(read_file("notes.txt"));
+//     println(file_exists("notes.txt"));
+//     delete_file("notes.txt");
+//
+//     println(http_get("https://example.com"));
+// }

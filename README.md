@@ -43,14 +43,23 @@ Currently working:
 - A small built-in **Core** library, always available with no import:
   `string_length`, `string_concat`, `string_to_upper`, `string_to_lower`,
   `abs`, `max`, `min`, `to_string`, `to_int`, `is_number`, `is_string`
+- **Collections**: `list_new`/`push`/`get`/`set`/`remove`/`length`/`is_empty`
+  and `map_new`/`put`/`get`/`has`/`remove`/`size`/`is_empty`, backed by
+  real `java.util.ArrayList`/`HashMap` (no array-literal syntax or
+  generics yet, so these are plain functions -- see
+  `stdlib/src/collections.roze`)
+- **IO**: `read_file`/`write_file`/`append_file`/`file_exists`/
+  `delete_file`/`read_lines`, and `http_get`/`http_post` -- see
+  `stdlib/src/io.roze`
 - `println`
 
-Not yet implemented: arrays/collections, structs/classes, and a real
-standard library beyond Core. Also, Roze identifiers that happen to
-match a Java reserved word (e.g. a function named `assert`) currently
-fail to compile -- see ROADMAP.md. See [ROADMAP.md](./ROADMAP.md) for
-the full picture, including which pieces are genuinely done vs. in
-progress.
+Not yet implemented: array-literal syntax, generics, structs/classes,
+and a Result/Option type for error handling (file/network errors
+currently surface as a runtime crash). Also, Roze identifiers that
+happen to match a Java reserved word (e.g. a function named `assert`)
+currently fail to compile -- see ROADMAP.md. See
+[ROADMAP.md](./ROADMAP.md) for the full picture, including which pieces
+are genuinely done vs. in progress.
 
 ## Building
 

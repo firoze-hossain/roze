@@ -5,6 +5,97 @@ use std::collections::HashMap;
 /// Java type used for Roze's "no annotation given" / dynamic-ish values.
 const OBJECT_TYPE: &str = "Object";
 
+/// Fixed helper methods emitted into every generated class, backing the
+/// file/network intrinsics. Java requires checked exceptions
+/// (`IOException`, `InterruptedException`) to be caught or declared;
+/// Roze has no `throws` syntax and generated methods never declare any,
+/// so these wrap each checked-exception-throwing call once here and
+/// rethrow as an unchecked `RuntimeException` -- callers just see a
+/// plain method call with no exception-handling of their own to write,
+/// consistent with Roze not having a Result/Option type yet (see
+/// ROADMAP.md).
+const IO_HELPER_METHODS: &str = r#"
+    private static String __roze_read_file(String path) {
+        try {
+            return new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)));
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void __roze_write_file(String path, String content) {
+        try {
+            java.nio.file.Files.write(java.nio.file.Paths.get(path), content.getBytes());
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void __roze_append_file(String path, String content) {
+        try {
+            java.nio.file.Files.write(
+                java.nio.file.Paths.get(path),
+                content.getBytes(),
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.APPEND
+            );
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static boolean __roze_delete_file(String path) {
+        try {
+            return java.nio.file.Files.deleteIfExists(java.nio.file.Paths.get(path));
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static java.util.List __roze_read_lines(String path) {
+        try {
+            return new java.util.ArrayList(java.nio.file.Files.readAllLines(java.nio.file.Paths.get(path)));
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static String __roze_http_get(String url) {
+        try {
+            java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(url))
+                .GET()
+                .build();
+            java.net.http.HttpResponse<String> response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+            return response.body();
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static String __roze_http_post(String url, String body) {
+        try {
+            java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(url))
+                .header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
+                .build();
+            java.net.http.HttpResponse<String> response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+            return response.body();
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
+    }
+"#;
+
 /// Returns the Java return type for a built-in Core (string/math)
 /// intrinsic, or None if `name` isn't one. Keep this in sync with
 /// `semantic::builtin_signatures`.
@@ -21,12 +112,64 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "to_int" => Some("int"),
         "is_number" => Some("boolean"),
         "is_string" => Some("boolean"),
+
+        "list_new" => Some("java.util.List"),
+        "list_push" => Some("boolean"),
+        "list_get" => Some(OBJECT_TYPE),
+        "list_set" => Some(OBJECT_TYPE),
+        "list_remove" => Some(OBJECT_TYPE),
+        "list_length" => Some("int"),
+        "list_is_empty" => Some("boolean"),
+
+        "map_new" => Some("java.util.Map"),
+        "map_put" => Some(OBJECT_TYPE),
+        "map_get" => Some(OBJECT_TYPE),
+        "map_has" => Some("boolean"),
+        "map_remove" => Some(OBJECT_TYPE),
+        "map_size" => Some("int"),
+        "map_is_empty" => Some("boolean"),
+
+        "read_file" => Some("String"),
+        "write_file" => Some("void"),
+        "append_file" => Some("void"),
+        "file_exists" => Some("boolean"),
+        "delete_file" => Some("boolean"),
+        "read_lines" => Some("java.util.List"),
+
+        "http_get" => Some("String"),
+        "http_post" => Some("String"),
+
         _ => None,
     }
 }
 
 fn is_intrinsic(name: &str) -> bool {
     intrinsic_return_type(name).is_some()
+}
+
+/// Escapes a raw string value (already fully resolved by the Roze
+/// lexer -- e.g. a literal `\n` in the source is, by this point, a real
+/// newline byte, not the two characters backslash-n) back into the
+/// contents of a Java string literal. Must handle every control
+/// character the lexer can produce, not just backslash/quote: emitting a
+/// raw newline (or tab, or carriage return) directly into generated
+/// Java source text produces invalid Java ("unclosed string literal"),
+/// since Java string literals can't contain a literal newline.
+fn escape_for_java_string_literal(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),  // backspace
+            '\u{c}' => out.push_str("\\f"),  // form feed
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Maps a Roze source-level type annotation to a Java type name.
@@ -39,6 +182,8 @@ fn roze_type_to_java(type_name: Option<&str>, default_java: &str) -> String {
         Some("string") => "String".to_string(),
         Some("bool") => "boolean".to_string(),
         Some("void") => "void".to_string(),
+        Some("list") | Some("List") => "java.util.List".to_string(),
+        Some("map") | Some("Map") => "java.util.Map".to_string(),
         Some(_) => OBJECT_TYPE.to_string(),
         None => default_java.to_string(),
     }
@@ -123,6 +268,7 @@ impl JavaSourceGenerator {
             source.push_str("    }\n");
         }
 
+        source.push_str(IO_HELPER_METHODS);
         source.push_str("}\n");
 
         Ok(source)
@@ -362,8 +508,7 @@ impl JavaSourceGenerator {
     fn generate_expression(&self, source: &mut String, expr: &Expression, scope: &Scope) -> Result<()> {
         match expr {
             Expression::String { value, .. } => {
-                let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-                source.push_str(&format!("\"{}\"", escaped));
+                source.push_str(&format!("\"{}\"", escape_for_java_string_literal(value)));
             }
             Expression::Number { value, .. } => {
                 source.push_str(value);
@@ -514,6 +659,143 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[0], scope)?;
                 source.push_str(") instanceof String)");
             }
+
+            // ---- Collections: List ----
+            "list_new" if arguments.is_empty() => {
+                source.push_str("new java.util.ArrayList()");
+            }
+            "list_push" if arguments.len() == 2 => {
+                self.generate_receiver(source, &arguments[0], scope)?;
+                source.push_str(".add(");
+                self.generate_expression(source, &arguments[1], scope)?;
+                source.push(')');
+            }
+            "list_get" if arguments.len() == 2 => {
+                self.generate_receiver(source, &arguments[0], scope)?;
+                source.push_str(".get(");
+                self.generate_index_arg(source, &arguments[1], scope)?;
+                source.push(')');
+            }
+            "list_set" if arguments.len() == 3 => {
+                self.generate_receiver(source, &arguments[0], scope)?;
+                source.push_str(".set(");
+                self.generate_index_arg(source, &arguments[1], scope)?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2], scope)?;
+                source.push(')');
+            }
+            "list_remove" if arguments.len() == 2 => {
+                // Must be a genuine primitive int (see generate_index_arg):
+                // List.remove has both remove(int) and remove(Object)
+                // overloads, and a boxed Integer argument binds to
+                // remove(Object) -- remove-by-equality, not by index.
+                self.generate_receiver(source, &arguments[0], scope)?;
+                source.push_str(".remove(");
+                self.generate_index_arg(source, &arguments[1], scope)?;
+                source.push(')');
+            }
+            "list_length" if arguments.len() == 1 => {
+                self.generate_receiver(source, &arguments[0], scope)?;
+                source.push_str(".size()");
+            }
+            "list_is_empty" if arguments.len() == 1 => {
+                self.generate_receiver(source, &arguments[0], scope)?;
+                source.push_str(".isEmpty()");
+            }
+
+            // ---- Collections: Map ----
+            "map_new" if arguments.is_empty() => {
+                source.push_str("new java.util.HashMap()");
+            }
+            "map_put" if arguments.len() == 3 => {
+                self.generate_receiver(source, &arguments[0], scope)?;
+                source.push_str(".put(");
+                self.generate_expression(source, &arguments[1], scope)?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2], scope)?;
+                source.push(')');
+            }
+            "map_get" if arguments.len() == 2 => {
+                self.generate_receiver(source, &arguments[0], scope)?;
+                source.push_str(".get(");
+                self.generate_expression(source, &arguments[1], scope)?;
+                source.push(')');
+            }
+            "map_has" if arguments.len() == 2 => {
+                self.generate_receiver(source, &arguments[0], scope)?;
+                source.push_str(".containsKey(");
+                self.generate_expression(source, &arguments[1], scope)?;
+                source.push(')');
+            }
+            "map_remove" if arguments.len() == 2 => {
+                self.generate_receiver(source, &arguments[0], scope)?;
+                source.push_str(".remove(");
+                self.generate_expression(source, &arguments[1], scope)?;
+                source.push(')');
+            }
+            "map_size" if arguments.len() == 1 => {
+                self.generate_receiver(source, &arguments[0], scope)?;
+                source.push_str(".size()");
+            }
+            "map_is_empty" if arguments.len() == 1 => {
+                self.generate_receiver(source, &arguments[0], scope)?;
+                source.push_str(".isEmpty()");
+            }
+
+            // ---- IO: file ----
+            // Each delegates to a fixed helper method (see
+            // IO_HELPER_METHODS) that wraps the underlying checked
+            // exception and rethrows unchecked.
+            "read_file" if arguments.len() == 1 => {
+                source.push_str("__roze_read_file(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push(')');
+            }
+            "write_file" if arguments.len() == 2 => {
+                source.push_str("__roze_write_file(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1], scope)?;
+                source.push(')');
+            }
+            "append_file" if arguments.len() == 2 => {
+                source.push_str("__roze_append_file(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1], scope)?;
+                source.push(')');
+            }
+            "file_exists" if arguments.len() == 1 => {
+                // Files.exists doesn't throw, so no helper needed.
+                source.push_str("java.nio.file.Files.exists(java.nio.file.Paths.get(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push_str("))");
+            }
+            "delete_file" if arguments.len() == 1 => {
+                source.push_str("__roze_delete_file(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push(')');
+            }
+            "read_lines" if arguments.len() == 1 => {
+                source.push_str("__roze_read_lines(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push(')');
+            }
+
+            // ---- IO: network ----
+            "http_get" if arguments.len() == 1 => {
+                source.push_str("__roze_http_get(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push(')');
+            }
+            "http_post" if arguments.len() == 2 => {
+                source.push_str("__roze_http_post(");
+                self.generate_expression(source, &arguments[0], scope)?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1], scope)?;
+                source.push(')');
+            }
+
             "println" => {
                 source.push_str("System.out.println(");
                 self.generate_println_args(source, arguments, scope)?;
@@ -547,6 +829,39 @@ impl JavaSourceGenerator {
             source.push_str("((Integer)(Object)(");
             self.generate_expression(source, expr, scope)?;
             source.push_str("))");
+            Ok(())
+        }
+    }
+
+    /// Generates an expression used as the receiver of a method call
+    /// (e.g. the list in `list.add(x)`), wrapped in parens as a cheap,
+    /// always-safe guard against needing to reason about whether the
+    /// receiver expression needs them for any particular case.
+    fn generate_receiver(&self, source: &mut String, expr: &Expression, scope: &Scope) -> Result<()> {
+        source.push('(');
+        self.generate_expression(source, expr, scope)?;
+        source.push(')');
+        Ok(())
+    }
+
+    /// Like `generate_int_arg`, but guarantees a genuine primitive `int`
+    /// (via an explicit `.intValue()` unboxing call) rather than
+    /// potentially leaving a boxed `Integer`. Needed specifically for
+    /// `List` index arguments: `List.remove` has both `remove(int)` and
+    /// `remove(Object)` overloads, and a boxed `Integer` argument binds
+    /// to `remove(Object)` (remove-by-equality) since that's reachable
+    /// without any unboxing at all -- silently doing the wrong thing
+    /// rather than failing to compile. `List.get`/`set` don't have that
+    /// particular ambiguity, but using the same guaranteed-primitive
+    /// helper for all three keeps index handling uniform.
+    fn generate_index_arg(&self, source: &mut String, expr: &Expression, scope: &Scope) -> Result<()> {
+        let t = self.infer_type(expr, scope);
+        if t == "int" {
+            self.generate_expression(source, expr, scope)
+        } else {
+            source.push_str("((Integer)(Object)(");
+            self.generate_expression(source, expr, scope)?;
+            source.push_str(")).intValue()");
             Ok(())
         }
     }
@@ -649,5 +964,112 @@ mod tests {
     fn no_main_falls_back_to_placeholder() {
         let java = generate("func helper() { println(\"hi\"); }");
         assert!(java.contains("No main function found"));
+    }
+
+    // ---- Collections ----
+
+    #[test]
+    fn list_operations_map_to_java_list_methods() {
+        let java = generate(
+            "func main() { let l = list_new(); list_push(l, 1); println(list_get(l, 0)); list_set(l, 0, 2); list_remove(l, 0); println(list_length(l)); println(list_is_empty(l)); }"
+        );
+        assert!(java.contains("new java.util.ArrayList()"), "expected list_new -> ArrayList:\n{}", java);
+        assert!(java.contains(").add("), "expected list_push -> .add(:\n{}", java);
+        assert!(java.contains(").get("), "expected list_get -> .get(:\n{}", java);
+        assert!(java.contains(").set("), "expected list_set -> .set(:\n{}", java);
+        assert!(java.contains(").remove("), "expected list_remove -> .remove(:\n{}", java);
+        assert!(java.contains(").size()"), "expected list_length -> .size():\n{}", java);
+        assert!(java.contains(").isEmpty()"), "expected list_is_empty -> .isEmpty():\n{}", java);
+    }
+
+    #[test]
+    fn list_remove_forces_primitive_int_to_avoid_overload_ambiguity() {
+        // List.remove(int) vs remove(Object): an untyped (Object-typed)
+        // index must be explicitly unboxed with .intValue(), or Java
+        // silently picks remove(Object) -- remove-by-equality instead of
+        // remove-by-index.
+        let java = generate("func f(idx) { let l = list_new(); list_remove(l, idx); } func main() { }");
+        assert!(java.contains(".intValue()"), "expected an explicit .intValue() unboxing for a non-int index:\n{}", java);
+    }
+
+    #[test]
+    fn map_operations_map_to_java_map_methods() {
+        let java = generate(
+            "func main() { let m = map_new(); map_put(m, \"a\", 1); println(map_get(m, \"a\")); println(map_has(m, \"a\")); map_remove(m, \"a\"); println(map_size(m)); println(map_is_empty(m)); }"
+        );
+        assert!(java.contains("new java.util.HashMap()"), "expected map_new -> HashMap:\n{}", java);
+        assert!(java.contains(").put("), "expected map_put -> .put(:\n{}", java);
+        assert!(java.contains(").get("), "expected map_get -> .get(:\n{}", java);
+        assert!(java.contains(").containsKey("), "expected map_has -> .containsKey(:\n{}", java);
+        assert!(java.contains(").remove("), "expected map_remove -> .remove(:\n{}", java);
+        assert!(java.contains(").size()"), "expected map_size -> .size():\n{}", java);
+        assert!(java.contains(").isEmpty()"), "expected map_is_empty -> .isEmpty():\n{}", java);
+    }
+
+    #[test]
+    fn list_and_map_declared_types_use_java_util() {
+        let java = generate("func main() { let l = list_new(); let m = map_new(); }");
+        assert!(java.contains("java.util.List l ="), "expected 'java.util.List l =':\n{}", java);
+        assert!(java.contains("java.util.Map m ="), "expected 'java.util.Map m =':\n{}", java);
+    }
+
+    // ---- IO: file ----
+
+    #[test]
+    fn file_intrinsics_delegate_to_helper_methods() {
+        let java = generate(
+            "func main() { write_file(\"a\", \"b\"); append_file(\"a\", \"c\"); read_file(\"a\"); delete_file(\"a\"); read_lines(\"a\"); }"
+        );
+        assert!(java.contains("__roze_write_file("));
+        assert!(java.contains("__roze_append_file("));
+        assert!(java.contains("__roze_read_file("));
+        assert!(java.contains("__roze_delete_file("));
+        assert!(java.contains("__roze_read_lines("));
+        // Every helper method must actually be defined in the class.
+        assert!(java.contains("private static void __roze_write_file"));
+        assert!(java.contains("private static void __roze_append_file"));
+        assert!(java.contains("private static String __roze_read_file"));
+        assert!(java.contains("private static boolean __roze_delete_file"));
+        assert!(java.contains("private static java.util.List __roze_read_lines"));
+    }
+
+    #[test]
+    fn file_exists_does_not_need_a_helper() {
+        // Files.exists doesn't throw a checked exception, so it can be
+        // called directly without a try/catch-wrapping helper.
+        let java = generate("func main() { file_exists(\"a\"); }");
+        assert!(java.contains("java.nio.file.Files.exists("));
+        assert!(!java.contains("__roze_file_exists"));
+    }
+
+    // ---- IO: network ----
+
+    #[test]
+    fn network_intrinsics_delegate_to_helper_methods() {
+        let java = generate("func main() { http_get(\"http://x\"); http_post(\"http://x\", \"body\"); }");
+        assert!(java.contains("__roze_http_get("));
+        assert!(java.contains("__roze_http_post("));
+        assert!(java.contains("private static String __roze_http_get"));
+        assert!(java.contains("private static String __roze_http_post"));
+        assert!(java.contains("java.net.http.HttpClient"));
+    }
+
+    // ---- String escaping ----
+
+    #[test]
+    fn string_escapes_are_re_escaped_for_java() {
+        // The Roze lexer resolves "\n" in source into a real newline
+        // byte; codegen must re-escape it back to "\n" in the generated
+        // Java text, or the .java file contains a raw newline inside a
+        // string literal (invalid Java: "unclosed string literal").
+        let java = generate("func main() { println(\"a\\nb\\tc\"); }");
+        assert!(java.contains("\"a\\nb\\tc\""), "expected re-escaped \\n and \\t, got:\n{}", java);
+        assert!(!java.contains("\"a\nb"), "must not contain a raw newline inside the Java string literal:\n{}", java);
+    }
+
+    #[test]
+    fn backslash_and_quote_are_still_escaped() {
+        let java = generate(r#"func main() { println("a\\b\"c"); }"#);
+        assert!(java.contains(r#""a\\b\"c""#), "expected escaped backslash and quote, got:\n{}", java);
     }
 }

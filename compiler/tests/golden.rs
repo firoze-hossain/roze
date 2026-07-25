@@ -184,3 +184,131 @@ fn missing_import_reports_cleanly() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Import error"), "expected an import error, got:\n{}", stderr);
 }
+
+#[test]
+fn collections_list_and_map() {
+    let (stdout, stderr, ok) = run_fixture("collections.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "3\napple\nblueberry\n2\nblueberry\nfalse\n2\n30\ntrue\nfalse\n1\nfalse";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
+fn file_io_read_write_append_delete() {
+    let (stdout, stderr, ok) = run_fixture("file_io.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "true\nHello from Roze!\nHello from Roze!\nSecond line\n2\nHello from Roze!\nSecond line\ntrue\nfalse";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+/// A minimal, hand-rolled HTTP/1.1 server for testing `http_get`/
+/// `http_post` against real network I/O without depending on any
+/// external network access -- loopback-only, so this works the same
+/// regardless of the sandbox/CI environment's network policy. Handles
+/// exactly the two requests the network golden test below makes, then
+/// its thread finishes.
+mod test_http_server {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    pub fn start() -> (u16, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind test HTTP server");
+        let port = listener.local_addr().unwrap().port();
+
+        let handle = std::thread::spawn(move || {
+            for stream in listener.incoming().take(2) {
+                if let Ok(mut stream) = stream {
+                    handle_one_request(&mut stream);
+                }
+            }
+        });
+
+        (port, handle)
+    }
+
+    fn handle_one_request(stream: &mut TcpStream) {
+        let mut buf = [0u8; 8192];
+        let mut request = Vec::new();
+
+        loop {
+            let n = stream.read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            request.extend_from_slice(&buf[..n]);
+            if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+
+        let header_end = request.windows(4).position(|w| w == b"\r\n\r\n").unwrap_or(request.len());
+        let header_text = String::from_utf8_lossy(&request[..header_end]).to_string();
+        let request_line = header_text.lines().next().unwrap_or("");
+        let mut parts = request_line.split_whitespace();
+        let method = parts.next().unwrap_or("GET").to_string();
+        let path = parts.next().unwrap_or("/").to_string();
+
+        let content_length: usize = header_text
+            .lines()
+            .find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().to_string()))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+
+        let body_start = (header_end + 4).min(request.len());
+        let mut body = request[body_start..].to_vec();
+        while body.len() < content_length {
+            let n = stream.read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            body.extend_from_slice(&buf[..n]);
+        }
+        let body_text = String::from_utf8_lossy(&body).to_string();
+
+        let response_body = if method == "GET" {
+            format!("hello from GET {}", path)
+        } else {
+            format!("echo: {}", body_text)
+        };
+
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response_body.len(),
+            response_body
+        );
+        let _ = stream.write_all(response.as_bytes());
+        let _ = stream.flush();
+    }
+}
+
+#[test]
+fn network_http_get_and_post_against_a_local_server() {
+    let (port, _server) = test_http_server::start();
+
+    let dir = scratch_dir("network");
+    let source = format!(
+        "func main() {{\n    println(http_get(\"http://127.0.0.1:{port}/hello\"));\n    println(http_post(\"http://127.0.0.1:{port}/echo\", \"some data\"));\n}}\n",
+        port = port,
+    );
+    std::fs::write(dir.join("network_test.roze"), source).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("run")
+        .arg("network_test.roze")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+
+    assert!(
+        output.status.success(),
+        "build/run failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        program_output(&stdout).trim_end(),
+        "hello from GET /hello\necho: some data"
+    );
+}

@@ -11,6 +11,12 @@ pub enum Type {
     Bool,
     Void,
     Unknown,
+    /// A list of untyped (Object-boxed) elements. Roze doesn't have
+    /// generics yet, so element type isn't tracked -- `list_get` always
+    /// returns Unknown, the same way an untyped function parameter does.
+    List,
+    /// A map of untyped (Object-boxed) keys/values, for the same reason.
+    Map,
     Function {
         params: Vec<Type>,
         return_type: Box<Type>,
@@ -28,6 +34,8 @@ impl Type {
             "string" => Type::String,
             "bool" => Type::Bool,
             "void" => Type::Void,
+            "list" | "List" => Type::List,
+            "map" | "Map" => Type::Map,
             _ => Type::Unknown,
         }
     }
@@ -39,6 +47,8 @@ impl Type {
             Type::Bool => "boolean".to_string(),
             Type::Void => "void".to_string(),
             Type::Unknown => "Object".to_string(),
+            Type::List => "java.util.List".to_string(),
+            Type::Map => "java.util.Map".to_string(),
             Type::Function { .. } => "Object".to_string(),
         }
     }
@@ -52,6 +62,8 @@ impl std::fmt::Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::Void => write!(f, "void"),
             Type::Unknown => write!(f, "<unknown>"),
+            Type::List => write!(f, "list"),
+            Type::Map => write!(f, "map"),
             Type::Function { .. } => write!(f, "function"),
         }
     }
@@ -163,6 +175,43 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("to_int", vec![Type::String], Type::Int),
         ("is_number", vec![Type::Unknown], Type::Bool),
         ("is_string", vec![Type::Unknown], Type::Bool),
+
+        // ---- Collections (List, Map) ----
+        // No generics yet, so elements/keys/values are all Unknown
+        // (Object-boxed at the Java level) -- the same representation an
+        // untyped function parameter already gets.
+        ("list_new", vec![], Type::List),
+        ("list_push", vec![Type::List, Type::Unknown], Type::Bool),
+        ("list_get", vec![Type::List, Type::Int], Type::Unknown),
+        ("list_set", vec![Type::List, Type::Int, Type::Unknown], Type::Unknown),
+        ("list_remove", vec![Type::List, Type::Int], Type::Unknown),
+        ("list_length", vec![Type::List], Type::Int),
+        ("list_is_empty", vec![Type::List], Type::Bool),
+
+        ("map_new", vec![], Type::Map),
+        ("map_put", vec![Type::Map, Type::Unknown, Type::Unknown], Type::Unknown),
+        ("map_get", vec![Type::Map, Type::Unknown], Type::Unknown),
+        ("map_has", vec![Type::Map, Type::Unknown], Type::Bool),
+        ("map_remove", vec![Type::Map, Type::Unknown], Type::Unknown),
+        ("map_size", vec![Type::Map], Type::Int),
+        ("map_is_empty", vec![Type::Map], Type::Bool),
+
+        // ---- IO: file ----
+        // Errors (file not found, permission denied, network failure)
+        // surface as a runtime crash (an unchecked exception from the
+        // JVM) rather than a Roze-level error value -- Roze doesn't have
+        // a Result/Option type yet to report failure any other way. See
+        // ROADMAP.md.
+        ("read_file", vec![Type::String], Type::String),
+        ("write_file", vec![Type::String, Type::String], Type::Void),
+        ("append_file", vec![Type::String, Type::String], Type::Void),
+        ("file_exists", vec![Type::String], Type::Bool),
+        ("delete_file", vec![Type::String], Type::Bool),
+        ("read_lines", vec![Type::String], Type::List),
+
+        // ---- IO: network ----
+        ("http_get", vec![Type::String], Type::String),
+        ("http_post", vec![Type::String, Type::String], Type::String),
     ]
 }
 
@@ -529,6 +578,67 @@ mod tests {
             "func main() { println(abs(-5)); println(string_length(\"hi\")); }"
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn collections_intrinsics_type_check() {
+        let result = check_source(
+            "func main() { \
+                let l = list_new(); \
+                list_push(l, 1); \
+                let x = list_get(l, 0); \
+                list_set(l, 0, 2); \
+                list_remove(l, 0); \
+                println(list_length(l)); \
+                println(list_is_empty(l)); \
+                let m = map_new(); \
+                map_put(m, \"a\", 1); \
+                let v = map_get(m, \"a\"); \
+                println(map_has(m, \"a\")); \
+                map_remove(m, \"a\"); \
+                println(map_size(m)); \
+                println(map_is_empty(m)); \
+            }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn list_and_map_type_annotations_are_recognized() {
+        let result = check_source(
+            "func takes_a_list(l: list) -> list { return l; } \
+             func takes_a_map(m: map) -> map { return m; } \
+             func main() { \
+                let l = takes_a_list(list_new()); \
+                let m = takes_a_map(map_new()); \
+             }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn reassigning_a_list_variable_to_a_map_is_an_error() {
+        let result = check_source(
+            "func main() { let l = list_new(); l = map_new(); }"
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn file_and_network_intrinsics_type_check() {
+        let result = check_source(
+            "func main() { \
+                write_file(\"a\", \"b\"); \
+                append_file(\"a\", \"c\"); \
+                println(read_file(\"a\")); \
+                println(file_exists(\"a\")); \
+                println(delete_file(\"a\")); \
+                let lines = read_lines(\"a\"); \
+                println(http_get(\"http://example.com\")); \
+                println(http_post(\"http://example.com\", \"body\")); \
+            }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
     }
 
     #[test]

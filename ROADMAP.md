@@ -143,13 +143,58 @@ these tools end to end rather than reading the code.
 
 ## Phase 3: Standard Library
 
-Core (string, math) is done -- see Phase 1. The module system needed to
-actually use a standard library (Phase 1.5) is also done now, so these
-are unblocked except where noted:
+Core (string, math) is done -- see Phase 1. IO and Collections are now
+done too. Both turned up a real bug along the way, same as every phase
+before this one -- found by actually compiling and running programs
+that use them, not just by writing the feature and assuming it works.
 
-- [ ] IO (`file`, `network`)
-- [ ] Collections (`List`, `Map`) -- also blocked on the language having arrays/generics at all, which don't exist yet
-- [ ] Web (`HTTP`, `JSON`)
+- [x] **Collections (`List`, `Map`)**. The original note here was right
+  that this is "blocked on the language having arrays/generics at all" --
+  rather than wait on that (a much larger language-design undertaking,
+  see below), `list_new`/`push`/`get`/`set`/`remove`/`length`/`is_empty`
+  and `map_new`/`put`/`get`/`has`/`remove`/`size`/`is_empty` are
+  implemented as compiler intrinsics, the same pattern as Core --
+  backed by real `java.util.ArrayList`/`HashMap`, with elements/keys/
+  values all untyped (Object-boxed), since there's no generics to give
+  them a real element type yet. Iterate with a C-style `for` and
+  `list_length` (no `for-each` yet). See `stdlib/src/collections.roze`.
+  - Found: `List.remove` has both `remove(int)` and `remove(Object)`
+    overloads, and a boxed `Integer` index silently binds to
+    `remove(Object)` -- remove-by-equality instead of remove-by-index.
+    Fixed by forcing index arguments to a genuine primitive `int` via an
+    explicit `.intValue()` unboxing call.
+- [x] **IO (`file`, `network`)**. `read_file`/`write_file`/`append_file`/
+  `file_exists`/`delete_file`/`read_lines`, and `http_get`/`http_post`
+  via `java.net.http.HttpClient`. Also intrinsics, also backed by real
+  JVM calls. Errors (file not found, a failed request) surface as a
+  runtime crash rather than a Roze-level error value -- Roze doesn't
+  have a Result/Option type yet (see the "bigger picture" section
+  below for where that fits). Java requires checked exceptions
+  (`IOException`, `InterruptedException`) to be caught or declared, and
+  Roze has no `throws` syntax, so these delegate to a fixed set of
+  helper methods (emitted into every generated class) that catch and
+  rethrow as unchecked. See `stdlib/src/io.roze`.
+  - Found (unrelated to IO specifically, but found while testing it): a
+    Roze string containing `\n`/`\t`/`\r` -- e.g.
+    `append_file(path, "\nmore text")` -- generated invalid Java. The
+    Roze lexer resolves `\n` in source into a real newline byte, and
+    codegen was only escaping backslash/quote when re-emitting a string
+    into generated Java source text, so the raw newline landed directly
+    inside a Java string literal ("unclosed string literal"). Fixed
+    with a proper escape function covering every control character the
+    lexer can produce.
+  - Tested for real, not just structurally: file tests actually
+    read/write/append/delete real files and check the content; the
+    network test spins up a minimal hand-rolled HTTP/1.1 server on
+    localhost (raw `TcpListener`, no new dependency) so `http_get`/
+    `http_post` are exercised against genuine network I/O without
+    depending on external network access.
+- [ ] Web (`HTTP`, `JSON`) -- `http_get`/`http_post` above cover the
+  client side; a JSON encode/decode pair (probably also intrinsics,
+  parsing into/out of nested `list`/`map` values) is the natural next
+  piece, plus an HTTP *server* story if "Spring-Boot-style enterprise
+  servers" (see below) is going to mean anything concrete on the JVM
+  backend.
 - [ ] Database (`SQL`)
 
 ## The bigger picture: one language, many targets
@@ -239,10 +284,17 @@ Concretely:
 2. ~~Phase 2~~ -- done: unified the LSP's parser with the compiler's,
    smoke-tested and fixed real bugs in `roze-build`/`roze-pkg`, added a
    genuine LSP protocol test standing in for a VS Code smoke test.
-3. **Phase 3 (Core is done; Collections/IO next)**, using the new module
-   system, in parallel with:
+3. ~~Phase 3 (Core, Collections, IO)~~ -- done, as compiler intrinsics.
+   Web (JSON)/DB remain, and are natural next additions to the same
+   intrinsic-based approach.
 4. **Native backend design** (memory model decision + LLVM/Cranelift
    spike), so systems/games/desktop work has *somewhere to go* instead of
-   being permanently "later."
+   being permanently "later." This is now the most consequential
+   open decision in the whole roadmap: Core/Collections/IO all being
+   done on the JVM backend, using real generics-shaped intrinsics,
+   makes it more tempting to keep extending that backend indefinitely --
+   worth deliberately checking that against the memory-model tradeoffs
+   in "The bigger picture" below before that becomes the path of least
+   resistance by default rather than by choice.
 5. Everything else (Web/DB stdlib, WASM, embedded, self-hosting) follows
    naturally once the above are in place.

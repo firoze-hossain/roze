@@ -1,0 +1,16 @@
+func main() {
+    write_file("golden_test_output.txt", "Hello from Roze!");
+    println(file_exists("golden_test_output.txt"));
+    println(read_file("golden_test_output.txt"));
+
+    append_file("golden_test_output.txt", "\nSecond line");
+    println(read_file("golden_test_output.txt"));
+
+    let lines = read_lines("golden_test_output.txt");
+    println(list_length(lines));
+    println(list_get(lines, 0));
+    println(list_get(lines, 1));
+
+    println(delete_file("golden_test_output.txt"));
+    println(file_exists("golden_test_output.txt"));
+}

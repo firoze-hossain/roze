@@ -166,6 +166,36 @@ fn type_error_reports_cleanly() {
 }
 
 #[test]
+fn source_file_in_a_subdirectory_compiles_and_runs() {
+    // The exact bug this guards against: passing a path with a
+    // directory component (e.g. "tests\test.roze" on Windows,
+    // "subdir/test.roze" here) used to embed the *entire path* --
+    // separator and all -- as the literal Java class name, producing
+    // invalid Java ("illegal character: '\'" / similarly for other
+    // separators the naive split('/') didn't handle).
+    let dir = scratch_dir("subdirectory_source");
+    let subdir = dir.join("subdir");
+    std::fs::create_dir_all(&subdir).unwrap();
+    std::fs::write(subdir.join("nested.roze"), "func main() { println(\"hi from a subdirectory\"); }\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("run")
+        .arg("subdir/nested.roze")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(program_output(&stdout).trim_end(), "hi from a subdirectory");
+}
+
+#[test]
 fn missing_import_reports_cleanly() {
     let dir = scratch_dir("missing_import");
     std::fs::write(

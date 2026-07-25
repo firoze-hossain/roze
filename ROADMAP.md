@@ -50,6 +50,31 @@ Everything originally listed here is now done:
   catch it fail, then confirmed they pass again once reverted. Run with
   `cargo test --workspace`.
 
+## Fixed: Windows path handling produced invalid Java class names
+
+Found by an actual Windows user running `roze run tests\test.roze` --
+the compiler crashed with `illegal character: '\'` in the generated
+Java. Root cause: both `codegen::compile_to_java` and `main.rs`'s
+`run_file` derived the Java class name with `input_file.split('/')`,
+which only recognizes forward slashes. On Windows, a path like
+`tests\test.roze` has no forward slash at all, so it passed straight
+through unsplit and the *entire path, backslash and all*, got embedded
+as the literal class name (`public class tests\test { ... }`) -- not a
+legal Java identifier. This is exactly the kind of bug that's invisible
+from a Linux/Mac dev machine or CI runner, since `split('/')` happens
+to work by coincidence there, and only surfaces the moment someone on
+Windows passes a path with a subdirectory in it.
+
+Fixed by extracting one shared, unit-tested `class_name_from_path`
+helper (previously this exact logic was duplicated in two places,
+independently) that treats both `/` and `\` as separators
+unconditionally -- deliberately not delegating to `std::path::Path`,
+whose separator handling is itself platform-conditional (only `/` on
+Unix), which would have made this specific bug untestable from a
+non-Windows machine. Also fixed a smaller latent bug in the same spot:
+`.replace(".roze", "")` stripped every occurrence of that substring
+anywhere in the path, not just a trailing extension.
+
 ## Known issue found but not yet fixed: Java reserved words as identifiers
 
 While validating the fixes above against the pre-existing

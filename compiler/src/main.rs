@@ -132,11 +132,7 @@ fn build_file(filename: &str, debug: bool) -> Result<(), ()> {
 }
 
 fn run_file(filename: &str) -> Result<(), ()> {
-    let class_name = filename
-        .split('/')
-        .last()
-        .unwrap_or(filename)
-        .replace(".roze", "");
+    let class_name = codegen::class_name_from_path(filename);
 
     println!("{} {}", "🚀 Running:".yellow(), class_name);
 

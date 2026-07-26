@@ -1,6 +1,6 @@
 pub mod jvm;
 
-use crate::parser::ast::Program;
+use crate::ir::TypedProgram;
 use anyhow::{Result, anyhow};
 use std::fs;
 use std::process::Command;
@@ -29,7 +29,7 @@ pub fn class_name_from_path(path: &str) -> String {
     file_name.strip_suffix(".roze").unwrap_or(file_name).to_string()
 }
 
-pub fn compile_to_java(program: Program, input_file: &str, classpath: Option<&str>) -> Result<()> {
+pub fn compile_to_java(program: TypedProgram, input_file: &str, classpath: Option<&str>) -> Result<()> {
     let class_name = class_name_from_path(input_file);
 
     let generator = jvm::JavaSourceGenerator::new(program, class_name.clone());

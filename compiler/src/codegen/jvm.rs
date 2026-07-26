@@ -1,6 +1,7 @@
-use crate::parser::ast::*;
+use crate::ir::{TypedExpression, TypedExpressionKind, TypedProgram, TypedStatement};
+use crate::parser::ast::{BinaryOperator, UnaryOperator};
+use crate::semantic::Type;
 use anyhow::Result;
-use std::collections::HashMap;
 
 /// Java type used for Roze's "no annotation given" / dynamic-ish values.
 const OBJECT_TYPE: &str = "Object";
@@ -572,49 +573,20 @@ fn escape_for_java_string_literal(value: &str) -> String {
     out
 }
 
-/// Maps a Roze source-level type annotation to a Java type name.
-/// `default_java` is used when no annotation was given at all (distinct
-/// from an annotation the compiler doesn't recognize, which still maps to
-/// Object).
-fn roze_type_to_java(type_name: Option<&str>, default_java: &str) -> String {
-    match type_name {
-        Some("int") => "int".to_string(),
-        Some("string") => "String".to_string(),
-        Some("bool") => "boolean".to_string(),
-        Some("void") => "void".to_string(),
-        Some("list") | Some("List") => "java.util.List".to_string(),
-        Some("map") | Some("Map") => "java.util.Map".to_string(),
-        Some(_) => OBJECT_TYPE.to_string(),
-        None => default_java.to_string(),
-    }
-}
-
-/// name -> java type, for locals/params visible at the current point in
-/// generation. A `Vec` of frames acts as a scope stack (innermost last).
-type Scope = Vec<HashMap<String, String>>;
-
 pub struct JavaSourceGenerator {
-    program: Program,
+    program: TypedProgram,
     class_name: String,
-    /// name -> (java param types, java return type) for every user-defined
-    /// top-level function, so call sites and `let` type inference never
-    /// have to guess.
-    functions: HashMap<String, (Vec<String>, String)>,
 }
 
 impl JavaSourceGenerator {
-    pub fn new(program: Program, class_name: String) -> Self {
-        let mut functions = HashMap::new();
-        for stmt in &program.statements {
-            if let Statement::Function { name, params, return_type, .. } = stmt {
-                let param_types: Vec<String> = params.iter()
-                    .map(|p| roze_type_to_java(p.type_name.as_deref(), OBJECT_TYPE))
-                    .collect();
-                let ret = roze_type_to_java(return_type.as_deref(), "void");
-                functions.insert(name.clone(), (param_types, ret));
-            }
-        }
-        Self { program, class_name, functions }
+    /// Takes the fully type-annotated IR (see `crate::ir` and
+    /// `semantic::check_and_lower`) rather than the raw AST. Every
+    /// expression in it already carries its resolved `Type`, computed
+    /// once by the type checker -- this generator never re-derives a
+    /// type from scratch (no local scope-tracking, no `infer_type`),
+    /// it just reads `.type_` off whatever node it's rendering.
+    pub fn new(program: TypedProgram, class_name: String) -> Self {
+        Self { program, class_name }
     }
 
     pub fn generate(&self) -> Result<String> {
@@ -624,7 +596,7 @@ impl JavaSourceGenerator {
 
         let mut main_found = false;
         for stmt in &self.program.statements {
-            if let Statement::Function { name, params, body, .. } = stmt {
+            if let TypedStatement::Function { name, params, return_type, body, .. } = stmt {
                 // Core intrinsics are handled entirely at each call site
                 // (see generate_call) and never emitted as a real method,
                 // even if a same-named function happens to be declared.
@@ -634,29 +606,19 @@ impl JavaSourceGenerator {
 
                 if name == "main" {
                     source.push_str("    public static void main(String[] args) {\n");
-                    let mut scope: Scope = vec![HashMap::new()];
-                    self.generate_statement(&mut source, body, 2, &mut scope)?;
+                    self.generate_statement(&mut source, body, 2)?;
                     source.push_str("    }\n");
                     main_found = true;
                 } else {
-                    let (param_types, ret_java) = self.functions.get(name).cloned().unwrap_or_default();
-                    let params_sig: Vec<String> = params.iter().zip(param_types.iter())
-                        .map(|(p, t)| format!("{} {}", t, p.name))
+                    let params_sig: Vec<String> = params.iter()
+                        .map(|p| format!("{} {}", p.type_.to_java(), p.name))
                         .collect();
 
                     source.push_str(&format!(
                         "    public static {} {}({}) {{\n",
-                        ret_java, name, params_sig.join(", ")
+                        return_type.to_java(), name, params_sig.join(", ")
                     ));
-
-                    let mut scope: Scope = vec![HashMap::new()];
-                    {
-                        let frame = scope.last_mut().expect("scope always has a frame");
-                        for (p, t) in params.iter().zip(param_types.iter()) {
-                            frame.insert(p.name.clone(), t.clone());
-                        }
-                    }
-                    self.generate_statement(&mut source, body, 2, &mut scope)?;
+                    self.generate_statement(&mut source, body, 2)?;
                     source.push_str("    }\n");
                 }
             }
@@ -677,86 +639,70 @@ impl JavaSourceGenerator {
         Ok(source)
     }
 
-    fn generate_statement(&self, source: &mut String, stmt: &Statement, indent: usize, scope: &mut Scope) -> Result<()> {
+    fn generate_statement(&self, source: &mut String, stmt: &TypedStatement, indent: usize) -> Result<()> {
         let indent_str = "    ".repeat(indent);
 
         match stmt {
-            Statement::Block { statements, .. } => {
+            TypedStatement::Block { statements, .. } => {
                 for stmt in statements {
-                    self.generate_statement(source, stmt, indent, scope)?;
+                    self.generate_statement(source, stmt, indent)?;
                 }
             }
-            Statement::Expression { expr, .. } => {
-                if let Expression::Call { function, arguments, .. } = expr.as_ref() {
-                    if let Expression::Identifier { name, .. } = function.as_ref() {
-                        if name == "println" {
-                            source.push_str(&format!("{}System.out.println(", indent_str));
-                            self.generate_println_args(source, arguments, scope)?;
-                            source.push_str(");\n");
-                            return Ok(());
-                        }
+            TypedStatement::Expression { expr, .. } => {
+                if let TypedExpressionKind::Call { function, arguments } = &expr.kind {
+                    if function == "println" {
+                        source.push_str(&format!("{}System.out.println(", indent_str));
+                        self.generate_println_args(source, arguments)?;
+                        source.push_str(");\n");
+                        return Ok(());
                     }
                 }
                 source.push_str(&indent_str);
-                self.generate_expression(source, expr, scope)?;
+                self.generate_expression(source, expr)?;
                 source.push_str(";\n");
             }
-            Statement::Let { name, value, .. } => {
-                let java_type = self.infer_type(value, scope);
-
-                source.push_str(&format!("{}{} {} = ", indent_str, java_type, name));
-                self.generate_expression(source, value, scope)?;
+            TypedStatement::Let { name, value, .. } => {
+                source.push_str(&format!("{}{} {} = ", indent_str, value.type_.to_java(), name));
+                self.generate_expression(source, value)?;
                 source.push_str(";\n");
-
-                scope.last_mut().expect("scope always has a frame").insert(name.clone(), java_type);
             }
-            Statement::Return { value, .. } => {
+            TypedStatement::Return { value, .. } => {
                 if let Some(expr) = value {
                     source.push_str(&format!("{}return ", indent_str));
-                    self.generate_expression(source, expr, scope)?;
+                    self.generate_expression(source, expr)?;
                     source.push_str(";\n");
                 } else {
                     source.push_str(&format!("{}return;\n", indent_str));
                 }
             }
-            Statement::Function { .. } => {
+            TypedStatement::Function { .. } => {
                 // Nested function declarations aren't supported; top-level
                 // functions are collected and emitted directly in `generate`.
             }
-            Statement::Import { .. } => {
-                // Imports are already resolved into real functions before
-                // this stage even runs (see imports::resolve_imports),
-                // so in practice there's nothing left to do here -- this
-                // arm only exists in case that ever changes.
-            }
-            Statement::Assign { name, value, .. } => {
+            TypedStatement::Assign { name, value, .. } => {
                 source.push_str(&format!("{}{} = ", indent_str, name));
-                self.generate_expression(source, value, scope)?;
+                self.generate_expression(source, value)?;
                 source.push_str(";\n");
             }
-            Statement::If { condition, then_branch, else_branch, .. } => {
-                self.generate_if_chain(source, condition, then_branch, else_branch.as_deref(), indent, scope, true)?;
+            TypedStatement::If { condition, then_branch, else_branch, .. } => {
+                self.generate_if_chain(source, condition, then_branch, else_branch.as_deref(), indent, true)?;
             }
-            Statement::While { condition, body, .. } => {
+            TypedStatement::While { condition, body, .. } => {
                 source.push_str(&format!("{}while (", indent_str));
-                self.generate_expression(source, condition, scope)?;
+                self.generate_expression(source, condition)?;
                 source.push_str(") {\n");
-                scope.push(HashMap::new());
-                self.generate_statement(source, body, indent + 1, scope)?;
-                scope.pop();
+                self.generate_statement(source, body, indent + 1)?;
                 source.push_str(&format!("{}}}\n", indent_str));
             }
-            Statement::For { init, condition, update, body, .. } => {
+            TypedStatement::For { init, condition, update, body, .. } => {
                 source.push_str(&format!("{}for (", indent_str));
-                scope.push(HashMap::new());
-                self.generate_for_clause(source, init, scope)?;
+                self.generate_for_clause(source, init)?;
                 source.push_str("; ");
-                self.generate_expression(source, condition, scope)?;
+                self.generate_expression(source, condition)?;
                 source.push_str("; ");
-                self.generate_for_clause(source, update, scope)?;
+                self.generate_for_clause(source, update)?;
                 source.push_str(") {\n");
-                self.generate_statement(source, body, indent + 1, scope)?;
-                scope.pop();
+                self.generate_statement(source, body, indent + 1)?;
                 source.push_str(&format!("{}}}\n", indent_str));
             }
         }
@@ -769,17 +715,15 @@ impl JavaSourceGenerator {
     /// `Let`/`Assign` cases, but without the indent prefix or trailing
     /// `;\n` those emit as full statements. The parser guarantees a
     /// for-loop's init/update are always `Let` or `Assign`.
-    fn generate_for_clause(&self, source: &mut String, stmt: &Statement, scope: &mut Scope) -> Result<()> {
+    fn generate_for_clause(&self, source: &mut String, stmt: &TypedStatement) -> Result<()> {
         match stmt {
-            Statement::Let { name, value, .. } => {
-                let java_type = self.infer_type(value, scope);
-                source.push_str(&format!("{} {} = ", java_type, name));
-                self.generate_expression(source, value, scope)?;
-                scope.last_mut().expect("scope always has a frame").insert(name.clone(), java_type);
+            TypedStatement::Let { name, value, .. } => {
+                source.push_str(&format!("{} {} = ", value.type_.to_java(), name));
+                self.generate_expression(source, value)?;
             }
-            Statement::Assign { name, value, .. } => {
+            TypedStatement::Assign { name, value, .. } => {
                 source.push_str(&format!("{} = ", name));
-                self.generate_expression(source, value, scope)?;
+                self.generate_expression(source, value)?;
             }
             _ => unreachable!("for-loop init/update is always Let or Assign (enforced by the parser)"),
         }
@@ -791,11 +735,10 @@ impl JavaSourceGenerator {
     fn generate_if_chain(
         &self,
         source: &mut String,
-        condition: &Expression,
-        then_branch: &Statement,
-        else_branch: Option<&Statement>,
+        condition: &TypedExpression,
+        then_branch: &TypedStatement,
+        else_branch: Option<&TypedStatement>,
         indent: usize,
-        scope: &mut Scope,
         write_indent: bool,
     ) -> Result<()> {
         let indent_str = "    ".repeat(indent);
@@ -804,24 +747,20 @@ impl JavaSourceGenerator {
             source.push_str(&indent_str);
         }
         source.push_str("if (");
-        self.generate_expression(source, condition, scope)?;
+        self.generate_expression(source, condition)?;
         source.push_str(") {\n");
-        scope.push(HashMap::new());
-        self.generate_statement(source, then_branch, indent + 1, scope)?;
-        scope.pop();
+        self.generate_statement(source, then_branch, indent + 1)?;
         source.push_str(&format!("{}}}", indent_str));
 
         match else_branch {
             None => source.push('\n'),
-            Some(Statement::If { condition, then_branch, else_branch, .. }) => {
+            Some(TypedStatement::If { condition, then_branch, else_branch, .. }) => {
                 source.push_str(" else ");
-                self.generate_if_chain(source, condition, then_branch, else_branch.as_deref(), indent, scope, false)?;
+                self.generate_if_chain(source, condition, then_branch, else_branch.as_deref(), indent, false)?;
             }
             Some(other) => {
                 source.push_str(" else {\n");
-                scope.push(HashMap::new());
-                self.generate_statement(source, other, indent + 1, scope)?;
-                scope.pop();
+                self.generate_statement(source, other, indent + 1)?;
                 source.push_str(&format!("{}}}\n", indent_str));
             }
         }
@@ -829,12 +768,12 @@ impl JavaSourceGenerator {
         Ok(())
     }
 
-    fn generate_println_args(&self, source: &mut String, arguments: &[Expression], scope: &Scope) -> Result<()> {
+    fn generate_println_args(&self, source: &mut String, arguments: &[TypedExpression]) -> Result<()> {
         if arguments.is_empty() {
             return Ok(());
         }
         if arguments.len() == 1 {
-            return self.generate_expression(source, &arguments[0], scope);
+            return self.generate_expression(source, &arguments[0]);
         }
         // println with several arguments concatenates them, so
         // `println(a, b)` behaves like `println(a + b)`.
@@ -843,100 +782,37 @@ impl JavaSourceGenerator {
             if i > 0 {
                 source.push_str(" + ");
             }
-            self.generate_expression(source, arg, scope)?;
+            self.generate_expression(source, arg)?;
         }
         source.push(')');
         Ok(())
     }
 
-    /// Infers the Java type an expression will evaluate to, using tracked
-    /// local/parameter types instead of guessing from variable names.
-    fn infer_type(&self, expr: &Expression, scope: &Scope) -> String {
-        match expr {
-            Expression::Number { .. } => "int".to_string(),
-            Expression::String { .. } => "String".to_string(),
-            Expression::Boolean { .. } => "boolean".to_string(),
-            Expression::Null { .. } => OBJECT_TYPE.to_string(),
-            Expression::Identifier { name, .. } => {
-                for frame in scope.iter().rev() {
-                    if let Some(t) = frame.get(name) {
-                        return t.clone();
-                    }
-                }
-                OBJECT_TYPE.to_string()
-            }
-            Expression::Unary { operand, .. } => self.infer_type(operand, scope),
-            Expression::Binary { left, operator, right, .. } => {
-                let left_type = self.infer_type(left, scope);
-                let right_type = self.infer_type(right, scope);
-
-                match operator {
-                    BinaryOperator::Add => {
-                        if left_type == "String" || right_type == "String" {
-                            "String".to_string()
-                        } else if left_type == "int" && right_type == "int" {
-                            "int".to_string()
-                        } else {
-                            // One side is some Object-typed/unknown value;
-                            // Java's `+` between an Object and anything
-                            // else always means string concatenation, so
-                            // this is the only type that's always valid.
-                            "String".to_string()
-                        }
-                    }
-                    BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Divide => "int".to_string(),
-                    BinaryOperator::Equal | BinaryOperator::NotEqual |
-                    BinaryOperator::LessThan | BinaryOperator::GreaterThan |
-                    BinaryOperator::LessEqual | BinaryOperator::GreaterEqual |
-                    BinaryOperator::And | BinaryOperator::Or => "boolean".to_string(),
-                }
-            }
-            Expression::Call { function, .. } => {
-                if let Expression::Identifier { name, .. } = function.as_ref() {
-                    if name == "println" {
-                        return "void".to_string();
-                    }
-                    if let Some(ret) = intrinsic_return_type(name) {
-                        return ret.to_string();
-                    }
-                    if let Some((_, ret)) = self.functions.get(name) {
-                        return ret.clone();
-                    }
-                }
-                OBJECT_TYPE.to_string()
-            }
-        }
-    }
-
-    fn generate_expression(&self, source: &mut String, expr: &Expression, scope: &Scope) -> Result<()> {
-        match expr {
-            Expression::String { value, .. } => {
+    fn generate_expression(&self, source: &mut String, expr: &TypedExpression) -> Result<()> {
+        match &expr.kind {
+            TypedExpressionKind::String(value) => {
                 source.push_str(&format!("\"{}\"", escape_for_java_string_literal(value)));
             }
-            Expression::Number { value, .. } => {
+            TypedExpressionKind::Number(value) => {
                 source.push_str(value);
             }
-            Expression::Identifier { name, .. } => {
+            TypedExpressionKind::Identifier(name) => {
                 source.push_str(name);
             }
-            Expression::Boolean { value, .. } => {
+            TypedExpressionKind::Boolean(value) => {
                 source.push_str(&format!("{}", value));
             }
-            Expression::Null { .. } => {
+            TypedExpressionKind::Null => {
                 source.push_str("null");
             }
-            Expression::Call { function, arguments, .. } => {
-                if let Expression::Identifier { name, .. } = function.as_ref() {
-                    self.generate_call(source, name, arguments, scope)?;
-                }
+            TypedExpressionKind::Call { function, arguments } => {
+                self.generate_call(source, function, arguments)?;
             }
-            Expression::Binary { left, operator, right, .. } => {
-                let left_type = self.infer_type(left, scope);
-                let right_type = self.infer_type(right, scope);
-                let is_primitive = |t: &str| t == "int" || t == "boolean";
+            TypedExpressionKind::Binary { left, operator, right } => {
+                let is_primitive = |t: &Type| matches!(t, Type::Int | Type::Bool);
 
                 let use_equals_method = matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual)
-                    && (!is_primitive(&left_type) || !is_primitive(&right_type));
+                    && (!is_primitive(&left.type_) || !is_primitive(&right.type_));
 
                 if use_equals_method {
                     // Java's `==`/`!=` on a non-primitive type is
@@ -950,16 +826,16 @@ impl JavaSourceGenerator {
                         source.push('!');
                     }
                     source.push_str("java.util.Objects.equals(");
-                    self.generate_expression(source, left, scope)?;
+                    self.generate_expression(source, left)?;
                     source.push_str(", ");
-                    self.generate_expression(source, right, scope)?;
+                    self.generate_expression(source, right)?;
                     source.push(')');
                 } else {
                     let is_string_concat = matches!(operator, BinaryOperator::Add)
-                        && (left_type == "String" || right_type == "String");
+                        && (left.type_ == Type::String || right.type_ == Type::String);
 
                     source.push('(');
-                    self.generate_expression(source, left, scope)?;
+                    self.generate_expression(source, left)?;
                     if is_string_concat {
                         source.push_str(" + ");
                     } else {
@@ -979,17 +855,17 @@ impl JavaSourceGenerator {
                         };
                         source.push_str(op);
                     }
-                    self.generate_expression(source, right, scope)?;
+                    self.generate_expression(source, right)?;
                     source.push(')');
                 }
             }
-            Expression::Unary { operator, operand, .. } => {
+            TypedExpressionKind::Unary { operator, operand } => {
                 let op = match operator {
                     UnaryOperator::Negate => "-",
                     UnaryOperator::Not => "!",
                 };
                 source.push_str(op);
-                self.generate_expression(source, operand, scope)?;
+                self.generate_expression(source, operand)?;
             }
         }
 
@@ -999,67 +875,67 @@ impl JavaSourceGenerator {
     /// Generates a call, rewriting Core (string/math) intrinsics to real
     /// JVM standard-library calls, since Roze has no method-call syntax of
     /// its own yet to express `s.length()` directly.
-    fn generate_call(&self, source: &mut String, name: &str, arguments: &[Expression], scope: &Scope) -> Result<()> {
+    fn generate_call(&self, source: &mut String, name: &str, arguments: &[TypedExpression]) -> Result<()> {
         match name {
             "string_length" if arguments.len() == 1 => {
                 source.push_str("((String)(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str(")).length()");
             }
             "string_to_upper" if arguments.len() == 1 => {
                 source.push_str("((String)(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str(")).toUpperCase()");
             }
             "string_to_lower" if arguments.len() == 1 => {
                 source.push_str("((String)(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str(")).toLowerCase()");
             }
             "string_concat" if arguments.len() == 2 => {
                 source.push('(');
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str(" + ");
-                self.generate_expression(source, &arguments[1], scope)?;
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
             "abs" if arguments.len() == 1 => {
                 source.push_str("Math.abs(");
-                self.generate_int_arg(source, &arguments[0], scope)?;
+                self.generate_int_arg(source, &arguments[0])?;
                 source.push(')');
             }
             "max" if arguments.len() == 2 => {
                 source.push_str("Math.max(");
-                self.generate_int_arg(source, &arguments[0], scope)?;
+                self.generate_int_arg(source, &arguments[0])?;
                 source.push_str(", ");
-                self.generate_int_arg(source, &arguments[1], scope)?;
+                self.generate_int_arg(source, &arguments[1])?;
                 source.push(')');
             }
             "min" if arguments.len() == 2 => {
                 source.push_str("Math.min(");
-                self.generate_int_arg(source, &arguments[0], scope)?;
+                self.generate_int_arg(source, &arguments[0])?;
                 source.push_str(", ");
-                self.generate_int_arg(source, &arguments[1], scope)?;
+                self.generate_int_arg(source, &arguments[1])?;
                 source.push(')');
             }
             "to_string" if arguments.len() == 1 => {
                 source.push_str("String.valueOf(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
             "to_int" if arguments.len() == 1 => {
                 source.push_str("Integer.parseInt(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
             "is_number" if arguments.len() == 1 => {
                 source.push_str("((Object)(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str(") instanceof Integer)");
             }
             "is_string" if arguments.len() == 1 => {
                 source.push_str("((Object)(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str(") instanceof String)");
             }
 
@@ -1068,23 +944,23 @@ impl JavaSourceGenerator {
                 source.push_str("new java.util.ArrayList()");
             }
             "list_push" if arguments.len() == 2 => {
-                self.generate_list_receiver(source, &arguments[0], scope)?;
+                self.generate_list_receiver(source, &arguments[0])?;
                 source.push_str(".add(");
-                self.generate_expression(source, &arguments[1], scope)?;
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
             "list_get" if arguments.len() == 2 => {
-                self.generate_list_receiver(source, &arguments[0], scope)?;
+                self.generate_list_receiver(source, &arguments[0])?;
                 source.push_str(".get(");
-                self.generate_index_arg(source, &arguments[1], scope)?;
+                self.generate_index_arg(source, &arguments[1])?;
                 source.push(')');
             }
             "list_set" if arguments.len() == 3 => {
-                self.generate_list_receiver(source, &arguments[0], scope)?;
+                self.generate_list_receiver(source, &arguments[0])?;
                 source.push_str(".set(");
-                self.generate_index_arg(source, &arguments[1], scope)?;
+                self.generate_index_arg(source, &arguments[1])?;
                 source.push_str(", ");
-                self.generate_expression(source, &arguments[2], scope)?;
+                self.generate_expression(source, &arguments[2])?;
                 source.push(')');
             }
             "list_remove" if arguments.len() == 2 => {
@@ -1092,17 +968,17 @@ impl JavaSourceGenerator {
                 // List.remove has both remove(int) and remove(Object)
                 // overloads, and a boxed Integer argument binds to
                 // remove(Object) -- remove-by-equality, not by index.
-                self.generate_list_receiver(source, &arguments[0], scope)?;
+                self.generate_list_receiver(source, &arguments[0])?;
                 source.push_str(".remove(");
-                self.generate_index_arg(source, &arguments[1], scope)?;
+                self.generate_index_arg(source, &arguments[1])?;
                 source.push(')');
             }
             "list_length" if arguments.len() == 1 => {
-                self.generate_list_receiver(source, &arguments[0], scope)?;
+                self.generate_list_receiver(source, &arguments[0])?;
                 source.push_str(".size()");
             }
             "list_is_empty" if arguments.len() == 1 => {
-                self.generate_list_receiver(source, &arguments[0], scope)?;
+                self.generate_list_receiver(source, &arguments[0])?;
                 source.push_str(".isEmpty()");
             }
 
@@ -1111,37 +987,37 @@ impl JavaSourceGenerator {
                 source.push_str("new java.util.HashMap()");
             }
             "map_put" if arguments.len() == 3 => {
-                self.generate_map_receiver(source, &arguments[0], scope)?;
+                self.generate_map_receiver(source, &arguments[0])?;
                 source.push_str(".put(");
-                self.generate_expression(source, &arguments[1], scope)?;
+                self.generate_expression(source, &arguments[1])?;
                 source.push_str(", ");
-                self.generate_expression(source, &arguments[2], scope)?;
+                self.generate_expression(source, &arguments[2])?;
                 source.push(')');
             }
             "map_get" if arguments.len() == 2 => {
-                self.generate_map_receiver(source, &arguments[0], scope)?;
+                self.generate_map_receiver(source, &arguments[0])?;
                 source.push_str(".get(");
-                self.generate_expression(source, &arguments[1], scope)?;
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
             "map_has" if arguments.len() == 2 => {
-                self.generate_map_receiver(source, &arguments[0], scope)?;
+                self.generate_map_receiver(source, &arguments[0])?;
                 source.push_str(".containsKey(");
-                self.generate_expression(source, &arguments[1], scope)?;
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
             "map_remove" if arguments.len() == 2 => {
-                self.generate_map_receiver(source, &arguments[0], scope)?;
+                self.generate_map_receiver(source, &arguments[0])?;
                 source.push_str(".remove(");
-                self.generate_expression(source, &arguments[1], scope)?;
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
             "map_size" if arguments.len() == 1 => {
-                self.generate_map_receiver(source, &arguments[0], scope)?;
+                self.generate_map_receiver(source, &arguments[0])?;
                 source.push_str(".size()");
             }
             "map_is_empty" if arguments.len() == 1 => {
-                self.generate_map_receiver(source, &arguments[0], scope)?;
+                self.generate_map_receiver(source, &arguments[0])?;
                 source.push_str(".isEmpty()");
             }
 
@@ -1151,121 +1027,121 @@ impl JavaSourceGenerator {
             // exception and rethrows unchecked.
             "read_file" if arguments.len() == 1 => {
                 source.push_str("__roze_read_file(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
             "write_file" if arguments.len() == 2 => {
                 source.push_str("__roze_write_file(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str(", ");
-                self.generate_expression(source, &arguments[1], scope)?;
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
             "append_file" if arguments.len() == 2 => {
                 source.push_str("__roze_append_file(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str(", ");
-                self.generate_expression(source, &arguments[1], scope)?;
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
             "file_exists" if arguments.len() == 1 => {
                 // Files.exists doesn't throw, so no helper needed.
                 source.push_str("java.nio.file.Files.exists(java.nio.file.Paths.get(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str("))");
             }
             "delete_file" if arguments.len() == 1 => {
                 source.push_str("__roze_delete_file(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
             "read_lines" if arguments.len() == 1 => {
                 source.push_str("__roze_read_lines(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
 
             // ---- IO: network ----
             "http_get" if arguments.len() == 1 => {
                 source.push_str("__roze_http_get(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
             "http_post" if arguments.len() == 2 => {
                 source.push_str("__roze_http_post(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str(", ");
-                self.generate_expression(source, &arguments[1], scope)?;
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
 
             // ---- Web: JSON ----
             "json_encode" if arguments.len() == 1 => {
                 source.push_str("__roze_json_encode(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
             "json_decode" if arguments.len() == 1 => {
                 source.push_str("__roze_json_decode(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
 
             // ---- Web: HTTP server ----
             "http_server_start" if arguments.len() == 1 => {
                 source.push_str("__roze_http_server_start(");
-                self.generate_int_arg(source, &arguments[0], scope)?;
+                self.generate_int_arg(source, &arguments[0])?;
                 source.push(')');
             }
             "http_server_accept" if arguments.len() == 1 => {
-                source.push_str("__roze_http_server_accept(");
-                self.generate_expression(source, &arguments[0], scope)?;
-                source.push(')');
+                source.push_str("__roze_http_server_accept((java.net.ServerSocket)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
             }
             "http_server_respond" if arguments.len() == 3 => {
                 source.push_str("__roze_http_server_respond(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str(", ");
-                self.generate_int_arg(source, &arguments[1], scope)?;
+                self.generate_int_arg(source, &arguments[1])?;
                 source.push_str(", ");
-                self.generate_expression(source, &arguments[2], scope)?;
+                self.generate_expression(source, &arguments[2])?;
                 source.push(')');
             }
             "http_server_stop" if arguments.len() == 1 => {
-                source.push_str("__roze_http_server_stop(");
-                self.generate_expression(source, &arguments[0], scope)?;
-                source.push(')');
+                source.push_str("__roze_http_server_stop((java.net.ServerSocket)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
             }
 
             // ---- Database (SQL) ----
             "sql_connect" if arguments.len() == 1 => {
                 source.push_str("__roze_sql_connect(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
             "sql_query" if arguments.len() == 2 => {
                 source.push_str("__roze_sql_query(((java.sql.Connection)(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str(")), ");
-                self.generate_expression(source, &arguments[1], scope)?;
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
             "sql_execute" if arguments.len() == 2 => {
                 source.push_str("__roze_sql_execute(((java.sql.Connection)(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str(")), ");
-                self.generate_expression(source, &arguments[1], scope)?;
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
             "sql_close" if arguments.len() == 1 => {
                 source.push_str("__roze_sql_close((java.sql.Connection)(");
-                self.generate_expression(source, &arguments[0], scope)?;
+                self.generate_expression(source, &arguments[0])?;
                 source.push_str("))");
             }
 
             "println" => {
                 source.push_str("System.out.println(");
-                self.generate_println_args(source, arguments, scope)?;
+                self.generate_println_args(source, arguments)?;
                 source.push(')');
             }
             _ => {
@@ -1275,7 +1151,7 @@ impl JavaSourceGenerator {
                     if i > 0 {
                         source.push_str(", ");
                     }
-                    self.generate_expression(source, arg, scope)?;
+                    self.generate_expression(source, arg)?;
                 }
                 source.push(')');
             }
@@ -1288,13 +1164,12 @@ impl JavaSourceGenerator {
     /// `int`, it's coming from an Object-typed (untyped-parameter) value,
     /// so we unbox it via Integer -- valid whenever the runtime value
     /// really is a boxed Integer, matching the declared `int` parameter.
-    fn generate_int_arg(&self, source: &mut String, expr: &Expression, scope: &Scope) -> Result<()> {
-        let t = self.infer_type(expr, scope);
-        if t == "int" {
-            self.generate_expression(source, expr, scope)
+    fn generate_int_arg(&self, source: &mut String, expr: &TypedExpression) -> Result<()> {
+        if expr.type_ == Type::Int {
+            self.generate_expression(source, expr)
         } else {
             source.push_str("((Integer)(Object)(");
-            self.generate_expression(source, expr, scope)?;
+            self.generate_expression(source, expr)?;
             source.push_str("))");
             Ok(())
         }
@@ -1304,9 +1179,9 @@ impl JavaSourceGenerator {
     /// (e.g. the list in `list.add(x)`), wrapped in parens as a cheap,
     /// always-safe guard against needing to reason about whether the
     /// receiver expression needs them for any particular case.
-    fn generate_receiver(&self, source: &mut String, expr: &Expression, scope: &Scope) -> Result<()> {
+    fn generate_receiver(&self, source: &mut String, expr: &TypedExpression) -> Result<()> {
         source.push('(');
-        self.generate_expression(source, expr, scope)?;
+        self.generate_expression(source, expr)?;
         source.push(')');
         Ok(())
     }
@@ -1318,26 +1193,24 @@ impl JavaSourceGenerator {
     /// coming out of `json_decode` is statically `Object` (its shape
     /// depends on the JSON text, not on anything the type checker can
     /// see), so `.get()`/`.size()`/etc need an explicit cast to resolve.
-    fn generate_list_receiver(&self, source: &mut String, expr: &Expression, scope: &Scope) -> Result<()> {
-        let t = self.infer_type(expr, scope);
-        if t == "java.util.List" {
-            self.generate_receiver(source, expr, scope)
+    fn generate_list_receiver(&self, source: &mut String, expr: &TypedExpression) -> Result<()> {
+        if expr.type_ == Type::List {
+            self.generate_receiver(source, expr)
         } else {
             source.push_str("((java.util.List)(");
-            self.generate_expression(source, expr, scope)?;
+            self.generate_expression(source, expr)?;
             source.push_str("))");
             Ok(())
         }
     }
 
     /// Like `generate_list_receiver`, for `Map`.
-    fn generate_map_receiver(&self, source: &mut String, expr: &Expression, scope: &Scope) -> Result<()> {
-        let t = self.infer_type(expr, scope);
-        if t == "java.util.Map" {
-            self.generate_receiver(source, expr, scope)
+    fn generate_map_receiver(&self, source: &mut String, expr: &TypedExpression) -> Result<()> {
+        if expr.type_ == Type::Map {
+            self.generate_receiver(source, expr)
         } else {
             source.push_str("((java.util.Map)(");
-            self.generate_expression(source, expr, scope)?;
+            self.generate_expression(source, expr)?;
             source.push_str("))");
             Ok(())
         }
@@ -1353,19 +1226,17 @@ impl JavaSourceGenerator {
     /// rather than failing to compile. `List.get`/`set` don't have that
     /// particular ambiguity, but using the same guaranteed-primitive
     /// helper for all three keeps index handling uniform.
-    fn generate_index_arg(&self, source: &mut String, expr: &Expression, scope: &Scope) -> Result<()> {
-        let t = self.infer_type(expr, scope);
-        if t == "int" {
-            self.generate_expression(source, expr, scope)
+    fn generate_index_arg(&self, source: &mut String, expr: &TypedExpression) -> Result<()> {
+        if expr.type_ == Type::Int {
+            self.generate_expression(source, expr)
         } else {
             source.push_str("((Integer)(Object)(");
-            self.generate_expression(source, expr, scope)?;
+            self.generate_expression(source, expr)?;
             source.push_str(")).intValue()");
             Ok(())
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1374,7 +1245,8 @@ mod tests {
 
     fn generate(src: &str) -> String {
         let program = parse(tokenize(src)).expect("fixture should parse");
-        JavaSourceGenerator::new(program, "Fixture".to_string())
+        let typed = crate::semantic::check_and_lower(&program).expect("fixture should type-check");
+        JavaSourceGenerator::new(typed, "Fixture".to_string())
             .generate()
             .expect("fixture should generate")
     }
@@ -1612,6 +1484,18 @@ mod tests {
         // the existing map_get/map_has intrinsics with no new type.
         let java = generate("func main() { let s = http_server_start(8080); let r = http_server_accept(s); println(map_get(r, \"path\")); }");
         assert!(java.contains("java.util.Map r ="), "expected the request to be declared as java.util.Map:\n{}", java);
+    }
+
+    #[test]
+    fn http_server_handle_is_cast_at_each_use_site() {
+        // http_server_start's declared type is Unknown/Object (an opaque
+        // handle -- there's no ServerSocket variant in the Type enum),
+        // but the helper methods it's passed to declare a
+        // java.net.ServerSocket parameter. Without an explicit cast at
+        // each call site, javac rejects passing an Object where
+        // ServerSocket is declared.
+        let java = generate("func main() { let s = http_server_start(8080); http_server_accept(s); http_server_stop(s); }");
+        assert!(java.contains("(java.net.ServerSocket)("), "expected an explicit ServerSocket cast:\n{}", java);
     }
 
     // ---- Database (SQL) ----

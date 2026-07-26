@@ -103,9 +103,10 @@ example exercising control flow and the Core library.
 ## Project layout
 
 ```
-compiler/     Lexer, parser, type checker, and JVM code generator (the `roze` binary)
+compiler/     Lexer, parser, type checker, typed IR, and JVM code generator (the `roze` binary)
 runtime/      Runtime support crate
 stdlib/       Standard library reference/source (see ROADMAP.md for current status)
+docs/         Design/decision documents (e.g. the memory model decision)
 tools/
   roze-build/   Build system (`roze-build`)
   roze-pkg/     Package manager (`roze-pkg`)

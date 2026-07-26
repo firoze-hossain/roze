@@ -1,0 +1,11 @@
+func main() {
+    let m = map_new();
+    map_put(m, "hello", "world");
+    println(json_encode(m));
+
+    let server = http_server_start(8080);
+    println("listening on 8080");
+    let req = http_server_accept(server);
+    http_server_respond(req, 200, "hi from roze");
+    http_server_stop(server);
+}

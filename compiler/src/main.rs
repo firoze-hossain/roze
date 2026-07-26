@@ -9,10 +9,11 @@ mod codegen;
 mod semantic;
 mod error;
 mod imports;
+mod ir;
 
 use lexer::tokenize;
 use parser::parse;
-use semantic::check_types;
+use semantic::check_and_lower;
 use error::RozeError;
 
 #[derive(ClapParser)]
@@ -123,15 +124,20 @@ fn build_file(filename: &str, debug: bool, classpath: Option<&str>) -> Result<()
         }
     };
 
-    // Type check
-    if let Err(e) = check_types(&program) {
-        report_error(&e, filename, &source);
-        return Err(());
-    }
+    // Type check, producing the fully type-annotated IR that codegen
+    // consumes directly (see ir.rs) -- this is also what guarantees
+    // codegen never has to re-derive a type from scratch itself.
+    let typed_program = match check_and_lower(&program) {
+        Ok(p) => p,
+        Err(e) => {
+            report_error(&e, filename, &source);
+            return Err(());
+        }
+    };
     println!("{}", "✅ Type checking passed!".green());
 
     // Generate Java code
-    if let Err(e) = codegen::compile_to_java(program, filename, classpath) {
+    if let Err(e) = codegen::compile_to_java(typed_program, filename, classpath) {
         report_error(&e, filename, &source);
         return Err(());
     }

@@ -296,28 +296,60 @@ per-target from early on, not a bolt-on after five other phases.**
 
 Concretely:
 
-1. **Separate the frontend from the JVM backend now, while it's cheap.**
-   Right now `codegen/jvm.rs` consumes the parser's AST directly. That's
-   fine with one backend; it becomes a real cost with two, because every
-   frontend feature (generics, closures, pattern matching, whatever comes
-   next) would otherwise need to be re-taught to each backend
-   independently, and they *will* drift the way the parser and the LSP's
-   separate parser already have. The standard shape here (used by
-   rustc, Kotlin, and Swift) is: `source -> AST -> typed IR -> backend`,
-   where the typed IR is backend-agnostic and each backend
-   (JVM-source-today, LLVM-later, WASM-maybe) only has to consume that
-   one shared representation.
+1. ~~Separate the frontend from the JVM backend now, while it's cheap.~~
+   **Done.** `codegen/jvm.rs` used to consume the parser's raw AST
+   directly and run its *own*, separate type-inference pass (`infer_type`,
+   plus a hand-rolled scope-tracking stack) to recover information the
+   type checker had already computed and thrown away -- exactly the kind
+   of duplication that drifts, the same problem the parser and the LSP's
+   separate parser had before being unified (see Phase 2 above). Added a
+   typed IR (`compiler/src/ir.rs`): the type checker now *produces* a
+   fully type-annotated tree (`semantic::check_and_lower`) instead of
+   just validating and discarding one, and codegen consumes it directly,
+   reading `.type_` off each node instead of re-deriving anything.
+   `infer_type` and the scope-tracking stack are gone entirely, not just
+   hidden.
+   - This paid off immediately, not just architecturally: the refactor
+     surfaced a real, previously-invisible bug. `http_server_start`'s
+     type in the semantic checker was `Unknown` (Object), but codegen's
+     old separate inference had independently been returning
+     `java.net.ServerSocket` for the same call -- the two systems
+     disagreed, silently papered over by codegen never actually
+     consulting the type checker's answer. The moment codegen started
+     trusting the shared source of truth instead, that mismatch became
+     a real compile failure instead of an invisible one. Fixed with an
+     explicit cast at the call site (the same pattern already used for
+     `sql_connect`'s connection handle).
+   - Verified against the full existing test suite (211 tests across
+     all four crates, 0 failures) with no behavior changes intended or
+     found beyond the bug above -- this was meant to be a pure
+     restructuring, and turned out to also be a bug fix.
+   - This is also the right shape for a second backend later: a typed
+     IR that isn't tied to Java is what a native backend would need to
+     consume anyway (see below), so building it now, while there's only
+     one backend to migrate, cost far less than untangling it after a
+     second backend already existed.
 
-2. **Pick a memory model on purpose, not by default.** This is the
-   single highest-leverage decision left, and it's currently undecided
-   by omission rather than by choice. The JVM backend implies GC. A
-   systems backend needs either manual memory management, ownership-style
-   compile-time checking (Rust's approach), or reference counting
-   (Swift's approach) -- and whichever you pick shapes syntax you haven't
-   written yet (how does the language spell "borrow," "move," "unsafe
-   block"?). Deciding this before Phase 3's Collections work is
-   worthwhile, since `List`/`Map` APIs look different under GC vs.
-   ownership.
+2. **Pick a memory model on purpose, not by default.** This is still
+   the single highest-leverage decision left, and it's still undecided
+   by omission rather than by choice -- but it's not mine to decide
+   unilaterally, since it shapes syntax you haven't written yet (how
+   does the language spell "borrow," "move," "unsafe block"?). Wrote up
+   the tradeoffs (GC, manual management, ownership/borrow-checking,
+   ARC) and a recommendation in
+   [`docs/MEMORY_MODEL_DECISION.md`](./docs/MEMORY_MODEL_DECISION.md) --
+   short version: **ARC**, as the option that reaches the whole stated
+   goal (embedded through enterprise) while remaining achievable for a
+   small team in a reasonable timeframe, versus ownership/borrow-
+   checking's multi-year compiler-engineering cost for the same reach,
+   or GC/manual-management's each only covering half the goal. This is
+   a recommendation to approve or override, not something to treat as
+   already decided. (The original note here about deciding this
+   "before Phase 3's Collections work" is now moot -- Collections
+   shipped already, as JVM-backed intrinsics -- but the decision is
+   exactly as unmade and exactly as consequential as it was before;
+   what's shipped on the JVM backend doesn't commit anything about the
+   native backend's design.)
 
 3. **Sequence the backends by what's actually reachable first**, rather
    than treating "systems programming" as strictly Phase 4:
@@ -366,14 +398,17 @@ Concretely:
    driver via `--classpath`), which is worth keeping in mind as a
    precedent for how "real" library dependencies might work in general
    once `roze-pkg` grows past generating stub files.
-4. **Native backend design** (memory model decision + LLVM/Cranelift
-   spike), so systems/games/desktop work has *somewhere to go* instead of
-   being permanently "later." This is now the most consequential
-   open decision in the whole roadmap: Core/Collections/IO all being
-   done on the JVM backend, using real generics-shaped intrinsics,
-   makes it more tempting to keep extending that backend indefinitely --
-   worth deliberately checking that against the memory-model tradeoffs
-   in "The bigger picture" below before that becomes the path of least
-   resistance by default rather than by choice.
+4. **Native backend design.** The typed-IR groundwork this needs is
+   done (see "The bigger picture" below). What's left is the memory
+   model decision (written up, with a recommendation, in
+   [`docs/MEMORY_MODEL_DECISION.md`](./docs/MEMORY_MODEL_DECISION.md) --
+   awaiting sign-off) and then an LLVM/Cranelift spike, so systems/
+   games/desktop work has *somewhere to go* instead of being permanently
+   "later." This is the most consequential open decision in the whole
+   roadmap: Core/Collections/IO/Web/Database all landing successfully on
+   the JVM backend makes it more tempting to keep extending that backend
+   indefinitely -- worth deliberately checking that against the memory
+   model tradeoffs before that becomes the path of least resistance by
+   default rather than by choice.
 5. Everything else (Web/DB stdlib, WASM, embedded, self-hosting) follows
    naturally once the above are in place.

@@ -1,5 +1,6 @@
 // compiler/src/semantic/mod.rs
 use crate::error::RozeError;
+use crate::ir::{TypedExpression, TypedExpressionKind, TypedFunctionParam, TypedProgram, TypedStatement};
 use crate::parser::ast::*;
 use std::collections::HashMap;
 use anyhow::Result;
@@ -273,10 +274,12 @@ impl TypeChecker {
         }
     }
 
-    pub fn check_program(&mut self, program: &Program) -> Result<()> {
-        // First pass: register every top-level function's signature before
-        // checking any bodies, so forward references and mutual recursion
-        // type-check correctly regardless of source order.
+    /// Type-checks `program` and, on success, returns the fully
+    /// type-annotated IR for it (see `crate::ir`). Registers every
+    /// top-level function's signature before checking any bodies, so
+    /// forward references and mutual recursion type-check correctly
+    /// regardless of source order.
+    pub fn check_program(&mut self, program: &Program) -> Result<TypedProgram> {
         for stmt in &program.statements {
             if let Statement::Function { name, params, return_type, .. } = stmt {
                 let param_types = params.iter()
@@ -287,13 +290,19 @@ impl TypeChecker {
             }
         }
 
+        let mut statements = Vec::with_capacity(program.statements.len());
         for stmt in &program.statements {
-            self.check_statement(stmt)?;
+            if let Some(typed) = self.check_statement(stmt)? {
+                statements.push(typed);
+            }
         }
-        Ok(())
+        Ok(TypedProgram { statements })
     }
 
-    pub fn check_statement(&mut self, stmt: &Statement) -> Result<()> {
+    /// Type-checks one statement, returning its typed-IR form. Returns
+    /// `Ok(None)` only for `Statement::Import` (which has no IR
+    /// counterpart -- see `ir::TypedStatement`'s doc comment).
+    pub fn check_statement(&mut self, stmt: &Statement) -> Result<Option<TypedStatement>> {
         match stmt {
             Statement::Function { name, params, return_type, body, location } => {
                 if name == "main" && return_type.is_some() {
@@ -304,51 +313,68 @@ impl TypeChecker {
                     ).with_hint("remove the '-> ...' after main()'s parameter list").into());
                 }
 
+                let resolved_return_type = return_type.as_deref().map(Type::from_name).unwrap_or(Type::Void);
+
                 let outer_function = self.current_function.replace(name.clone());
-                let outer_return_type = std::mem::replace(
-                    &mut self.current_return_type,
-                    return_type.as_deref().map(Type::from_name).unwrap_or(Type::Void),
-                );
+                let outer_return_type = std::mem::replace(&mut self.current_return_type, resolved_return_type.clone());
                 let outer_in_main = std::mem::replace(&mut self.in_main, name == "main");
 
                 self.symbol_table.push_scope();
+                let mut typed_params = Vec::with_capacity(params.len());
                 for param in params {
                     let param_type = param.type_name.as_deref().map(Type::from_name).unwrap_or(Type::Unknown);
-                    self.symbol_table.define(&param.name, param_type, location.line, location.column)?;
+                    self.symbol_table.define(&param.name, param_type.clone(), location.line, location.column)?;
+                    typed_params.push(TypedFunctionParam { name: param.name.clone(), type_: param_type });
                 }
 
-                self.check_statement(body)?;
+                let typed_body = self.check_statement(body)?
+                    .expect("a function body is always a Block, which always has an IR form");
 
                 self.symbol_table.pop_scope();
                 self.current_function = outer_function;
                 self.current_return_type = outer_return_type;
                 self.in_main = outer_in_main;
+
+                Ok(Some(TypedStatement::Function {
+                    name: name.clone(),
+                    params: typed_params,
+                    return_type: resolved_return_type,
+                    body: Box::new(typed_body),
+                    location: location.clone(),
+                }))
             }
             Statement::Let { name, value, location } => {
-                let value_type = self.check_expression(value)?;
-                self.symbol_table.define(name, value_type, location.line, location.column)?;
+                let typed_value = self.check_expression(value)?;
+                self.symbol_table.define(name, typed_value.type_.clone(), location.line, location.column)?;
+                Ok(Some(TypedStatement::Let {
+                    name: name.clone(),
+                    value: typed_value,
+                    location: location.clone(),
+                }))
             }
-            Statement::Expression { expr, .. } => {
-                self.check_expression(expr)?;
+            Statement::Expression { expr, location } => {
+                let typed_expr = self.check_expression(expr)?;
+                Ok(Some(TypedStatement::Expression { expr: typed_expr, location: location.clone() }))
             }
             Statement::Return { value, location } => {
-                match value {
+                let typed_value = match value {
                     Some(expr) => {
-                        let actual = self.check_expression(expr)?;
-                        if !types_compatible(&self.current_return_type, &actual) {
+                        let typed = self.check_expression(expr)?;
+                        if !types_compatible(&self.current_return_type, &typed.type_) {
                             let fn_name = self.current_function.as_deref().unwrap_or("<anonymous>");
                             return Err(RozeError::type_error(
                                 format!(
                                     "'{}' is declared to return {}, but this returns {}",
-                                    fn_name, self.current_return_type, actual
+                                    fn_name, self.current_return_type, typed.type_
                                 ),
                                 location.line,
                                 location.column,
                             ).with_hint(format!(
                                 "either change the returned value's type, or change the function's declared return type ('-> {}')",
-                                actual
+                                typed.type_
                             )).into());
                         }
+                        Some(typed)
                     }
                     None => {
                         // A bare `return;` is only valid if the function
@@ -364,46 +390,91 @@ impl TypeChecker {
                                 location.column,
                             ).into());
                         }
+                        None
+                    }
+                };
+                Ok(Some(TypedStatement::Return { value: typed_value, location: location.clone() }))
+            }
+            Statement::Block { statements, location } => {
+                self.symbol_table.push_scope();
+                let mut typed_statements = Vec::with_capacity(statements.len());
+                for stmt in statements {
+                    if let Some(typed) = self.check_statement(stmt)? {
+                        typed_statements.push(typed);
                     }
                 }
-            }
-            Statement::Block { statements, .. } => {
-                self.symbol_table.push_scope();
-                for stmt in statements {
-                    self.check_statement(stmt)?;
-                }
                 self.symbol_table.pop_scope();
+                Ok(Some(TypedStatement::Block { statements: typed_statements, location: location.clone() }))
             }
-            Statement::If { condition, then_branch, else_branch, .. } => {
-                self.check_expression(condition)?;
-                self.check_statement(then_branch)?;
-                if let Some(else_stmt) = else_branch {
-                    self.check_statement(else_stmt)?;
-                }
+            Statement::If { condition, then_branch, else_branch, location } => {
+                let typed_condition = self.check_expression(condition)?;
+                let typed_then = Box::new(
+                    self.check_statement(then_branch)?
+                        .expect("an if's then-branch is always a Block, which always has an IR form")
+                );
+                let typed_else = match else_branch {
+                    Some(else_stmt) => Some(Box::new(
+                        self.check_statement(else_stmt)?
+                            .expect("an if's else-branch is always a Block or If, both of which always have an IR form")
+                    )),
+                    None => None,
+                };
+                Ok(Some(TypedStatement::If {
+                    condition: typed_condition,
+                    then_branch: typed_then,
+                    else_branch: typed_else,
+                    location: location.clone(),
+                }))
             }
-            Statement::While { condition, body, .. } => {
-                self.check_expression(condition)?;
-                self.check_statement(body)?;
+            Statement::While { condition, body, location } => {
+                let typed_condition = self.check_expression(condition)?;
+                let typed_body = Box::new(
+                    self.check_statement(body)?
+                        .expect("a while's body is always a Block, which always has an IR form")
+                );
+                Ok(Some(TypedStatement::While {
+                    condition: typed_condition,
+                    body: typed_body,
+                    location: location.clone(),
+                }))
             }
-            Statement::For { init, condition, update, body, .. } => {
+            Statement::For { init, condition, update, body, location } => {
                 // A scope of its own so the init clause's variable (e.g.
                 // `let i` in `for let i = 0; ...`) is visible to the
                 // condition/update/body but doesn't leak past the loop.
                 self.symbol_table.push_scope();
-                self.check_statement(init)?;
-                self.check_expression(condition)?;
-                self.check_statement(update)?;
-                self.check_statement(body)?;
+                let typed_init = Box::new(
+                    self.check_statement(init)?
+                        .expect("a for-loop's init is always Let or Assign, both of which always have an IR form")
+                );
+                let typed_condition = self.check_expression(condition)?;
+                let typed_update = Box::new(
+                    self.check_statement(update)?
+                        .expect("a for-loop's update is always Assign, which always has an IR form")
+                );
+                let typed_body = Box::new(
+                    self.check_statement(body)?
+                        .expect("a for-loop's body is always a Block, which always has an IR form")
+                );
                 self.symbol_table.pop_scope();
+                Ok(Some(TypedStatement::For {
+                    init: typed_init,
+                    condition: typed_condition,
+                    update: typed_update,
+                    body: typed_body,
+                    location: location.clone(),
+                }))
             }
             Statement::Import { .. } => {
                 // Imports are already resolved into real functions before
                 // type-checking even runs (see imports::resolve_imports),
-                // so in practice there's nothing left to do here -- this
-                // arm only exists in case that ever changes.
+                // so in practice this arm is never hit -- it only exists
+                // in case that ever changes. No IR form for it either
+                // way (see `ir::TypedStatement`'s doc comment).
+                Ok(None)
             }
             Statement::Assign { name, value, location } => {
-                let value_type = self.check_expression(value)?;
+                let typed_value = self.check_expression(value)?;
                 match self.symbol_table.lookup(name) {
                     None => {
                         return Err(RozeError::type_error(
@@ -417,11 +488,11 @@ impl TypeChecker {
                         // declared type -- `let x = 5;` followed later by
                         // `x = "hi";` is a type error, the same as it
                         // would be at the `let`.
-                        if !types_compatible(&symbol.type_, &value_type) {
+                        if !types_compatible(&symbol.type_, &typed_value.type_) {
                             return Err(RozeError::type_error(
                                 format!(
                                     "Cannot assign a value of type {} to '{}', which was declared as {}",
-                                    value_type, name, symbol.type_
+                                    typed_value.type_, name, symbol.type_
                                 ),
                                 location.line,
                                 location.column,
@@ -432,20 +503,40 @@ impl TypeChecker {
                         }
                     }
                 }
+                Ok(Some(TypedStatement::Assign { name: name.clone(), value: typed_value, location: location.clone() }))
             }
         }
-        Ok(())
     }
 
-    pub fn check_expression(&mut self, expr: &Expression) -> Result<Type> {
+    pub fn check_expression(&mut self, expr: &Expression) -> Result<TypedExpression> {
         match expr {
-            Expression::Number { .. } => Ok(Type::Int),
-            Expression::String { .. } => Ok(Type::String),
-            Expression::Boolean { .. } => Ok(Type::Bool),
-            Expression::Null { .. } => Ok(Type::Unknown),
+            Expression::Number { value, location } => Ok(TypedExpression {
+                kind: TypedExpressionKind::Number(value.clone()),
+                type_: Type::Int,
+                location: location.clone(),
+            }),
+            Expression::String { value, location } => Ok(TypedExpression {
+                kind: TypedExpressionKind::String(value.clone()),
+                type_: Type::String,
+                location: location.clone(),
+            }),
+            Expression::Boolean { value, location } => Ok(TypedExpression {
+                kind: TypedExpressionKind::Boolean(*value),
+                type_: Type::Bool,
+                location: location.clone(),
+            }),
+            Expression::Null { location } => Ok(TypedExpression {
+                kind: TypedExpressionKind::Null,
+                type_: Type::Unknown,
+                location: location.clone(),
+            }),
             Expression::Identifier { name, location } => {
                 if let Some(symbol) = self.symbol_table.lookup(name) {
-                    Ok(symbol.type_.clone())
+                    Ok(TypedExpression {
+                        kind: TypedExpressionKind::Identifier(name.clone()),
+                        type_: symbol.type_.clone(),
+                        location: location.clone(),
+                    })
                 } else {
                     Err(RozeError::type_error(
                         format!("Undefined variable '{}'", name),
@@ -454,74 +545,123 @@ impl TypeChecker {
                     ).with_length(name.chars().count()).into())
                 }
             }
-            Expression::Unary { operand, .. } => self.check_expression(operand),
+            Expression::Unary { operator, operand, location } => {
+                let typed_operand = self.check_expression(operand)?;
+                let result_type = typed_operand.type_.clone();
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::Unary { operator: operator.clone(), operand: Box::new(typed_operand) },
+                    type_: result_type,
+                    location: location.clone(),
+                })
+            }
             Expression::Binary { left, operator, right, location } => {
-                let left_type = self.check_expression(left)?;
-                let right_type = self.check_expression(right)?;
+                let typed_left = self.check_expression(left)?;
+                let typed_right = self.check_expression(right)?;
+                let left_type = &typed_left.type_;
+                let right_type = &typed_right.type_;
 
-                match operator {
+                let result_type = match operator {
                     BinaryOperator::Add => {
-                        if left_type == Type::Int && right_type == Type::Int {
-                            Ok(Type::Int)
-                        } else if left_type == Type::String || right_type == Type::String {
-                            Ok(Type::String)
-                        } else if left_type == Type::Unknown || right_type == Type::Unknown {
+                        if *left_type == Type::Int && *right_type == Type::Int {
+                            Type::Int
+                        } else if *left_type == Type::String || *right_type == Type::String {
+                            Type::String
+                        } else if *left_type == Type::Unknown || *right_type == Type::Unknown {
                             // Untyped (dynamic-ish) operand: allow it and
                             // defer to runtime/codegen, rather than
                             // rejecting code that may well be valid.
-                            Ok(Type::Unknown)
+                            Type::Unknown
                         } else {
-                            Err(RozeError::type_error(
+                            return Err(RozeError::type_error(
                                 format!("Cannot add {} and {}", left_type, right_type),
                                 location.line,
                                 location.column,
-                            ).into())
+                            ).into());
                         }
                     }
                     BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Divide => {
                         let numeric_ok = |t: &Type| matches!(t, Type::Int | Type::Unknown);
-                        if numeric_ok(&left_type) && numeric_ok(&right_type) {
-                            Ok(Type::Int)
+                        if numeric_ok(left_type) && numeric_ok(right_type) {
+                            Type::Int
                         } else {
-                            Err(RozeError::type_error(
+                            return Err(RozeError::type_error(
                                 format!("Cannot perform arithmetic on {} and {}", left_type, right_type),
                                 location.line,
                                 location.column,
-                            ).into())
+                            ).into());
                         }
                     }
                     BinaryOperator::Equal | BinaryOperator::NotEqual |
                     BinaryOperator::LessThan | BinaryOperator::GreaterThan |
                     BinaryOperator::LessEqual | BinaryOperator::GreaterEqual |
-                    BinaryOperator::And | BinaryOperator::Or => Ok(Type::Bool),
-                }
+                    BinaryOperator::And | BinaryOperator::Or => Type::Bool,
+                };
+
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::Binary {
+                        left: Box::new(typed_left),
+                        operator: operator.clone(),
+                        right: Box::new(typed_right),
+                    },
+                    type_: result_type,
+                    location: location.clone(),
+                })
             }
             Expression::Call { function, arguments, location } => {
+                let mut typed_arguments = Vec::with_capacity(arguments.len());
                 for arg in arguments {
-                    self.check_expression(arg)?;
+                    typed_arguments.push(self.check_expression(arg)?);
                 }
+
                 if let Expression::Identifier { name, .. } = function.as_ref() {
-                    if name == "println" {
-                        return Ok(Type::Void);
-                    }
-                    if let Some(sig) = self.functions.get(name) {
-                        return Ok(sig.return_type.clone());
-                    }
-                    return Err(RozeError::type_error(
-                        format!("Call to undefined function '{}'", name),
-                        location.line,
-                        location.column,
-                    ).with_length(name.chars().count()).into());
+                    let return_type = if name == "println" {
+                        Type::Void
+                    } else if let Some(sig) = self.functions.get(name) {
+                        sig.return_type.clone()
+                    } else {
+                        return Err(RozeError::type_error(
+                            format!("Call to undefined function '{}'", name),
+                            location.line,
+                            location.column,
+                        ).with_length(name.chars().count()).into());
+                    };
+
+                    Ok(TypedExpression {
+                        kind: TypedExpressionKind::Call { function: name.clone(), arguments: typed_arguments },
+                        type_: return_type,
+                        location: location.clone(),
+                    })
+                } else {
+                    // Roze has no first-class function values, so the
+                    // parser never actually produces a Call whose
+                    // `function` isn't a bare Identifier -- kept as a
+                    // graceful fallback rather than a panic in case that
+                    // changes.
+                    Ok(TypedExpression {
+                        kind: TypedExpressionKind::Call { function: String::new(), arguments: typed_arguments },
+                        type_: Type::Unknown,
+                        location: location.clone(),
+                    })
                 }
-                Ok(Type::Unknown)
             }
         }
     }
 }
 
+/// Type-checks `program`, discarding the resulting IR -- for callers
+/// that only want a pass/fail answer (e.g. the LSP's diagnostics engine,
+/// which cares whether the program is valid, not about generating code
+/// for it). Compiling to Java should use `check_and_lower` instead, to
+/// avoid re-deriving the same information a second time in codegen.
 pub fn check_types(program: &Program) -> Result<()> {
+    check_and_lower(program).map(|_| ())
+}
+
+/// Type-checks `program` and returns its fully type-annotated IR (see
+/// `crate::ir`), ready for codegen to consume directly.
+pub fn check_and_lower(program: &Program) -> Result<crate::ir::TypedProgram> {
     let mut checker = TypeChecker::new();
-    checker.check_program(program)?;
+    let typed_program = checker.check_program(program)?;
 
     if !checker.errors.is_empty() {
         for error in &checker.errors {
@@ -529,7 +669,7 @@ pub fn check_types(program: &Program) -> Result<()> {
         }
         return Err(anyhow::anyhow!("Type checking failed"));
     }
-    Ok(())
+    Ok(typed_program)
 }
 
 #[cfg(test)]
@@ -718,5 +858,79 @@ mod tests {
         assert!(check_source("func main() { for let i = 0; i < 3; i = i + 1 { println(i); } }").is_ok());
         // ...but must NOT leak out past the loop.
         assert!(check_source("func main() { for let i = 0; i < 3; i = i + 1 { } println(i); }").is_err());
+    }
+
+    // ---- IR-specific tests: the typed tree itself, not just pass/fail ----
+
+    fn lower(src: &str) -> crate::ir::TypedProgram {
+        let program = parse(tokenize(src)).expect("fixture should parse");
+        check_and_lower(&program).expect("fixture should type-check")
+    }
+
+    #[test]
+    fn lowering_attaches_types_to_literals() {
+        let ir = lower("func main() { let x = 5; let s = \"hi\"; let b = true; }");
+        let body = match &ir.statements[0] {
+            TypedStatement::Function { body, .. } => body.as_ref(),
+            other => panic!("expected a function, got {:?}", other),
+        };
+        let stmts = match body {
+            TypedStatement::Block { statements, .. } => statements,
+            other => panic!("expected a block, got {:?}", other),
+        };
+        for (stmt, expected) in stmts.iter().zip([Type::Int, Type::String, Type::Bool]) {
+            match stmt {
+                TypedStatement::Let { value, .. } => assert_eq!(value.type_, expected),
+                other => panic!("expected a Let, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn lowering_resolves_identifier_types_from_the_symbol_table() {
+        let ir = lower("func main() { let x = 5; println(x); }");
+        let body = match &ir.statements[0] {
+            TypedStatement::Function { body, .. } => body.as_ref(),
+            other => panic!("expected a function, got {:?}", other),
+        };
+        let stmts = match body {
+            TypedStatement::Block { statements, .. } => statements,
+            other => panic!("expected a block, got {:?}", other),
+        };
+        match &stmts[1] {
+            TypedStatement::Expression { expr, .. } => match &expr.kind {
+                TypedExpressionKind::Call { arguments, .. } => {
+                    assert_eq!(arguments[0].type_, Type::Int, "the reference to x should carry its resolved type");
+                }
+                other => panic!("expected a Call, got {:?}", other),
+            },
+            other => panic!("expected an Expression statement, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn lowering_resolves_intrinsic_call_return_types() {
+        let ir = lower("func main() { let n = list_new(); }");
+        let body = match &ir.statements[0] {
+            TypedStatement::Function { body, .. } => body.as_ref(),
+            other => panic!("expected a function, got {:?}", other),
+        };
+        let stmts = match body {
+            TypedStatement::Block { statements, .. } => statements,
+            other => panic!("expected a block, got {:?}", other),
+        };
+        match &stmts[0] {
+            TypedStatement::Let { value, .. } => assert_eq!(value.type_, Type::List),
+            other => panic!("expected a Let, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn lowering_drops_import_statements_with_no_ir_form() {
+        // Only reachable if resolve_imports somehow didn't already strip
+        // it (see the Statement::Import arm's comment) -- still, the IR
+        // itself should never contain one either way.
+        let ir = lower("func main() { }");
+        assert!(!ir.statements.iter().any(|s| matches!(s, TypedStatement::Function { name, .. } if name.is_empty())));
     }
 }

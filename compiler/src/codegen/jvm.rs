@@ -544,7 +544,7 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
     }
 }
 
-fn is_intrinsic(name: &str) -> bool {
+pub(crate) fn is_intrinsic(name: &str) -> bool {
     intrinsic_return_type(name).is_some()
 }
 

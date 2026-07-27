@@ -29,6 +29,20 @@ struct Cli {
     debug: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum Target {
+    /// Compile to JVM bytecode via javac (the default; supports the
+    /// full language, including Core/Collections/IO/Web/Database).
+    Jvm,
+    /// Compile to a native executable via Cranelift, with no JVM/JDK
+    /// involved. An intentionally minimal SPIKE (see
+    /// compiler/src/codegen/native.rs): int/bool functions, arithmetic,
+    /// if/while/for, and println of an int/bool/string-literal only --
+    /// no strings-as-values, no list/map, no intrinsics. See
+    /// docs/MEMORY_MODEL_DECISION.md for why.
+    Native,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Build a Roze file
@@ -42,9 +56,12 @@ enum Commands {
         /// Extra classpath entries for javac (e.g. a JDBC driver jar for
         /// sql_connect/sql_query/sql_execute -- see stdlib/src/sql.roze).
         /// Use your platform's path separator (';' on Windows, ':'
-        /// elsewhere) to list more than one.
+        /// elsewhere) to list more than one. Ignored for --target native.
         #[arg(long)]
         classpath: Option<String>,
+        /// Which backend to compile with
+        #[arg(long, value_enum, default_value_t = Target::Jvm)]
+        target: Target,
     },
     /// Run a Roze file
     Run {
@@ -54,6 +71,9 @@ enum Commands {
         /// Extra classpath entries for javac/java (see `build --classpath`)
         #[arg(long)]
         classpath: Option<String>,
+        /// Which backend to compile and run with
+        #[arg(long, value_enum, default_value_t = Target::Jvm)]
+        target: Target,
     },
 }
 
@@ -61,9 +81,9 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Build { file, output: _, classpath } => build_file(&file, cli.debug, classpath.as_deref()),
-        Commands::Run { file, classpath } => build_file(&file, cli.debug, classpath.as_deref())
-            .and_then(|_| run_file(&file, classpath.as_deref())),
+        Commands::Build { file, output: _, classpath, target } => build_file(&file, cli.debug, classpath.as_deref(), target),
+        Commands::Run { file, classpath, target } => build_file(&file, cli.debug, classpath.as_deref(), target)
+            .and_then(|_| run_file(&file, classpath.as_deref(), target)),
     };
 
     // Every error is already reported (with a full source snippet, when
@@ -77,7 +97,7 @@ fn main() {
     }
 }
 
-fn build_file(filename: &str, debug: bool, classpath: Option<&str>) -> Result<(), ()> {
+fn build_file(filename: &str, debug: bool, classpath: Option<&str>, target: Target) -> Result<(), ()> {
     println!("{}", "🌹 Roze Compiler v0.1".bright_magenta());
     println!("{} {}", "📁 Compiling:".cyan(), filename);
 
@@ -136,8 +156,12 @@ fn build_file(filename: &str, debug: bool, classpath: Option<&str>) -> Result<()
     };
     println!("{}", "✅ Type checking passed!".green());
 
-    // Generate Java code
-    if let Err(e) = codegen::compile_to_java(typed_program, filename, classpath) {
+    // Generate code with the selected backend
+    let codegen_result = match target {
+        Target::Jvm => codegen::compile_to_java(typed_program, filename, classpath),
+        Target::Native => codegen::native::compile_to_native(typed_program, filename),
+    };
+    if let Err(e) = codegen_result {
         report_error(&e, filename, &source);
         return Err(());
     }
@@ -147,12 +171,16 @@ fn build_file(filename: &str, debug: bool, classpath: Option<&str>) -> Result<()
     Ok(())
 }
 
-fn run_file(filename: &str, classpath: Option<&str>) -> Result<(), ()> {
+fn run_file(filename: &str, classpath: Option<&str>, target: Target) -> Result<(), ()> {
     let class_name = codegen::class_name_from_path(filename);
 
     println!("{} {}", "🚀 Running:".yellow(), class_name);
 
-    if let Err(e) = codegen::run_java(&class_name, classpath) {
+    let run_result = match target {
+        Target::Jvm => codegen::run_java(&class_name, classpath),
+        Target::Native => codegen::native::run_native(&class_name),
+    };
+    if let Err(e) = run_result {
         eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);
         return Err(());
     }

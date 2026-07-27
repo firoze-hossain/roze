@@ -1,4 +1,5 @@
 pub mod jvm;
+pub mod native;
 
 use crate::ir::TypedProgram;
 use anyhow::{Result, anyhow};

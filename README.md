@@ -100,6 +100,20 @@ cargo test --workspace
 See [examples/core_demo.roze](./examples/core_demo.roze) for a working
 example exercising control flow and the Core library.
 
+### Native backend (spike)
+
+`--target native` compiles to a real, standalone executable via
+Cranelift -- no JVM/JDK involved at all -- for a deliberately small
+subset of the language (int/bool functions, arithmetic, `if`/`while`/
+`for`, calling other Roze functions; no strings-as-values, no
+`list`/`map`, no intrinsics yet -- see
+[docs/MEMORY_MODEL_DECISION.md](./docs/MEMORY_MODEL_DECISION.md) for
+why). Needs a C compiler (`cc`) on `PATH` for linking.
+
+```bash
+./target/release/roze run examples/native_demo.roze --target native
+```
+
 ## Project layout
 
 ```

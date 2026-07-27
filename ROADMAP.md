@@ -356,12 +356,13 @@ Concretely:
    - **JVM backend** (this one): web backends, enterprise/Spring-Boot-style
      servers, Android-adjacent apps. Already the furthest along --
      keep pushing it through Phase 1.5 -> 3.
-   - **Native backend via LLVM or Cranelift**: desktop apps, games, CLI
-     tools, systems/security tooling, and eventually OS-level work. This
-     is the one that unlocks most of your list and doesn't yet exist at
-     all -- worth starting design work on once Phase 1.5 lands, in
-     parallel with Phase 3, rather than waiting for Phase 3-5 to finish
-     first.
+   - **Native backend via Cranelift**: desktop apps, games, CLI
+     tools, systems/security tooling, and eventually OS-level work. A
+     real spike exists now (`--target native`, see the Phase 4 entry
+     above) proving the pipeline end-to-end for a small supported
+     subset -- unlocking the rest of this list is now a matter of
+     extending that subset (starting with the memory model decision),
+     not proving the architecture can work at all.
    - **WASM backend**: browser-side web, and a plausible path for
      portable AI/ML inference code. Lower priority than the native
      backend unless a browser target becomes a concrete goal.
@@ -398,17 +399,37 @@ Concretely:
    driver via `--classpath`), which is worth keeping in mind as a
    precedent for how "real" library dependencies might work in general
    once `roze-pkg` grows past generating stub files.
-4. **Native backend design.** The typed-IR groundwork this needs is
-   done (see "The bigger picture" below). What's left is the memory
-   model decision (written up, with a recommendation, in
-   [`docs/MEMORY_MODEL_DECISION.md`](./docs/MEMORY_MODEL_DECISION.md) --
-   awaiting sign-off) and then an LLVM/Cranelift spike, so systems/
-   games/desktop work has *somewhere to go* instead of being permanently
-   "later." This is the most consequential open decision in the whole
-   roadmap: Core/Collections/IO/Web/Database all landing successfully on
-   the JVM backend makes it more tempting to keep extending that backend
+4. ~~Native backend design~~ -- the typed-IR groundwork is done (see
+   "The bigger picture" below), and so is a real Cranelift spike
+   (`compiler/src/codegen/native.rs`, `--target native`). What's left is
+   the memory model decision itself (written up, with a recommendation,
+   in [`docs/MEMORY_MODEL_DECISION.md`](./docs/MEMORY_MODEL_DECISION.md) --
+   still awaiting sign-off) and then extending the spike into something
+   that reaches the actual systems/embedded goal. This is still the
+   most consequential open decision in the whole roadmap: Core/
+   Collections/IO/Web/Database all landing successfully on the JVM
+   backend makes it more tempting to keep extending that backend
    indefinitely -- worth deliberately checking that against the memory
    model tradeoffs before that becomes the path of least resistance by
    default rather than by choice.
+
+   **What the spike proves, concretely**: `roze build foo.roze --target
+   native` compiles the exact same typed IR the JVM backend consumes
+   into a real, standalone native executable -- an actual ELF binary
+   with no JVM/JDK involved anywhere, linked via the system's C
+   compiler. Supports functions with `int`/`bool` parameters and return
+   types, arithmetic, comparisons, real short-circuit `&&`/`||`,
+   `if`/`else`/`while`/`for`, calling other Roze functions (including
+   recursion -- `fib(10)` runs correctly), and `println` of an
+   int/bool/string-literal. 10 golden tests build and run real
+   executables and check their actual output, including one that would
+   fail if `&&`/`||` didn't *really* short-circuit (the untaken branch
+   divides by zero). Deliberately out of scope, and rejected with a
+   clear error rather than silently miscompiled: general string values
+   (only a literal passed straight to `println` works), `list`/`map`
+   (heap-allocated -- exactly what's waiting on the memory model
+   decision), and every Core/Collections/IO/Web/Database intrinsic
+   (JVM-specific today). The JVM backend is completely unaffected and
+   remains the default (`--target jvm` if you want to be explicit).
 5. Everything else (Web/DB stdlib, WASM, embedded, self-hosting) follows
    naturally once the above are in place.

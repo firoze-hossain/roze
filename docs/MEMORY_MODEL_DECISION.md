@@ -7,6 +7,15 @@ decision that shapes syntax you haven't written yet, and it's yours to
 make deliberately -- not something that should get decided by whichever
 option happens to be easiest to prototype first.
 
+**Update**: a real Cranelift-based native backend spike now exists
+(`compiler/src/codegen/native.rs`, `roze build foo.roze --target
+native`) proving the typed-IR-to-native pipeline works end-to-end for a
+deliberately small subset (int/bool functions, arithmetic, control
+flow, no heap types). This document's decision is now the *only* thing
+standing between that spike and actually reaching the systems/embedded
+goal -- extending it to strings/collections/anything heap-allocated
+means picking one of the options below first.
+
 ## Why this can't be deferred any further
 
 The JVM backend doesn't need this decision -- it's already built, it

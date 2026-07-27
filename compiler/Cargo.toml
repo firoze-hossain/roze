@@ -13,10 +13,20 @@ colored = { workspace = true }
 clap = { workspace = true }
 thiserror = { workspace = true }
 which = "6.0"
-cranelift = "0.134"
-cranelift-module = "0.134"
-cranelift-object = "0.134"
-cranelift-native = "0.134"
+# Pinned to an exact version, not a caret range: this native backend
+# spike was written and tested against 0.103.0 specifically. Newer
+# releases (0.134 confirmed) made breaking API changes --
+# FunctionBuilder::finalize() now requires a TargetFrontendConfig
+# argument, declare_var()'s signature changed to allocate and return the
+# Variable itself rather than taking a pre-made one, jump() now needs
+# BlockArg values instead of raw Value, and global_value() was renamed
+# to symbol_value(). Upgrading past 0.103.0 needs those call sites
+# updated and re-verified in compiler/src/codegen/native.rs first --
+# don't just loosen this constraint without doing that.
+cranelift = "=0.103.0"
+cranelift-module = "=0.103.0"
+cranelift-object = "=0.103.0"
+cranelift-native = "=0.103.0"
 target-lexicon = "0.12"
 
 [lib]

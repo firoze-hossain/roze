@@ -108,7 +108,12 @@ subset of the language (int/bool functions, arithmetic, `if`/`while`/
 `for`, calling other Roze functions; no strings-as-values, no
 `list`/`map`, no intrinsics yet -- see
 [docs/MEMORY_MODEL_DECISION.md](./docs/MEMORY_MODEL_DECISION.md) for
-why). Needs a C compiler (`cc`) on `PATH` for linking.
+why). Needs a C compiler (`cc`, `gcc`, or `clang` -- tried in that
+order) on `PATH` for linking; this is separate from whatever toolchain
+Rust itself used to build `roze`. On Linux/Mac this is virtually always
+already present; on Windows, MSYS2's MinGW-w64 toolchain is the most
+reliable option (see the error message from `--target native` for
+exact install steps if none is found).
 
 ```bash
 ./target/release/roze run examples/native_demo.roze --target native

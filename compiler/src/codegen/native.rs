@@ -78,19 +78,52 @@ pub fn compile_to_native(program: TypedProgram, input_file: &str) -> Result<()> 
     fs::write(&obj_path, &bytes)?;
     println!("📝 Generated native object file: {}", obj_path);
 
-    let status = Command::new("cc")
-        .arg(&obj_path)
-        .arg("-o")
-        .arg(&output_name)
-        .status()
-        .map_err(|e| anyhow!("failed to invoke the system linker ('cc'): {}", e))?;
-
-    if !status.success() {
-        return Err(anyhow!("Linking failed"));
-    }
-    println!("✅ Linked native executable: {}", output_name);
+    link_object_file(&obj_path, &output_name)?;
 
     Ok(())
+}
+
+/// Links `obj_path` into an executable at `output_name`, trying each of
+/// the standard C compiler/linker driver names in turn. This covers
+/// Linux/Mac (where `cc` is virtually always present) and Windows with
+/// MSYS2's MinGW-w64 toolchain installed (which provides `gcc`, and
+/// often `cc` too).
+///
+/// Deliberately doesn't attempt MSVC's `cl.exe`: its command-line
+/// syntax for this is different enough from `cc`/`gcc`/`clang`'s that
+/// getting it right without a Windows machine to verify against felt
+/// riskier than pointing at a well-trodden, already-documented
+/// alternative (MSYS2) in the error message below.
+fn link_object_file(obj_path: &str, output_name: &str) -> Result<()> {
+    const CANDIDATES: [&str; 3] = ["cc", "gcc", "clang"];
+
+    for candidate in CANDIDATES {
+        match Command::new(candidate).arg(obj_path).arg("-o").arg(output_name).status() {
+            Ok(status) if status.success() => {
+                println!("✅ Linked native executable: {}", output_name);
+                return Ok(());
+            }
+            Ok(status) => {
+                return Err(anyhow!("linking failed via '{}' (exit status: {})", candidate, status));
+            }
+            Err(_) => continue, // this one isn't installed -- try the next candidate
+        }
+    }
+
+    Err(anyhow!(
+        "couldn't find a C compiler to link the native executable (tried: {}).\n\n\
+         The native backend (--target native) needs one to produce a final executable -- \
+         this is separate from whatever toolchain Rust itself used to build the `roze` \
+         compiler, so having that working already doesn't mean this step will.\n\n\
+         On Windows, the most reliable option is MSYS2's MinGW-w64 toolchain:\n\
+         \x20 1. winget install -e --id MSYS2.MSYS2\n\
+         \x20 2. Open \"MSYS2 MinGW x64\" (not plain MSYS2) from the Start menu\n\
+         \x20 3. pacman -S mingw-w64-x86_64-toolchain\n\
+         \x20 4. Add C:\\msys64\\mingw64\\bin to your PATH, then open a new terminal\n\n\
+         On Linux: sudo apt install build-essential (or your distro's equivalent).\n\
+         On macOS: xcode-select --install",
+        CANDIDATES.join(", ")
+    ))
 }
 
 /// Runs a compiled native executable by path (as opposed to

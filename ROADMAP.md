@@ -330,26 +330,16 @@ Concretely:
      one backend to migrate, cost far less than untangling it after a
      second backend already existed.
 
-2. **Pick a memory model on purpose, not by default.** This is still
-   the single highest-leverage decision left, and it's still undecided
-   by omission rather than by choice -- but it's not mine to decide
-   unilaterally, since it shapes syntax you haven't written yet (how
-   does the language spell "borrow," "move," "unsafe block"?). Wrote up
-   the tradeoffs (GC, manual management, ownership/borrow-checking,
-   ARC) and a recommendation in
-   [`docs/MEMORY_MODEL_DECISION.md`](./docs/MEMORY_MODEL_DECISION.md) --
-   short version: **ARC**, as the option that reaches the whole stated
-   goal (embedded through enterprise) while remaining achievable for a
-   small team in a reasonable timeframe, versus ownership/borrow-
-   checking's multi-year compiler-engineering cost for the same reach,
-   or GC/manual-management's each only covering half the goal. This is
-   a recommendation to approve or override, not something to treat as
-   already decided. (The original note here about deciding this
-   "before Phase 3's Collections work" is now moot -- Collections
-   shipped already, as JVM-backed intrinsics -- but the decision is
-   exactly as unmade and exactly as consequential as it was before;
-   what's shipped on the JVM backend doesn't commit anything about the
-   native backend's design.)
+2. ~~Pick a memory model on purpose, not by default.~~ **Decided: ARC**,
+   approved and now implemented for the first heap type (`string`) --
+   see the Phase 4 entry in "Revised phase order" below for what that
+   covers concretely, and
+   [`docs/MEMORY_MODEL_DECISION.md`](./docs/MEMORY_MODEL_DECISION.md)
+   for the full tradeoff writeup (GC, manual management, ownership/
+   borrow-checking, ARC), kept as the permanent record of *why* ARC was
+   chosen over the alternatives -- the same reasoning applies as ARC
+   gets extended to each next type (`list`/`map`, then eventually a
+   user-defined `class`).
 
 3. **Sequence the backends by what's actually reachable first**, rather
    than treating "systems programming" as strictly Phase 4:
@@ -399,37 +389,56 @@ Concretely:
    driver via `--classpath`), which is worth keeping in mind as a
    precedent for how "real" library dependencies might work in general
    once `roze-pkg` grows past generating stub files.
-4. ~~Native backend design~~ -- the typed-IR groundwork is done (see
-   "The bigger picture" below), and so is a real Cranelift spike
-   (`compiler/src/codegen/native.rs`, `--target native`). What's left is
-   the memory model decision itself (written up, with a recommendation,
-   in [`docs/MEMORY_MODEL_DECISION.md`](./docs/MEMORY_MODEL_DECISION.md) --
-   still awaiting sign-off) and then extending the spike into something
-   that reaches the actual systems/embedded goal. This is still the
-   most consequential open decision in the whole roadmap: Core/
-   Collections/IO/Web/Database all landing successfully on the JVM
-   backend makes it more tempting to keep extending that backend
-   indefinitely -- worth deliberately checking that against the memory
-   model tradeoffs before that becomes the path of least resistance by
-   default rather than by choice.
+4. **Native backend design** -- the typed-IR groundwork is done, the
+   Cranelift spike is done, and the memory model decision itself is now
+   **decided: ARC** (approved; see
+   [`docs/MEMORY_MODEL_DECISION.md`](./docs/MEMORY_MODEL_DECISION.md)
+   for the full tradeoff writeup, kept as the record of why). ARC is
+   now implemented for real, for the first heap type: `string`. This
+   used to be the most consequential open decision in the whole
+   roadmap; it's made now, and the thing worth watching going forward
+   is different -- making sure `list`/`map`/a real `class` type get
+   built out on native at a reasonable pace, rather than the JVM
+   backend's existing maturity on those fronts becoming a reason to
+   never quite get to it.
 
-   **What the spike proves, concretely**: `roze build foo.roze --target
+   **What the spike proved, concretely**: `roze build foo.roze --target
    native` compiles the exact same typed IR the JVM backend consumes
    into a real, standalone native executable -- an actual ELF binary
    with no JVM/JDK involved anywhere, linked via the system's C
-   compiler. Supports functions with `int`/`bool` parameters and return
-   types, arithmetic, comparisons, real short-circuit `&&`/`||`,
-   `if`/`else`/`while`/`for`, calling other Roze functions (including
-   recursion -- `fib(10)` runs correctly), and `println` of an
-   int/bool/string-literal. 10 golden tests build and run real
-   executables and check their actual output, including one that would
-   fail if `&&`/`||` didn't *really* short-circuit (the untaken branch
-   divides by zero). Deliberately out of scope, and rejected with a
-   clear error rather than silently miscompiled: general string values
-   (only a literal passed straight to `println` works), `list`/`map`
-   (heap-allocated -- exactly what's waiting on the memory model
-   decision), and every Core/Collections/IO/Web/Database intrinsic
-   (JVM-specific today). The JVM backend is completely unaffected and
+   compiler. `if`/`else`/`while`/`for`, calling other Roze functions
+   (including recursion -- `fib(10)` runs correctly), real short-
+   circuit `&&`/`||`. The JVM backend is completely unaffected and
    remains the default (`--target jvm` if you want to be explicit).
+
+   **What ARC adds, concretely**: `string` is now a real, general-
+   purpose type on the native backend -- parameters, return values,
+   `let`/reassignment, concatenation, content equality (`==`/`!=`, a
+   real `memcmp`, not pointer identity), and `println` of any string
+   value, not just a literal. Backed by real `malloc`/`free` and real
+   reference counting, with literals specially marked *immortal*
+   (refcount sentinel, living in static data, retain/release are
+   no-ops) so the overwhelmingly common case -- using a literal --
+   costs no heap traffic at all. Verified with more than golden-test
+   output-checking: the test suite runs a string-heavy program through
+   `valgrind --leak-check=full` and asserts zero leaks/errors, which is
+   what actually caught a real bug during development (a temporary
+   string consumed by concat/equality/println and discarded needs an
+   explicit release, since no named binding owns it) and continues to
+   guard against that class of regression. Manually stress-tested
+   beyond the automated suite too: nested early returns several scopes
+   deep, a `for`-loop whose own init variable is a heap-allocated
+   (non-literal) string with an early return from inside the loop
+   body, and a ~700-operation high-volume concatenation loop -- all
+   clean under Valgrind.
+
+   **Still not supported, deliberately, and rejected with a clear
+   error rather than silently miscompiled**: `list`/`map` (each
+   element/key/value would need its own retain/release, following the
+   same convention recursively through a container -- a real next
+   increment, not a given just because strings work), any user-defined
+   `class`/reference type (doesn't exist as syntax yet -- `class` is
+   tokenized but never parsed, see Phase 1 above), and every Core/
+   Collections/IO/Web/Database intrinsic (JVM-specific today).
 5. Everything else (Web/DB stdlib, WASM, embedded, self-hosting) follows
    naturally once the above are in place.

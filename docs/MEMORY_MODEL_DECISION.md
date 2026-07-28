@@ -1,20 +1,20 @@
 # Memory model for the native backend: a decision, not a default
 
-This is the one item from ["The bigger picture"](../ROADMAP.md#the-bigger-picture-one-language-many-targets)
-that genuinely needs your sign-off rather than mine to implement. I'm
-laying out the tradeoffs and making a recommendation, but this is a
-decision that shapes syntax you haven't written yet, and it's yours to
-make deliberately -- not something that should get decided by whichever
-option happens to be easiest to prototype first.
+**Decided: ARC.** Approved and a real implementation now exists for
+the first heap type (strings) -- see `compiler/src/codegen/native.rs`
+and the "What's actually built" section at the bottom of this document.
+The analysis and recommendation below are kept as-is (including the
+original framing of this as an open decision) since they're still the
+record of *why* ARC was chosen, and the same reasoning applies to each
+next type (starting with `list`/`map`) as ARC gets extended to them.
 
-**Update**: a real Cranelift-based native backend spike now exists
-(`compiler/src/codegen/native.rs`, `roze build foo.roze --target
-native`) proving the typed-IR-to-native pipeline works end-to-end for a
-deliberately small subset (int/bool functions, arithmetic, control
-flow, no heap types). This document's decision is now the *only* thing
-standing between that spike and actually reaching the systems/embedded
-goal -- extending it to strings/collections/anything heap-allocated
-means picking one of the options below first.
+**Update history**:
+- A real Cranelift-based native backend spike first proved the typed-
+  IR-to-native pipeline end-to-end for a deliberately small subset
+  (int/bool functions, arithmetic, control flow, no heap types).
+- ARC was then approved as the memory model, and implemented for
+  `string` -- the first and simplest heap type -- as the next concrete
+  step past that spike. `list`/`map` remain unported (see below).
 
 ## Why this can't be deferred any further
 
@@ -206,3 +206,57 @@ touches, so the scope of "deciding this" is visible up front:
 None of this needs to be designed in this document -- it's scoped here
 so that "pick ARC" (or whichever option) is understood as the first
 step of a real design task, not the whole of it.
+
+## What's actually built (strings, under ARC)
+
+The `class` question above is still open -- what's built so far is
+narrower and doesn't need it: ARC for Roze's one built-in heap type
+that already existed conceptually, `string`, without yet introducing
+any new user-facing type-declaration syntax.
+
+**Representation**: a Roze string value is a pointer to its bytes,
+with a 16-byte ARC header immediately *before* that pointer (refcount,
+then length) -- so the value Roze code holds is always already a
+valid, NUL-terminated C string, usable directly with `printf`'s `%s`
+with no adjustment. A literal is a specially-marked *immortal* string
+(refcount sentinel `-1`, living in static data, never allocated or
+freed) -- retain/release are no-ops on it, so the overwhelmingly common
+case of using a literal costs no heap traffic at all.
+
+**Ownership convention**: a *fresh* value (a literal, a concatenation
+result, a function's return value) already carries a properly-owned
+reference nobody else holds a claim on. A bare *identifier* reference
+aliases an existing owned binding, so creating a second independent
+owner from it needs an explicit retain. Every scope releases its own
+string locals on normal exit; an early `return` releases every
+*active* scope (the whole function is being exited, not just the
+innermost block), protecting the returned value with a retain first if
+it's a bare identifier alias.
+
+**What works**: `string` parameters/return types, `let`/reassignment,
+concatenation (`+`), content equality (`==`/`!=`, real `memcmp`-based
+comparison, not pointer identity), and `println` of any string value
+(not just a literal anymore).
+
+**Verified for real**: beyond the golden tests (which check program
+*output*), the test suite runs a string-heavy program through
+`valgrind --leak-check=full` and asserts zero leaks and zero errors --
+this is what actually caught a real bug during development (a
+temporary string consumed by concat/equality/println and then
+discarded needs an explicit release, since no named binding ever owns
+it) and is what continues to guard against that class of regression.
+Manually stress-tested beyond the automated suite too: nested early
+returns several scopes deep, a `for`-loop whose own init variable is a
+heap-allocated (non-literal) string with an early return from inside
+the loop body, and a high-volume loop performing ~700 concatenations
+in a row -- all clean under Valgrind (0 leaks, 0 errors, allocation
+count exactly matches free count).
+
+**What's not built yet**: `list`/`map` on the native backend still
+don't exist (each element/key/value would need its own retain/release,
+following the same convention above but applied recursively through a
+container -- a real next increment, not a given just because strings
+work). No `class`/user-defined reference types. No `weak` escape hatch
+(moot until something can form a reference cycle, which needs `class`
+first). Every Core/Collections/IO/Web/Database intrinsic remains
+JVM-only.

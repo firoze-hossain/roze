@@ -100,20 +100,23 @@ cargo test --workspace
 See [examples/core_demo.roze](./examples/core_demo.roze) for a working
 example exercising control flow and the Core library.
 
-### Native backend (spike)
+### Native backend
 
 `--target native` compiles to a real, standalone executable via
-Cranelift -- no JVM/JDK involved at all -- for a deliberately small
-subset of the language (int/bool functions, arithmetic, `if`/`while`/
-`for`, calling other Roze functions; no strings-as-values, no
-`list`/`map`, no intrinsics yet -- see
-[docs/MEMORY_MODEL_DECISION.md](./docs/MEMORY_MODEL_DECISION.md) for
-why). Needs a C compiler (`cc`, `gcc`, or `clang` -- tried in that
-order) on `PATH` for linking; this is separate from whatever toolchain
-Rust itself used to build `roze`. On Linux/Mac this is virtually always
-already present; on Windows, MSYS2's MinGW-w64 toolchain is the most
-reliable option (see the error message from `--target native` for
-exact install steps if none is found).
+Cranelift -- no JVM/JDK involved at all. Supports int/bool/`string`
+functions, arithmetic, `if`/`while`/`for`, calling other Roze functions,
+and (as of the ARC memory model decision -- see
+[docs/MEMORY_MODEL_DECISION.md](./docs/MEMORY_MODEL_DECISION.md))
+real, general-purpose strings: parameters, return values, `let`/
+reassignment, concatenation, and content equality, all backed by real
+reference counting. Not supported yet: `list`/`map` and every Core/
+Collections/IO/Web/Database intrinsic (JVM-specific today). Needs a C
+compiler (`cc`, `gcc`, or `clang` -- tried in that order) on `PATH` for
+linking; this is separate from whatever toolchain Rust itself used to
+build `roze`. On Linux/Mac this is virtually always already present; on
+Windows, MSYS2's MinGW-w64 toolchain is the most reliable option (see
+the error message from `--target native` for exact install steps if
+none is found).
 
 ```bash
 ./target/release/roze run examples/native_demo.roze --target native

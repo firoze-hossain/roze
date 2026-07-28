@@ -224,13 +224,259 @@ fn intrinsic_call_is_rejected_with_a_clear_message() {
 }
 
 #[test]
-fn general_string_variable_is_rejected_with_a_clear_message() {
-    let (_stdout, stderr, ok) = run_native_source(
-        "reject_string_var",
+fn general_string_variables_now_work() {
+    // This used to be explicitly rejected -- see the ARC implementation
+    // in native.rs (compile_string_literal, string retain/release/
+    // concat/eq) for when that changed, once the memory model decision
+    // (docs/MEMORY_MODEL_DECISION.md) landed on ARC.
+    let (stdout, stderr, ok) = run_native_source(
+        "general_string_var",
         "func main() {\n    let s = \"hi\";\n    println(s);\n}\n",
     );
-    assert!(!ok, "expected the native backend to reject a general string value");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(program_output(&stdout).trim_end(), "hi");
+}
+
+#[test]
+fn list_and_map_are_still_rejected_with_a_clear_message() {
+    // Unlike strings, list/map haven't had ARC ported to their
+    // (multiple, variable-count) elements yet -- still out of scope.
+    let (_stdout, stderr, ok) = run_native_source(
+        "reject_list",
+        "func main() {\n    let l = list_new();\n    println(l);\n}\n",
+    );
+    assert!(!ok, "expected the native backend to still reject list/map");
     assert!(stderr.contains("native backend"), "expected a clear native-backend-specific message, got:\n{}", stderr);
+}
+
+#[test]
+fn no_memory_leaks_in_a_string_heavy_program() {
+    // Gated on valgrind being available (not installed by default
+    // almost anywhere, and Linux-only) -- skips with a clear message
+    // rather than failing if it's missing. This directly guards
+    // against the exact leak class found (via valgrind) during ARC's
+    // initial implementation: a fresh/temporary string value consumed
+    // as an operand to concat/equality/println and then discarded
+    // needs an explicit release, since no named binding ever owns it.
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_memory_leaks_in_a_string_heavy_program: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_leak_check");
+    let source = "\
+func digit_str(d: int) -> string {
+    if d == 0 { return \"0\"; }
+    if d == 1 { return \"1\"; }
+    if d == 2 { return \"2\"; }
+    return \"3+\";
+}
+
+func build(n: int) -> string {
+    let result = \"\";
+    let x = n;
+    let i = 0;
+    while i < 4 {
+        result = digit_str(x - (x / 3) * 3) + result;
+        x = x / 3;
+        i = i + 1;
+    }
+    return \"n=\" + result;
+}
+
+func main() {
+    let i = 0;
+    while i < 100 {
+        let s = build(i);
+        i = i + 1;
+    }
+    println(\"done\");
+}
+";
+    std::fs::write(dir.join("leak_check.roze"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("leak_check.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./leak_check")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}
+
+#[test]
+fn string_concat_equality_and_functions_are_correct() {
+    // Output-correctness (as opposed to no_memory_leaks_in_a_string_heavy_program,
+    // which checks for leaks specifically) for the core string
+    // operations together: concatenation, content equality (not
+    // pointer identity), passing a string into a function, and
+    // returning one back out.
+    let source = "\
+func greet(name: string) -> string {
+    return \"Hello, \" + name + \"!\";
+}
+
+func main() {
+    let a = \"foo\";
+    let b = \"foo\";
+    println(a == b);
+    println(a == \"bar\");
+    println(a != \"bar\");
+    println(greet(\"Roze\"));
+
+    let combined = a + b + \"baz\";
+    println(combined);
+}
+";
+    let (stdout, stderr, ok) = run_native_source("string_ops", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(
+        program_output(&stdout).trim_end(),
+        "true\nfalse\ntrue\nHello, Roze!\nfoofoobaz"
+    );
+}
+
+#[test]
+fn no_leak_with_heap_allocated_for_loop_init_variable_and_early_return() {
+    // Specifically targets a subtle case: a for-loop's *own* init
+    // variable (`for let label = ...; ...`) can itself be a string --
+    // nothing in the grammar restricts a for-loop's init to `int`, even
+    // though that's the overwhelmingly common case. If that string is
+    // heap-allocated (not an immortal literal) and the loop is exited
+    // early via `return` from inside its body, the for-loop's own
+    // scope-exit cleanup (which only runs on the *normal* loop-
+    // completion path) must not be the only thing responsible for
+    // releasing it -- `return`'s release-every-active-scope must cover
+    // it too, or it leaks; and it must not *also* run on top of that
+    // and double-release it.
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_with_heap_allocated_for_loop_init_variable_and_early_return: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_for_loop_init_leak_check");
+    let source = "\
+func early_exit(n: int) -> string {
+    for let label = \"loop\" + \" start\"; n < 100; n = n + 1 {
+        if n > 5 {
+            return \"escaped early\";
+        }
+    }
+    return \"never found\";
+}
+
+func main() {
+    println(early_exit(0));
+}
+";
+    std::fs::write(dir.join("loop_init_leak.roze"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("loop_init_leak.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./loop_init_leak")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}
+
+#[test]
+fn no_leak_with_early_returns_nested_several_scopes_deep() {
+    // Each level (function top scope, outer if, inner if) holds its own
+    // live string local at the moment of return -- release_all_active_
+    // scopes must walk *all* of them, not just the innermost.
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_with_early_returns_nested_several_scopes_deep: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_nested_return_leak_check");
+    let source = "\
+func classify(x: int) -> string {
+    let outer = \"outer value\";
+    if x > 0 {
+        let inner = \"inner value\";
+        if x > 10 {
+            let deepest = \"deepest\" + \" value\";
+            return deepest;
+        }
+        return inner;
+    }
+    return outer;
+}
+
+func main() {
+    println(classify(20));
+    println(classify(5));
+    println(classify(-1));
+}
+";
+    std::fs::write(dir.join("nested_return_leak.roze"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("nested_return_leak.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./nested_return_leak")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
 }
 
 #[test]

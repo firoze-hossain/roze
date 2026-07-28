@@ -19,8 +19,11 @@ Cargo.lock
 # Every .roze file you build emits a same-named .java source file and
 # .class bytecode file right next to it. These are build outputs, not
 # source, and should never be committed -- same idea as not committing
-# target/.
+# target/. The native backend (--target native) emits a same-named .o
+# object file and a bare executable (no fixed extension, so that one
+# still needs care with `git add`) instead.
 *.class
+*.o
 # NOTE: we intentionally do NOT ignore *.java globally, since some tools
 # (e.g. IDE integration) may keep hand-written .java interop files. If you
 # want the compiler's generated .java files ignored too, uncomment:

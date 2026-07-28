@@ -1,13 +1,13 @@
 // examples/native_demo.roze
-// Demonstrates the native (Cranelift) backend spike -- compiles to a
-// real, standalone executable, no JVM/JDK involved at all.
+// Demonstrates the native (Cranelift) backend -- compiles to a real,
+// standalone executable, no JVM/JDK involved at all.
 // Try it: roze run examples/native_demo.roze --target native
 //
-// Deliberately uses only what the native backend supports today: int/
-// bool functions, arithmetic, if/while/for, calling other functions,
-// and println of an int/bool/string-literal. See
-// docs/MEMORY_MODEL_DECISION.md for what's not supported yet (general
-// strings, list/map, and why).
+// Uses what the native backend supports today: int/bool/string
+// functions, arithmetic, string concatenation and equality (under
+// ARC -- see docs/MEMORY_MODEL_DECISION.md), if/while/for, and calling
+// other functions. Not supported yet: list/map, and every Core/
+// Collections/IO/Web/Database intrinsic (JVM-specific today).
 
 func fib(n: int) -> int {
     if n < 2 {
@@ -34,6 +34,10 @@ func sum_to(n: int) -> int {
     return total;
 }
 
+func greet(name: string) -> string {
+    return "Hello, " + name + "!";
+}
+
 func main() {
     println("Hello from the native backend!");
 
@@ -51,4 +55,8 @@ func main() {
         println(i);
         i = i + 1;
     }
+
+    let greeting = greet("Roze");
+    println(greeting);
+    println(greeting == "Hello, Roze!");
 }

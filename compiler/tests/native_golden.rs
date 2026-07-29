@@ -215,9 +215,11 @@ func main() {
 
 #[test]
 fn intrinsic_call_is_rejected_with_a_clear_message() {
+    // list_* used to be the go-to still-unsupported intrinsic for this
+    // test, until list support landed -- map_* is the current one.
     let (_stdout, stderr, ok) = run_native_source(
         "reject_intrinsic",
-        "func main() {\n    let l = list_new();\n    println(list_length(l));\n}\n",
+        "func main() {\n    let m = map_new();\n    println(map_size(m));\n}\n",
     );
     assert!(!ok, "expected the native backend to reject an intrinsic call");
     assert!(stderr.contains("native backend"), "expected a clear native-backend-specific message, got:\n{}", stderr);
@@ -470,6 +472,234 @@ func main() {
         .arg("--leak-check=full")
         .arg("--error-exitcode=1")
         .arg("./nested_return_leak")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}
+
+#[test]
+fn list_operations_are_correct() {
+    let source = "\
+func make_range(n: int) -> list {
+    let l = list_new();
+    for let i = 0; i < n; i = i + 1 {
+        list_push(l, i);
+    }
+    return l;
+}
+
+func sum_list(l: list) -> int {
+    let total = 0;
+    for let i = 0; i < list_length(l); i = i + 1 {
+        total = total + list_get(l, i);
+    }
+    return total;
+}
+
+func main() {
+    let l = list_new();
+    list_push(l, 10);
+    list_push(l, 20);
+    list_push(l, 30);
+    println(list_length(l));
+    println(list_get(l, 0));
+    println(list_is_empty(l));
+
+    let old = list_set(l, 1, 99);
+    println(old);
+    println(list_get(l, 1));
+
+    let removed = list_remove(l, 0);
+    println(removed);
+    println(list_length(l));
+    println(list_get(l, 0));
+
+    // Growth past the initial capacity (via realloc), a function
+    // returning a list it created, and aliasing (two bindings to the
+    // same underlying list, mutation through either visible via both).
+    let big = make_range(50);
+    println(list_length(big));
+    println(sum_list(big));
+    let alias = big;
+    list_push(alias, 999);
+    println(list_length(big));
+    println(list_get(big, 50));
+}
+";
+    let (stdout, stderr, ok) = run_native_source("list_ops", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(
+        program_output(&stdout).trim_end(),
+        "3\n10\nfalse\n20\n99\n10\n2\n99\n50\n1225\n51\n999"
+    );
+}
+
+#[test]
+fn list_index_out_of_bounds_exits_cleanly_instead_of_crashing() {
+    // No undefined behavior on an out-of-bounds access -- a clear
+    // message and a controlled exit(1), never a silent wrong read or a
+    // segfault from walking off the allocated buffer.
+    let source = "\
+func main() {
+    let l = list_new();
+    list_push(l, 1);
+    println(\"reached\");
+    println(list_get(l, 5));
+    println(\"never reached\");
+}
+";
+    let (stdout, _stderr, ok) = run_native_source("list_oob", source);
+    assert!(!ok, "expected a non-zero exit on out-of-bounds access");
+    assert!(stdout.contains("reached"), "expected output up to the out-of-bounds access, got:\n{}", stdout);
+    assert!(!stdout.contains("never reached"), "must not continue past the out-of-bounds access:\n{}", stdout);
+}
+
+#[test]
+fn list_element_type_is_restricted_to_int_and_bool_for_now() {
+    // Elements are plain i64 words with no ARC of their own -- storing
+    // a string (or another list) in one would compile but silently do
+    // the wrong thing at runtime (never retained/released as part of
+    // the list), so it's rejected at compile time instead.
+    let (_stdout, stderr, ok) = run_native_source(
+        "list_reject_string_element",
+        "func main() {\n    let l = list_new();\n    list_push(l, \"not allowed yet\");\n}\n",
+    );
+    assert!(!ok, "expected a compile error for a string list element");
+    assert!(stderr.contains("int/bool"), "expected a message naming the restriction, got:\n{}", stderr);
+}
+
+#[test]
+fn no_leak_with_high_volume_list_growth_shrink_and_nesting() {
+    // Exercises realloc-driven growth (1000 pushes against an initial
+    // capacity of 4), memmove-driven removal (500 pop-fronts), and
+    // nested list allocation (a fresh list created and consumed inside
+    // a loop, 200 times) together in one run.
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_with_high_volume_list_growth_shrink_and_nesting: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_list_high_volume");
+    let source = "\
+func main() {
+    let l = list_new();
+    for let i = 0; i < 1000; i = i + 1 {
+        list_push(l, i);
+    }
+    for let i = 0; i < 500; i = i + 1 {
+        list_remove(l, 0);
+    }
+    println(list_length(l));
+
+    let copies = list_new();
+    for let i = 0; i < 200; i = i + 1 {
+        let inner = list_new();
+        list_push(inner, i);
+        list_push(copies, list_get(inner, 0));
+    }
+    println(list_length(copies));
+}
+";
+    std::fs::write(dir.join("list_high_volume.roze"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("list_high_volume.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./list_high_volume")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}
+
+#[test]
+fn no_leak_with_lists_nested_several_scopes_deep_and_early_returns() {
+    // Mirrors the string version of this test: multiple live list
+    // locals across nested scopes (function top scope, for-loop body,
+    // nested if), with an early return from the deepest one --
+    // release-on-return must walk every active scope, and a list
+    // created but never returned (`dummy`) must still be released when
+    // the function falls off the end normally on the other call.
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_with_lists_nested_several_scopes_deep_and_early_returns: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_list_nested_return");
+    let source = "\
+func find_first_over(l: list, threshold: int) -> int {
+    let dummy = list_new();
+    list_push(dummy, 1);
+    for let i = 0; i < list_length(l); i = i + 1 {
+        if list_get(l, i) > threshold {
+            let another = list_new();
+            list_push(another, i);
+            if list_get(l, i) > 1000 {
+                return list_get(another, 0);
+            }
+            return i;
+        }
+    }
+    return -1;
+}
+
+func main() {
+    let l = list_new();
+    list_push(l, 1);
+    list_push(l, 5);
+    list_push(l, 1500);
+    list_push(l, 10);
+    println(find_first_over(l, 100));
+
+    let l2 = list_new();
+    list_push(l2, 1);
+    list_push(l2, 5);
+    println(find_first_over(l2, 100));
+}
+";
+    std::fs::write(dir.join("list_nested_return.roze"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("list_nested_return.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./list_nested_return")
         .current_dir(&dir)
         .output()
         .expect("failed to invoke valgrind");

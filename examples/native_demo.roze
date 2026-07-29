@@ -3,11 +3,13 @@
 // standalone executable, no JVM/JDK involved at all.
 // Try it: roze run examples/native_demo.roze --target native
 //
-// Uses what the native backend supports today: int/bool/string
-// functions, arithmetic, string concatenation and equality (under
-// ARC -- see docs/MEMORY_MODEL_DECISION.md), if/while/for, and calling
-// other functions. Not supported yet: list/map, and every Core/
-// Collections/IO/Web/Database intrinsic (JVM-specific today).
+// Uses what the native backend supports today: int/bool/string/list
+// functions, arithmetic, string concatenation and equality, list
+// push/get/set/remove (all under ARC -- see
+// docs/MEMORY_MODEL_DECISION.md), if/while/for, and calling other
+// functions. Not supported yet: map, string/list elements inside a
+// list, and every Core/Collections/IO/Web/Database intrinsic
+// (JVM-specific today).
 
 func fib(n: int) -> int {
     if n < 2 {
@@ -38,6 +40,22 @@ func greet(name: string) -> string {
     return "Hello, " + name + "!";
 }
 
+func make_range(n: int) -> list {
+    let l = list_new();
+    for let i = 0; i < n; i = i + 1 {
+        list_push(l, i);
+    }
+    return l;
+}
+
+func sum_list(l: list) -> int {
+    let total = 0;
+    for let i = 0; i < list_length(l); i = i + 1 {
+        total = total + list_get(l, i);
+    }
+    return total;
+}
+
 func main() {
     println("Hello from the native backend!");
 
@@ -59,4 +77,10 @@ func main() {
     let greeting = greet("Roze");
     println(greeting);
     println(greeting == "Hello, Roze!");
+
+    let numbers = make_range(10);
+    println(list_length(numbers));
+    println(sum_list(numbers));
+    list_push(numbers, 100);
+    println(list_get(numbers, 10));
 }

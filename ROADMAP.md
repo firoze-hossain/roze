@@ -390,14 +390,14 @@ Concretely:
    precedent for how "real" library dependencies might work in general
    once `roze-pkg` grows past generating stub files.
 4. **Native backend design** -- the typed-IR groundwork is done, the
-   Cranelift spike is done, and the memory model decision itself is now
+   Cranelift spike is done, the memory model decision itself is
    **decided: ARC** (approved; see
    [`docs/MEMORY_MODEL_DECISION.md`](./docs/MEMORY_MODEL_DECISION.md)
-   for the full tradeoff writeup, kept as the record of why). ARC is
-   now implemented for real, for the first heap type: `string`. This
+   for the full tradeoff writeup, kept as the record of why), and ARC
+   is now implemented for two heap types: `string` and `list`. This
    used to be the most consequential open decision in the whole
    roadmap; it's made now, and the thing worth watching going forward
-   is different -- making sure `list`/`map`/a real `class` type get
+   is different -- making sure `map`/a real `class` type keep getting
    built out on native at a reasonable pace, rather than the JVM
    backend's existing maturity on those fronts becoming a reason to
    never quite get to it.
@@ -411,11 +411,11 @@ Concretely:
    circuit `&&`/`||`. The JVM backend is completely unaffected and
    remains the default (`--target jvm` if you want to be explicit).
 
-   **What ARC adds, concretely**: `string` is now a real, general-
-   purpose type on the native backend -- parameters, return values,
-   `let`/reassignment, concatenation, content equality (`==`/`!=`, a
-   real `memcmp`, not pointer identity), and `println` of any string
-   value, not just a literal. Backed by real `malloc`/`free` and real
+   **What ARC adds for `string`, concretely**: a real, general-purpose
+   type on the native backend -- parameters, return values, `let`/
+   reassignment, concatenation, content equality (`==`/`!=`, a real
+   `memcmp`, not pointer identity), and `println` of any string value,
+   not just a literal. Backed by real `malloc`/`free` and real
    reference counting, with literals specially marked *immortal*
    (refcount sentinel, living in static data, retain/release are
    no-ops) so the overwhelmingly common case -- using a literal --
@@ -432,13 +432,40 @@ Concretely:
    body, and a ~700-operation high-volume concatenation loop -- all
    clean under Valgrind.
 
+   **What ARC adds for `list`, concretely**: `list_new/push/get/set/
+   remove/length/is_empty`, growth past initial capacity via `realloc`,
+   shrinking via a single `memmove` call on `remove`, and safe out-of-
+   bounds handling (a clear message and a controlled `exit(1)`, never a
+   crash). A list's identity stays stable across a `realloc`-driven
+   grow by design -- the pointer Roze code holds points at a small,
+   fixed-address header; only an internal data pointer inside it ever
+   moves. Deliberately scoped to int/bool elements only for now (a
+   string or nested list stored as an element would compile but
+   silently do the wrong thing at runtime -- never retained/released as
+   part of the container -- so that's rejected at compile time with a
+   message naming the restriction instead). This is also where a
+   *second* real bug turned up: extending the string ownership
+   convention to `list` exposed that `Return`/`Assign`/bare-
+   `Expression`-statement cleanup had each independently written their
+   own `Type::String`-only check -- three narrow copies of the same
+   logic, none aware of `list`. Valgrind caught it immediately (a list
+   freed by its own function before ever reaching the caller it was
+   returned to); fixed by consolidating all three into one shared
+   release-by-type dispatch function, specifically so the *next* ARC
+   type can't reintroduce the same bug through the same mechanism.
+   Verified the same way as strings: output-correctness tests plus
+   Valgrind-gated tests for the hardest cases -- multiple live lists
+   nested several scopes deep with an early return from the deepest
+   one, and a high-volume run (1000 pushes forcing several growths, 500
+   removals, 200 nested list allocations) -- all clean.
+
    **Still not supported, deliberately, and rejected with a clear
-   error rather than silently miscompiled**: `list`/`map` (each
-   element/key/value would need its own retain/release, following the
-   same convention recursively through a container -- a real next
-   increment, not a given just because strings work), any user-defined
-   `class`/reference type (doesn't exist as syntax yet -- `class` is
-   tokenized but never parsed, see Phase 1 above), and every Core/
-   Collections/IO/Web/Database intrinsic (JVM-specific today).
+   error rather than silently miscompiled**: `map` (a hash table's
+   collision-resolution and resizing logic is meaningfully harder to
+   get right, and to verify with the same confidence, than a growable
+   array was -- its own increment, not bundled in alongside list), any
+   user-defined `class`/reference type (doesn't exist as syntax yet --
+   `class` is tokenized but never parsed, see Phase 1 above), and every
+   Core/Collections/IO/Web/Database intrinsic (JVM-specific today).
 5. Everything else (Web/DB stdlib, WASM, embedded, self-hosting) follows
    naturally once the above are in place.

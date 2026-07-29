@@ -172,10 +172,10 @@ pub fn run_native(name: &str) -> Result<()> {
 /// function did) giving an error with no position information at all.
 fn require_supported_type(ty: &Type, location: &Location, context: &str) -> Result<()> {
     match ty {
-        Type::Int | Type::Bool | Type::Void | Type::Unknown | Type::String => Ok(()),
-        Type::List | Type::Map => Err(anyhow!(
-            "line {}, column {}: the native backend doesn't support '{}' yet -- each element/key/value would need its own ARC retain/release, which hasn't been ported from the string implementation yet -- {}",
-            location.line, location.column, ty, context
+        Type::Int | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List => Ok(()),
+        Type::Map => Err(anyhow!(
+            "line {}, column {}: the native backend doesn't support 'map' yet -- each key/value would need its own ARC retain/release, following the same convention list elements would eventually need too -- {}",
+            location.line, location.column, context
         )),
         Type::Function { .. } => Err(anyhow!(
             "line {}, column {}: the native backend doesn't support function values -- {}",
@@ -457,6 +457,481 @@ fn build_string_eq(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Cont
     Ok(func_id)
 }
 
+/// A native `list` value is a pointer to a small, FIXED-size (never
+/// reallocated, never moved) header:
+///
+///   [0..8)   i64  refcount
+///   [8..16)  i64  length     (elements currently in use)
+///   [16..24) i64  capacity   (elements the data buffer can hold)
+///   [24..32) i64  data_ptr   (pointer to a SEPARATELY allocated buffer)
+///
+/// Two-level indirection (header + separate data buffer) rather than
+/// growing the header itself, on purpose: `list_push` can need to grow
+/// the backing storage, and `realloc` can return a different address --
+/// if the list's own identity (the pointer Roze code holds as "the
+/// list") could change out from under it on every push, every other
+/// binding aliasing that same list would go stale. Keeping the header
+/// itself fixed-address means only `data_ptr` (an internal detail) ever
+/// moves; the value Roze code actually holds never does.
+///
+/// No "immortal" concept here (unlike strings): there's no such thing
+/// as a list *literal*, so every list is always a real, live, heap
+/// allocation from the moment `list_new()` creates it.
+///
+/// Elements are plain i64 words with no ARC of their own -- this
+/// implementation is deliberately scoped to int/bool elements only
+/// (rejected at each call site that would insert an unsupported
+/// element), so there's nothing per-element to retain/release, only
+/// the list's own header refcount.
+const LIST_HEADER_SIZE: i64 = 32;
+const LIST_INITIAL_CAPACITY: i64 = 4;
+
+struct ListRuntime {
+    new_id: FuncId,
+    retain_id: FuncId,
+    release_id: FuncId,
+    push_id: FuncId,
+    get_id: FuncId,
+    set_id: FuncId,
+    remove_id: FuncId,
+    length_id: FuncId,
+    is_empty_id: FuncId,
+}
+
+fn declare_list_runtime(module: &mut ObjectModule, printf_id: FuncId) -> Result<ListRuntime> {
+    let mut malloc_sig = module.make_signature();
+    malloc_sig.params.push(AbiParam::new(VALUE_TYPE));
+    malloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let malloc_id = module.declare_function("malloc", Linkage::Import, &malloc_sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    let mut free_sig = module.make_signature();
+    free_sig.params.push(AbiParam::new(VALUE_TYPE));
+    let free_id = module.declare_function("free", Linkage::Import, &free_sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    let mut realloc_sig = module.make_signature();
+    realloc_sig.params.push(AbiParam::new(VALUE_TYPE));
+    realloc_sig.params.push(AbiParam::new(VALUE_TYPE));
+    realloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let realloc_id = module.declare_function("realloc", Linkage::Import, &realloc_sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    let mut memmove_sig = module.make_signature();
+    memmove_sig.params.push(AbiParam::new(VALUE_TYPE));
+    memmove_sig.params.push(AbiParam::new(VALUE_TYPE));
+    memmove_sig.params.push(AbiParam::new(VALUE_TYPE));
+    memmove_sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let memmove_id = module.declare_function("memmove", Linkage::Import, &memmove_sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    module.declare_function("exit", Linkage::Import, &{
+        let mut sig = module.make_signature();
+        sig.params.push(AbiParam::new(types::I32));
+        sig
+    }).map_err(|e| anyhow!(e.to_string()))?;
+
+    let oob_message = NativeGenerator::declare_c_string(module, "__roze_list_oob_msg", b"Roze: list index out of bounds\n")?;
+
+    let mut ctx = module.make_context();
+    let new_id = build_list_new(module, &mut ctx, malloc_id)?;
+    let retain_id = build_list_retain(module, &mut ctx)?;
+    let release_id = build_list_release(module, &mut ctx, free_id)?;
+    let push_id = build_list_push(module, &mut ctx, realloc_id)?;
+    let get_id = build_list_bounds_checked_access(module, &mut ctx, printf_id, oob_message, AccessKind::Get)?;
+    let set_id = build_list_bounds_checked_access(module, &mut ctx, printf_id, oob_message, AccessKind::Set)?;
+    let remove_id = build_list_remove(module, &mut ctx, printf_id, oob_message, memmove_id)?;
+    let length_id = build_list_length(module, &mut ctx)?;
+    let is_empty_id = build_list_is_empty(module, &mut ctx)?;
+
+    Ok(ListRuntime { new_id, retain_id, release_id, push_id, get_id, set_id, remove_id, length_id, is_empty_id })
+}
+
+/// Emits `if !(0 <= index < length) { print an error; exit(1); }`,
+/// leaving the builder switched into a fresh "in bounds" block for the
+/// caller to continue building in. Shared by get/set/remove.
+fn emit_bounds_check(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    printf_id: FuncId,
+    oob_message: DataId,
+    index: Value,
+    length: Value,
+) {
+    let zero = builder.ins().iconst(VALUE_TYPE, 0);
+    let not_negative = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, index, zero);
+    let less_than_length = builder.ins().icmp(IntCC::SignedLessThan, index, length);
+    let in_bounds = builder.ins().band(not_negative, less_than_length);
+
+    let ok_block = builder.create_block();
+    let abort_block = builder.create_block();
+    builder.ins().brif(in_bounds, ok_block, &[], abort_block, &[]);
+
+    builder.switch_to_block(abort_block);
+    builder.seal_block(abort_block);
+    let msg_gv = module.declare_data_in_func(oob_message, builder.func);
+    let msg_ptr = builder.ins().global_value(VALUE_TYPE, msg_gv);
+    let printf_ref = module.declare_func_in_func(printf_id, builder.func);
+    let dummy = builder.ins().iconst(VALUE_TYPE, 0);
+    builder.ins().call(printf_ref, &[msg_ptr, dummy]);
+
+    let exit_id = module.declare_function("exit", Linkage::Import, &{
+        let mut sig = module.make_signature();
+        sig.params.push(AbiParam::new(types::I32));
+        sig
+    }).expect("exit was already declared once in declare_list_runtime with an identical signature");
+    let exit_ref = module.declare_func_in_func(exit_id, builder.func);
+    let one_i32 = builder.ins().iconst(types::I32, 1);
+    builder.ins().call(exit_ref, &[one_i32]);
+    // exit() never returns in practice; this return only exists so the
+    // block has a well-formed terminator Cranelift's verifier accepts.
+    builder.ins().return_(&[zero]);
+
+    builder.switch_to_block(ok_block);
+    builder.seal_block(ok_block);
+}
+
+enum AccessKind {
+    Get,
+    Set,
+}
+
+/// `__roze_list_new() -> i64`: allocates a header plus an initial-
+/// capacity data buffer, both independently, and links them together.
+fn build_list_new(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, malloc_id: FuncId) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_list_new", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let malloc_ref = module.declare_func_in_func(malloc_id, builder.func);
+
+        let header_size = builder.ins().iconst(VALUE_TYPE, LIST_HEADER_SIZE);
+        let call = builder.ins().call(malloc_ref, &[header_size]);
+        let header_ptr = builder.inst_results(call)[0];
+
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        builder.ins().store(MemFlags::new(), one, header_ptr, 0);
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        builder.ins().store(MemFlags::new(), zero, header_ptr, 8);
+        let initial_capacity = builder.ins().iconst(VALUE_TYPE, LIST_INITIAL_CAPACITY);
+        builder.ins().store(MemFlags::new(), initial_capacity, header_ptr, 16);
+
+        let data_size = builder.ins().iconst(VALUE_TYPE, LIST_INITIAL_CAPACITY * 8);
+        let data_call = builder.ins().call(malloc_ref, &[data_size]);
+        let data_ptr = builder.inst_results(data_call)[0];
+        builder.ins().store(MemFlags::new(), data_ptr, header_ptr, 24);
+
+        builder.ins().return_(&[header_ptr]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_list_retain(ptr: i64) -> void`
+fn build_list_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_list_retain", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+
+        let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
+        let incremented = builder.ins().iadd_imm(refcount, 1);
+        builder.ins().store(MemFlags::new(), incremented, ptr, 0);
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_list_release(ptr: i64) -> void`: frees both the data buffer
+/// and the header itself once the refcount reaches zero.
+fn build_list_release(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, free_id: FuncId) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_list_release", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+
+        let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
+        let decremented = builder.ins().iadd_imm(refcount, -1);
+        builder.ins().store(MemFlags::new(), decremented, ptr, 0);
+
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let should_free = builder.ins().icmp(IntCC::Equal, decremented, zero);
+        let free_block = builder.create_block();
+        let done_block = builder.create_block();
+        builder.ins().brif(should_free, free_block, &[], done_block, &[]);
+
+        builder.switch_to_block(free_block);
+        builder.seal_block(free_block);
+        let data_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
+        let free_ref = module.declare_func_in_func(free_id, builder.func);
+        builder.ins().call(free_ref, &[data_ptr]);
+        builder.ins().call(free_ref, &[ptr]);
+        builder.ins().jump(done_block, &[]);
+
+        builder.switch_to_block(done_block);
+        builder.seal_block(done_block);
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_list_push(ptr: i64, value: i64) -> i64` (always 1/true,
+/// matching `java.util.List.add`'s return convention): doubles the data
+/// buffer via `realloc` when full, updating the header's `data_ptr`/
+/// `capacity` fields in place -- the header's own address never
+/// changes, only what it points at.
+fn build_list_push(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, realloc_id: FuncId) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_list_push", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+        let value = builder.block_params(entry)[1];
+
+        let length = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 8);
+        let capacity = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 16);
+        let data_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
+
+        let needs_grow = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, length, capacity);
+        let grow_block = builder.create_block();
+        let store_block = builder.create_block();
+        builder.append_block_param(store_block, VALUE_TYPE); // the data_ptr to actually use
+
+        builder.ins().brif(needs_grow, grow_block, &[], store_block, &[data_ptr]);
+
+        builder.switch_to_block(grow_block);
+        builder.seal_block(grow_block);
+        let two = builder.ins().iconst(VALUE_TYPE, 2);
+        let new_capacity = builder.ins().imul(capacity, two);
+        let new_size = builder.ins().imul_imm(new_capacity, 8);
+        let realloc_ref = module.declare_func_in_func(realloc_id, builder.func);
+        let call = builder.ins().call(realloc_ref, &[data_ptr, new_size]);
+        let new_data_ptr = builder.inst_results(call)[0];
+        builder.ins().store(MemFlags::new(), new_data_ptr, ptr, 24);
+        builder.ins().store(MemFlags::new(), new_capacity, ptr, 16);
+        builder.ins().jump(store_block, &[new_data_ptr]);
+
+        builder.switch_to_block(store_block);
+        builder.seal_block(store_block);
+        let current_data_ptr = builder.block_params(store_block)[0];
+        let offset = builder.ins().imul_imm(length, 8);
+        let elem_addr = builder.ins().iadd(current_data_ptr, offset);
+        builder.ins().store(MemFlags::new(), value, elem_addr, 0);
+        let new_length = builder.ins().iadd_imm(length, 1);
+        builder.ins().store(MemFlags::new(), new_length, ptr, 8);
+
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        builder.ins().return_(&[one]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_list_get(ptr, index) -> i64` / `__roze_list_set(ptr, index,
+/// value) -> i64` (returns the *old* value, matching
+/// `java.util.List.set`). Both bounds-check first.
+fn build_list_bounds_checked_access(
+    module: &mut ObjectModule,
+    ctx: &mut cranelift::codegen::Context,
+    printf_id: FuncId,
+    oob_message: DataId,
+    kind: AccessKind,
+) -> Result<FuncId> {
+    let name = match kind {
+        AccessKind::Get => "__roze_list_get",
+        AccessKind::Set => "__roze_list_set",
+    };
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE)); // ptr
+    sig.params.push(AbiParam::new(VALUE_TYPE)); // index
+    if matches!(kind, AccessKind::Set) {
+        sig.params.push(AbiParam::new(VALUE_TYPE)); // value
+    }
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function(name, Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+        let index = builder.block_params(entry)[1];
+        let maybe_value = if matches!(kind, AccessKind::Set) { Some(builder.block_params(entry)[2]) } else { None };
+
+        let length = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 8);
+        emit_bounds_check(&mut builder, module, printf_id, oob_message, index, length);
+
+        let data_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
+        let offset = builder.ins().imul_imm(index, 8);
+        let elem_addr = builder.ins().iadd(data_ptr, offset);
+
+        match maybe_value {
+            None => {
+                let val = builder.ins().load(VALUE_TYPE, MemFlags::new(), elem_addr, 0);
+                builder.ins().return_(&[val]);
+            }
+            Some(new_value) => {
+                let old_val = builder.ins().load(VALUE_TYPE, MemFlags::new(), elem_addr, 0);
+                builder.ins().store(MemFlags::new(), new_value, elem_addr, 0);
+                builder.ins().return_(&[old_val]);
+            }
+        }
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_list_remove(ptr, index) -> i64` (returns the removed value):
+/// bounds-checks, then shifts every later element down one slot via a
+/// single `memmove` call (correct even when the shifted region is
+/// empty -- removing the last element -- since a zero-length memmove is
+/// a defined no-op).
+fn build_list_remove(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, printf_id: FuncId, oob_message: DataId, memmove_id: FuncId) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_list_remove", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+        let index = builder.block_params(entry)[1];
+
+        let length = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 8);
+        emit_bounds_check(&mut builder, module, printf_id, oob_message, index, length);
+
+        let data_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
+        let offset = builder.ins().imul_imm(index, 8);
+        let elem_addr = builder.ins().iadd(data_ptr, offset);
+        let removed = builder.ins().load(VALUE_TYPE, MemFlags::new(), elem_addr, 0);
+
+        // remaining = length - index - 1 (elements after the removed one)
+        let after_index = builder.ins().iadd_imm(index, 1);
+        let remaining_count = builder.ins().isub(length, after_index);
+        let remaining_bytes = builder.ins().imul_imm(remaining_count, 8);
+        let src_addr = builder.ins().iadd_imm(elem_addr, 8);
+        let memmove_ref = module.declare_func_in_func(memmove_id, builder.func);
+        builder.ins().call(memmove_ref, &[elem_addr, src_addr, remaining_bytes]);
+
+        let new_length = builder.ins().iadd_imm(length, -1);
+        builder.ins().store(MemFlags::new(), new_length, ptr, 8);
+
+        builder.ins().return_(&[removed]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_list_length(ptr: i64) -> i64`
+fn build_list_length(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_list_length", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+        let length = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 8);
+        builder.ins().return_(&[length]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_list_is_empty(ptr: i64) -> i64` (0 or 1)
+fn build_list_is_empty(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_list_is_empty", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+        let length = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 8);
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let is_empty = builder.ins().icmp(IntCC::Equal, length, zero);
+        let result = builder.ins().uextend(VALUE_TYPE, is_empty);
+        builder.ins().return_(&[result]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
 struct NativeGenerator<'a> {
     module: &'a mut ObjectModule,
     functions: HashMap<String, FuncId>,
@@ -466,6 +941,7 @@ struct NativeGenerator<'a> {
     true_str: DataId,
     false_str: DataId,
     strings: StringRuntime,
+    lists: ListRuntime,
     literal_counter: usize,
 }
 
@@ -490,6 +966,7 @@ impl<'a> NativeGenerator<'a> {
         let false_str = Self::declare_c_string(module, "__roze_false_str", b"false")?;
 
         let strings = declare_string_runtime(module)?;
+        let lists = declare_list_runtime(module, printf_id)?;
 
         Ok(Self {
             module,
@@ -500,6 +977,7 @@ impl<'a> NativeGenerator<'a> {
             true_str,
             false_str,
             strings,
+            lists,
             literal_counter: 0,
         })
     }
@@ -573,6 +1051,15 @@ impl<'a> NativeGenerator<'a> {
                         string_release_id: self.strings.release_id,
                         string_concat_id: self.strings.concat_id,
                         string_eq_id: self.strings.eq_id,
+                        list_new_id: self.lists.new_id,
+                        list_retain_id: self.lists.retain_id,
+                        list_release_id: self.lists.release_id,
+                        list_push_id: self.lists.push_id,
+                        list_get_id: self.lists.get_id,
+                        list_set_id: self.lists.set_id,
+                        list_remove_id: self.lists.remove_id,
+                        list_length_id: self.lists.length_id,
+                        list_is_empty_id: self.lists.is_empty_id,
                         literal_counter: &mut self.literal_counter,
                         scopes: vec![HashMap::new()],
                         next_var_index: 0,
@@ -681,6 +1168,15 @@ struct FunctionCompiler<'a, 'b> {
     string_release_id: FuncId,
     string_concat_id: FuncId,
     string_eq_id: FuncId,
+    list_new_id: FuncId,
+    list_retain_id: FuncId,
+    list_release_id: FuncId,
+    list_push_id: FuncId,
+    list_get_id: FuncId,
+    list_set_id: FuncId,
+    list_remove_id: FuncId,
+    list_length_id: FuncId,
+    list_is_empty_id: FuncId,
     /// Shared across every function being compiled (not reset per
     /// function), so two string literals never collide on the same
     /// generated data symbol name.
@@ -722,14 +1218,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     /// after an early return -- see `release_all_active_scopes`, used
     /// there instead, and never both for the same exit).
     fn release_frame(&mut self, frame_index: usize) -> Result<()> {
-        let string_vars: Vec<Variable> = self.scopes[frame_index]
+        let arc_vars: Vec<(Variable, Type)> = self.scopes[frame_index]
             .values()
-            .filter(|(_, ty)| *ty == Type::String)
-            .map(|(var, _)| *var)
+            .filter(|(_, ty)| matches!(ty, Type::String | Type::List))
+            .cloned()
             .collect();
-        for var in string_vars {
+        for (var, ty) in arc_vars {
             let val = self.builder.use_var(var);
-            self.emit_string_release(val)?;
+            self.emit_release_for_type(&ty, val)?;
         }
         Ok(())
     }
@@ -753,12 +1249,51 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     /// creating a second independent owner from it needs an explicit
     /// retain first.
     fn retain_if_aliasing(&mut self, expr: &TypedExpression, val: Value) -> Result<()> {
-        if expr.type_ == Type::String {
-            if let TypedExpressionKind::Identifier(_) = &expr.kind {
-                self.emit_string_retain(val)?;
+        if let TypedExpressionKind::Identifier(_) = &expr.kind {
+            match expr.type_ {
+                Type::String => self.emit_string_retain(val)?,
+                Type::List => self.emit_list_retain(val)?,
+                _ => {}
             }
         }
         Ok(())
+    }
+
+    /// Native `list` elements are plain i64 words with no ARC of their
+    /// own (see the module-level doc comment on `LIST_HEADER_SIZE`),
+    /// which is only safe for int/bool values -- a string or another
+    /// list stored in a list this way would compile, but silently do
+    /// the wrong thing at runtime (its refcount would never be adjusted
+    /// for being held by the list, so it could be freed while the list
+    /// still points at it, or never freed at all). Reject those cases
+    /// at compile time instead of ever executing them.
+    fn reject_unless_element_supported(&self, value: &TypedExpression, location: &Location, context: &str) -> Result<()> {
+        match &value.type_ {
+            Type::Int | Type::Bool | Type::Unknown => Ok(()),
+            other => Err(anyhow!(
+                "line {}, column {}: the native backend's lists can only hold int/bool elements for now, not {} -- {}",
+                location.line, location.column, other, context
+            )),
+        }
+    }
+
+    /// Releases `val` per its Roze type, if it's an ARC type at all
+    /// (String or List) -- a no-op for everything else. Centralizing
+    /// this dispatch in one place, rather than repeating `if ty ==
+    /// Type::String` at every release site, is what actually matters
+    /// here: that exact per-site duplication is what let a real bug
+    /// through during development -- `Return`, `Assign`, and bare
+    /// `Expression`-statement cleanup were each independently checking
+    /// only `Type::String`, so a `list` value went un-retained/
+    /// un-released at every one of those sites until this was
+    /// consolidated (caught by Valgrind: a list was being freed by its
+    /// own function before ever reaching the caller it was returned to).
+    fn emit_release_for_type(&mut self, ty: &Type, val: Value) -> Result<()> {
+        match ty {
+            Type::String => self.emit_string_release(val),
+            Type::List => self.emit_list_release(val),
+            _ => Ok(()),
+        }
     }
 
     fn emit_string_retain(&mut self, val: Value) -> Result<()> {
@@ -782,6 +1317,60 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn emit_string_eq(&mut self, a: Value, b: Value) -> Result<Value> {
         let func_ref = self.module.declare_func_in_func(self.string_eq_id, self.builder.func);
         let call = self.builder.ins().call(func_ref, &[a, b]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_list_new(&mut self) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.list_new_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_list_retain(&mut self, val: Value) -> Result<()> {
+        let func_ref = self.module.declare_func_in_func(self.list_retain_id, self.builder.func);
+        self.builder.ins().call(func_ref, &[val]);
+        Ok(())
+    }
+
+    fn emit_list_release(&mut self, val: Value) -> Result<()> {
+        let func_ref = self.module.declare_func_in_func(self.list_release_id, self.builder.func);
+        self.builder.ins().call(func_ref, &[val]);
+        Ok(())
+    }
+
+    fn emit_list_push(&mut self, list: Value, value: Value) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.list_push_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[list, value]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_list_get(&mut self, list: Value, index: Value) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.list_get_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[list, index]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_list_set(&mut self, list: Value, index: Value, value: Value) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.list_set_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[list, index, value]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_list_remove(&mut self, list: Value, index: Value) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.list_remove_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[list, index]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_list_length(&mut self, list: Value) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.list_length_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[list]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_list_is_empty(&mut self, list: Value) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.list_is_empty_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[list]);
         Ok(self.builder.inst_results(call)[0])
     }
 
@@ -849,17 +1438,15 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let val = self.compile_expression(value)?;
                 self.retain_if_aliasing(value, val)?;
                 let (var, ty) = self.lookup_local(name);
-                if ty == Type::String {
-                    let old_val = self.builder.use_var(var);
-                    self.emit_string_release(old_val)?;
-                }
+                let old_val = self.builder.use_var(var);
+                self.emit_release_for_type(&ty, old_val)?;
                 self.builder.def_var(var, val);
                 Ok(false)
             }
             TypedStatement::Expression { expr, .. } => {
                 let val = self.compile_expression(expr)?;
-                if expr.type_ == Type::String && !matches!(expr.kind, TypedExpressionKind::Identifier(_)) {
-                    self.emit_string_release(val)?;
+                if !matches!(expr.kind, TypedExpressionKind::Identifier(_)) {
+                    self.emit_release_for_type(&expr.type_, val)?;
                 }
                 Ok(false)
             }
@@ -867,9 +1454,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 match value {
                     Some(expr) => {
                         let val = self.compile_expression(expr)?;
-                        if expr.type_ == Type::String {
-                            self.retain_if_aliasing(expr, val)?;
-                        }
+                        self.retain_if_aliasing(expr, val)?;
                         self.release_all_active_scopes()?;
                         self.builder.ins().return_(&[val]);
                     }
@@ -1097,6 +1682,42 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn compile_call(&mut self, name: &str, arguments: &[TypedExpression], location: &Location) -> Result<Value> {
         if name == "println" {
             return self.compile_println(arguments);
+        }
+
+        match name {
+            "list_new" if arguments.is_empty() => return self.emit_list_new(),
+            "list_push" if arguments.len() == 2 => {
+                self.reject_unless_element_supported(&arguments[1], location, "list_push")?;
+                let list = self.compile_expression(&arguments[0])?;
+                let value = self.compile_expression(&arguments[1])?;
+                return self.emit_list_push(list, value);
+            }
+            "list_get" if arguments.len() == 2 => {
+                let list = self.compile_expression(&arguments[0])?;
+                let index = self.compile_expression(&arguments[1])?;
+                return self.emit_list_get(list, index);
+            }
+            "list_set" if arguments.len() == 3 => {
+                self.reject_unless_element_supported(&arguments[2], location, "list_set")?;
+                let list = self.compile_expression(&arguments[0])?;
+                let index = self.compile_expression(&arguments[1])?;
+                let value = self.compile_expression(&arguments[2])?;
+                return self.emit_list_set(list, index, value);
+            }
+            "list_remove" if arguments.len() == 2 => {
+                let list = self.compile_expression(&arguments[0])?;
+                let index = self.compile_expression(&arguments[1])?;
+                return self.emit_list_remove(list, index);
+            }
+            "list_length" if arguments.len() == 1 => {
+                let list = self.compile_expression(&arguments[0])?;
+                return self.emit_list_length(list);
+            }
+            "list_is_empty" if arguments.len() == 1 => {
+                let list = self.compile_expression(&arguments[0])?;
+                return self.emit_list_is_empty(list);
+            }
+            _ => {}
         }
 
         if super::jvm::is_intrinsic(name) {

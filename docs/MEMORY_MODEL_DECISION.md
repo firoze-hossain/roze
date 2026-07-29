@@ -1,12 +1,13 @@
 # Memory model for the native backend: a decision, not a default
 
 **Decided: ARC.** Approved and a real implementation now exists for
-the first heap type (strings) -- see `compiler/src/codegen/native.rs`
-and the "What's actually built" section at the bottom of this document.
-The analysis and recommendation below are kept as-is (including the
-original framing of this as an open decision) since they're still the
-record of *why* ARC was chosen, and the same reasoning applies to each
-next type (starting with `list`/`map`) as ARC gets extended to them.
+two heap types (`string` and `list`) -- see
+`compiler/src/codegen/native.rs` and the "What's actually built"
+sections further down this document. The analysis and recommendation
+below are kept as-is (including the original framing of this as an
+open decision) since they're still the record of *why* ARC was chosen,
+and the same reasoning applies to each next type (`map`, then
+eventually a user-defined `class`) as ARC gets extended to them.
 
 **Update history**:
 - A real Cranelift-based native backend spike first proved the typed-
@@ -14,7 +15,9 @@ next type (starting with `list`/`map`) as ARC gets extended to them.
   (int/bool functions, arithmetic, control flow, no heap types).
 - ARC was then approved as the memory model, and implemented for
   `string` -- the first and simplest heap type -- as the next concrete
-  step past that spike. `list`/`map` remain unported (see below).
+  step past that spike.
+- ARC was then extended to `list` (int/bool elements only for now --
+  see below). `map` remains unported.
 
 ## Why this can't be deferred any further
 
@@ -252,11 +255,62 @@ the loop body, and a high-volume loop performing ~700 concatenations
 in a row -- all clean under Valgrind (0 leaks, 0 errors, allocation
 count exactly matches free count).
 
-**What's not built yet**: `list`/`map` on the native backend still
-don't exist (each element/key/value would need its own retain/release,
-following the same convention above but applied recursively through a
-container -- a real next increment, not a given just because strings
-work). No `class`/user-defined reference types. No `weak` escape hatch
-(moot until something can form a reference cycle, which needs `class`
-first). Every Core/Collections/IO/Web/Database intrinsic remains
-JVM-only.
+## What's actually built (list, under the same ARC convention)
+
+**Representation**: unlike a string, a native `list` value's identity
+has to stay stable across mutation -- `list_push` can need to grow the
+backing storage, and `realloc` can return a different address. Two-
+level indirection solves this: the pointer Roze code holds points at a
+small, *fixed*-address header (refcount, length, capacity, and a
+pointer to a *separately* allocated data buffer); only that inner data
+pointer ever moves when the buffer grows, never the header itself, so
+every binding aliasing the same list keeps working correctly across an
+arbitrary number of pushes.
+
+**Ownership convention**: identical to strings -- a fresh list (from
+`list_new()`, or handed back as a function's return value) is already
+owned; a bare identifier alias needs an explicit retain to create a
+second independent owner; every scope releases its own list locals;
+early `return` releases every active scope. Elements themselves are
+plain i64 words with no ARC of their own, which is why this is
+deliberately scoped to int/bool elements only -- a string or another
+list stored as an element would compile but silently do the wrong
+thing at runtime (never retained/released as part of the container),
+so that's rejected at compile time instead, with a message naming the
+restriction.
+
+**What works**: `list_new/push/get/set/remove/length/is_empty`, growth
+past initial capacity (via `realloc`), shrinking via `remove` (via a
+single `memmove` call, correct even when removing the last element,
+since a zero-length `memmove` is a defined no-op), and safe out-of-
+bounds handling -- a clear message and a controlled `exit(1)`, never a
+crash or a silent wrong read from walking off the allocated buffer.
+
+**Found a second real bug this way, not just a first**: extending the
+ownership convention to `list` immediately exposed that `Return`,
+`Assign`, and bare `Expression`-statement cleanup had each
+independently written their own `if ty == Type::String` check -- three
+separate, narrow copies of the same logic, none of which knew about
+`list`. Caught by Valgrind: a list was being freed by its own function
+before it ever reached the caller it was returned to. Fixed by
+consolidating all three into one shared release-by-type dispatch
+function, specifically so the *next* ARC type (whatever extends this
+after `list`) can't reintroduce the same class of bug by the same
+mechanism -- there's now exactly one place that needs to know about a
+new ARC type's release call, not three.
+
+**Verified the same way**: output-correctness tests, plus Valgrind-
+gated tests for the trickiest scenarios -- multiple live lists nested
+several scopes deep with an early return from the deepest one, and a
+high-volume run (1000 pushes forcing several `realloc` growths, 500
+`memmove`-based removals, 200 nested list allocations) -- all clean (0
+leaks, 0 errors, allocation count exactly matching free count).
+
+**What's not built yet**: `map` on the native backend still doesn't
+exist -- a hash table's collision-resolution and resizing logic is
+meaningfully harder to get right (and to verify with the same
+confidence) than a growable array was, so it's being treated as its
+own increment rather than rushed alongside list. No `class`/user-
+defined reference types. No `weak` escape hatch (moot until something
+can form a reference cycle, which needs `class` first). Every Core/
+Collections/IO/Web/Database intrinsic remains JVM-only.

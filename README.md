@@ -103,13 +103,16 @@ example exercising control flow and the Core library.
 ### Native backend
 
 `--target native` compiles to a real, standalone executable via
-Cranelift -- no JVM/JDK involved at all. Supports int/bool/`string`
-functions, arithmetic, `if`/`while`/`for`, calling other Roze functions,
-and (as of the ARC memory model decision -- see
+Cranelift -- no JVM/JDK involved at all. Supports int/bool/`string`/
+`list` functions, arithmetic, `if`/`while`/`for`, calling other Roze
+functions, and (as of the ARC memory model decision -- see
 [docs/MEMORY_MODEL_DECISION.md](./docs/MEMORY_MODEL_DECISION.md))
-real, general-purpose strings: parameters, return values, `let`/
-reassignment, concatenation, and content equality, all backed by real
-reference counting. Not supported yet: `list`/`map` and every Core/
+real, general-purpose strings and lists, both backed by real reference
+counting: string parameters/return values/`let`/reassignment/
+concatenation/content equality, and `list_new/push/get/set/remove/
+length/is_empty` with int/bool elements (growing automatically past
+initial capacity, safe out-of-bounds handling). Not supported yet:
+`map`, string/list elements *inside* a list, and every Core/
 Collections/IO/Web/Database intrinsic (JVM-specific today). Needs a C
 compiler (`cc`, `gcc`, or `clang` -- tried in that order) on `PATH` for
 linking; this is separate from whatever toolchain Rust itself used to

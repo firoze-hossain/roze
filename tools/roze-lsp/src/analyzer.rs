@@ -95,6 +95,11 @@ impl Analyzer {
         Vec::new()
     }
 
+    // DocumentSymbol::deprecated is a required struct field (no
+    // ..Default::default() used here), so it must be set even though
+    // it's deprecated in favor of `tags` -- which is already set below
+    // too, for clients that prefer it.
+    #[allow(deprecated)]
     pub fn get_document_symbols(&self, doc: &Document) -> Vec<DocumentSymbol> {
         let mut symbols = Vec::new();
 

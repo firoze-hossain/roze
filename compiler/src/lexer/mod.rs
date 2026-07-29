@@ -5,7 +5,6 @@ use std::iter::Peekable;
 use std::str::Chars;
 
 pub struct Lexer<'a> {
-    input: &'a str,
     chars: Peekable<Chars<'a>>,
     position: usize,
     line: usize,
@@ -16,7 +15,6 @@ pub struct Lexer<'a> {
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
         let mut lexer = Self {
-            input,
             chars: input.chars().peekable(),
             position: 0,
             line: 1,

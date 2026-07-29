@@ -35,33 +35,9 @@ impl Default for ProjectConfig {
 }
 
 impl ProjectConfig {
-    pub fn new(name: &str) -> Self {
-        let mut config = Self::default();
-        config.name = name.to_string();
-        config
-    }
-
     pub fn load(path: &PathBuf) -> Result<Self, anyhow::Error> {
         let content = fs::read_to_string(path)?;
         let config: ProjectConfig = toml::from_str(&content)?;
         Ok(config)
-    }
-
-    pub fn save(&self, path: &PathBuf) -> Result<(), anyhow::Error> {
-        let content = toml::to_string_pretty(self)?;
-        fs::write(path, content)?;
-        Ok(())
-    }
-
-    pub fn add_dependency(&mut self, name: &str, version: &str) {
-        self.dependencies.insert(name.to_string(), version.to_string());
-    }
-
-    pub fn remove_dependency(&mut self, name: &str) {
-        self.dependencies.remove(name);
-    }
-
-    pub fn has_dependency(&self, name: &str) -> bool {
-        self.dependencies.contains_key(name)
     }
 }

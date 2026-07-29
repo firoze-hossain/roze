@@ -42,7 +42,7 @@
 // functions (including recursion), and `println` of any int/bool/
 // string value (not just literals anymore).
 use crate::ir::{TypedExpression, TypedExpressionKind, TypedProgram, TypedStatement};
-use crate::parser::ast::{BinaryOperator, UnaryOperator};
+use crate::parser::ast::{BinaryOperator, Location, UnaryOperator};
 use crate::semantic::Type;
 use anyhow::{anyhow, Result};
 use cranelift::prelude::*;
@@ -167,16 +167,20 @@ pub fn run_native(name: &str) -> Result<()> {
 }
 
 /// Rejects any type this backend doesn't support yet, with a message
-/// pointing at why, rather than either panicking or silently
-/// miscompiling.
-fn require_supported_type(ty: &Type, context: &str) -> Result<()> {
+/// pointing at why and exactly where in the source, rather than either
+/// panicking, silently miscompiling, or (as an earlier version of this
+/// function did) giving an error with no position information at all.
+fn require_supported_type(ty: &Type, location: &Location, context: &str) -> Result<()> {
     match ty {
         Type::Int | Type::Bool | Type::Void | Type::Unknown | Type::String => Ok(()),
         Type::List | Type::Map => Err(anyhow!(
-            "the native backend doesn't support '{}' yet -- each element/key/value would need its own ARC retain/release, which hasn't been ported from the string implementation yet -- {}",
-            ty, context
+            "line {}, column {}: the native backend doesn't support '{}' yet -- each element/key/value would need its own ARC retain/release, which hasn't been ported from the string implementation yet -- {}",
+            location.line, location.column, ty, context
         )),
-        Type::Function { .. } => Err(anyhow!("the native backend doesn't support function values -- {}", context)),
+        Type::Function { .. } => Err(anyhow!(
+            "line {}, column {}: the native backend doesn't support function values -- {}",
+            location.line, location.column, context
+        )),
     }
 }
 
@@ -519,11 +523,11 @@ impl<'a> NativeGenerator<'a> {
     /// `emit_c_main`.
     fn declare_all_functions(&mut self, program: &TypedProgram) -> Result<()> {
         for stmt in &program.statements {
-            if let TypedStatement::Function { name, params, return_type, .. } = stmt {
+            if let TypedStatement::Function { name, params, return_type, location, .. } = stmt {
                 for param in params {
-                    require_supported_type(&param.type_, &format!("parameter '{}' of function '{}'", param.name, name))?;
+                    require_supported_type(&param.type_, location, &format!("parameter '{}' of function '{}'", param.name, name))?;
                 }
-                require_supported_type(return_type, &format!("the return type of function '{}'", name))?;
+                require_supported_type(return_type, location, &format!("the return type of function '{}'", name))?;
 
                 let mut sig = self.module.make_signature();
                 for _ in params {
@@ -834,7 +838,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 Ok(terminated)
             }
             TypedStatement::Let { name, value, .. } => {
-                require_supported_type(&value.type_, &format!("variable '{}'", name))?;
+                require_supported_type(&value.type_, &value.location, &format!("variable '{}'", name))?;
                 let val = self.compile_expression(value)?;
                 self.retain_if_aliasing(value, val)?;
                 let var = self.declare_local(name, value.type_.clone());
@@ -994,7 +998,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 }
             }
             TypedExpressionKind::Binary { left, operator, right } => self.compile_binary(left, operator, right),
-            TypedExpressionKind::Call { function, arguments } => self.compile_call(function, arguments),
+            TypedExpressionKind::Call { function, arguments } => self.compile_call(function, arguments, &expr.location),
         }
     }
 
@@ -1090,15 +1094,15 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         Ok(self.builder.block_params(merge_block)[0])
     }
 
-    fn compile_call(&mut self, name: &str, arguments: &[TypedExpression]) -> Result<Value> {
+    fn compile_call(&mut self, name: &str, arguments: &[TypedExpression], location: &Location) -> Result<Value> {
         if name == "println" {
             return self.compile_println(arguments);
         }
 
         if super::jvm::is_intrinsic(name) {
             return Err(anyhow!(
-                "'{}' is a Core/Collections/IO/Web/Database intrinsic, which is only available on the JVM backend today (see docs/MEMORY_MODEL_DECISION.md for why the native backend doesn't have these yet)",
-                name
+                "line {}, column {}: '{}' is a Core/Collections/IO/Web/Database intrinsic, which is only available on the JVM backend today (see docs/MEMORY_MODEL_DECISION.md for why the native backend doesn't have these yet)",
+                location.line, location.column, name
             ));
         }
 

@@ -35,6 +35,14 @@ struct Document {
 
 #[derive(Debug, Clone)]
 struct Workspace {
+    // Known gap, not yet wired up: this is hardcoded to "." at the one
+    // call site (see main()) rather than coming from the LSP client's
+    // actual `initialize` request (`rootUri`/`workspaceFolders`), so
+    // there's nothing meaningful to read from it yet. Kept as a
+    // placeholder for when workspace-relative features (e.g. resolving
+    // imports or symbols across the whole project, not just the
+    // currently-open file) get built.
+    #[allow(dead_code)]
     root: PathBuf,
     documents: DashMap<Url, Document>,
     analyzer: Analyzer,

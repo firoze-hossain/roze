@@ -184,14 +184,6 @@ main = "src/lib.roze"
         }
     }
 
-    pub fn get_all_templates() -> Vec<Self> {
-        vec![
-            Self::get_default(),
-            Self::get_web(),
-            Self::get_library(),
-        ]
-    }
-
     pub fn apply(&self, project_name: &str, author: &str, output_dir: &PathBuf) -> Result<()> {
         fs::create_dir_all(output_dir.join("src"))?;
 

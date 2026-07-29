@@ -18,6 +18,12 @@ pub enum Type {
     List,
     /// A map of untyped (Object-boxed) keys/values, for the same reason.
     Map,
+    /// Reserved for when Roze gets first-class function values/closures
+    /// -- nothing constructs this yet (there's no syntax for a function
+    /// *value*, only calls), but the other Type variants already match
+    /// on it exhaustively, so it's kept rather than removed and
+    /// re-added later.
+    #[allow(dead_code)]
     Function {
         params: Vec<Type>,
         return_type: Box<Type>,
@@ -144,10 +150,6 @@ impl SymbolTable {
             }
         }
         None
-    }
-
-    pub fn lookup_current(&self, name: &str) -> Option<&Symbol> {
-        self.scopes.last().and_then(|frame| frame.get(name))
     }
 }
 
@@ -653,6 +655,13 @@ impl TypeChecker {
 /// which cares whether the program is valid, not about generating code
 /// for it). Compiling to Java should use `check_and_lower` instead, to
 /// avoid re-deriving the same information a second time in codegen.
+///
+/// (The "never used" dead-code warning this can trigger is a known
+/// false positive from the bin/lib dual-module-tree setup: roze-lsp
+/// genuinely calls this through the lib target; only the bin target's
+/// own separate copy of this file -- main.rs uses check_and_lower
+/// directly instead -- doesn't.)
+#[allow(dead_code)]
 pub fn check_types(program: &Program) -> Result<()> {
     check_and_lower(program).map(|_| ())
 }

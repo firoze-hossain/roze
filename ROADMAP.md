@@ -394,12 +394,12 @@ Concretely:
    **decided: ARC** (approved; see
    [`docs/MEMORY_MODEL_DECISION.md`](./docs/MEMORY_MODEL_DECISION.md)
    for the full tradeoff writeup, kept as the record of why), and ARC
-   is now implemented for two heap types: `string` and `list`. This
-   used to be the most consequential open decision in the whole
-   roadmap; it's made now, and the thing worth watching going forward
-   is different -- making sure `map`/a real `class` type keep getting
-   built out on native at a reasonable pace, rather than the JVM
-   backend's existing maturity on those fronts becoming a reason to
+   is now implemented for three heap types: `string`, `list`, and
+   `map`. This used to be the most consequential open decision in the
+   whole roadmap; it's made now, and the thing worth watching going
+   forward is different -- making sure a real `class` type keeps
+   getting built out on native at a reasonable pace, rather than the
+   JVM backend's existing maturity on that front becoming a reason to
    never quite get to it.
 
    **What the spike proved, concretely**: `roze build foo.roze --target
@@ -459,13 +459,33 @@ Concretely:
    one, and a high-volume run (1000 pushes forcing several growths, 500
    removals, 200 nested list allocations) -- all clean.
 
+   **What ARC adds for `map`, concretely**: `map_new/put/get/has/
+   remove/size/is_empty`, via a real hash table -- open addressing with
+   linear probing, tombstones for correct post-removal lookups, and
+   automatic growth (doubling + full rehash) once the load factor would
+   exceed 75%. Same two-level-indirection identity-stability trick as
+   `list`, same int/bool-only key/value restriction and the same
+   reasoning for it. Given a hash table's collision/resize logic is
+   genuinely harder to get right than a growable array's, the whole
+   algorithm was prototyped and Valgrind-checked in plain C first,
+   *before* being translated into Cranelift IR -- separating "is the
+   algorithm right" from "is the IR construction right" instead of
+   debugging both at once. Verified the same way as `string`/`list`:
+   output-correctness tests plus Valgrind-gated tests for the hardest
+   cases -- 1000 puts forcing several growths together with negative
+   keys and post-removal tombstone probing, and multiple live maps
+   nested several scopes deep with an early return from the deepest
+   one -- all clean.
+
    **Still not supported, deliberately, and rejected with a clear
-   error rather than silently miscompiled**: `map` (a hash table's
-   collision-resolution and resizing logic is meaningfully harder to
-   get right, and to verify with the same confidence, than a growable
-   array was -- its own increment, not bundled in alongside list), any
-   user-defined `class`/reference type (doesn't exist as syntax yet --
-   `class` is tokenized but never parsed, see Phase 1 above), and every
-   Core/Collections/IO/Web/Database intrinsic (JVM-specific today).
+   error rather than silently miscompiled**: any user-defined `class`/
+   reference type (doesn't exist as syntax yet -- `class` is tokenized
+   but never parsed, see Phase 1 above; without it there's no way to
+   define a *new* heap type beyond the three built-in ones above), a
+   `weak` escape hatch (moot until something can form a reference
+   cycle, which needs `class` first), string or nested-container keys/
+   values inside `list`/`map` (would need the same recursive retain/
+   release treatment applied through a container), and every Core/
+   Collections/IO/Web/Database intrinsic (JVM-specific today).
 5. Everything else (Web/DB stdlib, WASM, embedded, self-hosting) follows
    naturally once the above are in place.

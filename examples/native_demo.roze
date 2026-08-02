@@ -3,13 +3,13 @@
 // standalone executable, no JVM/JDK involved at all.
 // Try it: roze run examples/native_demo.roze --target native
 //
-// Uses what the native backend supports today: int/bool/string/list
-// functions, arithmetic, string concatenation and equality, list
-// push/get/set/remove (all under ARC -- see
+// Uses what the native backend supports today: int/bool/string/list/
+// map functions, arithmetic, string concatenation and equality, list
+// push/get/set/remove, map put/get/has/remove (all under ARC -- see
 // docs/MEMORY_MODEL_DECISION.md), if/while/for, and calling other
-// functions. Not supported yet: map, string/list elements inside a
-// list, and every Core/Collections/IO/Web/Database intrinsic
-// (JVM-specific today).
+// functions. Not supported yet: string/list/map elements or keys/
+// values inside a list/map, any user-defined class, and every Core/
+// Collections/IO/Web/Database intrinsic (JVM-specific today).
 
 func fib(n: int) -> int {
     if n < 2 {
@@ -83,4 +83,14 @@ func main() {
     println(sum_list(numbers));
     list_push(numbers, 100);
     println(list_get(numbers, 10));
+
+    let ages = map_new();
+    map_put(ages, 1, 30);
+    map_put(ages, 2, 25);
+    println(map_size(ages));
+    println(map_get(ages, 1));
+    println(map_has(ages, 3));
+    map_remove(ages, 1);
+    println(map_has(ages, 1));
+    println(map_size(ages));
 }

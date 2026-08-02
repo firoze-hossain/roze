@@ -172,11 +172,7 @@ pub fn run_native(name: &str) -> Result<()> {
 /// function did) giving an error with no position information at all.
 fn require_supported_type(ty: &Type, location: &Location, context: &str) -> Result<()> {
     match ty {
-        Type::Int | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List => Ok(()),
-        Type::Map => Err(anyhow!(
-            "line {}, column {}: the native backend doesn't support 'map' yet -- each key/value would need its own ARC retain/release, following the same convention list elements would eventually need too -- {}",
-            location.line, location.column, context
-        )),
+        Type::Int | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map => Ok(()),
         Type::Function { .. } => Err(anyhow!(
             "line {}, column {}: the native backend doesn't support function values -- {}",
             location.line, location.column, context
@@ -932,6 +928,798 @@ fn build_list_is_empty(module: &mut ObjectModule, ctx: &mut cranelift::codegen::
     Ok(func_id)
 }
 
+/// A native `map` value is a pointer to a small, FIXED-size (never
+/// reallocated, never moved) header -- the same two-level-indirection
+/// idea as `list`, for the same reason (growth needs to be able to
+/// move the backing storage without changing the map's own identity):
+///
+///   [0..8)   i64  refcount
+///   [8..16)  i64  count      (live entries)
+///   [16..24) i64  capacity   (slots -- always a power of 2)
+///   [24..32) i64  slots_ptr  (pointer to a SEPARATELY allocated array)
+///
+/// Each slot is 24 bytes: `[state: i64][key: i64][value: i64]`, where
+/// state is 0 (empty, never used), 1 (occupied), or 2 (tombstone -- had
+/// an entry, since removed). Open addressing with linear probing:
+/// insert/lookup start at `hash(key) & (capacity - 1)` (capacity being
+/// a power of 2 makes this a cheap bitmask instead of a real modulo,
+/// and works correctly for negative keys too, since AND operates on
+/// the bit pattern regardless of sign) and scan forward, wrapping at
+/// the end, until the right kind of slot is found. A tombstone (rather
+/// than resetting a removed slot straight back to empty) is necessary
+/// for correctness, not just an optimization: resetting a slot to
+/// empty on removal could break the probe sequence for some *other*
+/// key that happens to hash to the same start index and had to skip
+/// past this slot to find its own -- a later lookup for that other key
+/// would then stop early at the now-empty slot and incorrectly report
+/// it missing.
+///
+/// Keys and values are both plain i64 words with no ARC of their own,
+/// same restriction and same reasoning as `list`'s elements (see
+/// `LIST_HEADER_SIZE`'s doc comment) -- scoped to int/bool for now.
+///
+/// The algorithm here (probing, growth, tombstones) was prototyped and
+/// verified in plain C first (allocs/frees checked under Valgrind, and
+/// exercised well past a resize with a realistic mix of inserts,
+/// updates, removals, and negative keys) before being translated to
+/// Cranelift IR -- getting the algorithm right is a different problem
+/// from getting the IR construction right, and easier to debug
+/// separately than at the same time.
+const MAP_HEADER_SIZE: i64 = 32;
+const MAP_SLOT_SIZE: i64 = 24;
+const MAP_INITIAL_CAPACITY: i64 = 8;
+/// A 64-bit multiplicative hash constant (2^64 / golden ratio, the same
+/// constant Fibonacci hashing uses) -- reinterpreted as a signed i64
+/// (so its top bit is set, making the constant itself negative), which
+/// is fine: it's used purely to scramble bits via wrapping
+/// multiplication, never compared or treated as a magnitude.
+const MAP_HASH_MULTIPLIER: i64 = 0x9E3779B97F4A7C15u64 as i64;
+
+struct MapRuntime {
+    new_id: FuncId,
+    retain_id: FuncId,
+    release_id: FuncId,
+    put_id: FuncId,
+    get_id: FuncId,
+    has_id: FuncId,
+    remove_id: FuncId,
+    size_id: FuncId,
+    is_empty_id: FuncId,
+}
+
+fn declare_map_runtime(module: &mut ObjectModule) -> Result<MapRuntime> {
+    let mut malloc_sig = module.make_signature();
+    malloc_sig.params.push(AbiParam::new(VALUE_TYPE));
+    malloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let malloc_id = module.declare_function("malloc", Linkage::Import, &malloc_sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    let mut free_sig = module.make_signature();
+    free_sig.params.push(AbiParam::new(VALUE_TYPE));
+    let free_id = module.declare_function("free", Linkage::Import, &free_sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    let mut calloc_sig = module.make_signature();
+    calloc_sig.params.push(AbiParam::new(VALUE_TYPE));
+    calloc_sig.params.push(AbiParam::new(VALUE_TYPE));
+    calloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let calloc_id = module.declare_function("calloc", Linkage::Import, &calloc_sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    let mut ctx = module.make_context();
+
+    // probe_for_insert/probe_for_lookup are shared internally by
+    // put/grow and get/has/remove respectively -- declared once here,
+    // passed by FuncId to whichever builders need to call them, rather
+    // than each duplicating the probing loop.
+    let probe_for_insert_id = build_map_probe_for_insert(module, &mut ctx)?;
+    let probe_for_lookup_id = build_map_probe_for_lookup(module, &mut ctx)?;
+    let grow_id = build_map_grow(module, &mut ctx, calloc_id, free_id, probe_for_insert_id)?;
+
+    let new_id = build_map_new(module, &mut ctx, malloc_id, calloc_id)?;
+    let retain_id = build_map_retain(module, &mut ctx)?;
+    let release_id = build_map_release(module, &mut ctx, free_id)?;
+    let put_id = build_map_put(module, &mut ctx, grow_id, probe_for_insert_id)?;
+    let get_id = build_map_get(module, &mut ctx, probe_for_lookup_id)?;
+    let has_id = build_map_has(module, &mut ctx, probe_for_lookup_id)?;
+    let remove_id = build_map_remove(module, &mut ctx, probe_for_lookup_id)?;
+    let size_id = build_map_size(module, &mut ctx)?;
+    let is_empty_id = build_map_is_empty(module, &mut ctx)?;
+
+    Ok(MapRuntime { new_id, retain_id, release_id, put_id, get_id, has_id, remove_id, size_id, is_empty_id })
+}
+
+/// Computes `hash(key) & (capacity - 1)` -- the starting slot index for
+/// probing. Shared by both probe functions and `build_map_grow`.
+fn emit_map_hash_index(builder: &mut FunctionBuilder, key: Value, capacity: Value) -> Value {
+    let multiplier = builder.ins().iconst(VALUE_TYPE, MAP_HASH_MULTIPLIER);
+    let hash = builder.ins().imul(key, multiplier);
+    let mask = builder.ins().iadd_imm(capacity, -1);
+    builder.ins().band(hash, mask)
+}
+
+/// `__roze_map_probe_for_insert(slots_ptr, capacity, key) -> i64`:
+/// returns the index of the first slot that's empty, a tombstone, or
+/// already holds this exact key (for an in-place update) -- assumes
+/// the caller has already ensured room exists (via the load-factor
+/// check in `build_map_put`, before growth), so this cannot loop
+/// forever in practice; guarded with a probe-count cap regardless, as
+/// a defensive fallback that aborts cleanly rather than hanging if that
+/// invariant is ever violated by a bug elsewhere.
+fn build_map_probe_for_insert(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE)); // slots_ptr
+    sig.params.push(AbiParam::new(VALUE_TYPE)); // capacity
+    sig.params.push(AbiParam::new(VALUE_TYPE)); // key
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_map_probe_for_insert", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let slots_ptr = builder.block_params(entry)[0];
+        let capacity = builder.block_params(entry)[1];
+        let key = builder.block_params(entry)[2];
+
+        let start_index = emit_map_hash_index(&mut builder, key, capacity);
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+
+        let header = builder.create_block();
+        builder.append_block_param(header, VALUE_TYPE); // index
+        builder.append_block_param(header, VALUE_TYPE); // probe_count
+        builder.ins().jump(header, &[start_index, zero]);
+
+        builder.switch_to_block(header);
+        let index = builder.block_params(header)[0];
+        let probe_count = builder.block_params(header)[1];
+
+        let abort_block = builder.create_block();
+        let check_block = builder.create_block();
+        let exceeded = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, probe_count, capacity);
+        builder.ins().brif(exceeded, abort_block, &[], check_block, &[]);
+
+        builder.switch_to_block(abort_block);
+        builder.seal_block(abort_block);
+        // Internal invariant violation (see the doc comment): trap
+        // rather than loop forever or silently corrupt the table.
+        builder.ins().trap(TrapCode::UnreachableCodeReached);
+
+        builder.switch_to_block(check_block);
+        builder.seal_block(check_block);
+        let slot_offset = builder.ins().imul_imm(index, MAP_SLOT_SIZE);
+        let slot_addr = builder.ins().iadd(slots_ptr, slot_offset);
+        let state = builder.ins().load(VALUE_TYPE, MemFlags::new(), slot_addr, 0);
+
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        let two = builder.ins().iconst(VALUE_TYPE, 2);
+        let is_empty = builder.ins().icmp(IntCC::Equal, state, zero);
+        let is_tombstone = builder.ins().icmp(IntCC::Equal, state, two);
+        let is_occupied = builder.ins().icmp(IntCC::Equal, state, one);
+
+        let existing_key = builder.ins().load(VALUE_TYPE, MemFlags::new(), slot_addr, 8);
+        let key_matches = builder.ins().icmp(IntCC::Equal, existing_key, key);
+        let occupied_and_matches = builder.ins().band(is_occupied, key_matches);
+
+        let empty_or_tombstone = builder.ins().bor(is_empty, is_tombstone);
+        let should_stop = builder.ins().bor(empty_or_tombstone, occupied_and_matches);
+
+        let found_block = builder.create_block();
+        let advance_block = builder.create_block();
+        builder.ins().brif(should_stop, found_block, &[], advance_block, &[]);
+
+        builder.switch_to_block(found_block);
+        builder.seal_block(found_block);
+        builder.ins().return_(&[index]);
+
+        builder.switch_to_block(advance_block);
+        builder.seal_block(advance_block);
+        let mask = builder.ins().iadd_imm(capacity, -1);
+        let advanced = builder.ins().iadd_imm(index, 1);
+        let next_index = builder.ins().band(advanced, mask);
+        let next_probe_count = builder.ins().iadd_imm(probe_count, 1);
+        builder.ins().jump(header, &[next_index, next_probe_count]);
+
+        // header has two predecessors (the initial jump and this
+        // back-edge) -- seal only now that both exist.
+        builder.seal_block(header);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_map_probe_for_lookup(slots_ptr, capacity, key) -> i64`:
+/// returns the matching slot's index, or -1 if the key is definitely
+/// absent (found an empty slot, or exhausted every slot without one).
+fn build_map_probe_for_lookup(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE)); // slots_ptr
+    sig.params.push(AbiParam::new(VALUE_TYPE)); // capacity
+    sig.params.push(AbiParam::new(VALUE_TYPE)); // key
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_map_probe_for_lookup", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let slots_ptr = builder.block_params(entry)[0];
+        let capacity = builder.block_params(entry)[1];
+        let key = builder.block_params(entry)[2];
+
+        let start_index = emit_map_hash_index(&mut builder, key, capacity);
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+
+        let header = builder.create_block();
+        builder.append_block_param(header, VALUE_TYPE); // index
+        builder.append_block_param(header, VALUE_TYPE); // probe_count
+        builder.ins().jump(header, &[start_index, zero]);
+
+        builder.switch_to_block(header);
+        let index = builder.block_params(header)[0];
+        let probe_count = builder.block_params(header)[1];
+
+        let not_found_block = builder.create_block();
+        let check_block = builder.create_block();
+        let exceeded = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, probe_count, capacity);
+        builder.ins().brif(exceeded, not_found_block, &[], check_block, &[]);
+
+        builder.switch_to_block(check_block);
+        builder.seal_block(check_block);
+        let slot_offset = builder.ins().imul_imm(index, MAP_SLOT_SIZE);
+        let slot_addr = builder.ins().iadd(slots_ptr, slot_offset);
+        let state = builder.ins().load(VALUE_TYPE, MemFlags::new(), slot_addr, 0);
+        let is_empty = builder.ins().icmp(IntCC::Equal, state, zero);
+
+        let empty_stop_block = builder.create_block();
+        let match_check_block = builder.create_block();
+        builder.ins().brif(is_empty, empty_stop_block, &[], match_check_block, &[]);
+
+        builder.switch_to_block(empty_stop_block);
+        builder.seal_block(empty_stop_block);
+        builder.ins().jump(not_found_block, &[]);
+
+        builder.switch_to_block(match_check_block);
+        builder.seal_block(match_check_block);
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        let is_occupied = builder.ins().icmp(IntCC::Equal, state, one);
+        let existing_key = builder.ins().load(VALUE_TYPE, MemFlags::new(), slot_addr, 8);
+        let key_matches = builder.ins().icmp(IntCC::Equal, existing_key, key);
+        let found = builder.ins().band(is_occupied, key_matches);
+
+        let found_block = builder.create_block();
+        let advance_block = builder.create_block();
+        builder.ins().brif(found, found_block, &[], advance_block, &[]);
+
+        builder.switch_to_block(found_block);
+        builder.seal_block(found_block);
+        builder.ins().return_(&[index]);
+
+        builder.switch_to_block(advance_block);
+        builder.seal_block(advance_block);
+        let mask = builder.ins().iadd_imm(capacity, -1);
+        let advanced = builder.ins().iadd_imm(index, 1);
+        let next_index = builder.ins().band(advanced, mask);
+        let next_probe_count = builder.ins().iadd_imm(probe_count, 1);
+        builder.ins().jump(header, &[next_index, next_probe_count]);
+
+        // header has two predecessors (the initial jump and this
+        // back-edge) -- seal only now that both exist.
+        builder.seal_block(header);
+
+        // not_found_block has two predecessors (the probe-count-
+        // exceeded branch and empty_stop_block's jump) -- seal only now.
+        builder.switch_to_block(not_found_block);
+        builder.seal_block(not_found_block);
+        let neg_one = builder.ins().iconst(VALUE_TYPE, -1);
+        builder.ins().return_(&[neg_one]);
+
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_map_new() -> i64`
+fn build_map_new(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, malloc_id: FuncId, calloc_id: FuncId) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_map_new", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let malloc_ref = module.declare_func_in_func(malloc_id, builder.func);
+        let header_size = builder.ins().iconst(VALUE_TYPE, MAP_HEADER_SIZE);
+        let call = builder.ins().call(malloc_ref, &[header_size]);
+        let header_ptr = builder.inst_results(call)[0];
+
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        builder.ins().store(MemFlags::new(), one, header_ptr, 0);
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        builder.ins().store(MemFlags::new(), zero, header_ptr, 8);
+        let initial_capacity = builder.ins().iconst(VALUE_TYPE, MAP_INITIAL_CAPACITY);
+        builder.ins().store(MemFlags::new(), initial_capacity, header_ptr, 16);
+
+        let calloc_ref = module.declare_func_in_func(calloc_id, builder.func);
+        let slot_size = builder.ins().iconst(VALUE_TYPE, MAP_SLOT_SIZE);
+        let slots_call = builder.ins().call(calloc_ref, &[initial_capacity, slot_size]);
+        let slots_ptr = builder.inst_results(slots_call)[0];
+        builder.ins().store(MemFlags::new(), slots_ptr, header_ptr, 24);
+
+        builder.ins().return_(&[header_ptr]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_map_retain(ptr: i64) -> void`
+fn build_map_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_map_retain", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+
+        let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
+        let incremented = builder.ins().iadd_imm(refcount, 1);
+        builder.ins().store(MemFlags::new(), incremented, ptr, 0);
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_map_release(ptr: i64) -> void`
+fn build_map_release(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, free_id: FuncId) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_map_release", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+
+        let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
+        let decremented = builder.ins().iadd_imm(refcount, -1);
+        builder.ins().store(MemFlags::new(), decremented, ptr, 0);
+
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let should_free = builder.ins().icmp(IntCC::Equal, decremented, zero);
+        let free_block = builder.create_block();
+        let done_block = builder.create_block();
+        builder.ins().brif(should_free, free_block, &[], done_block, &[]);
+
+        builder.switch_to_block(free_block);
+        builder.seal_block(free_block);
+        let slots_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
+        let free_ref = module.declare_func_in_func(free_id, builder.func);
+        builder.ins().call(free_ref, &[slots_ptr]);
+        builder.ins().call(free_ref, &[ptr]);
+        builder.ins().jump(done_block, &[]);
+
+        builder.switch_to_block(done_block);
+        builder.seal_block(done_block);
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_map_grow(ptr: i64) -> void`: doubles capacity and rehashes
+/// every live entry into the new table, reusing
+/// `__roze_map_probe_for_insert` for each reinsertion (the new table
+/// starts completely empty, so there's always room -- no load-factor
+/// check needed on the way in).
+fn build_map_grow(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, calloc_id: FuncId, free_id: FuncId, probe_for_insert_id: FuncId) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_map_grow", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+
+        let old_capacity = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 16);
+        let old_slots_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
+        let new_capacity = builder.ins().imul_imm(old_capacity, 2);
+
+        let calloc_ref = module.declare_func_in_func(calloc_id, builder.func);
+        let slot_size = builder.ins().iconst(VALUE_TYPE, MAP_SLOT_SIZE);
+        let call = builder.ins().call(calloc_ref, &[new_capacity, slot_size]);
+        let new_slots_ptr = builder.inst_results(call)[0];
+
+        // Rehash loop: for old_index in 0..old_capacity.
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let loop_header = builder.create_block();
+        builder.append_block_param(loop_header, VALUE_TYPE); // old_index
+        builder.ins().jump(loop_header, &[zero]);
+
+        builder.switch_to_block(loop_header);
+        let old_index = builder.block_params(loop_header)[0];
+        let loop_body = builder.create_block();
+        let loop_exit = builder.create_block();
+        let done = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, old_index, old_capacity);
+        builder.ins().brif(done, loop_exit, &[], loop_body, &[]);
+
+        builder.switch_to_block(loop_body);
+        builder.seal_block(loop_body);
+        let slot_offset = builder.ins().imul_imm(old_index, MAP_SLOT_SIZE);
+        let slot_addr = builder.ins().iadd(old_slots_ptr, slot_offset);
+        let state = builder.ins().load(VALUE_TYPE, MemFlags::new(), slot_addr, 0);
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        let is_occupied = builder.ins().icmp(IntCC::Equal, state, one);
+
+        let reinsert_block = builder.create_block();
+        let next_block = builder.create_block();
+        builder.ins().brif(is_occupied, reinsert_block, &[], next_block, &[]);
+
+        builder.switch_to_block(reinsert_block);
+        builder.seal_block(reinsert_block);
+        let key = builder.ins().load(VALUE_TYPE, MemFlags::new(), slot_addr, 8);
+        let value = builder.ins().load(VALUE_TYPE, MemFlags::new(), slot_addr, 16);
+        let probe_ref = module.declare_func_in_func(probe_for_insert_id, builder.func);
+        let probe_call = builder.ins().call(probe_ref, &[new_slots_ptr, new_capacity, key]);
+        let new_index = builder.inst_results(probe_call)[0];
+        let new_slot_offset = builder.ins().imul_imm(new_index, MAP_SLOT_SIZE);
+        let new_slot_addr = builder.ins().iadd(new_slots_ptr, new_slot_offset);
+        builder.ins().store(MemFlags::new(), one, new_slot_addr, 0);
+        builder.ins().store(MemFlags::new(), key, new_slot_addr, 8);
+        builder.ins().store(MemFlags::new(), value, new_slot_addr, 16);
+        builder.ins().jump(next_block, &[]);
+
+        builder.switch_to_block(next_block);
+        builder.seal_block(next_block);
+        let next_index = builder.ins().iadd_imm(old_index, 1);
+        builder.ins().jump(loop_header, &[next_index]);
+
+        // loop_header has two predecessors (the initial jump and this
+        // back-edge) -- seal only now that both exist.
+        builder.seal_block(loop_header);
+
+        builder.switch_to_block(loop_exit);
+        builder.seal_block(loop_exit);
+        let free_ref = module.declare_func_in_func(free_id, builder.func);
+        builder.ins().call(free_ref, &[old_slots_ptr]);
+        builder.ins().store(MemFlags::new(), new_slots_ptr, ptr, 24);
+        builder.ins().store(MemFlags::new(), new_capacity, ptr, 16);
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_map_put(ptr, key, value) -> i64`: returns the old value if
+/// `key` already existed, else 0 (Roze has no null-distinct-from-0
+/// representation yet on this backend -- same simplification
+/// `__roze_map_get` makes for a missing key).
+fn build_map_put(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, grow_id: FuncId, probe_for_insert_id: FuncId) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_map_put", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+        let key = builder.block_params(entry)[1];
+        let value = builder.block_params(entry)[2];
+
+        let count = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 8);
+        let capacity = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 16);
+
+        // Grow when (count + 1) * 4 > capacity * 3, i.e. load factor
+        // would exceed 75% after this insert.
+        let count_plus_1 = builder.ins().iadd_imm(count, 1);
+        let lhs = builder.ins().imul_imm(count_plus_1, 4);
+        let rhs = builder.ins().imul_imm(capacity, 3);
+        let needs_grow = builder.ins().icmp(IntCC::SignedGreaterThan, lhs, rhs);
+
+        let grow_block = builder.create_block();
+        let after_grow_block = builder.create_block();
+        builder.append_block_param(after_grow_block, VALUE_TYPE); // slots_ptr
+        builder.append_block_param(after_grow_block, VALUE_TYPE); // capacity
+
+        let slots_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
+        builder.ins().brif(needs_grow, grow_block, &[], after_grow_block, &[slots_ptr, capacity]);
+
+        builder.switch_to_block(grow_block);
+        builder.seal_block(grow_block);
+        let grow_ref = module.declare_func_in_func(grow_id, builder.func);
+        builder.ins().call(grow_ref, &[ptr]);
+        let grown_slots_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
+        let grown_capacity = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 16);
+        builder.ins().jump(after_grow_block, &[grown_slots_ptr, grown_capacity]);
+
+        builder.switch_to_block(after_grow_block);
+        builder.seal_block(after_grow_block);
+        let current_slots_ptr = builder.block_params(after_grow_block)[0];
+        let current_capacity = builder.block_params(after_grow_block)[1];
+
+        let probe_ref = module.declare_func_in_func(probe_for_insert_id, builder.func);
+        let probe_call = builder.ins().call(probe_ref, &[current_slots_ptr, current_capacity, key]);
+        let index = builder.inst_results(probe_call)[0];
+        let slot_offset = builder.ins().imul_imm(index, MAP_SLOT_SIZE);
+        let slot_addr = builder.ins().iadd(current_slots_ptr, slot_offset);
+
+        let state = builder.ins().load(VALUE_TYPE, MemFlags::new(), slot_addr, 0);
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        let is_new_entry = builder.ins().icmp(IntCC::NotEqual, state, one);
+        let old_value = builder.ins().load(VALUE_TYPE, MemFlags::new(), slot_addr, 16);
+
+        builder.ins().store(MemFlags::new(), one, slot_addr, 0);
+        builder.ins().store(MemFlags::new(), key, slot_addr, 8);
+        builder.ins().store(MemFlags::new(), value, slot_addr, 16);
+
+        let increment_block = builder.create_block();
+        let return_block = builder.create_block();
+        builder.append_block_param(return_block, VALUE_TYPE); // result
+        builder.ins().brif(is_new_entry, increment_block, &[], return_block, &[old_value]);
+
+        builder.switch_to_block(increment_block);
+        builder.seal_block(increment_block);
+        let new_count = builder.ins().iadd_imm(count, 1);
+        builder.ins().store(MemFlags::new(), new_count, ptr, 8);
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        builder.ins().jump(return_block, &[zero]);
+
+        builder.switch_to_block(return_block);
+        builder.seal_block(return_block);
+        let result = builder.block_params(return_block)[0];
+        builder.ins().return_(&[result]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_map_get(ptr, key) -> i64` (0 if the key is absent -- same
+/// no-null-representation simplification as `__roze_map_put`'s "new
+/// key" return; use `__roze_map_has` to distinguish "absent" from "0").
+fn build_map_get(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, probe_for_lookup_id: FuncId) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_map_get", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+        let key = builder.block_params(entry)[1];
+
+        let capacity = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 16);
+        let slots_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
+        let probe_ref = module.declare_func_in_func(probe_for_lookup_id, builder.func);
+        let call = builder.ins().call(probe_ref, &[slots_ptr, capacity, key]);
+        let index = builder.inst_results(call)[0];
+
+        let neg_one = builder.ins().iconst(VALUE_TYPE, -1);
+        let not_found = builder.ins().icmp(IntCC::Equal, index, neg_one);
+
+        let missing_block = builder.create_block();
+        let present_block = builder.create_block();
+        builder.ins().brif(not_found, missing_block, &[], present_block, &[]);
+
+        builder.switch_to_block(missing_block);
+        builder.seal_block(missing_block);
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        builder.ins().return_(&[zero]);
+
+        builder.switch_to_block(present_block);
+        builder.seal_block(present_block);
+        let slot_offset = builder.ins().imul_imm(index, MAP_SLOT_SIZE);
+        let slot_addr = builder.ins().iadd(slots_ptr, slot_offset);
+        let value = builder.ins().load(VALUE_TYPE, MemFlags::new(), slot_addr, 16);
+        builder.ins().return_(&[value]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_map_has(ptr, key) -> i64` (0 or 1)
+fn build_map_has(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, probe_for_lookup_id: FuncId) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_map_has", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+        let key = builder.block_params(entry)[1];
+
+        let capacity = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 16);
+        let slots_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
+        let probe_ref = module.declare_func_in_func(probe_for_lookup_id, builder.func);
+        let call = builder.ins().call(probe_ref, &[slots_ptr, capacity, key]);
+        let index = builder.inst_results(call)[0];
+
+        let neg_one = builder.ins().iconst(VALUE_TYPE, -1);
+        let found = builder.ins().icmp(IntCC::NotEqual, index, neg_one);
+        let result = builder.ins().uextend(VALUE_TYPE, found);
+        builder.ins().return_(&[result]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_map_remove(ptr, key) -> i64` (the removed value, or 0 if
+/// the key wasn't present)
+fn build_map_remove(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, probe_for_lookup_id: FuncId) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_map_remove", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+        let key = builder.block_params(entry)[1];
+
+        let capacity = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 16);
+        let slots_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
+        let probe_ref = module.declare_func_in_func(probe_for_lookup_id, builder.func);
+        let call = builder.ins().call(probe_ref, &[slots_ptr, capacity, key]);
+        let index = builder.inst_results(call)[0];
+
+        let neg_one = builder.ins().iconst(VALUE_TYPE, -1);
+        let not_found = builder.ins().icmp(IntCC::Equal, index, neg_one);
+
+        let missing_block = builder.create_block();
+        let remove_block = builder.create_block();
+        builder.ins().brif(not_found, missing_block, &[], remove_block, &[]);
+
+        builder.switch_to_block(missing_block);
+        builder.seal_block(missing_block);
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        builder.ins().return_(&[zero]);
+
+        builder.switch_to_block(remove_block);
+        builder.seal_block(remove_block);
+        let slot_offset = builder.ins().imul_imm(index, MAP_SLOT_SIZE);
+        let slot_addr = builder.ins().iadd(slots_ptr, slot_offset);
+        let value = builder.ins().load(VALUE_TYPE, MemFlags::new(), slot_addr, 16);
+        let two = builder.ins().iconst(VALUE_TYPE, 2);
+        builder.ins().store(MemFlags::new(), two, slot_addr, 0);
+        let count = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 8);
+        let new_count = builder.ins().iadd_imm(count, -1);
+        builder.ins().store(MemFlags::new(), new_count, ptr, 8);
+        builder.ins().return_(&[value]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_map_size(ptr: i64) -> i64`
+fn build_map_size(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_map_size", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+        let count = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 8);
+        builder.ins().return_(&[count]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_map_is_empty(ptr: i64) -> i64` (0 or 1)
+fn build_map_is_empty(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_map_is_empty", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+        let count = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 8);
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let is_empty = builder.ins().icmp(IntCC::Equal, count, zero);
+        let result = builder.ins().uextend(VALUE_TYPE, is_empty);
+        builder.ins().return_(&[result]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
 struct NativeGenerator<'a> {
     module: &'a mut ObjectModule,
     functions: HashMap<String, FuncId>,
@@ -942,6 +1730,7 @@ struct NativeGenerator<'a> {
     false_str: DataId,
     strings: StringRuntime,
     lists: ListRuntime,
+    maps: MapRuntime,
     literal_counter: usize,
 }
 
@@ -967,6 +1756,7 @@ impl<'a> NativeGenerator<'a> {
 
         let strings = declare_string_runtime(module)?;
         let lists = declare_list_runtime(module, printf_id)?;
+        let maps = declare_map_runtime(module)?;
 
         Ok(Self {
             module,
@@ -978,6 +1768,7 @@ impl<'a> NativeGenerator<'a> {
             false_str,
             strings,
             lists,
+            maps,
             literal_counter: 0,
         })
     }
@@ -1060,6 +1851,15 @@ impl<'a> NativeGenerator<'a> {
                         list_remove_id: self.lists.remove_id,
                         list_length_id: self.lists.length_id,
                         list_is_empty_id: self.lists.is_empty_id,
+                        map_new_id: self.maps.new_id,
+                        map_retain_id: self.maps.retain_id,
+                        map_release_id: self.maps.release_id,
+                        map_put_id: self.maps.put_id,
+                        map_get_id: self.maps.get_id,
+                        map_has_id: self.maps.has_id,
+                        map_remove_id: self.maps.remove_id,
+                        map_size_id: self.maps.size_id,
+                        map_is_empty_id: self.maps.is_empty_id,
                         literal_counter: &mut self.literal_counter,
                         scopes: vec![HashMap::new()],
                         next_var_index: 0,
@@ -1177,6 +1977,15 @@ struct FunctionCompiler<'a, 'b> {
     list_remove_id: FuncId,
     list_length_id: FuncId,
     list_is_empty_id: FuncId,
+    map_new_id: FuncId,
+    map_retain_id: FuncId,
+    map_release_id: FuncId,
+    map_put_id: FuncId,
+    map_get_id: FuncId,
+    map_has_id: FuncId,
+    map_remove_id: FuncId,
+    map_size_id: FuncId,
+    map_is_empty_id: FuncId,
     /// Shared across every function being compiled (not reset per
     /// function), so two string literals never collide on the same
     /// generated data symbol name.
@@ -1220,7 +2029,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn release_frame(&mut self, frame_index: usize) -> Result<()> {
         let arc_vars: Vec<(Variable, Type)> = self.scopes[frame_index]
             .values()
-            .filter(|(_, ty)| matches!(ty, Type::String | Type::List))
+            .filter(|(_, ty)| matches!(ty, Type::String | Type::List | Type::Map))
             .cloned()
             .collect();
         for (var, ty) in arc_vars {
@@ -1253,25 +2062,27 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             match expr.type_ {
                 Type::String => self.emit_string_retain(val)?,
                 Type::List => self.emit_list_retain(val)?,
+                Type::Map => self.emit_map_retain(val)?,
                 _ => {}
             }
         }
         Ok(())
     }
 
-    /// Native `list` elements are plain i64 words with no ARC of their
-    /// own (see the module-level doc comment on `LIST_HEADER_SIZE`),
-    /// which is only safe for int/bool values -- a string or another
-    /// list stored in a list this way would compile, but silently do
-    /// the wrong thing at runtime (its refcount would never be adjusted
-    /// for being held by the list, so it could be freed while the list
-    /// still points at it, or never freed at all). Reject those cases
-    /// at compile time instead of ever executing them.
-    fn reject_unless_element_supported(&self, value: &TypedExpression, location: &Location, context: &str) -> Result<()> {
+    /// Native `list` elements and `map` keys/values are plain i64 words
+    /// with no ARC of their own (see the module-level doc comments on
+    /// `LIST_HEADER_SIZE`/`MAP_HEADER_SIZE`), which is only safe for
+    /// int/bool values -- a string or another list/map stored this way
+    /// would compile, but silently do the wrong thing at runtime (its
+    /// refcount would never be adjusted for being held by the
+    /// container, so it could be freed while the container still
+    /// points at it, or never freed at all). Reject those cases at
+    /// compile time instead of ever executing them.
+    fn reject_unless_supported_as_container_value(&self, value: &TypedExpression, location: &Location, context: &str) -> Result<()> {
         match &value.type_ {
             Type::Int | Type::Bool | Type::Unknown => Ok(()),
             other => Err(anyhow!(
-                "line {}, column {}: the native backend's lists can only hold int/bool elements for now, not {} -- {}",
+                "line {}, column {}: the native backend's lists and maps can only hold int/bool values for now, not {} -- {}",
                 location.line, location.column, other, context
             )),
         }
@@ -1292,6 +2103,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         match ty {
             Type::String => self.emit_string_release(val),
             Type::List => self.emit_list_release(val),
+            Type::Map => self.emit_map_release(val),
             _ => Ok(()),
         }
     }
@@ -1371,6 +2183,60 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn emit_list_is_empty(&mut self, list: Value) -> Result<Value> {
         let func_ref = self.module.declare_func_in_func(self.list_is_empty_id, self.builder.func);
         let call = self.builder.ins().call(func_ref, &[list]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_map_new(&mut self) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.map_new_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_map_retain(&mut self, val: Value) -> Result<()> {
+        let func_ref = self.module.declare_func_in_func(self.map_retain_id, self.builder.func);
+        self.builder.ins().call(func_ref, &[val]);
+        Ok(())
+    }
+
+    fn emit_map_release(&mut self, val: Value) -> Result<()> {
+        let func_ref = self.module.declare_func_in_func(self.map_release_id, self.builder.func);
+        self.builder.ins().call(func_ref, &[val]);
+        Ok(())
+    }
+
+    fn emit_map_put(&mut self, map: Value, key: Value, value: Value) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.map_put_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[map, key, value]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_map_get(&mut self, map: Value, key: Value) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.map_get_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[map, key]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_map_has(&mut self, map: Value, key: Value) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.map_has_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[map, key]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_map_remove(&mut self, map: Value, key: Value) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.map_remove_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[map, key]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_map_size(&mut self, map: Value) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.map_size_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[map]);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    fn emit_map_is_empty(&mut self, map: Value) -> Result<Value> {
+        let func_ref = self.module.declare_func_in_func(self.map_is_empty_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, &[map]);
         Ok(self.builder.inst_results(call)[0])
     }
 
@@ -1687,7 +2553,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         match name {
             "list_new" if arguments.is_empty() => return self.emit_list_new(),
             "list_push" if arguments.len() == 2 => {
-                self.reject_unless_element_supported(&arguments[1], location, "list_push")?;
+                self.reject_unless_supported_as_container_value(&arguments[1], location, "list_push")?;
                 let list = self.compile_expression(&arguments[0])?;
                 let value = self.compile_expression(&arguments[1])?;
                 return self.emit_list_push(list, value);
@@ -1698,7 +2564,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 return self.emit_list_get(list, index);
             }
             "list_set" if arguments.len() == 3 => {
-                self.reject_unless_element_supported(&arguments[2], location, "list_set")?;
+                self.reject_unless_supported_as_container_value(&arguments[2], location, "list_set")?;
                 let list = self.compile_expression(&arguments[0])?;
                 let index = self.compile_expression(&arguments[1])?;
                 let value = self.compile_expression(&arguments[2])?;
@@ -1716,6 +2582,41 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             "list_is_empty" if arguments.len() == 1 => {
                 let list = self.compile_expression(&arguments[0])?;
                 return self.emit_list_is_empty(list);
+            }
+            "map_new" if arguments.is_empty() => return self.emit_map_new(),
+            "map_put" if arguments.len() == 3 => {
+                self.reject_unless_supported_as_container_value(&arguments[1], location, "map_put (key)")?;
+                self.reject_unless_supported_as_container_value(&arguments[2], location, "map_put (value)")?;
+                let map = self.compile_expression(&arguments[0])?;
+                let key = self.compile_expression(&arguments[1])?;
+                let value = self.compile_expression(&arguments[2])?;
+                return self.emit_map_put(map, key, value);
+            }
+            "map_get" if arguments.len() == 2 => {
+                self.reject_unless_supported_as_container_value(&arguments[1], location, "map_get (key)")?;
+                let map = self.compile_expression(&arguments[0])?;
+                let key = self.compile_expression(&arguments[1])?;
+                return self.emit_map_get(map, key);
+            }
+            "map_has" if arguments.len() == 2 => {
+                self.reject_unless_supported_as_container_value(&arguments[1], location, "map_has (key)")?;
+                let map = self.compile_expression(&arguments[0])?;
+                let key = self.compile_expression(&arguments[1])?;
+                return self.emit_map_has(map, key);
+            }
+            "map_remove" if arguments.len() == 2 => {
+                self.reject_unless_supported_as_container_value(&arguments[1], location, "map_remove (key)")?;
+                let map = self.compile_expression(&arguments[0])?;
+                let key = self.compile_expression(&arguments[1])?;
+                return self.emit_map_remove(map, key);
+            }
+            "map_size" if arguments.len() == 1 => {
+                let map = self.compile_expression(&arguments[0])?;
+                return self.emit_map_size(map);
+            }
+            "map_is_empty" if arguments.len() == 1 => {
+                let map = self.compile_expression(&arguments[0])?;
+                return self.emit_map_is_empty(map);
             }
             _ => {}
         }

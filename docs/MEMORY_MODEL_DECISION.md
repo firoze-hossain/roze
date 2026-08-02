@@ -1,13 +1,13 @@
 # Memory model for the native backend: a decision, not a default
 
 **Decided: ARC.** Approved and a real implementation now exists for
-two heap types (`string` and `list`) -- see
+three heap types (`string`, `list`, and `map`) -- see
 `compiler/src/codegen/native.rs` and the "What's actually built"
 sections further down this document. The analysis and recommendation
 below are kept as-is (including the original framing of this as an
 open decision) since they're still the record of *why* ARC was chosen,
-and the same reasoning applies to each next type (`map`, then
-eventually a user-defined `class`) as ARC gets extended to them.
+and the same reasoning applies to whatever comes next (a user-defined
+`class`) as ARC gets extended further.
 
 **Update history**:
 - A real Cranelift-based native backend spike first proved the typed-
@@ -16,8 +16,9 @@ eventually a user-defined `class`) as ARC gets extended to them.
 - ARC was then approved as the memory model, and implemented for
   `string` -- the first and simplest heap type -- as the next concrete
   step past that spike.
-- ARC was then extended to `list` (int/bool elements only for now --
-  see below). `map` remains unported.
+- ARC was then extended to `list` (int/bool elements only for now).
+- ARC was then extended to `map` (int/bool keys/values only for now,
+  same reasoning as `list`'s elements) -- see below.
 
 ## Why this can't be deferred any further
 
@@ -314,3 +315,66 @@ own increment rather than rushed alongside list. No `class`/user-
 defined reference types. No `weak` escape hatch (moot until something
 can form a reference cycle, which needs `class` first). Every Core/
 Collections/IO/Web/Database intrinsic remains JVM-only.
+
+## What's actually built (map, under the same ARC convention)
+
+**Representation**: same two-level-indirection idea as `list` and for
+the same reason (growth has to be able to relocate the backing storage
+without changing the map's own identity) -- a fixed-address header
+(refcount, count, capacity, and a pointer to a *separately* allocated
+slots array). Each slot holds a state (empty / occupied / tombstone),
+a key, and a value. Open addressing with linear probing: an insert or
+lookup starts at `hash(key) & (capacity - 1)` (capacity is always a
+power of 2, so this is a cheap bitmask, and works correctly for
+negative keys too, since AND operates on the bit pattern regardless of
+sign) and scans forward, wrapping at the end, until it finds the right
+kind of slot. A tombstone -- rather than resetting a removed slot
+straight back to empty -- is load-bearing for correctness, not just an
+optimization: resetting to empty could break the probe sequence for
+some *other* key that hashed to the same start index and had to skip
+past this slot to find its own, making a later lookup for that other
+key stop early and incorrectly report it missing.
+
+**Managing the added complexity**: a hash table's collision-resolution
+and resizing logic is genuinely harder to get right than a growable
+array's. Rather than writing it directly in Cranelift IR and hoping,
+the whole algorithm (probing, growth, tombstones) was prototyped in
+plain C first -- checked for correctness with a real test covering
+insert/update/remove/missing-key/negative-key/post-growth-still-
+correct scenarios, and checked for leaks under Valgrind -- *before*
+being translated into IR. This separates "is the algorithm right" from
+"is the IR construction right" instead of debugging both at once.
+
+**Ownership convention**: identical to `string`/`list` -- a fresh map
+is already owned, a bare identifier alias needs an explicit retain,
+every scope releases its own map locals, early `return` releases every
+active scope. Keys and values are plain i64 words with no ARC of their
+own, same restriction and same reasoning as `list`'s elements -- scoped
+to int/bool for now, rejected at compile time (naming whether it was
+the key or the value) otherwise.
+
+**What works**: `map_new/put/get/has/remove/size/is_empty`. `put`
+returns the old value on an update, 0 on a new key (Roze has no
+null-distinct-from-0 representation on this backend yet, so `has`
+is how you tell "absent" from "present with value 0"). Growth doubles
+capacity and rehashes every live entry into the new table once the
+load factor would exceed 75%, reusing the exact same probing function
+insertion already uses (rather than a second, subtly-different copy of
+that logic) for each entry's new slot.
+
+**Verified the same way as `string`/`list`**: output-correctness
+tests, plus Valgrind-gated tests for the trickiest scenarios --
+high-volume growth (1000 puts forcing several doublings and full
+rehashes) together with negative keys and post-removal tombstone
+probing, and multiple live maps nested several scopes deep with an
+early return from the deepest one -- all clean (0 leaks, 0 errors,
+allocation count exactly matching free count).
+
+**What's not built yet**: no `class`/user-defined reference types (so
+no way to define a *new* heap type beyond the three built-in ones
+above). No `weak` escape hatch (moot until something can form a
+reference cycle, which needs `class` first). No string or nested-
+container keys/values in `list`/`map` (would need the same recursive
+retain/release treatment applied through a container, not a given just
+because the container itself is ARC-managed). Every Core/Collections/
+IO/Web/Database intrinsic remains JVM-only.

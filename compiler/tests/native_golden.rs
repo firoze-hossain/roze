@@ -215,11 +215,15 @@ func main() {
 
 #[test]
 fn intrinsic_call_is_rejected_with_a_clear_message() {
-    // list_* used to be the go-to still-unsupported intrinsic for this
-    // test, until list support landed -- map_* is the current one.
+    // list_*, then map_*, were each in turn the go-to still-unsupported
+    // intrinsic for this test until support for them landed -- a Core
+    // (JVM-only) intrinsic like string_length is a stable choice here,
+    // since Core is a whole separate JVM-standard-library-backed
+    // family, not a native-backend heap type that might get ARC support
+    // next.
     let (_stdout, stderr, ok) = run_native_source(
         "reject_intrinsic",
-        "func main() {\n    let m = map_new();\n    println(map_size(m));\n}\n",
+        "func main() {\n    println(string_length(\"hi\"));\n}\n",
     );
     assert!(!ok, "expected the native backend to reject an intrinsic call");
     assert!(stderr.contains("native backend"), "expected a clear native-backend-specific message, got:\n{}", stderr);
@@ -240,14 +244,17 @@ fn general_string_variables_now_work() {
 }
 
 #[test]
-fn list_and_map_are_still_rejected_with_a_clear_message() {
-    // Unlike strings, list/map haven't had ARC ported to their
-    // (multiple, variable-count) elements yet -- still out of scope.
+fn println_of_a_raw_list_or_map_value_is_still_rejected() {
+    // list/map themselves are fully supported now -- what's still out
+    // of scope is stringifying a whole container directly (there's no
+    // "[1, 2, 3]"-style formatting implemented for println yet).
+    // println of an individual *element* (an int/bool/string read out
+    // via list_get/map_get) works fine, same as any other value.
     let (_stdout, stderr, ok) = run_native_source(
-        "reject_list",
+        "reject_println_of_list",
         "func main() {\n    let l = list_new();\n    println(l);\n}\n",
     );
-    assert!(!ok, "expected the native backend to still reject list/map");
+    assert!(!ok, "expected the native backend to still reject println of a raw list value");
     assert!(stderr.contains("native backend"), "expected a clear native-backend-specific message, got:\n{}", stderr);
 }
 
@@ -700,6 +707,226 @@ func main() {
         .arg("--leak-check=full")
         .arg("--error-exitcode=1")
         .arg("./list_nested_return")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}
+
+#[test]
+fn map_operations_are_correct() {
+    let source = "\
+func make_counts() -> map {
+    let m = map_new();
+    map_put(m, 1, 10);
+    map_put(m, 2, 20);
+    return m;
+}
+
+func main() {
+    let m = map_new();
+    println(map_size(m));
+    println(map_is_empty(m));
+
+    println(map_put(m, 1, 100));
+    println(map_put(m, 2, 200));
+    println(map_size(m));
+    println(map_get(m, 1));
+    println(map_get(m, 999));
+    println(map_has(m, 1));
+    println(map_has(m, 999));
+
+    println(map_put(m, 1, 111));
+    println(map_get(m, 1));
+    println(map_size(m));
+
+    println(map_remove(m, 1));
+    println(map_has(m, 1));
+    println(map_size(m));
+    println(map_remove(m, 999));
+
+    // A function returning a map it created, and aliasing (two bindings
+    // to the same underlying map, mutation through either visible via
+    // both).
+    let counts = make_counts();
+    let alias = counts;
+    map_put(alias, 3, 30);
+    println(map_size(counts));
+    println(map_get(counts, 3));
+}
+";
+    let (stdout, stderr, ok) = run_native_source("map_ops", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(
+        program_output(&stdout).trim_end(),
+        "0\ntrue\n0\n0\n2\n100\n0\ntrue\nfalse\n100\n111\n2\n111\nfalse\n1\n0\n3\n30"
+    );
+}
+
+#[test]
+fn map_key_and_value_types_are_restricted_to_int_and_bool_for_now() {
+    // Same reasoning as list elements: keys/values are plain i64 words
+    // with no ARC of their own, so a string key or value would compile
+    // but silently do the wrong thing at runtime.
+    let (_stdout, key_stderr, key_ok) = run_native_source(
+        "map_reject_string_key",
+        "func main() {\n    let m = map_new();\n    map_put(m, \"bad key\", 1);\n}\n",
+    );
+    assert!(!key_ok, "expected a compile error for a string map key");
+    assert!(key_stderr.contains("int/bool"), "expected a message naming the restriction, got:\n{}", key_stderr);
+
+    let (_stdout, value_stderr, value_ok) = run_native_source(
+        "map_reject_string_value",
+        "func main() {\n    let m = map_new();\n    map_put(m, 1, \"bad value\");\n}\n",
+    );
+    assert!(!value_ok, "expected a compile error for a string map value");
+    assert!(value_stderr.contains("int/bool"), "expected a message naming the restriction, got:\n{}", value_stderr);
+}
+
+#[test]
+fn no_leak_with_high_volume_map_growth_and_negative_keys() {
+    // Exercises hash-table growth (1000 puts against an initial
+    // capacity of 8, forcing several doublings and full rehashes),
+    // negative keys (bitmask-based indexing must handle these
+    // correctly, not just positive ones), and removal leaving
+    // tombstones behind that later lookups must still probe past
+    // correctly.
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_with_high_volume_map_growth_and_negative_keys: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_map_high_volume");
+    let source = "\
+func main() {
+    let m = map_new();
+    for let i = 0; i < 1000; i = i + 1 {
+        map_put(m, i, i * 2);
+    }
+    println(map_size(m));
+
+    let total = 0;
+    for let i = 0; i < 1000; i = i + 1 {
+        total = total + map_get(m, i);
+    }
+    println(total);
+
+    map_put(m, -5, -50);
+    println(map_get(m, -5));
+
+    for let i = 0; i < 500; i = i + 1 {
+        map_remove(m, i);
+    }
+    println(map_size(m));
+
+    let still_there = true;
+    for let i = 500; i < 1000; i = i + 1 {
+        if map_get(m, i) != i * 2 {
+            still_there = false;
+        }
+    }
+    println(still_there);
+}
+";
+    std::fs::write(dir.join("map_high_volume.roze"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("map_high_volume.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let run_output = Command::new(format!("{}/map_high_volume", dir.display())).output().expect("failed to run map_high_volume");
+    assert!(run_output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&run_output.stdout).trim_end(),
+        "1000\n999000\n-50\n501\ntrue"
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./map_high_volume")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}
+
+#[test]
+fn no_leak_with_maps_nested_several_scopes_deep_and_early_returns() {
+    // Mirrors the list/string versions of this test: multiple live map
+    // locals across nested scopes with an early return from the
+    // deepest one, and a map created but never returned (`dummy`) that
+    // must still be released when the function falls off the end
+    // normally on the other call.
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_with_maps_nested_several_scopes_deep_and_early_returns: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_map_nested_return");
+    let source = "\
+func find_or_default(m: map, key: int, threshold: int) -> int {
+    let dummy = map_new();
+    map_put(dummy, 0, 0);
+    if map_has(m, key) {
+        let value = map_get(m, key);
+        if value > threshold {
+            let another = map_new();
+            map_put(another, key, value);
+            return map_get(another, key);
+        }
+        return value;
+    }
+    return -1;
+}
+
+func main() {
+    let m = map_new();
+    map_put(m, 1, 10);
+    map_put(m, 3, 30);
+    println(find_or_default(m, 3, 5));
+    println(find_or_default(m, 1, 500));
+    println(find_or_default(m, 999, 5));
+}
+";
+    std::fs::write(dir.join("map_nested_return.roze"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("map_nested_return.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./map_nested_return")
         .current_dir(&dir)
         .output()
         .expect("failed to invoke valgrind");

@@ -104,20 +104,23 @@ example exercising control flow and the Core library.
 
 `--target native` compiles to a real, standalone executable via
 Cranelift -- no JVM/JDK involved at all. Supports int/bool/`string`/
-`list` functions, arithmetic, `if`/`while`/`for`, calling other Roze
-functions, and (as of the ARC memory model decision -- see
+`list`/`map` functions, arithmetic, `if`/`while`/`for`, calling other
+Roze functions, and (as of the ARC memory model decision -- see
 [docs/MEMORY_MODEL_DECISION.md](./docs/MEMORY_MODEL_DECISION.md))
-real, general-purpose strings and lists, both backed by real reference
-counting: string parameters/return values/`let`/reassignment/
-concatenation/content equality, and `list_new/push/get/set/remove/
-length/is_empty` with int/bool elements (growing automatically past
-initial capacity, safe out-of-bounds handling). Not supported yet:
-`map`, string/list elements *inside* a list, and every Core/
-Collections/IO/Web/Database intrinsic (JVM-specific today). Needs a C
-compiler (`cc`, `gcc`, or `clang` -- tried in that order) on `PATH` for
-linking; this is separate from whatever toolchain Rust itself used to
-build `roze`. On Linux/Mac this is virtually always already present; on
-Windows, MSYS2's MinGW-w64 toolchain is the most reliable option (see
+real, general-purpose strings, lists, and maps, all backed by real
+reference counting: string parameters/return values/`let`/
+reassignment/concatenation/content equality; `list_new/push/get/set/
+remove/length/is_empty` with int/bool elements (growing automatically
+past initial capacity, safe out-of-bounds handling); and `map_new/put/
+get/has/remove/size/is_empty` with int/bool keys/values (a real hash
+table with automatic growth). Not supported yet: string/list/map
+elements or keys/values *inside* a list/map, any user-defined `class`,
+and every Core/Collections/IO/Web/Database intrinsic (JVM-specific
+today). Needs a C compiler (`cc`, `gcc`, or `clang` -- tried in that
+order) on `PATH` for linking; this is separate from whatever toolchain
+Rust itself used to build `roze`. On Linux/Mac this is virtually always
+already present; on Windows, MSYS2's MinGW-w64 toolchain is the most
+reliable option (see
 the error message from `--target native` for exact install steps if
 none is found).
 

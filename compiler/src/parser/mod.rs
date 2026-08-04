@@ -110,39 +110,55 @@ impl Parser {
             Token::If => self.parse_if(),
             Token::While => self.parse_while(),
             Token::For => self.parse_for(),
-            Token::Identifier(name) if matches!(
-                self.tokens.get(self.position + 1).map(|t| &t.token),
-                Some(Token::Equals)
-            ) => {
-                let name = name.clone();
-                self.advance(); // Skip identifier
-                self.advance(); // Skip '='
-                while self.check(&Token::Newline) {
-                    self.advance();
-                }
-                let value = self.parse_expression()?;
-                if self.match_token(&Token::Semicolon) {
-                    // Semicolon consumed
-                }
-                Ok(Statement::Assign {
-                    name,
-                    value: Box::new(value),
-                    location,
-                })
-            }
+            Token::Class => self.parse_class(),
             _ => {
-                // Parse as expression statement
+                // Parse a full expression first, then decide: if `=`
+                // follows, this is an assignment (either to a bare name
+                // or to a field, depending on what the expression turned
+                // out to be); otherwise it's an expression-statement.
+                // This subsumes what used to be a separate one-token
+                // lookahead special case for `IDENTIFIER =`, and handles
+                // `object.field = value` the same way for free, since
+                // postfix `.field` parsing already produces a
+                // `FieldAccess` expression here.
                 let expr = self.parse_expression()?;
 
-                // Optional semicolon
-                if self.match_token(&Token::Semicolon) {
-                    // Semicolon consumed
-                }
+                if self.check(&Token::Equals) {
+                    self.advance(); // consume '='
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    let value = self.parse_expression()?;
+                    if self.match_token(&Token::Semicolon) {
+                        // Semicolon consumed
+                    }
+                    match expr {
+                        Expression::Identifier { name, .. } => Ok(Statement::Assign {
+                            name,
+                            value: Box::new(value),
+                            location,
+                        }),
+                        Expression::FieldAccess { object, field, .. } => Ok(Statement::FieldAssign {
+                            object,
+                            field,
+                            value: Box::new(value),
+                            location,
+                        }),
+                        other => Err(self.error(format!(
+                            "Cannot assign to this expression (only a variable name or 'object.field' can be an assignment target): {:?}",
+                            other
+                        ))),
+                    }
+                } else {
+                    if self.match_token(&Token::Semicolon) {
+                        // Semicolon consumed
+                    }
 
-                Ok(Statement::Expression {
-                    expr: Box::new(expr),
-                    location,
-                })
+                    Ok(Statement::Expression {
+                        expr: Box::new(expr),
+                        location,
+                    })
+                }
             }
         }
     }
@@ -545,6 +561,81 @@ impl Parser {
         })
     }
 
+    /// `class Name { field: type, field2: type2, ... }` -- fields only,
+    /// deliberately no methods/inheritance/interfaces for this first
+    /// increment (see ROADMAP.md). Fields can be separated by commas,
+    /// newlines, or both.
+    fn parse_class(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // Skip 'class'
+
+        let name = match &self.current().token {
+            Token::Identifier(n) => {
+                let n = n.clone();
+                self.advance();
+                n
+            }
+            other => return Err(self.error(format!("Expected a class name after 'class', found {}", other))),
+        };
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        if !self.check(&Token::LeftBrace) {
+            return Err(self.error(format!("Expected '{{' after class name '{}'", name)));
+        }
+        self.advance(); // Skip '{'
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let mut fields = Vec::new();
+        while !self.check(&Token::RightBrace) && !self.check(&Token::EOF) {
+            let field_name = match &self.current().token {
+                Token::Identifier(n) => {
+                    let n = n.clone();
+                    self.advance();
+                    n
+                }
+                other => return Err(self.error(format!("Expected a field name, found {}", other))),
+            };
+
+            if !self.check(&Token::Colon) {
+                return Err(self.error(format!("Expected ':' and a type after field name '{}'", field_name))
+                    .context_hint("class fields need a type, e.g. 'x: int'"));
+            }
+            self.advance(); // Skip ':'
+
+            let type_name = match &self.current().token {
+                Token::Identifier(t) => {
+                    let t = t.clone();
+                    self.advance();
+                    t
+                }
+                other => return Err(self.error(format!("Expected a type name after ':', found {}", other))),
+            };
+
+            fields.push(FunctionParam { name: field_name, type_name: Some(type_name) });
+
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&Token::Comma) {
+                self.advance();
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+            }
+        }
+
+        if !self.check(&Token::RightBrace) {
+            return Err(self.error(format!("Expected '}}' to close class '{}'", name)));
+        }
+        self.advance(); // Skip '}'
+
+        Ok(Statement::ClassDecl { name, fields, location })
+    }
+
     /// The for-loop's init clause: either `let name = expr` (declares a
     /// new loop variable, scoped to the loop) or `name = expr`
     /// (reassigns an existing variable).
@@ -769,8 +860,38 @@ impl Parser {
                 location,
             })
         } else {
-            self.parse_primary()
+            self.parse_postfix()
         }
+    }
+
+    /// Wraps `parse_primary` with zero or more trailing `.field`
+    /// accesses (e.g. `a.b.c`), so field access composes with anything
+    /// a primary expression can produce -- a bare variable, a function
+    /// call's return value, or a chained field access itself.
+    fn parse_postfix(&mut self) -> Result<Expression> {
+        let mut expr = self.parse_primary()?;
+
+        while self.check(&Token::Dot) {
+            let location = Location::new(self.current().line, self.current().column);
+            self.advance(); // Skip '.'
+
+            let field = match &self.current().token {
+                Token::Identifier(name) => {
+                    let name = name.clone();
+                    self.advance();
+                    name
+                }
+                other => return Err(self.error(format!("Expected a field name after '.', found {}", other))),
+            };
+
+            expr = Expression::FieldAccess {
+                object: Box::new(expr),
+                field,
+                location,
+            };
+        }
+
+        Ok(expr)
     }
 
     fn parse_primary(&mut self) -> Result<Expression> {
@@ -811,6 +932,48 @@ impl Parser {
             Token::Null => {
                 self.advance();
                 Ok(Expression::Null { location })
+            }
+            Token::New => {
+                self.advance();
+                let class_name = match &self.current().token {
+                    Token::Identifier(n) => {
+                        let n = n.clone();
+                        self.advance();
+                        n
+                    }
+                    other => return Err(self.error(format!("Expected a class name after 'new', found {}", other))),
+                };
+
+                if !self.check(&Token::LeftParen) {
+                    return Err(self.error(format!("Expected '(' after 'new {}'", class_name)));
+                }
+                self.advance(); // Skip '('
+
+                let mut args = Vec::new();
+                while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    if self.check(&Token::RightParen) {
+                        break;
+                    }
+                    let arg = self.parse_expression()?;
+                    args.push(arg);
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    if !self.check(&Token::Comma) {
+                        break;
+                    }
+                    self.advance(); // Skip comma
+                }
+
+                if !self.check(&Token::RightParen) {
+                    return Err(self.error(format!("Expected ')' after arguments to 'new {}(...)'", class_name)));
+                }
+                self.advance(); // Skip ')'
+
+                Ok(Expression::New { class_name, arguments: args, location })
             }
             Token::Identifier(name) => {
                 self.advance();

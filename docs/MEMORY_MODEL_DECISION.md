@@ -1,13 +1,11 @@
 # Memory model for the native backend: a decision, not a default
 
 **Decided: ARC.** Approved and a real implementation now exists for
-three heap types (`string`, `list`, and `map`) -- see
+`string`, `list`, `map`, and user-defined `class` -- see
 `compiler/src/codegen/native.rs` and the "What's actually built"
 sections further down this document. The analysis and recommendation
 below are kept as-is (including the original framing of this as an
-open decision) since they're still the record of *why* ARC was chosen,
-and the same reasoning applies to whatever comes next (a user-defined
-`class`) as ARC gets extended further.
+open decision) since they're still the record of *why* ARC was chosen.
 
 **Update history**:
 - A real Cranelift-based native backend spike first proved the typed-
@@ -18,7 +16,11 @@ and the same reasoning applies to whatever comes next (a user-defined
   step past that spike.
 - ARC was then extended to `list` (int/bool elements only for now).
 - ARC was then extended to `map` (int/bool keys/values only for now,
-  same reasoning as `list`'s elements) -- see below.
+  same reasoning as `list`'s elements).
+- ARC was then extended to user-defined `class` -- see below. Unlike
+  `list`/`map`'s elements, a class's field types are statically
+  declared, so this reaches string/list/map/another-class fields too,
+  not just int/bool.
 
 ## Why this can't be deferred any further
 
@@ -370,11 +372,78 @@ probing, and multiple live maps nested several scopes deep with an
 early return from the deepest one -- all clean (0 leaks, 0 errors,
 allocation count exactly matching free count).
 
-**What's not built yet**: no `class`/user-defined reference types (so
-no way to define a *new* heap type beyond the three built-in ones
-above). No `weak` escape hatch (moot until something can form a
-reference cycle, which needs `class` first). No string or nested-
-container keys/values in `list`/`map` (would need the same recursive
-retain/release treatment applied through a container, not a given just
-because the container itself is ARC-managed). Every Core/Collections/
-IO/Web/Database intrinsic remains JVM-only.
+## What's actually built (user-defined `class`, under the same ARC convention)
+
+**Representation**: a class instance is a heap block with a refcount
+header followed by one 8-byte slot per field, in declaration order --
+no two-level indirection needed (unlike `list`/`map`): a class's field
+count never changes after construction, so nothing about it needs to
+grow, and the instance's own address never needs to move.
+
+**What makes this tractable, unlike `list`/`map`'s elements**: a
+class's field *types* are statically declared in the class body, not
+opaque. That's what makes correct ARC support here possible at all --
+`release` is generated *once per class definition* (not a single
+generic implementation shared by every class, the way string/list/
+map's retain/release are), so it can know exactly which fields need
+recursively retaining/releasing and which don't, exactly the same way
+a typed function parameter already does. This also means a class field
+can be a string, a list, a map, or another class -- there's no
+int/bool-only restriction here the way there is for `list`/`map`
+elements, since the field's real type is always known.
+
+**Two-pass declaration, mirroring how ordinary functions support
+mutual/forward reference**: every class's `new`/`release` function
+*signatures* are declared before any class's body is built, so a field
+whose type is another class -- declared earlier, later, or even
+itself -- can always find that class's release function already
+declared, regardless of source order.
+
+**What works**: field construction (`new Name(...)`), field reads and
+writes, functions taking and returning class instances, and classes
+nesting other classes as fields.
+
+**Found two real bugs during development, one of them predating
+`class` entirely**:
+1. Reading a class field that's itself ARC-managed needs care about
+   *whose* reference it is. If the object being read from is itself a
+   fresh, unowned temporary (e.g. `some_call().field`), the field must
+   be retained *before* the temporary object is released -- releasing
+   the object first would recursively free that same field out from
+   under the value just extracted (a use-after-free). If the object is
+   instead rooted in a stable binding (a plain variable, or a chain of
+   field accesses ultimately rooted in one), the field is *borrowed*
+   right along with it -- no retain at the read site at all, deferring
+   entirely to whatever consumes the result next (a `let`, a return, a
+   function argument) to decide if *it* needs an independent copy.
+2. This second bug predates `class` and was only exposed by it:
+   `list`/`map`'s own "borrowing" intrinsics (`length`, `get`, `has`,
+   `size`, ...) take their container argument without ever taking
+   ownership of it, and were only ever exercised with an
+   already-bound variable as that argument -- so nothing ever noticed
+   that a *fresh* container value (a class field read, or even just a
+   function's direct return value, e.g. `list_length(make_list())`)
+   passed the same way was never released after the call. Fixed with
+   one shared `release_if_fresh` helper, applied to every one of those
+   intrinsics uniformly, using the exact same "is this value ultimately
+   rooted in a stable binding" check (`expression_is_borrowed`) that
+   the class-field fix above needed anyway -- rather than two separate,
+   easy-to-desync notions of "does this need releasing."
+
+**Verified the same way as `string`/`list`/`map`**: output-correctness
+tests (construction, field read/write, class-typed function parameters
+and returns, nested classes -- one class holding fields of another),
+plus Valgrind-gated tests for the hardest cases -- a string field being
+reassigned, a class instance returned from its own constructing
+function (the exact bug class list/map's own arrival caught previously
+-- freed by its own function before reaching the caller), multiple
+live class instances nested several scopes deep with an early return
+from the deepest one, and field access/assignment on a temporary
+(never-bound) object specifically -- all clean (0 leaks, 0 errors,
+allocation count exactly matching free count).
+
+**What's not built yet**: no `weak` escape hatch (the first thing that
+can actually form a reference cycle -- two classes each holding a field
+of the other's type -- now exists, so this is a real, not just
+theoretical, gap going forward). Every Core/Collections/IO/Web/
+Database intrinsic remains JVM-only.

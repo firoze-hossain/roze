@@ -18,6 +18,14 @@ pub enum Type {
     List,
     /// A map of untyped (Object-boxed) keys/values, for the same reason.
     Map,
+    /// An instance of a user-defined `class Name { field: type, ... }`.
+    /// Unlike `list`/`map`'s elements, a class's field types *are*
+    /// statically known (declared in the class body), which is what
+    /// makes this tractable to support on the native backend too --
+    /// each field's retain/release can be dispatched correctly based on
+    /// its declared type, the same way a typed function parameter
+    /// already is.
+    Class(String),
     /// Reserved for when Roze gets first-class function values/closures
     /// -- nothing constructs this yet (there's no syntax for a function
     /// *value*, only calls), but the other Type variants already match
@@ -56,6 +64,7 @@ impl Type {
             Type::Unknown => "Object".to_string(),
             Type::List => "java.util.List".to_string(),
             Type::Map => "java.util.Map".to_string(),
+            Type::Class(name) => name.clone(),
             Type::Function { .. } => "Object".to_string(),
         }
     }
@@ -71,6 +80,7 @@ impl std::fmt::Display for Type {
             Type::Unknown => write!(f, "<unknown>"),
             Type::List => write!(f, "list"),
             Type::Map => write!(f, "map"),
+            Type::Class(name) => write!(f, "{}", name),
             Type::Function { .. } => write!(f, "function"),
         }
     }
@@ -249,6 +259,10 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
 pub struct TypeChecker {
     pub symbol_table: SymbolTable,
     pub functions: HashMap<String, FunctionSig>,
+    /// Class name -> its fields, in declaration order (order matters:
+    /// `new Name(a, b)`'s arguments are positional, matched against
+    /// this order).
+    pub classes: HashMap<String, Vec<(String, Type)>>,
     pub current_function: Option<String>,
     pub current_return_type: Type,
     /// True while checking `main`'s body -- codegen always hard-codes
@@ -269,6 +283,7 @@ impl TypeChecker {
         Self {
             symbol_table: SymbolTable::new(),
             functions,
+            classes: HashMap::new(),
             current_function: None,
             current_return_type: Type::Void,
             in_main: false,
@@ -276,18 +291,42 @@ impl TypeChecker {
         }
     }
 
+    /// Resolves a source-level type name, checking user-defined classes
+    /// first (so a class named e.g. `Point` correctly resolves to
+    /// `Type::Class("Point")` rather than falling through to Unknown
+    /// the way `Type::from_name` alone would, having no way to know
+    /// about classes registered on this specific checker instance).
+    fn resolve_type_name(&self, name: &str) -> Type {
+        if self.classes.contains_key(name) {
+            Type::Class(name.to_string())
+        } else {
+            Type::from_name(name)
+        }
+    }
+
     /// Type-checks `program` and, on success, returns the fully
     /// type-annotated IR for it (see `crate::ir`). Registers every
-    /// top-level function's signature before checking any bodies, so
-    /// forward references and mutual recursion type-check correctly
-    /// regardless of source order.
+    /// class and top-level function's signature before checking any
+    /// bodies, so forward references and mutual recursion type-check
+    /// correctly regardless of source order. Classes are registered
+    /// before functions specifically, so a function's parameter/return
+    /// type can reference a class declared later in the file.
     pub fn check_program(&mut self, program: &Program) -> Result<TypedProgram> {
+        for stmt in &program.statements {
+            if let Statement::ClassDecl { name, fields, .. } = stmt {
+                let resolved_fields = fields.iter()
+                    .map(|f| (f.name.clone(), f.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown)))
+                    .collect();
+                self.classes.insert(name.clone(), resolved_fields);
+            }
+        }
+
         for stmt in &program.statements {
             if let Statement::Function { name, params, return_type, .. } = stmt {
                 let param_types = params.iter()
-                    .map(|p| p.type_name.as_deref().map(Type::from_name).unwrap_or(Type::Unknown))
+                    .map(|p| p.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown))
                     .collect();
-                let ret = return_type.as_deref().map(Type::from_name).unwrap_or(Type::Void);
+                let ret = return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
                 self.functions.insert(name.clone(), FunctionSig { params: param_types, return_type: ret });
             }
         }
@@ -315,7 +354,7 @@ impl TypeChecker {
                     ).with_hint("remove the '-> ...' after main()'s parameter list").into());
                 }
 
-                let resolved_return_type = return_type.as_deref().map(Type::from_name).unwrap_or(Type::Void);
+                let resolved_return_type = return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
 
                 let outer_function = self.current_function.replace(name.clone());
                 let outer_return_type = std::mem::replace(&mut self.current_return_type, resolved_return_type.clone());
@@ -324,7 +363,7 @@ impl TypeChecker {
                 self.symbol_table.push_scope();
                 let mut typed_params = Vec::with_capacity(params.len());
                 for param in params {
-                    let param_type = param.type_name.as_deref().map(Type::from_name).unwrap_or(Type::Unknown);
+                    let param_type = param.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown);
                     self.symbol_table.define(&param.name, param_type.clone(), location.line, location.column)?;
                     typed_params.push(TypedFunctionParam { name: param.name.clone(), type_: param_type });
                 }
@@ -474,6 +513,57 @@ impl TypeChecker {
                 // in case that ever changes. No IR form for it either
                 // way (see `ir::TypedStatement`'s doc comment).
                 Ok(None)
+            }
+            Statement::ClassDecl { name, location, .. } => {
+                // Already fully resolved into self.classes during
+                // check_program's first pass (needed there so function
+                // signatures declared earlier in the file can reference
+                // a class declared later) -- just look it up again here
+                // rather than re-deriving it, and hand codegen the
+                // resolved (name, Type) pairs directly.
+                let fields = self.classes.get(name)
+                    .expect("check_program registers every class before any statement is checked")
+                    .clone();
+                Ok(Some(TypedStatement::ClassDecl { name: name.clone(), fields, location: location.clone() }))
+            }
+            Statement::FieldAssign { object, field, value, location } => {
+                let typed_object = self.check_expression(object)?;
+                let class_name = match &typed_object.type_ {
+                    Type::Class(name) => name.clone(),
+                    other => return Err(RozeError::type_error(
+                        format!("Cannot access a field on {}, which isn't a class instance", other),
+                        location.line,
+                        location.column,
+                    ).into()),
+                };
+                let field_type = self.classes.get(&class_name)
+                    .and_then(|fields| fields.iter().find(|(n, _)| n == field))
+                    .map(|(_, ty)| ty.clone())
+                    .ok_or_else(|| RozeError::type_error(
+                        format!("'{}' has no field named '{}'", class_name, field),
+                        location.line,
+                        location.column,
+                    ))?;
+
+                let typed_value = self.check_expression(value)?;
+                if !types_compatible(&field_type, &typed_value.type_) {
+                    return Err(RozeError::type_error(
+                        format!(
+                            "Cannot assign a value of type {} to '{}.{}', which is declared as {}",
+                            typed_value.type_, class_name, field, field_type
+                        ),
+                        location.line,
+                        location.column,
+                    ).into());
+                }
+
+                Ok(Some(TypedStatement::FieldAssign {
+                    object: typed_object,
+                    field: field.clone(),
+                    field_type,
+                    value: typed_value,
+                    location: location.clone(),
+                }))
             }
             Statement::Assign { name, value, location } => {
                 let typed_value = self.check_expression(value)?;
@@ -645,6 +735,71 @@ impl TypeChecker {
                         location: location.clone(),
                     })
                 }
+            }
+            Expression::New { class_name, arguments, location } => {
+                let fields = self.classes.get(class_name).cloned().ok_or_else(|| RozeError::type_error(
+                    format!("Undefined class '{}'", class_name),
+                    location.line,
+                    location.column,
+                ).with_length(class_name.chars().count()))?;
+
+                if arguments.len() != fields.len() {
+                    return Err(RozeError::type_error(
+                        format!(
+                            "'{}' has {} field(s), but 'new {}(...)' was given {} argument(s)",
+                            class_name, fields.len(), class_name, arguments.len()
+                        ),
+                        location.line,
+                        location.column,
+                    ).into());
+                }
+
+                let mut typed_arguments = Vec::with_capacity(arguments.len());
+                for (arg, (field_name, field_type)) in arguments.iter().zip(fields.iter()) {
+                    let typed_arg = self.check_expression(arg)?;
+                    if !types_compatible(field_type, &typed_arg.type_) {
+                        return Err(RozeError::type_error(
+                            format!(
+                                "'{}.{}' is declared as {}, but 'new {}(...)' was given {} for it",
+                                class_name, field_name, field_type, class_name, typed_arg.type_
+                            ),
+                            location.line,
+                            location.column,
+                        ).into());
+                    }
+                    typed_arguments.push(typed_arg);
+                }
+
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::New { class_name: class_name.clone(), arguments: typed_arguments },
+                    type_: Type::Class(class_name.clone()),
+                    location: location.clone(),
+                })
+            }
+            Expression::FieldAccess { object, field, location } => {
+                let typed_object = self.check_expression(object)?;
+                let class_name = match &typed_object.type_ {
+                    Type::Class(name) => name.clone(),
+                    other => return Err(RozeError::type_error(
+                        format!("Cannot access a field on {}, which isn't a class instance", other),
+                        location.line,
+                        location.column,
+                    ).into()),
+                };
+                let field_type = self.classes.get(&class_name)
+                    .and_then(|fields| fields.iter().find(|(n, _)| n == field))
+                    .map(|(_, ty)| ty.clone())
+                    .ok_or_else(|| RozeError::type_error(
+                        format!("'{}' has no field named '{}'", class_name, field),
+                        location.line,
+                        location.column,
+                    ))?;
+
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::FieldAccess { object: Box::new(typed_object), field: field.clone() },
+                    type_: field_type,
+                    location: location.clone(),
+                })
             }
         }
     }
@@ -858,6 +1013,84 @@ mod tests {
             }"
         );
         assert!(result.is_ok(), "{:?}", result);
+    }
+
+    // ---- Classes ----
+
+    #[test]
+    fn class_construction_field_access_and_assignment_type_check() {
+        let result = check_source(
+            "class Point { x: int, y: int } \
+             func main() { \
+                let p = new Point(1, 2); \
+                println(p.x); \
+                p.x = 5; \
+             }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn class_can_be_used_as_a_function_parameter_and_return_type() {
+        let result = check_source(
+            "class Point { x: int } \
+             func make(x: int) -> Point { return new Point(x); } \
+             func get_x(p: Point) -> int { return p.x; } \
+             func main() { \
+                let p = make(5); \
+                println(get_x(p)); \
+             }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn class_can_be_declared_after_a_function_that_uses_it() {
+        // Classes are registered in a first pass, before functions, so
+        // a function earlier in the file can reference a class declared
+        // later.
+        let result = check_source(
+            "func make() -> Point { return new Point(1); } \
+             class Point { x: int } \
+             func main() { println(make().x); }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn wrong_number_of_constructor_arguments_is_an_error() {
+        let result = check_source("class Point { x: int, y: int } func main() { let p = new Point(1); }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn wrong_constructor_argument_type_is_an_error() {
+        let result = check_source("class Point { x: int, y: int } func main() { let p = new Point(\"hi\", 2); }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn accessing_an_undefined_field_is_an_error() {
+        let result = check_source("class Point { x: int } func main() { let p = new Point(1); println(p.z); }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn assigning_wrong_type_to_a_field_is_an_error() {
+        let result = check_source("class Point { x: int } func main() { let p = new Point(1); p.x = \"oops\"; }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn constructing_an_undefined_class_is_an_error() {
+        let result = check_source("func main() { let p = new Nonexistent(1); }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn accessing_a_field_on_a_non_class_value_is_an_error() {
+        let result = check_source("func main() { let x = 5; println(x.field); }");
+        assert!(result.is_err());
     }
 
     #[test]

@@ -1,0 +1,49 @@
+class Point {
+    x: int,
+    y: int
+}
+
+class Person {
+    name: string,
+    age: int
+}
+
+func distance_squared(p: Point) -> int {
+    return p.x * p.x + p.y * p.y;
+}
+
+func make_person(name: string, age: int) -> Person {
+    return new Person(name, age);
+}
+
+func greet(p: Person) -> string {
+    return "Hello, " + p.name + "! You are " + to_string(p.age) + ".";
+}
+
+func older(a: Person, b: Person) -> Person {
+    if a.age > b.age {
+        return a;
+    }
+    return b;
+}
+
+func main() {
+    let p = new Point(3, 4);
+    println(p.x);
+    println(p.y);
+    println(distance_squared(p));
+
+    p.x = 10;
+    println(distance_squared(p));
+
+    let alice = make_person("Alice", 30);
+    let bob = new Person("Bob", 25);
+    println(greet(alice));
+    println(greet(bob));
+
+    let elder = older(alice, bob);
+    println(elder.name);
+
+    alice.age = 31;
+    println(greet(alice));
+}

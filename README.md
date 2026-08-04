@@ -104,19 +104,25 @@ example exercising control flow and the Core library.
 
 `--target native` compiles to a real, standalone executable via
 Cranelift -- no JVM/JDK involved at all. Supports int/bool/`string`/
-`list`/`map` functions, arithmetic, `if`/`while`/`for`, calling other
-Roze functions, and (as of the ARC memory model decision -- see
+`list`/`map`/user-defined `class` functions, arithmetic, `if`/`while`/
+`for`, calling other Roze functions, and (as of the ARC memory model
+decision -- see
 [docs/MEMORY_MODEL_DECISION.md](./docs/MEMORY_MODEL_DECISION.md))
-real, general-purpose strings, lists, and maps, all backed by real
-reference counting: string parameters/return values/`let`/
+real, general-purpose strings, lists, maps, and classes, all backed by
+real reference counting: string parameters/return values/`let`/
 reassignment/concatenation/content equality; `list_new/push/get/set/
 remove/length/is_empty` with int/bool elements (growing automatically
-past initial capacity, safe out-of-bounds handling); and `map_new/put/
+past initial capacity, safe out-of-bounds handling); `map_new/put/
 get/has/remove/size/is_empty` with int/bool keys/values (a real hash
-table with automatic growth). Not supported yet: string/list/map
-elements or keys/values *inside* a list/map, any user-defined `class`,
-and every Core/Collections/IO/Web/Database intrinsic (JVM-specific
-today). Needs a C compiler (`cc`, `gcc`, or `clang` -- tried in that
+table with automatic growth); and `class Name { field: type, ... }`
+with `new`/field read/field write, where a field can be a string, a
+list, a map, or another class (not restricted to int/bool the way
+`list`/`map` elements are, since a class's field types are statically
+declared). Not supported yet: string/list/map elements or keys/values
+*inside* a `list`/`map` specifically, a `weak` reference (so a
+reference cycle between two classes will leak), and every Core/
+Collections/IO/Web/Database intrinsic (JVM-specific today). Needs a C
+compiler (`cc`, `gcc`, or `clang` -- tried in that
 order) on `PATH` for linking; this is separate from whatever toolchain
 Rust itself used to build `roze`. On Linux/Mac this is virtually always
 already present; on Windows, MSYS2's MinGW-w64 toolchain is the most

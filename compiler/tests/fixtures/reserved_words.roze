@@ -1,0 +1,27 @@
+func assert(x: bool) {
+    if x {
+        println("ok");
+    } else {
+        println("failed");
+    }
+}
+
+func interface(x: int) -> int {
+    return x * 2;
+}
+
+func main() {
+    assert(true);
+    let synchronized = 5;
+    println(synchronized);
+    println(interface(21));
+
+    let switch = "hello";
+    println(switch);
+    switch = "world";
+    println(switch);
+
+    for let case = 0; case < 3; case = case + 1 {
+        println(case);
+    }
+}

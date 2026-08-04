@@ -139,6 +139,14 @@ fn collect_statement(stmt: &Statement, ast: &mut Ast) {
             collect_statement(body, ast);
         }
         Statement::Expression { .. } | Statement::Return { .. } | Statement::Assign { .. } => {}
+        // `class` declarations don't currently show up as their own
+        // symbol kind in the outline/symbols view -- a real LSP UX
+        // enhancement (the `Ast`/`DocumentSymbol` data model here only
+        // has Function/Variable buckets right now), not attempted as
+        // part of adding `class` to the language itself. `object.field
+        // = value` doesn't introduce a new symbol either way, the same
+        // as a plain `Assign`.
+        Statement::ClassDecl { .. } | Statement::FieldAssign { .. } => {}
     }
 }
 

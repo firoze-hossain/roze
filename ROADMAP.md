@@ -10,7 +10,7 @@ code.
 | Task | Status | Notes |
 |---|---|---|
 | Lexer | ✅ Done | Tokenizes comments, strings, numbers, all operators, and keywords including `if`/`else`/`while`/`for`/`class` (the latter two aren't used by the parser yet). |
-| Parser | ✅ Done for the currently-supported grammar | Handles `func` (with typed params and `-> ReturnType`), `let`, assignment, `return`, blocks, `if`/`else`/`else if`, `while`, `for` (C-style: `for let i = 0; i < n; i = i + 1 { ... }`), `import`, and expressions with normal precedence. `class` is tokenized but intentionally not parsed yet (no structs/objects in the language yet to back it). |
+| Parser | ✅ Done for the currently-supported grammar | Handles `func` (with typed params and `-> ReturnType`), `let`, assignment, `return`, blocks, `if`/`else`/`else if`, `while`, `for` (C-style: `for let i = 0; i < n; i = i + 1 { ... }`), `import`, `class` (fields only -- see the class support entry further down), `new`/field access/field assignment, and expressions with normal precedence. |
 | Type checker | ✅ Done | Tracks real parameter/return types, scoped variable lookup, and catches undefined-variable/undefined-function errors. Now also enforces that every `return` matches the function's declared return type (including a bare `return;` in a non-void function), that reassignment preserves a variable's original declared type, and that `main` doesn't declare a return type (it's always void, matching what codegen hard-codes). |
 | JVM codegen | ✅ Done for the currently-supported grammar | Emits **every** top-level function (previously only `main` was emitted -- calling any second function was a silent miscompile), using real declared/inferred types instead of guessing from variable names. Generates `if`/`while`/`for`/assignment, all as real Java control flow (a Roze `for` compiles to an actual Java `for (init; cond; update)`, not a desugared `while`). |
 | Core (string, math) | ✅ Done | `string_length`, `string_concat`, `string_to_upper`, `string_to_lower`, `abs`, `max`, `min`, `to_string`, `to_int`, `is_number`, `is_string` -- implemented as compiler intrinsics mapped to real JVM calls, available in every program with no import. See `stdlib/src/core.roze` for the reference doc. |
@@ -75,23 +75,113 @@ non-Windows machine. Also fixed a smaller latent bug in the same spot:
 `.replace(".roze", "")` stripped every occurrence of that substring
 anywhere in the path, not just a trailing extension.
 
-## Known issue found but not yet fixed: Java reserved words as identifiers
+## Fixed: Java reserved words as identifiers
 
 While validating the fixes above against the pre-existing
 `tests/test_runner.roze`, a function named `assert` failed to compile --
-`assert` is a Java reserved word, and codegen emits Roze identifiers
+`assert` is a Java reserved word, and codegen emitted Roze identifiers
 verbatim as Java identifiers with no check against Java's keyword list.
-Any Roze variable, parameter, or function name that happens to match a
-Java keyword (`assert`, `interface`, `synchronized`, `native`, `package`,
-`throws`, `enum`, `default`, `switch`, `case`, `new`... the list is long)
-will fail the same way -- a real, if narrow, correctness gap. Renamed
-`test_runner.roze`'s `assert` to `check` as a workaround rather than
-leaving a known-broken test file in the repo, but the underlying gap is
-still open. Fixing it properly means maintaining a Java-reserved-word
-list in codegen and escaping any identifier that collides with one
-(e.g. emitting `assert_` instead of `assert`) consistently at both the
-definition and every use site -- a reasonably small, well-scoped next
-fix, not attempted here to keep this pass focused on `for`/imports/tests.
+Any Roze variable, parameter, or function name that happened to match a
+Java keyword (`assert`, `interface`, `synchronized`, `switch`, `case`...
+the list is long) failed the same way.
+
+Fixed by maintaining Java's reserved-word list in codegen and escaping
+any identifier that collides with one by appending an underscore (e.g.
+`assert` -> `assert_`), applied consistently at every point an
+identifier is emitted -- function/variable/parameter declarations, every
+read, every reassignment, and every for-loop clause. Deliberately
+doesn't escape Java's *contextual* keywords (`var`, `yield`, `record`,
+`sealed`, `permits`), which remain legal identifiers in most Java
+positions -- escaping those would just be unnecessary noise for names
+that almost never actually need it.
+
+Tested for real, not just at the unit level: a golden test compiles and
+runs a program with a function named `assert`, a function named
+`interface`, a variable named `synchronized`, a reassigned variable
+named `switch`, and a for-loop counter named `case` -- all in one
+program -- and checks the actual output.
+
+## Added: class/struct support (JVM backend)
+
+The single biggest missing language feature: `class` was tokenized
+since the very beginning but never parsed (no structs/objects in the
+language to back it). Now it is -- fields only, deliberately no
+methods, inheritance, or interfaces for this first increment:
+
+```roze
+class Point { x: int, y: int }
+
+func distance_squared(p: Point) -> int {
+    return p.x * p.x + p.y * p.y;
+}
+
+func main() {
+    let p = new Point(3, 4);
+    p.x = 10;
+    println(distance_squared(p));
+}
+```
+
+**Parser**: `class Name { field: type, ... }` as a top-level
+declaration; `new Name(args)` (positional, matching field order);
+postfix `.field` access, added as a new precedence layer between
+`parse_unary` and `parse_primary` so it composes with anything a
+primary expression can produce (a variable, a function call's return
+value, a chained field access); `object.field = value` as a new
+assignment form. Restructured statement-level assignment parsing along
+the way: it now parses the full expression first and checks for a
+following `=`, rather than a one-token lookahead special case for a
+bare identifier -- which handles `object.field = value` for free
+through the same code path, instead of needing a second, separate
+special case.
+
+**Semantic checker**: a new `Type::Class(String)`, and a class
+registry populated in a first pass (before functions, so a function
+declared earlier in the file can reference a class declared later).
+Full type-checking for construction (argument count and each
+argument's type against the class's declared fields, in order), field
+reads, and field assignment -- each with a specific, located error
+message (wrong argument count, wrong argument type naming which field,
+undefined field, undefined class, assigning the wrong type to a field).
+
+**JVM codegen**: each Roze `class` becomes a real, separate
+(package-private) Java class in the same generated file, with public
+fields and a single all-fields constructor -- legal Java allows any
+number of classes per file as long as at most one is `public` and
+matches the filename, which is always the main class here. This means
+the JVM's own object model and garbage collector do all the memory
+management for a Roze class, for free -- no ARC work needed on this
+backend at all.
+
+**Found a real bug during testing**: a class name colliding with a
+Java reserved word (e.g. `class interface { ... }`) correctly escaped
+at its `new interface_(...)` construction call site, but *not* in the
+type position right next to it -- a variable's declared type, a
+parameter, a return type, a field's own type all still emitted the
+raw, un-escaped name. Root cause: `Type::to_java()` lives in
+`semantic`, which has no business depending on codegen's Java-
+reserved-word list, so the escaping could only happen at explicit call
+sites -- and the six sites that emit a *declared type* (as opposed to
+a name being referenced) had never been audited for this, since no
+type had ever needed escaping before `class` existed. Fixed by
+consolidating into one `java_type_name` helper and routing all six
+sites through it.
+
+**Native backend**: does not support `class` at all yet (see below) --
+rejected with a clear error rather than silently miscompiled.
+
+Tested for real: golden and unit tests cover construction, field
+read/write, passing a class instance into and back out of a function,
+comparing/branching on field values, and the reserved-word-escaping
+bug above specifically (a class *and* one of its fields both named
+after Java keywords, checked at every emission site: the class
+declaration, the field declaration, the constructor, a function's
+return type using that class, a variable's declared type, and the
+field access itself) -- plus every error path (wrong argument count,
+wrong argument type, undefined field, undefined class, wrong
+assignment type, accessing a field on a non-class value). 258 tests
+passing (109 lib + 105 bin unit tests, 20 JVM golden, 24 native
+golden), 0 failures.
 
 ## Phase 2: Developer Experience -- done
 
@@ -394,13 +484,13 @@ Concretely:
    **decided: ARC** (approved; see
    [`docs/MEMORY_MODEL_DECISION.md`](./docs/MEMORY_MODEL_DECISION.md)
    for the full tradeoff writeup, kept as the record of why), and ARC
-   is now implemented for three heap types: `string`, `list`, and
-   `map`. This used to be the most consequential open decision in the
-   whole roadmap; it's made now, and the thing worth watching going
-   forward is different -- making sure a real `class` type keeps
-   getting built out on native at a reasonable pace, rather than the
-   JVM backend's existing maturity on that front becoming a reason to
-   never quite get to it.
+   is now implemented for `string`, `list`, `map`, and user-defined
+   `class` -- reaching every heap-shaped construct the language
+   currently has. This used to be the most consequential open decision
+   in the whole roadmap; it's made now and built out across the whole
+   type system, and the thing worth watching going forward is
+   different -- a `weak` escape hatch is a real, not just theoretical,
+   gap now that `class` can actually form reference cycles.
 
    **What the spike proved, concretely**: `roze build foo.roze --target
    native` compiles the exact same typed IR the JVM backend consumes
@@ -477,15 +567,46 @@ Concretely:
    nested several scopes deep with an early return from the deepest
    one -- all clean.
 
+   **What ARC adds for user-defined `class`, concretely**: field
+   construction (`new Name(...)`), field reads and writes, functions
+   taking and returning class instances, and classes nesting other
+   classes as fields. A class instance is a heap block with a refcount
+   header and one slot per field -- no two-level indirection needed
+   (unlike `list`/`map`), since a class's field count never changes
+   after construction. What makes this reach further than `list`/
+   `map`'s int/bool-only restriction: a class's field *types* are
+   statically declared, not opaque, so `release` is generated *once per
+   class definition* (not one generic implementation shared by every
+   class) and can know exactly which fields need recursive
+   retain/release -- including a field that's a string, a list, a map,
+   or another class. Every class's `new`/`release` function
+   *signatures* are declared before any class's body is built (mirroring
+   how ordinary functions support mutual/forward reference), so a field
+   whose type is another class -- declared earlier, later, or even
+   itself -- always finds that class's release function already
+   declared.
+
+   **Found two more real bugs during development, one of them
+   predating `class` entirely**: (1) reading a field from a *fresh,
+   unowned* object (e.g. `some_call().field`) needs the field retained
+   *before* the object itself is released, or releasing the object
+   first would recursively free that same field out from under the
+   value just extracted -- a use-after-free, not just a leak. (2) This
+   exposed a second, older bug: `list`/`map`'s own "borrowing"
+   intrinsics (`length`, `get`, `has`, `size`, ...) take their container
+   argument without taking ownership of it, and had only ever been
+   exercised with an already-bound variable as that argument -- nothing
+   had ever noticed that a genuinely *fresh* container value passed the
+   same way (a class field read, or even just `list_length(make_list())`
+   with no class involved at all) was never released after the call.
+   Fixed both with one shared "is this value ultimately rooted in a
+   stable binding" check, rather than two separate, easy-to-desync
+   notions of when a value needs releasing.
+
    **Still not supported, deliberately, and rejected with a clear
-   error rather than silently miscompiled**: any user-defined `class`/
-   reference type (doesn't exist as syntax yet -- `class` is tokenized
-   but never parsed, see Phase 1 above; without it there's no way to
-   define a *new* heap type beyond the three built-in ones above), a
-   `weak` escape hatch (moot until something can form a reference
-   cycle, which needs `class` first), string or nested-container keys/
-   values inside `list`/`map` (would need the same recursive retain/
-   release treatment applied through a container), and every Core/
-   Collections/IO/Web/Database intrinsic (JVM-specific today).
+   error rather than silently miscompiled**: a `weak` escape hatch (no
+   longer just theoretical -- two classes each holding a field of the
+   other's type can now genuinely form a reference cycle) and every
+   Core/Collections/IO/Web/Database intrinsic (JVM-specific today).
 5. Everything else (Web/DB stdlib, WASM, embedded, self-hosting) follows
    naturally once the above are in place.

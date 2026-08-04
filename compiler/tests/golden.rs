@@ -218,6 +218,30 @@ fn source_file_in_a_subdirectory_compiles_and_runs() {
 }
 
 #[test]
+fn java_reserved_words_as_identifiers_compile_and_run_correctly() {
+    // The exact bug from ROADMAP.md's "Known issue found but not yet
+    // fixed" section: a Roze function/variable/parameter/loop-variable
+    // name that happens to be a Java keyword used to fail to compile,
+    // since codegen emitted Roze identifiers verbatim.
+    let (stdout, stderr, ok) = run_fixture("reserved_words.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(
+        program_output(&stdout).trim_end(),
+        "ok\n5\n42\nhello\nworld\n0\n1\n2"
+    );
+}
+
+#[test]
+fn classes_construction_field_access_and_mutation() {
+    let (stdout, stderr, ok) = run_fixture("classes.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(
+        program_output(&stdout).trim_end(),
+        "3\n4\n25\n116\nHello, Alice! You are 30.\nHello, Bob! You are 25.\nAlice\nHello, Alice! You are 31."
+    );
+}
+
+#[test]
 fn missing_import_reports_cleanly() {
     let dir = scratch_dir("missing_import");
     std::fs::write(

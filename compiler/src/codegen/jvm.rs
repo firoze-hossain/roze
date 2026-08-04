@@ -548,6 +548,58 @@ pub(crate) fn is_intrinsic(name: &str) -> bool {
     intrinsic_return_type(name).is_some()
 }
 
+/// Java's true reserved words (keywords + reserved literals) -- these
+/// can never be used as a Java identifier, unlike Java's *contextual*
+/// keywords (`var`, `yield`, `record`, `sealed`, `permits`), which
+/// remain legal identifiers in most positions and so aren't escaped
+/// here (escaping them would just be unnecessary noise in the common
+/// case where they're never actually used as a Roze name).
+const JAVA_RESERVED_WORDS: &[&str] = &[
+    "abstract", "assert", "boolean", "break", "byte", "case", "catch",
+    "char", "class", "const", "continue", "default", "do", "double",
+    "else", "enum", "extends", "final", "finally", "float", "for",
+    "goto", "if", "implements", "import", "instanceof", "int",
+    "interface", "long", "native", "new", "package", "private",
+    "protected", "public", "return", "short", "static", "strictfp",
+    "super", "switch", "synchronized", "this", "throw", "throws",
+    "transient", "try", "void", "volatile", "while",
+    "true", "false", "null",
+    "_",
+];
+
+/// Escapes a Roze identifier that happens to collide with a Java
+/// reserved word (e.g. a Roze function or variable named `assert`,
+/// `interface`, `synchronized`...) by appending an underscore, so
+/// codegen never emits an invalid Java identifier. Must be applied
+/// consistently at *every* definition and use site (every caller of
+/// this function is one) -- missing even one would silently produce a
+/// mismatch between the mangled name at the declaration and the
+/// original name at a use site, which javac would reject as an
+/// undefined symbol.
+fn escape_java_identifier(name: &str) -> String {
+    if JAVA_RESERVED_WORDS.contains(&name) {
+        format!("{}_", name)
+    } else {
+        name.to_string()
+    }
+}
+
+/// Like `ty.to_java()`, but additionally escapes a `Type::Class` name
+/// against Java's reserved words -- `Type::to_java()` itself can't do
+/// this (it lives in `semantic`, which reserved-word escaping has no
+/// business depending on; that's a codegen-specific concern). Every
+/// site that emits a *declared type* as Java source text (a variable's
+/// declared type, a parameter, a return type, a field) needs this
+/// instead of calling `.to_java()` directly, or a class named e.g.
+/// `interface` would correctly escape at its `new interface_(...)`
+/// call site but not in the type position right next to it.
+fn java_type_name(ty: &Type) -> String {
+    match ty {
+        Type::Class(name) => escape_java_identifier(name),
+        other => other.to_java(),
+    }
+}
+
 /// Escapes a raw string value (already fully resolved by the Roze
 /// lexer -- e.g. a literal `\n` in the source is, by this point, a real
 /// newline byte, not the two characters backslash-n) back into the
@@ -611,12 +663,12 @@ impl JavaSourceGenerator {
                     main_found = true;
                 } else {
                     let params_sig: Vec<String> = params.iter()
-                        .map(|p| format!("{} {}", p.type_.to_java(), p.name))
+                        .map(|p| format!("{} {}", java_type_name(&p.type_), escape_java_identifier(&p.name)))
                         .collect();
 
                     source.push_str(&format!(
                         "    public static {} {}({}) {{\n",
-                        return_type.to_java(), name, params_sig.join(", ")
+                        java_type_name(return_type), escape_java_identifier(name), params_sig.join(", ")
                     ));
                     self.generate_statement(&mut source, body, 2)?;
                     source.push_str("    }\n");
@@ -636,7 +688,46 @@ impl JavaSourceGenerator {
         source.push_str(SQL_HELPER_METHODS);
         source.push_str("}\n");
 
+        for stmt in &self.program.statements {
+            if let TypedStatement::ClassDecl { name, fields, .. } = stmt {
+                self.generate_class(&mut source, name, fields)?;
+            }
+        }
+
         Ok(source)
+    }
+
+    /// Emits a Roze `class` as a real, separate Java class in the same
+    /// file -- fields only, a single all-fields constructor (arguments
+    /// positional, in declaration order, matching `new Name(...)`'s own
+    /// order), no methods/inheritance (see ROADMAP.md). Legal Java
+    /// allows any number of classes per file as long as at most one is
+    /// `public` and it matches the filename -- that's always the main
+    /// class here, so every class generated from a Roze `class`
+    /// declaration is deliberately package-private.
+    fn generate_class(&self, source: &mut String, name: &str, fields: &[(String, Type)]) -> Result<()> {
+        let escaped_name = escape_java_identifier(name);
+        source.push_str(&format!("class {} {{\n", escaped_name));
+
+        for (field_name, field_type) in fields {
+            source.push_str(&format!(
+                "    public {} {};\n",
+                java_type_name(field_type), escape_java_identifier(field_name)
+            ));
+        }
+
+        let ctor_params: Vec<String> = fields.iter()
+            .map(|(field_name, field_type)| format!("{} {}", java_type_name(field_type), escape_java_identifier(field_name)))
+            .collect();
+        source.push_str(&format!("    public {}({}) {{\n", escaped_name, ctor_params.join(", ")));
+        for (field_name, _) in fields {
+            let escaped_field = escape_java_identifier(field_name);
+            source.push_str(&format!("        this.{} = {};\n", escaped_field, escaped_field));
+        }
+        source.push_str("    }\n");
+
+        source.push_str("}\n");
+        Ok(())
     }
 
     fn generate_statement(&self, source: &mut String, stmt: &TypedStatement, indent: usize) -> Result<()> {
@@ -662,7 +753,7 @@ impl JavaSourceGenerator {
                 source.push_str(";\n");
             }
             TypedStatement::Let { name, value, .. } => {
-                source.push_str(&format!("{}{} {} = ", indent_str, value.type_.to_java(), name));
+                source.push_str(&format!("{}{} {} = ", indent_str, java_type_name(&value.type_), escape_java_identifier(name)));
                 self.generate_expression(source, value)?;
                 source.push_str(";\n");
             }
@@ -679,8 +770,21 @@ impl JavaSourceGenerator {
                 // Nested function declarations aren't supported; top-level
                 // functions are collected and emitted directly in `generate`.
             }
+            TypedStatement::ClassDecl { .. } => {
+                // Like a nested Function, a top-level-only construct;
+                // top-level class declarations are collected and
+                // emitted as real Java classes directly in `generate`
+                // (see `generate_class`).
+            }
+            TypedStatement::FieldAssign { object, field, value, .. } => {
+                source.push_str(&indent_str);
+                self.generate_expression(source, object)?;
+                source.push_str(&format!(".{} = ", escape_java_identifier(field)));
+                self.generate_expression(source, value)?;
+                source.push_str(";\n");
+            }
             TypedStatement::Assign { name, value, .. } => {
-                source.push_str(&format!("{}{} = ", indent_str, name));
+                source.push_str(&format!("{}{} = ", indent_str, escape_java_identifier(name)));
                 self.generate_expression(source, value)?;
                 source.push_str(";\n");
             }
@@ -718,11 +822,11 @@ impl JavaSourceGenerator {
     fn generate_for_clause(&self, source: &mut String, stmt: &TypedStatement) -> Result<()> {
         match stmt {
             TypedStatement::Let { name, value, .. } => {
-                source.push_str(&format!("{} {} = ", value.type_.to_java(), name));
+                source.push_str(&format!("{} {} = ", java_type_name(&value.type_), escape_java_identifier(name)));
                 self.generate_expression(source, value)?;
             }
             TypedStatement::Assign { name, value, .. } => {
-                source.push_str(&format!("{} = ", name));
+                source.push_str(&format!("{} = ", escape_java_identifier(name)));
                 self.generate_expression(source, value)?;
             }
             _ => unreachable!("for-loop init/update is always Let or Assign (enforced by the parser)"),
@@ -797,7 +901,7 @@ impl JavaSourceGenerator {
                 source.push_str(value);
             }
             TypedExpressionKind::Identifier(name) => {
-                source.push_str(name);
+                source.push_str(&escape_java_identifier(name));
             }
             TypedExpressionKind::Boolean(value) => {
                 source.push_str(&format!("{}", value));
@@ -807,6 +911,20 @@ impl JavaSourceGenerator {
             }
             TypedExpressionKind::Call { function, arguments } => {
                 self.generate_call(source, function, arguments)?;
+            }
+            TypedExpressionKind::New { class_name, arguments } => {
+                source.push_str(&format!("new {}(", escape_java_identifier(class_name)));
+                for (i, arg) in arguments.iter().enumerate() {
+                    if i > 0 {
+                        source.push_str(", ");
+                    }
+                    self.generate_expression(source, arg)?;
+                }
+                source.push(')');
+            }
+            TypedExpressionKind::FieldAccess { object, field } => {
+                self.generate_expression(source, object)?;
+                source.push_str(&format!(".{}", escape_java_identifier(field)));
             }
             TypedExpressionKind::Binary { left, operator, right } => {
                 let is_primitive = |t: &Type| matches!(t, Type::Int | Type::Bool);
@@ -1145,7 +1263,7 @@ impl JavaSourceGenerator {
                 source.push(')');
             }
             _ => {
-                source.push_str(name);
+                source.push_str(&escape_java_identifier(name));
                 source.push('(');
                 for (i, arg) in arguments.iter().enumerate() {
                     if i > 0 {
@@ -1249,6 +1367,113 @@ mod tests {
         JavaSourceGenerator::new(typed, "Fixture".to_string())
             .generate()
             .expect("fixture should generate")
+    }
+
+    #[test]
+    fn escapes_a_java_reserved_word() {
+        assert_eq!(escape_java_identifier("assert"), "assert_");
+        assert_eq!(escape_java_identifier("interface"), "interface_");
+        assert_eq!(escape_java_identifier("synchronized"), "synchronized_");
+        assert_eq!(escape_java_identifier("switch"), "switch_");
+        assert_eq!(escape_java_identifier("true"), "true_");
+        assert_eq!(escape_java_identifier("null"), "null_");
+    }
+
+    #[test]
+    fn leaves_an_ordinary_identifier_alone() {
+        assert_eq!(escape_java_identifier("total"), "total");
+        assert_eq!(escape_java_identifier("assertion"), "assertion"); // a prefix match, not the word itself
+        assert_eq!(escape_java_identifier("my_switch"), "my_switch");
+    }
+
+    #[test]
+    fn does_not_escape_javas_contextual_keywords() {
+        // var/yield/record/sealed/permits remain legal Java identifiers
+        // in most positions -- escaping them would just be unnecessary
+        // noise for names that virtually never actually need it.
+        assert_eq!(escape_java_identifier("var"), "var");
+        assert_eq!(escape_java_identifier("yield"), "yield");
+        assert_eq!(escape_java_identifier("record"), "record");
+    }
+
+    #[test]
+    fn function_named_after_a_java_keyword_compiles_and_is_escaped_consistently() {
+        // The exact bug this guards against: a Roze function named
+        // `assert` (a real Java keyword) used to fail to compile,
+        // because codegen emitted Roze identifiers verbatim with no
+        // check against Java's keyword list.
+        let java = generate("func assert(x: bool) { println(x); } func main() { assert(true); }");
+        assert!(java.contains("static void assert_("), "expected the declaration to be escaped:\n{}", java);
+        assert!(java.contains("assert_(true)"), "expected the call site to be escaped to match:\n{}", java);
+        assert!(!java.contains("void assert("), "must not emit the bare reserved word as a method name:\n{}", java);
+    }
+
+    #[test]
+    fn variable_named_after_a_java_keyword_is_escaped_at_declaration_and_every_use() {
+        let java = generate("func main() { let switch = \"hi\"; println(switch); switch = \"bye\"; println(switch); }");
+        assert!(java.contains("String switch_ ="), "expected the declaration to be escaped:\n{}", java);
+        assert!(java.contains("println(switch_)"), "expected reads to be escaped:\n{}", java);
+        assert!(java.contains("switch_ = \"bye\""), "expected the reassignment target to be escaped:\n{}", java);
+    }
+
+    #[test]
+    fn for_loop_variable_named_after_a_java_keyword_is_escaped() {
+        let java = generate("func main() { for let case = 0; case < 3; case = case + 1 { println(case); } }");
+        assert!(java.contains("int case_ = 0"), "expected the loop variable's declaration to be escaped:\n{}", java);
+        assert!(java.contains("case_ < 3"), "expected the condition to be escaped:\n{}", java);
+        assert!(java.contains("case_ = (case_ + 1)"), "expected the update clause to be escaped:\n{}", java);
+    }
+
+    #[test]
+    fn parameter_named_after_a_java_keyword_is_escaped() {
+        let java = generate("func f(interface: int) -> int { return interface; } func main() { }");
+        assert!(java.contains("int interface_)"), "expected the parameter declaration to be escaped:\n{}", java);
+        assert!(java.contains("return interface_;"), "expected the parameter's use in the body to be escaped:\n{}", java);
+    }
+
+    // ---- Classes ----
+
+    #[test]
+    fn class_becomes_a_real_separate_java_class() {
+        let java = generate("class Point { x: int, y: int } func main() { let p = new Point(1, 2); }");
+        assert!(java.contains("class Point {"), "expected a real Java class:\n{}", java);
+        assert!(java.contains("public int x;"), "expected a public field:\n{}", java);
+        assert!(java.contains("public int y;"), "expected a public field:\n{}", java);
+        assert!(java.contains("public Point(int x, int y)"), "expected an all-fields constructor:\n{}", java);
+        assert!(java.contains("this.x = x;"), "expected the constructor to assign fields:\n{}", java);
+        assert!(java.contains("this.y = y;"), "expected the constructor to assign fields:\n{}", java);
+        assert!(java.contains("new Point(1, 2)"), "expected construction to compile to 'new':\n{}", java);
+    }
+
+    #[test]
+    fn field_access_and_assignment_compile_correctly() {
+        let java = generate("class Point { x: int } func main() { let p = new Point(1); println(p.x); p.x = 5; }");
+        assert!(java.contains("println(p.x)"), "expected field read to compile to '.field':\n{}", java);
+        assert!(java.contains("p.x = 5;"), "expected field assignment to compile to '.field = value':\n{}", java);
+    }
+
+    #[test]
+    fn class_name_and_field_name_reserved_word_collisions_are_escaped_everywhere() {
+        // The exact bug found during development: a class named
+        // `interface` (a Java keyword) correctly escaped at its `new
+        // interface_(...)` call site, but NOT in the *type* position
+        // right next to it (a variable's declared type, a parameter, a
+        // return type) -- because Type::to_java() itself has no
+        // business depending on codegen's reserved-word list, every
+        // site that emits a declared type needed to route through a
+        // separate escaping-aware helper instead.
+        let java = generate(
+            "class interface { assert: int } \
+             func make() -> interface { return new interface(1); } \
+             func main() { let obj = make(); println(obj.assert); }"
+        );
+        assert!(java.contains("class interface_ {"), "expected the class declaration itself to be escaped:\n{}", java);
+        assert!(java.contains("public int assert_;"), "expected the field declaration to be escaped:\n{}", java);
+        assert!(java.contains("public interface_(int assert_)"), "expected the constructor name and parameter to be escaped:\n{}", java);
+        assert!(java.contains("interface_ make()"), "expected the return type position to be escaped, not just the constructor call:\n{}", java);
+        assert!(java.contains("new interface_(1)"), "expected the constructor call to be escaped:\n{}", java);
+        assert!(java.contains("interface_ obj = make();"), "expected the variable's declared type to be escaped:\n{}", java);
+        assert!(java.contains("obj.assert_"), "expected the field access to be escaped:\n{}", java);
     }
 
     #[test]

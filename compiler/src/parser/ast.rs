@@ -77,6 +77,25 @@ pub enum Statement {
         body: Box<Statement>,
         location: Location,
     },
+    /// A `class Name { field: type, ... }` declaration -- fields only,
+    /// deliberately no methods/inheritance/interfaces for this first
+    /// increment (see ROADMAP.md). Reuses `FunctionParam` for fields
+    /// since it's already exactly "a name plus an optional type name."
+    ClassDecl {
+        name: String,
+        fields: Vec<FunctionParam>,
+        location: Location,
+    },
+    /// `object.field = value;` -- a distinct statement from `Assign`
+    /// (which only ever targets a bare variable name) since the
+    /// assignment target here is itself an expression (evaluated to
+    /// find *which* object's field to write).
+    FieldAssign {
+        object: Box<Expression>,
+        field: String,
+        value: Box<Expression>,
+        location: Location,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +139,22 @@ pub enum Expression {
     Call {
         function: Box<Expression>,
         arguments: Vec<Expression>,
+        location: Location,
+    },
+    /// `new ClassName(arg1, arg2, ...)` -- arguments are positional, in
+    /// the class's declared field order (see `Statement::ClassDecl`).
+    New {
+        class_name: String,
+        arguments: Vec<Expression>,
+        location: Location,
+    },
+    /// `object.field` -- reading a field. `object` is itself an
+    /// expression (not just a bare name) so this composes with
+    /// anything that evaluates to a class instance, e.g. a function
+    /// call's return value.
+    FieldAccess {
+        object: Box<Expression>,
+        field: String,
         location: Location,
     },
 }

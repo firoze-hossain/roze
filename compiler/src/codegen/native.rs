@@ -90,6 +90,7 @@ pub fn compile_to_native(program: TypedProgram, input_file: &str) -> Result<()> 
 
     {
         let mut generator = NativeGenerator::new(&mut module)?;
+        generator.declare_all_classes(&program)?;
         generator.declare_all_functions(&program)?;
         generator.compile_all_functions(&program)?;
     }
@@ -170,9 +171,37 @@ pub fn run_native(name: &str) -> Result<()> {
 /// pointing at why and exactly where in the source, rather than either
 /// panicking, silently miscompiling, or (as an earlier version of this
 /// function did) giving an error with no position information at all.
+/// Whether evaluating `expr` yields a *borrowed* reference (still owned
+/// by some existing binding -- a plain variable, or a field read off
+/// one) as opposed to a *fresh*, independently-owned one (a literal,
+/// concatenation, function call, constructor call, or a field read off
+/// an owned/temporary object).
+///
+/// This matters because a borrowed reference needs an explicit retain
+/// when it's consumed at a point that creates a new independent owner
+/// (a `let`, `return`, or being passed to something that stores it --
+/// see `retain_if_aliasing`), while a fresh one already *is* one and
+/// doesn't. Chained field access (`a.b.c`) needs this to be recursive,
+/// not just "is this a bare identifier": if `a` is a plain variable,
+/// `a.b` is borrowed right along with it (its lifetime is tied to
+/// `a`'s), and so is `a.b.c` -- but if the *object* side of a field
+/// access is itself something fresh (`some_call().field`), the field
+/// value extracted from it needs to be retained before that fresh
+/// object gets released (see `compile_expression`'s `FieldAccess`
+/// case), at which point the *result* of that whole expression is
+/// itself now fresh, not borrowed -- exactly like a normal function
+/// call's result.
+fn expression_is_borrowed(expr: &TypedExpression) -> bool {
+    match &expr.kind {
+        TypedExpressionKind::Identifier(_) => true,
+        TypedExpressionKind::FieldAccess { object, .. } => expression_is_borrowed(object),
+        _ => false,
+    }
+}
+
 fn require_supported_type(ty: &Type, location: &Location, context: &str) -> Result<()> {
     match ty {
-        Type::Int | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map => Ok(()),
+        Type::Int | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) => Ok(()),
         Type::Function { .. } => Err(anyhow!(
             "line {}, column {}: the native backend doesn't support function values -- {}",
             location.line, location.column, context
@@ -1720,6 +1749,195 @@ fn build_map_is_empty(module: &mut ObjectModule, ctx: &mut cranelift::codegen::C
     Ok(func_id)
 }
 
+/// A native class instance is a pointer to a heap block:
+///
+///   [0..8)          i64  refcount
+///   [8..8+8*i)      i64  field i's value, in declaration order
+///
+/// No two-level indirection here (unlike `list`/`map`): a class's field
+/// count never changes after construction, so there's nothing that
+/// needs to grow, and the instance's own address never needs to move.
+///
+/// Unlike `list`/`map`'s elements, a class's field *types* are
+/// statically declared, not opaque -- which is what makes proper ARC
+/// support here tractable at all: `release` is generated once per
+/// class definition (not a single generic implementation shared by
+/// every class, the way string/list/map's retain/release are), and can
+/// therefore know exactly which fields need recursively
+/// retaining/releasing and which don't, the same way a typed function
+/// parameter already does.
+const CLASS_HEADER_SIZE: i64 = 8;
+
+/// Retain is identical for every class regardless of field layout (just
+/// bump the refcount at offset 0) -- unlike `new` (a different
+/// parameter list per class) or `release` (needs to know which
+/// specific fields to recursively release), so this one function is
+/// shared by every class rather than generated per class.
+fn build_class_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_class_retain", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+
+        let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
+        let incremented = builder.ins().iadd_imm(refcount, 1);
+        builder.ins().store(MemFlags::new(), incremented, ptr, 0);
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// Everything needed to construct and destroy instances of one class.
+struct ClassInfo {
+    /// Ordered exactly as declared -- this order is both the
+    /// constructor's parameter order (matching `new Name(...)`'s own
+    /// positional order) and how field byte offsets are computed
+    /// (`CLASS_HEADER_SIZE + index * 8`).
+    fields: Vec<(String, Type)>,
+    new_id: FuncId,
+    release_id: FuncId,
+}
+
+/// A field's declared type decides how (or whether) its value needs to
+/// be retained/released -- exactly the same dispatch `emit_release_for_type`
+/// does for a local variable, just needing the relevant FuncIds passed
+/// in explicitly here since this runs before `FunctionCompiler` (which
+/// normally owns that dispatch) exists for any given function.
+fn arc_release_call_for_field_type(
+    ty: &Type,
+    string_release_id: FuncId,
+    list_release_id: FuncId,
+    map_release_id: FuncId,
+    other_class_release_ids: &HashMap<String, FuncId>,
+) -> Option<FuncId> {
+    match ty {
+        Type::String => Some(string_release_id),
+        Type::List => Some(list_release_id),
+        Type::Map => Some(map_release_id),
+        Type::Class(name) => other_class_release_ids.get(name).copied(),
+        _ => None,
+    }
+}
+
+/// Builds one class's `new` and `release` functions. `new_id`/
+/// `release_id` are already-declared (not yet defined) FuncIds -- see
+/// the two-pass declare-then-build split in `NativeGenerator`, which
+/// mirrors how ordinary Roze functions support mutual/forward
+/// reference: every class's function *signatures* are declared before
+/// any class's body is built, so `other_class_release_ids` can name a
+/// class's own release function even for a field whose class is
+/// declared later in the file (or refers back to itself).
+fn build_class_runtime(
+    module: &mut ObjectModule,
+    ctx: &mut cranelift::codegen::Context,
+    fields: &[(String, Type)],
+    new_id: FuncId,
+    release_id: FuncId,
+    malloc_id: FuncId,
+    free_id: FuncId,
+    string_release_id: FuncId,
+    list_release_id: FuncId,
+    map_release_id: FuncId,
+    other_class_release_ids: &HashMap<String, FuncId>,
+) -> Result<()> {
+    // --- new(field0, field1, ...) -> ptr ---
+    let mut new_sig = module.make_signature();
+    for _ in fields {
+        new_sig.params.push(AbiParam::new(VALUE_TYPE));
+    }
+    new_sig.returns.push(AbiParam::new(VALUE_TYPE));
+    ctx.func.signature = new_sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let malloc_ref = module.declare_func_in_func(malloc_id, builder.func);
+        let total_size = CLASS_HEADER_SIZE + (fields.len() as i64) * 8;
+        let size_val = builder.ins().iconst(VALUE_TYPE, total_size);
+        let call = builder.ins().call(malloc_ref, &[size_val]);
+        let ptr = builder.inst_results(call)[0];
+
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        builder.ins().store(MemFlags::new(), one, ptr, 0);
+
+        for (i, _field) in fields.iter().enumerate() {
+            let param = builder.block_params(entry)[i];
+            let offset = (CLASS_HEADER_SIZE + (i as i64) * 8) as i32;
+            builder.ins().store(MemFlags::new(), param, ptr, offset);
+        }
+
+        builder.ins().return_(&[ptr]);
+        builder.finalize();
+    }
+    module.define_function(new_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+
+    // --- release(ptr) -> void ---
+    let mut release_sig = module.make_signature();
+    release_sig.params.push(AbiParam::new(VALUE_TYPE));
+    ctx.func.signature = release_sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+
+        let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
+        let decremented = builder.ins().iadd_imm(refcount, -1);
+        builder.ins().store(MemFlags::new(), decremented, ptr, 0);
+
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let should_free = builder.ins().icmp(IntCC::Equal, decremented, zero);
+        let free_block = builder.create_block();
+        let done_block = builder.create_block();
+        builder.ins().brif(should_free, free_block, &[], done_block, &[]);
+
+        builder.switch_to_block(free_block);
+        builder.seal_block(free_block);
+        for (i, (_, field_type)) in fields.iter().enumerate() {
+            if let Some(field_release_id) = arc_release_call_for_field_type(
+                field_type, string_release_id, list_release_id, map_release_id, other_class_release_ids,
+            ) {
+                let offset = (CLASS_HEADER_SIZE + (i as i64) * 8) as i32;
+                let field_val = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, offset);
+                let field_release_ref = module.declare_func_in_func(field_release_id, builder.func);
+                builder.ins().call(field_release_ref, &[field_val]);
+            }
+        }
+        let free_ref = module.declare_func_in_func(free_id, builder.func);
+        builder.ins().call(free_ref, &[ptr]);
+        builder.ins().jump(done_block, &[]);
+
+        builder.switch_to_block(done_block);
+        builder.seal_block(done_block);
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+    module.define_function(release_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+
+    Ok(())
+}
+
 struct NativeGenerator<'a> {
     module: &'a mut ObjectModule,
     functions: HashMap<String, FuncId>,
@@ -1731,6 +1949,8 @@ struct NativeGenerator<'a> {
     strings: StringRuntime,
     lists: ListRuntime,
     maps: MapRuntime,
+    classes: HashMap<String, ClassInfo>,
+    class_retain_id: FuncId,
     literal_counter: usize,
 }
 
@@ -1758,6 +1978,9 @@ impl<'a> NativeGenerator<'a> {
         let lists = declare_list_runtime(module, printf_id)?;
         let maps = declare_map_runtime(module)?;
 
+        let mut retain_ctx = module.make_context();
+        let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
+
         Ok(Self {
             module,
             functions: HashMap::new(),
@@ -1769,6 +1992,8 @@ impl<'a> NativeGenerator<'a> {
             strings,
             lists,
             maps,
+            classes: HashMap::new(),
+            class_retain_id,
             literal_counter: 0,
         })
     }
@@ -1782,6 +2007,70 @@ impl<'a> NativeGenerator<'a> {
             .map_err(|e| anyhow!(e.to_string()))?;
         module.define_data(data_id, &data_ctx).map_err(|e| anyhow!(e.to_string()))?;
         Ok(data_id)
+    }
+
+    /// Registers every class's `new`/`release` function *signatures*
+    /// first (a first pass, mirroring `declare_all_functions`'s own
+    /// first pass for the same reason), then builds every class's
+    /// actual function bodies in a second pass -- so a field whose type
+    /// is another class (declared earlier, later, or even itself) can
+    /// always find that class's release function already declared,
+    /// regardless of source order.
+    fn declare_all_classes(&mut self, program: &TypedProgram) -> Result<()> {
+        for stmt in &program.statements {
+            if let TypedStatement::ClassDecl { name, fields, location } = stmt {
+                for (field_name, field_type) in fields {
+                    require_supported_type(field_type, location, &format!("field '{}' of class '{}'", field_name, name))?;
+                }
+
+                let mut new_sig = self.module.make_signature();
+                for _ in fields {
+                    new_sig.params.push(AbiParam::new(VALUE_TYPE));
+                }
+                new_sig.returns.push(AbiParam::new(VALUE_TYPE));
+                let new_id = self.module.declare_function(&format!("__roze_class_{}_new", name), Linkage::Local, &new_sig)
+                    .map_err(|e| anyhow!(e.to_string()))?;
+
+                let mut release_sig = self.module.make_signature();
+                release_sig.params.push(AbiParam::new(VALUE_TYPE));
+                let release_id = self.module.declare_function(&format!("__roze_class_{}_release", name), Linkage::Local, &release_sig)
+                    .map_err(|e| anyhow!(e.to_string()))?;
+
+                self.classes.insert(name.clone(), ClassInfo { fields: fields.clone(), new_id, release_id });
+            }
+        }
+
+        let other_class_release_ids: HashMap<String, FuncId> = self.classes.iter()
+            .map(|(name, info)| (name.clone(), info.release_id))
+            .collect();
+
+        let mut malloc_sig = self.module.make_signature();
+        malloc_sig.params.push(AbiParam::new(VALUE_TYPE));
+        malloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
+        let malloc_id = self.module.declare_function("malloc", Linkage::Import, &malloc_sig).map_err(|e| anyhow!(e.to_string()))?;
+
+        let mut free_sig = self.module.make_signature();
+        free_sig.params.push(AbiParam::new(VALUE_TYPE));
+        let free_id = self.module.declare_function("free", Linkage::Import, &free_sig).map_err(|e| anyhow!(e.to_string()))?;
+
+        let mut ctx = self.module.make_context();
+        for info in self.classes.values() {
+            build_class_runtime(
+                self.module,
+                &mut ctx,
+                &info.fields,
+                info.new_id,
+                info.release_id,
+                malloc_id,
+                free_id,
+                self.strings.release_id,
+                self.lists.release_id,
+                self.maps.release_id,
+                &other_class_release_ids,
+            )?;
+        }
+
+        Ok(())
     }
 
     /// Registers every top-level function's signature before compiling
@@ -1860,6 +2149,8 @@ impl<'a> NativeGenerator<'a> {
                         map_remove_id: self.maps.remove_id,
                         map_size_id: self.maps.size_id,
                         map_is_empty_id: self.maps.is_empty_id,
+                        classes: &self.classes,
+                        class_retain_id: self.class_retain_id,
                         literal_counter: &mut self.literal_counter,
                         scopes: vec![HashMap::new()],
                         next_var_index: 0,
@@ -1986,6 +2277,8 @@ struct FunctionCompiler<'a, 'b> {
     map_remove_id: FuncId,
     map_size_id: FuncId,
     map_is_empty_id: FuncId,
+    classes: &'a HashMap<String, ClassInfo>,
+    class_retain_id: FuncId,
     /// Shared across every function being compiled (not reset per
     /// function), so two string literals never collide on the same
     /// generated data symbol name.
@@ -2029,7 +2322,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn release_frame(&mut self, frame_index: usize) -> Result<()> {
         let arc_vars: Vec<(Variable, Type)> = self.scopes[frame_index]
             .values()
-            .filter(|(_, ty)| matches!(ty, Type::String | Type::List | Type::Map))
+            .filter(|(_, ty)| matches!(ty, Type::String | Type::List | Type::Map | Type::Class(_)))
             .cloned()
             .collect();
         for (var, ty) in arc_vars {
@@ -2058,13 +2351,44 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     /// creating a second independent owner from it needs an explicit
     /// retain first.
     fn retain_if_aliasing(&mut self, expr: &TypedExpression, val: Value) -> Result<()> {
-        if let TypedExpressionKind::Identifier(_) = &expr.kind {
-            match expr.type_ {
-                Type::String => self.emit_string_retain(val)?,
-                Type::List => self.emit_list_retain(val)?,
-                Type::Map => self.emit_map_retain(val)?,
-                _ => {}
-            }
+        if expression_is_borrowed(expr) {
+            self.retain_for_arc_type(&expr.type_, val)?;
+        }
+        Ok(())
+    }
+
+    /// Retains `val` per its Roze type, if it's an ARC type at all --
+    /// shared by `retain_if_aliasing` (an identifier alias) and reading
+    /// a class field (which extracts a reference the instance itself
+    /// separately keeps owning), since both need exactly the same
+    /// per-type dispatch.
+    fn retain_for_arc_type(&mut self, ty: &Type, val: Value) -> Result<()> {
+        match ty {
+            Type::String => self.emit_string_retain(val),
+            Type::List => self.emit_list_retain(val),
+            Type::Map => self.emit_map_retain(val),
+            Type::Class(_) => self.emit_class_retain(val),
+            _ => Ok(()),
+        }
+    }
+
+    /// Releases `val` (the compiled form of `expr`) if `expr` isn't a
+    /// bare identifier -- i.e. if evaluating it produced a *fresh*
+    /// owned reference (a literal, a concatenation, a function call's
+    /// return value, a field read) that nothing else will release once
+    /// this borrowing use is done. `list`/`map`'s accessor intrinsics
+    /// (length, get, has, ...) all take their container argument this
+    /// way: they read/mutate through it without taking ownership of
+    /// the container reference itself, so whoever *does* own a fresh
+    /// one needs it released right after -- the same "borrow, then
+    /// release if fresh" pattern already used for binary-op operands
+    /// and println's argument. This is exactly the case that leaked
+    /// before this existed: `list_length(make_list())`, where
+    /// `make_list()`'s fresh return value was read once and then never
+    /// released.
+    fn release_if_fresh(&mut self, expr: &TypedExpression, val: Value) -> Result<()> {
+        if !expression_is_borrowed(expr) {
+            self.emit_release_for_type(&expr.type_, val)?;
         }
         Ok(())
     }
@@ -2104,6 +2428,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             Type::String => self.emit_string_release(val),
             Type::List => self.emit_list_release(val),
             Type::Map => self.emit_map_release(val),
+            Type::Class(name) => {
+                let release_id = self.classes.get(name)
+                    .map(|info| info.release_id)
+                    .expect("every class referenced by a typed value was declared and registered in declare_all_classes");
+                let release_ref = self.module.declare_func_in_func(release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -2238,6 +2570,36 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         let func_ref = self.module.declare_func_in_func(self.map_is_empty_id, self.builder.func);
         let call = self.builder.ins().call(func_ref, &[map]);
         Ok(self.builder.inst_results(call)[0])
+    }
+
+    /// Shared by every class -- see `build_class_retain`'s doc comment
+    /// for why retain (unlike `new`/`release`) doesn't need to be
+    /// generated per class.
+    fn emit_class_retain(&mut self, val: Value) -> Result<()> {
+        let func_ref = self.module.declare_func_in_func(self.class_retain_id, self.builder.func);
+        self.builder.ins().call(func_ref, &[val]);
+        Ok(())
+    }
+
+    fn emit_class_new(&mut self, class_name: &str, arguments: &[Value]) -> Result<Value> {
+        let new_id = self.classes.get(class_name)
+            .map(|info| info.new_id)
+            .expect("check_and_lower already verified this class exists");
+        let func_ref = self.module.declare_func_in_func(new_id, self.builder.func);
+        let call = self.builder.ins().call(func_ref, arguments);
+        Ok(self.builder.inst_results(call)[0])
+    }
+
+    /// A field's byte offset within its class's instance layout --
+    /// `CLASS_HEADER_SIZE` (the refcount) plus 8 bytes per field before
+    /// it, in declaration order (see `ClassInfo`'s doc comment).
+    fn class_field_offset(&self, class_name: &str, field: &str) -> i32 {
+        let fields = &self.classes.get(class_name)
+            .expect("check_and_lower already verified this class exists")
+            .fields;
+        let index = fields.iter().position(|(name, _)| name == field)
+            .expect("check_and_lower already verified this field exists on this class");
+        (CLASS_HEADER_SIZE + (index as i64) * 8) as i32
     }
 
     /// Compiles a string literal into a static, immortal (never
@@ -2420,6 +2782,45 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 // Nested functions aren't supported; handled at the top level.
                 Ok(false)
             }
+            TypedStatement::ClassDecl { .. } => {
+                // Like a nested Function, a top-level-only construct;
+                // handled (or in this backend's case, rejected -- see
+                // require_supported_type) elsewhere. Class support on
+                // native doesn't exist yet at all.
+                Ok(false)
+            }
+            TypedStatement::FieldAssign { object, field, field_type, value, .. } => {
+                let class_name = match &object.type_ {
+                    Type::Class(name) => name.clone(),
+                    other => unreachable!(
+                        "check_and_lower guarantees a FieldAssign's object is always a class instance, got {:?}",
+                        other
+                    ),
+                };
+                let object_val = self.compile_expression(object)?;
+
+                let val = self.compile_expression(value)?;
+                self.retain_if_aliasing(value, val)?;
+
+                let offset = self.class_field_offset(&class_name, field);
+                let old_val = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), object_val, offset);
+                self.emit_release_for_type(field_type, old_val)?;
+                self.builder.ins().store(MemFlags::new(), val, object_val, offset);
+
+                // If `object` is a fresh, owned temporary (not
+                // ultimately rooted in a plain variable -- see
+                // expression_is_borrowed), nothing else owns it going
+                // forward -- release it now, or it leaks. A borrowed
+                // object (e.g. `a` in `a.b = x`, or even `a.b` in
+                // `a.b.c = x` when `a` is a plain variable) must NOT be
+                // released here -- its lifetime belongs to whatever
+                // variable it's ultimately rooted in.
+                if !expression_is_borrowed(object) {
+                    self.emit_release_for_type(&object.type_, object_val)?;
+                }
+
+                Ok(false)
+            }
         }
     }
 
@@ -2450,6 +2851,57 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             TypedExpressionKind::Binary { left, operator, right } => self.compile_binary(left, operator, right),
             TypedExpressionKind::Call { function, arguments } => self.compile_call(function, arguments, &expr.location),
+            TypedExpressionKind::New { class_name, arguments } => {
+                // Each argument follows the same ownership handoff as a
+                // function call argument (see compile_call): compile it
+                // (an owned temp), then retain-if-aliasing, since the
+                // constructor stores it into a field -- taking
+                // ownership of a reference distinct from wherever it
+                // came from, if it was a bare identifier.
+                let mut arg_values = Vec::with_capacity(arguments.len());
+                for arg in arguments {
+                    let val = self.compile_expression(arg)?;
+                    self.retain_if_aliasing(arg, val)?;
+                    arg_values.push(val);
+                }
+                self.emit_class_new(class_name, &arg_values)
+            }
+            TypedExpressionKind::FieldAccess { object, field } => {
+                let class_name = match &object.type_ {
+                    Type::Class(name) => name.clone(),
+                    other => unreachable!(
+                        "check_and_lower guarantees a FieldAccess's object is always a class instance, got {:?}",
+                        other
+                    ),
+                };
+                let object_val = self.compile_expression(object)?;
+                let offset = self.class_field_offset(&class_name, field);
+                let field_val = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), object_val, offset);
+
+                if !expression_is_borrowed(object) {
+                    // `object`'s value is a fresh, owned temporary
+                    // (e.g. `some_call().field`) with nothing else
+                    // referencing it. Protect the field we're
+                    // extracting from `object`'s own release (which
+                    // would otherwise recursively release this same
+                    // field, since it doesn't know we still need it)
+                    // by retaining it *first*, then release `object`
+                    // itself, or it leaks. The result is now a fresh,
+                    // independently-owned value -- exactly like a
+                    // normal function call's result, needing no further
+                    // retention wherever it's consumed next.
+                    self.retain_for_arc_type(&expr.type_, field_val)?;
+                    self.emit_release_for_type(&object.type_, object_val)?;
+                }
+                // Else: `object` is borrowed (ultimately rooted in a
+                // plain variable that stays alive on its own), so the
+                // field value is borrowed right along with it -- no
+                // retain/release here. Whatever consumes this
+                // FieldAccess result treats it exactly like reading a
+                // plain variable (see retain_if_aliasing).
+
+                Ok(field_val)
+            }
         }
     }
 
@@ -2556,32 +3008,44 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.reject_unless_supported_as_container_value(&arguments[1], location, "list_push")?;
                 let list = self.compile_expression(&arguments[0])?;
                 let value = self.compile_expression(&arguments[1])?;
-                return self.emit_list_push(list, value);
+                let result = self.emit_list_push(list, value)?;
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(result);
             }
             "list_get" if arguments.len() == 2 => {
                 let list = self.compile_expression(&arguments[0])?;
                 let index = self.compile_expression(&arguments[1])?;
-                return self.emit_list_get(list, index);
+                let result = self.emit_list_get(list, index)?;
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(result);
             }
             "list_set" if arguments.len() == 3 => {
                 self.reject_unless_supported_as_container_value(&arguments[2], location, "list_set")?;
                 let list = self.compile_expression(&arguments[0])?;
                 let index = self.compile_expression(&arguments[1])?;
                 let value = self.compile_expression(&arguments[2])?;
-                return self.emit_list_set(list, index, value);
+                let result = self.emit_list_set(list, index, value)?;
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(result);
             }
             "list_remove" if arguments.len() == 2 => {
                 let list = self.compile_expression(&arguments[0])?;
                 let index = self.compile_expression(&arguments[1])?;
-                return self.emit_list_remove(list, index);
+                let result = self.emit_list_remove(list, index)?;
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(result);
             }
             "list_length" if arguments.len() == 1 => {
                 let list = self.compile_expression(&arguments[0])?;
-                return self.emit_list_length(list);
+                let result = self.emit_list_length(list)?;
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(result);
             }
             "list_is_empty" if arguments.len() == 1 => {
                 let list = self.compile_expression(&arguments[0])?;
-                return self.emit_list_is_empty(list);
+                let result = self.emit_list_is_empty(list)?;
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(result);
             }
             "map_new" if arguments.is_empty() => return self.emit_map_new(),
             "map_put" if arguments.len() == 3 => {
@@ -2590,33 +3054,45 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let map = self.compile_expression(&arguments[0])?;
                 let key = self.compile_expression(&arguments[1])?;
                 let value = self.compile_expression(&arguments[2])?;
-                return self.emit_map_put(map, key, value);
+                let result = self.emit_map_put(map, key, value)?;
+                self.release_if_fresh(&arguments[0], map)?;
+                return Ok(result);
             }
             "map_get" if arguments.len() == 2 => {
                 self.reject_unless_supported_as_container_value(&arguments[1], location, "map_get (key)")?;
                 let map = self.compile_expression(&arguments[0])?;
                 let key = self.compile_expression(&arguments[1])?;
-                return self.emit_map_get(map, key);
+                let result = self.emit_map_get(map, key)?;
+                self.release_if_fresh(&arguments[0], map)?;
+                return Ok(result);
             }
             "map_has" if arguments.len() == 2 => {
                 self.reject_unless_supported_as_container_value(&arguments[1], location, "map_has (key)")?;
                 let map = self.compile_expression(&arguments[0])?;
                 let key = self.compile_expression(&arguments[1])?;
-                return self.emit_map_has(map, key);
+                let result = self.emit_map_has(map, key)?;
+                self.release_if_fresh(&arguments[0], map)?;
+                return Ok(result);
             }
             "map_remove" if arguments.len() == 2 => {
                 self.reject_unless_supported_as_container_value(&arguments[1], location, "map_remove (key)")?;
                 let map = self.compile_expression(&arguments[0])?;
                 let key = self.compile_expression(&arguments[1])?;
-                return self.emit_map_remove(map, key);
+                let result = self.emit_map_remove(map, key)?;
+                self.release_if_fresh(&arguments[0], map)?;
+                return Ok(result);
             }
             "map_size" if arguments.len() == 1 => {
                 let map = self.compile_expression(&arguments[0])?;
-                return self.emit_map_size(map);
+                let result = self.emit_map_size(map)?;
+                self.release_if_fresh(&arguments[0], map)?;
+                return Ok(result);
             }
             "map_is_empty" if arguments.len() == 1 => {
                 let map = self.compile_expression(&arguments[0])?;
-                return self.emit_map_is_empty(map);
+                let result = self.emit_map_is_empty(map)?;
+                self.release_if_fresh(&arguments[0], map)?;
+                return Ok(result);
             }
             _ => {}
         }

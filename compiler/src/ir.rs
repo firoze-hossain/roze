@@ -86,6 +86,28 @@ pub enum TypedStatement {
         body: Box<TypedStatement>,
         location: Location,
     },
+    /// A `class Name { field: type, ... }` declaration, fully resolved:
+    /// each field's type is already known (declared explicitly, unlike
+    /// `list`/`map` elements), which is what lets codegen (both
+    /// backends) generate correct per-field handling directly from this
+    /// node with no further lookup needed.
+    ClassDecl {
+        name: String,
+        fields: Vec<(String, Type)>,
+        location: Location,
+    },
+    /// `object.field = value;`
+    FieldAssign {
+        object: TypedExpression,
+        field: String,
+        /// The field's declared type, resolved once here by the type
+        /// checker (which already has the class registry) so codegen
+        /// doesn't need its own copy of that registry just to know
+        /// whether the old/new value needs ARC retain/release.
+        field_type: Type,
+        value: TypedExpression,
+        location: Location,
+    },
     // Deliberately no `Import` variant: imports are resolved into real
     // functions before type-checking ever runs (see
     // imports::resolve_imports), so by the time this IR exists, no
@@ -127,5 +149,16 @@ pub enum TypedExpressionKind {
         // never an arbitrary expression.
         function: String,
         arguments: Vec<TypedExpression>,
+    },
+    /// `new ClassName(arg1, arg2, ...)` -- arguments are positional, in
+    /// the class's declared field order.
+    New {
+        class_name: String,
+        arguments: Vec<TypedExpression>,
+    },
+    /// `object.field`
+    FieldAccess {
+        object: Box<TypedExpression>,
+        field: String,
     },
 }

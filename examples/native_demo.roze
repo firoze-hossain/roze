@@ -4,11 +4,13 @@
 // Try it: roze run examples/native_demo.roze --target native
 //
 // Uses what the native backend supports today: int/bool/string/list/
-// map functions, arithmetic, string concatenation and equality, list
-// push/get/set/remove, map put/get/has/remove (all under ARC -- see
+// map/class functions, arithmetic, string concatenation and equality,
+// list push/get/set/remove, map put/get/has/remove, class construction
+// and field read/write (all under ARC -- see
 // docs/MEMORY_MODEL_DECISION.md), if/while/for, and calling other
 // functions. Not supported yet: string/list/map elements or keys/
-// values inside a list/map, any user-defined class, and every Core/
+// values inside a list/map specifically, a weak reference (so two
+// classes referencing each other will leak), and every Core/
 // Collections/IO/Web/Database intrinsic (JVM-specific today).
 
 func fib(n: int) -> int {
@@ -56,6 +58,15 @@ func sum_list(l: list) -> int {
     return total;
 }
 
+class Person {
+    name: string,
+    age: int
+}
+
+func greet_person(p: Person) -> string {
+    return "Hi, " + p.name + "!";
+}
+
 func main() {
     println("Hello from the native backend!");
 
@@ -93,4 +104,10 @@ func main() {
     map_remove(ages, 1);
     println(map_has(ages, 1));
     println(map_size(ages));
+
+    let alice = new Person("Alice", 30);
+    println(alice.name);
+    println(greet_person(alice));
+    alice.age = 31;
+    println(alice.age);
 }

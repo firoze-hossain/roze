@@ -937,6 +937,500 @@ func main() {
 }
 
 #[test]
+fn class_construction_field_access_and_mutation_are_correct() {
+    let source = "\
+class Person {
+    name: string,
+    age: int
+}
+
+func greet(p: Person) -> string {
+    return \"Hello, \" + p.name + \"!\";
+}
+
+func older(a: Person, b: Person) -> Person {
+    if a.age > b.age {
+        return a;
+    }
+    return b;
+}
+
+func main() {
+    let alice = new Person(\"Alice\", 30);
+    let bob = new Person(\"Bob\", 25);
+
+    println(greet(alice));
+    println(greet(bob));
+
+    let elder = older(alice, bob);
+    println(elder.name);
+
+    alice.name = \"Alicia\";
+    println(alice.name);
+    println(greet(alice));
+}
+";
+    let (stdout, stderr, ok) = run_native_source("class_ops", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(
+        program_output(&stdout).trim_end(),
+        "Hello, Alice!\nHello, Bob!\nAlice\nAlicia\nHello, Alicia!"
+    );
+}
+
+#[test]
+fn nested_classes_are_correct() {
+    // A class field whose type is itself another class -- Line owns two
+    // independently ARC-managed Point instances.
+    let source = "\
+class Point {
+    x: int,
+    y: int
+}
+
+class Line {
+    start: Point,
+    end: Point
+}
+
+func make_line() -> Line {
+    let a = new Point(0, 0);
+    let b = new Point(3, 4);
+    return new Line(a, b);
+}
+
+func length_squared(l: Line) -> int {
+    let dx = l.end.x - l.start.x;
+    let dy = l.end.y - l.start.y;
+    return dx * dx + dy * dy;
+}
+
+func main() {
+    let line = make_line();
+    println(line.start.x);
+    println(line.end.x);
+    println(length_squared(line));
+
+    line.start.x = 1;
+    println(line.start.x);
+    println(length_squared(line));
+}
+";
+    let (stdout, stderr, ok) = run_native_source("nested_classes", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(program_output(&stdout).trim_end(), "0\n3\n25\n1\n20");
+}
+
+#[test]
+fn field_access_and_assignment_on_a_temporary_object_do_not_leak_output() {
+    // Output-correctness companion to the Valgrind-gated leak test below
+    // for the same scenario (`make_box().value`, a field read/write on
+    // a class instance that's never bound to a variable).
+    let source = "\
+class Box {
+    value: string
+}
+
+func make_box() -> Box {
+    return new Box(\"boxed value\");
+}
+
+func main() {
+    println(make_box().value);
+    make_box().value = \"unused\";
+    println(\"done\");
+}
+";
+    let (stdout, stderr, ok) = run_native_source("temp_field_access", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(program_output(&stdout).trim_end(), "boxed value\ndone");
+}
+
+#[test]
+fn class_fields_can_be_list_map_or_another_class() {
+    // list/map/class are all ARC types this backend already knows how
+    // to retain/release (see arc_release_call_for_field_type) -- a
+    // class field of one of these types is fully supported, not
+    // rejected. (There's no field type the native backend actually
+    // rejects via ordinary Roze syntax right now, since Type::Function
+    // has no source-level way to be written as a type annotation.)
+    let source = "\
+class Bag {
+    items: list
+}
+
+func main() {
+    let l = list_new();
+    list_push(l, 1);
+    list_push(l, 2);
+    let b = new Bag(l);
+    println(list_length(b.items));
+    println(list_get(b.items, 0));
+}
+";
+    let (stdout, stderr, ok) = run_native_source("class_list_field", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(program_output(&stdout).trim_end(), "2\n1");
+}
+
+#[test]
+fn no_leak_with_string_field_reassignment_and_class_typed_function_returns() {
+    // Exercises: a string field being reassigned (must release the old
+    // value), a class instance returned from a function (must not be
+    // freed by its own function before reaching the caller -- the exact
+    // bug class list/map's arrival each caught previously), and passing
+    // class instances as function arguments (aliasing).
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_with_string_field_reassignment_and_class_typed_function_returns: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_class_string_field");
+    let source = "\
+class Person {
+    name: string,
+    age: int
+}
+
+func greet(p: Person) -> string {
+    return \"Hello, \" + p.name + \"!\";
+}
+
+func older(a: Person, b: Person) -> Person {
+    if a.age > b.age {
+        return a;
+    }
+    return b;
+}
+
+func main() {
+    let alice = new Person(\"Alice\", 30);
+    let bob = new Person(\"Bob\", 25);
+    println(greet(alice));
+    println(greet(bob));
+    let elder = older(alice, bob);
+    println(elder.name);
+    alice.name = \"Alicia\";
+    println(greet(alice));
+}
+";
+    std::fs::write(dir.join("class_string_field.roze"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("class_string_field.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./class_string_field")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}
+
+#[test]
+fn no_leak_with_classes_nested_several_scopes_deep_and_early_returns() {
+    // Mirrors the string/list/map versions of this test: multiple live
+    // class instances across nested scopes with an early return from
+    // the deepest one, and a class instance created but never returned
+    // (`dummy`) that must still be released when the function falls
+    // off the end normally on the other call.
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_with_classes_nested_several_scopes_deep_and_early_returns: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_class_nested_return");
+    let source = "\
+class Result {
+    label: string,
+    value: int
+}
+
+func classify(x: int) -> Result {
+    let dummy = new Result(\"dummy\", 0);
+    if x > 0 {
+        let inner = new Result(\"positive branch\", x);
+        if x > 100 {
+            return new Result(\"big\", x);
+        }
+        return inner;
+    }
+    return dummy;
+}
+
+func main() {
+    let r1 = classify(200);
+    println(r1.label);
+    let r2 = classify(50);
+    println(r2.label);
+    let r3 = classify(-5);
+    println(r3.label);
+}
+";
+    std::fs::write(dir.join("class_nested_return.roze"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("class_nested_return.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./class_nested_return")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}
+
+#[test]
+fn no_leak_with_field_access_and_assignment_on_a_temporary_object() {
+    // Specifically targets the edge case handled in compile_expression's
+    // FieldAccess arm and compile_statement's FieldAssign arm: when the
+    // object being accessed is itself a fresh (non-identifier) class
+    // reference -- e.g. `some_call().field` -- nothing else owns that
+    // temporary object, so it must be released right after the field
+    // read/write, or it leaks.
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_with_field_access_and_assignment_on_a_temporary_object: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_class_temp_field_access");
+    let source = "\
+class Box {
+    value: string
+}
+
+func make_box() -> Box {
+    return new Box(\"boxed value\");
+}
+
+func main() {
+    println(make_box().value);
+    make_box().value = \"unused\";
+    println(\"done\");
+}
+";
+    std::fs::write(dir.join("temp_field_access.roze"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("temp_field_access.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./temp_field_access")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}
+
+#[test]
+fn no_leak_reading_an_arc_typed_field_transiently_without_storing_it() {
+    // The exact bug found during development: compile_expression's
+    // FieldAccess used to retain the extracted field value
+    // unconditionally, on every read -- correct when the value is
+    // then stored somewhere independent (a `let`, a `return`), but a
+    // leak when it's just used transiently and discarded, e.g. passed
+    // straight through to an intrinsic like list_length that doesn't
+    // take ownership. `list_length(l)` (a bare identifier) never
+    // needed a retain; `list_length(b.items)` shouldn't need one
+    // either just because the value came from a field instead of a
+    // plain variable. Fixed by making a field read borrowed by default
+    // (like reading a plain variable), only becoming an owned,
+    // independent value when it's actually consumed at a point that
+    // creates a new owner (see `retain_if_aliasing` and
+    // `expression_is_borrowed`).
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_reading_an_arc_typed_field_transiently_without_storing_it: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_class_transient_field_read");
+    let source = "\
+class Bag {
+    items: list
+}
+
+func main() {
+    let l = list_new();
+    list_push(l, 1);
+    list_push(l, 2);
+    let b = new Bag(l);
+    println(list_length(b.items));
+    println(list_get(b.items, 0));
+}
+";
+    std::fs::write(dir.join("transient_field_read.roze"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("transient_field_read.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./transient_field_read")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}
+
+#[test]
+fn no_leak_or_use_after_free_with_deeply_chained_field_access() {
+    // A second, related bug found alongside the one above: naively
+    // checking "is the object a bare Identifier" (rather than
+    // recursively checking whether it's ultimately *rooted* in one)
+    // gets chained field access wrong in both directions --
+    // `a.b.c` where `a` is a plain variable would incorrectly treat
+    // the intermediate `a.b` as a fresh temporary needing release,
+    // prematurely releasing a reference `a` itself still legitimately
+    // owns. Exercises a 3-level chain (Company -> Person -> Address ->
+    // string), reading and reassigning through the full chain, and
+    // extracting both a string and an intermediate class reference
+    // independently via `let`.
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_or_use_after_free_with_deeply_chained_field_access: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_class_deep_chain");
+    let source = "\
+class Address {
+    city: string
+}
+
+class Person {
+    name: string,
+    address: Address
+}
+
+class Company {
+    owner: Person
+}
+
+func make_company() -> Company {
+    let addr = new Address(\"Springfield\");
+    let person = new Person(\"Homer\", addr);
+    return new Company(person);
+}
+
+func main() {
+    let c = make_company();
+    println(c.owner.name);
+    println(c.owner.address.city);
+
+    c.owner.address.city = \"Shelbyville\";
+    println(c.owner.address.city);
+
+    let city_copy = c.owner.address.city;
+    println(city_copy);
+
+    let addr2 = c.owner.address;
+    println(addr2.city);
+}
+";
+    std::fs::write(dir.join("deep_chain.roze"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("deep_chain.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let run_output = Command::new(format!("{}/deep_chain", dir.display())).output().expect("failed to run deep_chain");
+    assert!(run_output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&run_output.stdout).trim_end(),
+        "Homer\nSpringfield\nShelbyville\nShelbyville\nShelbyville"
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./deep_chain")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}
+
+#[test]
 fn jvm_backend_is_still_the_default_and_unaffected() {
     // No --target flag at all -- must still produce a working JVM build,
     // completely unaffected by the native backend's existence.

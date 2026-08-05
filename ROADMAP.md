@@ -5,6 +5,12 @@ compiler actually does. Everything marked ✅ below was verified by
 compiling and running real `.roze` programs, not just by reading the
 code.
 
+This document tracks what's been *done*, phase by phase, as it happens.
+For the forward-looking question -- how far Roze is from Java/Python/
+C/C++/Rust-class status, what each of that gap's pieces actually
+requires, and a realistic phased plan and timeline to get there -- see
+[`docs/PROJECT_PLAN.md`](./docs/PROJECT_PLAN.md).
+
 ## Phase 1: Foundation
 
 | Task | Status | Notes |

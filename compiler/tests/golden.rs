@@ -218,6 +218,16 @@ fn source_file_in_a_subdirectory_compiles_and_runs() {
 }
 
 #[test]
+fn float_arithmetic_functions_and_intrinsics_are_correct() {
+    let (stdout, stderr, ok) = run_fixture("floats.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(
+        program_output(&stdout).trim_end(),
+        "3.14\n5.140000000000001\n1.1400000000000001\n6.28\n1.57\n8.14\n8.14\ntrue\nfalse\n-3.14\n5.0\n3.14\n5\n3.14\n7\n7.5\n2.0\ntrue\nfalse\n3.14\n4.0"
+    );
+}
+
+#[test]
 fn java_reserved_words_as_identifiers_compile_and_run_correctly() {
     // The exact bug from ROADMAP.md's "Known issue found but not yet
     // fixed" section: a Roze function/variable/parameter/loop-variable

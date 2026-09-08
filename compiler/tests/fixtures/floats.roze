@@ -1,0 +1,37 @@
+func average(a: float, b: float) -> float {
+    return (a + b) / 2.0;
+}
+
+class Box {
+    value: float
+}
+
+func main() {
+    let x = 3.14;
+    println(x);
+    let y = 2.0;
+    println(x + y);
+    println(x - y);
+    println(x * y);
+    println(x / y);
+    let z = 5;
+    println(x + z);
+    println(z + x);
+    println(x < 4.0);
+    println(x > 4.0);
+    println(-x);
+
+    println(average(3.0, 7.0));
+    println(abs(-3.14));
+    println(abs(-5));
+    println(max(3.14, 2.0));
+    println(max(3, 7));
+    println(max(3, 7.5));
+    println(min(3.14, 2.0));
+    println(is_number(3.14));
+    println(is_number("hello"));
+    println(to_string(3.14));
+
+    let b = new Box(4);
+    println(b.value);
+}

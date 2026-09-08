@@ -103,10 +103,10 @@ example exercising control flow and the Core library.
 ### Native backend
 
 `--target native` compiles to a real, standalone executable via
-Cranelift -- no JVM/JDK involved at all. Supports int/bool/`string`/
-`list`/`map`/user-defined `class` functions, arithmetic, `if`/`while`/
-`for`, calling other Roze functions, and (as of the ARC memory model
-decision -- see
+Cranelift -- no JVM/JDK involved at all. Supports int/`float`/bool/
+`string`/`list`/`map`/user-defined `class` functions, arithmetic,
+`if`/`while`/`for`, calling other Roze functions, and (as of the ARC
+memory model decision -- see
 [docs/MEMORY_MODEL_DECISION.md](./docs/MEMORY_MODEL_DECISION.md))
 real, general-purpose strings, lists, maps, and classes, all backed by
 real reference counting: string parameters/return values/`let`/
@@ -118,8 +118,11 @@ table with automatic growth); and `class Name { field: type, ... }`
 with `new`/field read/field write, where a field can be a string, a
 list, a map, or another class (not restricted to int/bool the way
 `list`/`map` elements are, since a class's field types are statically
-declared). Not supported yet: string/list/map elements or keys/values
-*inside* a `list`/`map` specifically, a `weak` reference (so a
+declared). `float` (a real IEEE-754 double) is a normal value type, not
+ARC-managed -- mixed int/float arithmetic promotes to float, and an int
+widens implicitly into a float-expecting position. Not supported yet:
+string/list/map elements or keys/values *inside* a `list`/`map`
+specifically, a `weak` reference (so a
 reference cycle between two classes will leak), and every Core/
 Collections/IO/Web/Database intrinsic (JVM-specific today). Needs a C
 compiler (`cc`, `gcc`, or `clang` -- tried in that

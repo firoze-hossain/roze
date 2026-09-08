@@ -8,6 +8,12 @@ use anyhow::Result;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Int,
+    /// A 64-bit floating-point number (Java `double` / Cranelift `f64`
+    /// on native). Distinguished from `Int` purely by whether a number
+    /// literal's source text contains a decimal point -- `42` is
+    /// `Int`, `42.0` is `Float`, there's no separate `Expression`
+    /// variant for it (see `check_expression`'s `Number` case).
+    Float,
     String,
     Bool,
     Void,
@@ -46,6 +52,7 @@ impl Type {
     pub fn from_name(name: &str) -> Type {
         match name {
             "int" => Type::Int,
+            "float" => Type::Float,
             "string" => Type::String,
             "bool" => Type::Bool,
             "void" => Type::Void,
@@ -58,6 +65,7 @@ impl Type {
     pub fn to_java(&self) -> String {
         match self {
             Type::Int => "int".to_string(),
+            Type::Float => "double".to_string(),
             Type::String => "String".to_string(),
             Type::Bool => "boolean".to_string(),
             Type::Void => "void".to_string(),
@@ -74,6 +82,7 @@ impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Int => write!(f, "int"),
+            Type::Float => write!(f, "float"),
             Type::String => write!(f, "string"),
             Type::Bool => write!(f, "bool"),
             Type::Void => write!(f, "void"),
@@ -87,14 +96,20 @@ impl std::fmt::Display for Type {
 }
 
 /// Two types are "compatible" for assignment/return purposes if they're
-/// equal, or if either side is Unknown -- meaning we don't have enough
-/// static information to say either way, so we don't block it. This is
-/// intentionally permissive rather than a full inference engine: it
-/// catches the clear-cut cases (assigning a string into an int variable,
-/// returning a string from a function declared `-> int`) without
-/// rejecting legitimate code that flows through an untyped parameter.
+/// equal, if either side is Unknown -- meaning we don't have enough
+/// static information to say either way, so we don't block it -- or if
+/// an int is flowing into a float-expecting position (implicit
+/// widening, the same direction `+`/`-`/`*`/`/` already promote mixed
+/// int/float operands in). The reverse -- a float flowing into an
+/// int-expecting position -- is deliberately NOT allowed here: that's
+/// narrowing, silently losing precision, and needs an explicit
+/// conversion instead (not implemented yet -- there's no cast syntax
+/// in Roze at all currently).
 fn types_compatible(expected: &Type, actual: &Type) -> bool {
-    expected == actual || matches!(expected, Type::Unknown) || matches!(actual, Type::Unknown)
+    expected == actual
+        || matches!(expected, Type::Unknown)
+        || matches!(actual, Type::Unknown)
+        || (matches!(expected, Type::Float) && matches!(actual, Type::Int))
 }
 
 #[derive(Debug, Clone)]
@@ -181,9 +196,9 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("string_concat", vec![Type::String, Type::String], Type::String),
         ("string_to_upper", vec![Type::String], Type::String),
         ("string_to_lower", vec![Type::String], Type::String),
-        ("abs", vec![Type::Int], Type::Int),
-        ("max", vec![Type::Int, Type::Int], Type::Int),
-        ("min", vec![Type::Int, Type::Int], Type::Int),
+        ("abs", vec![Type::Unknown], Type::Int),
+        ("max", vec![Type::Unknown, Type::Unknown], Type::Int),
+        ("min", vec![Type::Unknown, Type::Unknown], Type::Int),
         ("to_string", vec![Type::Unknown], Type::String),
         ("to_int", vec![Type::String], Type::Int),
         ("is_number", vec![Type::Unknown], Type::Bool),
@@ -272,6 +287,28 @@ pub struct TypeChecker {
     /// confusing javac error.
     pub in_main: bool,
     pub errors: Vec<String>,
+}
+
+/// The result type of a numeric binary operator given its operand
+/// types, or None if the combination isn't numeric at all (the caller
+/// then decides what else it might be -- string concatenation for
+/// `+`, or a hard error). Promotes a mixed int/float pair to float, in
+/// either order, matching the same direction `types_compatible`
+/// already allows for assignment. An Unknown operand (an untyped
+/// list/map element, an untyped function parameter) defers to the
+/// other operand's type where there is one, or Int as a reasonable
+/// default when both sides are unknown -- preserving the exact
+/// behavior this had before Float existed, just now also extended to
+/// recognize Float on either side.
+fn numeric_binary_result_type(left: &Type, right: &Type) -> Option<Type> {
+    match (left, right) {
+        (Type::Int, Type::Int) => Some(Type::Int),
+        (Type::Float, Type::Float) => Some(Type::Float),
+        (Type::Float, Type::Int) | (Type::Int, Type::Float) => Some(Type::Float),
+        (Type::Unknown, Type::Unknown) => Some(Type::Int),
+        (Type::Unknown, other) | (other, Type::Unknown) if matches!(other, Type::Int | Type::Float) => Some(other.clone()),
+        _ => None,
+    }
 }
 
 impl TypeChecker {
@@ -604,7 +641,7 @@ impl TypeChecker {
         match expr {
             Expression::Number { value, location } => Ok(TypedExpression {
                 kind: TypedExpressionKind::Number(value.clone()),
-                type_: Type::Int,
+                type_: if value.contains('.') { Type::Float } else { Type::Int },
                 location: location.clone(),
             }),
             Expression::String { value, location } => Ok(TypedExpression {
@@ -654,8 +691,8 @@ impl TypeChecker {
 
                 let result_type = match operator {
                     BinaryOperator::Add => {
-                        if *left_type == Type::Int && *right_type == Type::Int {
-                            Type::Int
+                        if let Some(numeric_type) = numeric_binary_result_type(left_type, right_type) {
+                            numeric_type
                         } else if *left_type == Type::String || *right_type == Type::String {
                             Type::String
                         } else if *left_type == Type::Unknown || *right_type == Type::Unknown {
@@ -672,9 +709,8 @@ impl TypeChecker {
                         }
                     }
                     BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Divide => {
-                        let numeric_ok = |t: &Type| matches!(t, Type::Int | Type::Unknown);
-                        if numeric_ok(left_type) && numeric_ok(right_type) {
-                            Type::Int
+                        if let Some(numeric_type) = numeric_binary_result_type(left_type, right_type) {
+                            numeric_type
                         } else {
                             return Err(RozeError::type_error(
                                 format!("Cannot perform arithmetic on {} and {}", left_type, right_type),
@@ -708,7 +744,68 @@ impl TypeChecker {
                 if let Expression::Identifier { name, .. } = function.as_ref() {
                     let return_type = if name == "println" {
                         Type::Void
+                    } else if name == "abs" && typed_arguments.len() == 1 {
+                        // Math.abs has both an int and a double overload
+                        // on the JVM side, and the native backend needs
+                        // the same distinction -- the return type has to
+                        // track whichever one this call actually
+                        // resolves to, or a `let` binding downstream
+                        // would get the wrong declared type.
+                        match &typed_arguments[0].type_ {
+                            Type::Float => Type::Float,
+                            Type::Int | Type::Unknown => Type::Int,
+                            other => return Err(RozeError::type_error(
+                                format!("abs() needs a number, got {}", other),
+                                location.line,
+                                location.column,
+                            ).into()),
+                        }
+                    } else if (name == "max" || name == "min") && typed_arguments.len() == 2 {
+                        numeric_binary_result_type(&typed_arguments[0].type_, &typed_arguments[1].type_)
+                            .ok_or_else(|| RozeError::type_error(
+                                format!(
+                                    "{}() needs two numbers, got {} and {}",
+                                    name, typed_arguments[0].type_, typed_arguments[1].type_
+                                ),
+                                location.line,
+                                location.column,
+                            ))?
                     } else if let Some(sig) = self.functions.get(name) {
+                        // Validate argument count and each argument's
+                        // type against the declared signature -- the
+                        // same checks `New` (class construction) already
+                        // does for its constructor arguments, just
+                        // never applied to an ordinary function call
+                        // before now. Skipped for intrinsics whose
+                        // params are deliberately Unknown/variable-arity
+                        // in `builtin_signatures` (e.g. `to_string`,
+                        // `list_push`) -- those accept anything by
+                        // design, not by omission.
+                        let params_are_meaningfully_typed = !sig.params.iter().all(|p| matches!(p, Type::Unknown));
+                        if params_are_meaningfully_typed {
+                            if typed_arguments.len() != sig.params.len() {
+                                return Err(RozeError::type_error(
+                                    format!(
+                                        "'{}' takes {} argument(s), but {} were given",
+                                        name, sig.params.len(), typed_arguments.len()
+                                    ),
+                                    location.line,
+                                    location.column,
+                                ).into());
+                            }
+                            for (arg, param_type) in typed_arguments.iter().zip(sig.params.iter()) {
+                                if !types_compatible(param_type, &arg.type_) {
+                                    return Err(RozeError::type_error(
+                                        format!(
+                                            "'{}' expects {} for this argument, got {}",
+                                            name, param_type, arg.type_
+                                        ),
+                                        location.line,
+                                        location.column,
+                                    ).into());
+                                }
+                            }
+                        }
                         sig.return_type.clone()
                     } else {
                         return Err(RozeError::type_error(
@@ -845,6 +942,25 @@ mod tests {
     fn check_source(src: &str) -> Result<()> {
         let program = parse(tokenize(src)).expect("fixture should parse");
         check_types(&program)
+    }
+
+    fn typed_program(src: &str) -> TypedProgram {
+        let program = parse(tokenize(src)).expect("fixture should parse");
+        check_and_lower(&program).expect("fixture should type-check")
+    }
+
+    /// Pulls out the declared type of every top-level `let` in `main`'s
+    /// body, in order -- for tests that need to inspect what a value
+    /// actually resolved to, not just whether the program type-checked.
+    fn main_let_types(program: &TypedProgram) -> Vec<&Type> {
+        program.statements.iter()
+            .find_map(|s| if let TypedStatement::Function { name, body, .. } = s {
+                if name == "main" { Some(body) } else { None }
+            } else { None })
+            .map(|body| if let TypedStatement::Block { statements, .. } = body.as_ref() {
+                statements.iter().filter_map(|s| if let TypedStatement::Let { value, .. } = s { Some(&value.type_) } else { None }).collect()
+            } else { vec![] })
+            .unwrap_or_default()
     }
 
     #[test]
@@ -1091,6 +1207,53 @@ mod tests {
     fn accessing_a_field_on_a_non_class_value_is_an_error() {
         let result = check_source("func main() { let x = 5; println(x.field); }");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn float_literal_is_distinguished_from_int_by_a_decimal_point() {
+        let program = typed_program("func main() { let x = 3.14; let y = 5; }");
+        let types = main_let_types(&program);
+        assert_eq!(types, vec![&Type::Float, &Type::Int]);
+    }
+
+    #[test]
+    fn mixed_int_float_arithmetic_promotes_to_float() {
+        assert!(check_source("func main() { let x = 1 + 2.5; }").is_ok());
+        assert!(check_source("func main() { let x = 2.5 + 1; }").is_ok());
+        assert!(check_source("func main() { let x = 1 - 2.5; }").is_ok());
+        assert!(check_source("func main() { let x = 2.5 * 2; }").is_ok());
+        assert!(check_source("func main() { let x = 5 / 2.0; }").is_ok());
+    }
+
+    #[test]
+    fn float_can_flow_into_a_function_expecting_float_but_not_the_reverse() {
+        // Implicit widening (int -> float) is allowed; implicit
+        // narrowing (float -> int) is not, since it would silently
+        // lose precision.
+        assert!(check_source("func f(x: float) -> float { return x; } func main() { f(5); }").is_ok());
+        assert!(check_source("func f(x: int) -> int { return x; } func main() { f(5.0); }").is_err());
+    }
+
+    #[test]
+    fn abs_max_min_return_type_tracks_their_argument_types() {
+        // abs(-3.14) must type-check as Float (not the old fixed Int),
+        // or a `let` binding downstream would get the wrong declared
+        // type and fail to compile at the codegen level.
+        let program = typed_program("func main() { let a = abs(-3.14); let b = abs(-5); let c = max(3, 7.5); }");
+        let types = main_let_types(&program);
+        assert_eq!(types, vec![&Type::Float, &Type::Int, &Type::Float]);
+    }
+
+    #[test]
+    fn function_call_arguments_are_validated_for_count_and_type() {
+        // A real, general gap this phase also found and fixed: ordinary
+        // function calls (unlike class construction, which already
+        // validated its constructor arguments) had no argument
+        // count/type validation at all before now.
+        assert!(check_source("func f(a: int, b: int) {} func main() { f(1, 2); }").is_ok());
+        assert!(check_source("func f(a: int, b: int) {} func main() { f(1); }").is_err());
+        assert!(check_source("func f(a: int, b: int) {} func main() { f(1, 2, 3); }").is_err());
+        assert!(check_source("func f(a: int) {} func main() { f(\"hi\"); }").is_err());
     }
 
     #[test]

@@ -201,12 +201,22 @@ fn expression_is_borrowed(expr: &TypedExpression) -> bool {
 
 fn require_supported_type(ty: &Type, location: &Location, context: &str) -> Result<()> {
     match ty {
-        Type::Int | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) => Ok(()),
+        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) => Ok(()),
         Type::Function { .. } => Err(anyhow!(
             "line {}, column {}: the native backend doesn't support function values -- {}",
             location.line, location.column, context
         )),
     }
+}
+
+/// The Cranelift register/value type a given Roze type is represented
+/// in. Only `Float` differs from the uniform `VALUE_TYPE` (i64) every
+/// other type shares (ints, bools, and every pointer -- strings,
+/// lists, maps, class instances -- all fit naturally in a 64-bit
+/// integer register; only a genuine IEEE-754 double needs its own
+/// register class).
+fn cranelift_type_for(ty: &Type) -> types::Type {
+    if *ty == Type::Float { types::F64 } else { VALUE_TYPE }
 }
 
 /// The FuncIds for the small ARC runtime backing `string` values,
@@ -1854,8 +1864,8 @@ fn build_class_runtime(
 ) -> Result<()> {
     // --- new(field0, field1, ...) -> ptr ---
     let mut new_sig = module.make_signature();
-    for _ in fields {
-        new_sig.params.push(AbiParam::new(VALUE_TYPE));
+    for (_, field_type) in fields {
+        new_sig.params.push(AbiParam::new(cranelift_type_for(field_type)));
     }
     new_sig.returns.push(AbiParam::new(VALUE_TYPE));
     ctx.func.signature = new_sig;
@@ -1941,7 +1951,9 @@ fn build_class_runtime(
 struct NativeGenerator<'a> {
     module: &'a mut ObjectModule,
     functions: HashMap<String, FuncId>,
+    function_param_types: HashMap<String, Vec<Type>>,
     printf_id: FuncId,
+    gcvt_id: FuncId,
     fmt_int: DataId,
     fmt_str: DataId,
     true_str: DataId,
@@ -1969,6 +1981,34 @@ impl<'a> NativeGenerator<'a> {
         let printf_id = module.declare_function("printf", Linkage::Import, &printf_sig)
             .map_err(|e| anyhow!(e.to_string()))?;
 
+        // Printing a float can't reuse printf_id's signature above (a
+        // float argument needs a different register class than an
+        // int/pointer one at the C ABI level), but Cranelift's object
+        // module rejects declaring the same external symbol twice with
+        // two different signatures -- confirmed empirically. A second,
+        // *variadic* printf/snprintf declaration was also tried and
+        // rejected, for a different reason: the x86-64 SystemV ABI
+        // requires the caller of a variadic function to set %al to the
+        // number of vector (XMM) registers used for the variadic
+        // arguments, so the callee's own varargs machinery knows
+        // whether to bother saving them into its register-save area --
+        // and Cranelift 0.103 has no support at all for emitting that
+        // (confirmed by its own source: no mention of "variadic"
+        // anywhere in the crate). Without it, a float argument sometimes
+        // read correctly and sometimes read stale/garbage register
+        // contents depending on what a *preceding, unrelated* call
+        // happened to leave in %al. Sidestepped entirely by using
+        // gcvt(double, int, char*), a genuinely non-variadic (fixed
+        // 3-argument) glibc function for double-to-string conversion --
+        // no %al concern applies to an ordinary, non-variadic call.
+        let mut gcvt_sig = module.make_signature();
+        gcvt_sig.params.push(AbiParam::new(types::F64)); // value
+        gcvt_sig.params.push(AbiParam::new(types::I32)); // significant digits
+        gcvt_sig.params.push(AbiParam::new(VALUE_TYPE));  // output buffer
+        gcvt_sig.returns.push(AbiParam::new(VALUE_TYPE)); // same buffer pointer, back
+        let gcvt_id = module.declare_function("gcvt", Linkage::Import, &gcvt_sig)
+            .map_err(|e| anyhow!(e.to_string()))?;
+
         let fmt_int = Self::declare_c_string(module, "__roze_fmt_int", b"%lld\n")?;
         let fmt_str = Self::declare_c_string(module, "__roze_fmt_str", b"%s\n")?;
         let true_str = Self::declare_c_string(module, "__roze_true_str", b"true")?;
@@ -1984,7 +2024,9 @@ impl<'a> NativeGenerator<'a> {
         Ok(Self {
             module,
             functions: HashMap::new(),
+            function_param_types: HashMap::new(),
             printf_id,
+            gcvt_id,
             fmt_int,
             fmt_str,
             true_str,
@@ -2024,8 +2066,8 @@ impl<'a> NativeGenerator<'a> {
                 }
 
                 let mut new_sig = self.module.make_signature();
-                for _ in fields {
-                    new_sig.params.push(AbiParam::new(VALUE_TYPE));
+                for (_, field_type) in fields {
+                    new_sig.params.push(AbiParam::new(cranelift_type_for(field_type)));
                 }
                 new_sig.returns.push(AbiParam::new(VALUE_TYPE));
                 let new_id = self.module.declare_function(&format!("__roze_class_{}_new", name), Linkage::Local, &new_sig)
@@ -2088,17 +2130,18 @@ impl<'a> NativeGenerator<'a> {
                 require_supported_type(return_type, location, &format!("the return type of function '{}'", name))?;
 
                 let mut sig = self.module.make_signature();
-                for _ in params {
-                    sig.params.push(AbiParam::new(VALUE_TYPE));
+                for param in params {
+                    sig.params.push(AbiParam::new(cranelift_type_for(&param.type_)));
                 }
                 if !matches!(return_type, Type::Void) {
-                    sig.returns.push(AbiParam::new(VALUE_TYPE));
+                    sig.returns.push(AbiParam::new(cranelift_type_for(return_type)));
                 }
 
                 let func_name = if name == "main" { "__roze_main" } else { name.as_str() };
                 let func_id = self.module.declare_function(func_name, Linkage::Local, &sig)
                     .map_err(|e| anyhow!(e.to_string()))?;
                 self.functions.insert(name.clone(), func_id);
+                self.function_param_types.insert(name.clone(), params.iter().map(|p| p.type_.clone()).collect());
             }
         }
         Ok(())
@@ -2108,7 +2151,7 @@ impl<'a> NativeGenerator<'a> {
         let mut ctx = self.module.make_context();
 
         for stmt in &program.statements {
-            if let TypedStatement::Function { name, params, body, .. } = stmt {
+            if let TypedStatement::Function { name, params, return_type, body, .. } = stmt {
                 let func_id = *self.functions.get(name)
                     .expect("declare_all_functions registers every function before this runs");
 
@@ -2122,7 +2165,9 @@ impl<'a> NativeGenerator<'a> {
                         module: self.module,
                         builder,
                         functions: &self.functions,
+                        function_param_types: &self.function_param_types,
                         printf_id: self.printf_id,
+                        gcvt_id: self.gcvt_id,
                         fmt_int: self.fmt_int,
                         fmt_str: self.fmt_str,
                         true_str: self.true_str,
@@ -2154,6 +2199,7 @@ impl<'a> NativeGenerator<'a> {
                         literal_counter: &mut self.literal_counter,
                         scopes: vec![HashMap::new()],
                         next_var_index: 0,
+                        current_return_type: return_type.clone(),
                     };
 
                     let entry = fc.builder.create_block();
@@ -2250,7 +2296,9 @@ struct FunctionCompiler<'a, 'b> {
     module: &'a mut ObjectModule,
     builder: FunctionBuilder<'b>,
     functions: &'a HashMap<String, FuncId>,
+    function_param_types: &'a HashMap<String, Vec<Type>>,
     printf_id: FuncId,
+    gcvt_id: FuncId,
     fmt_int: DataId,
     fmt_str: DataId,
     true_str: DataId,
@@ -2288,13 +2336,36 @@ struct FunctionCompiler<'a, 'b> {
     /// which locals are strings needing a release call.
     scopes: Vec<HashMap<String, (Variable, Type)>>,
     next_var_index: usize,
+    /// The enclosing function's declared return type -- needed so
+    /// `return` can insert an explicit int-to-float conversion when the
+    /// returned expression is Int but the function is declared to
+    /// return Float (the same implicit widening `types_compatible`
+    /// already allows at the type-checking level; codegen has to
+    /// actually perform it, not just permit it, or Cranelift's
+    /// verifier rejects the mismatched i64-into-an-f64-signature return).
+    current_return_type: Type,
 }
 
 impl<'a, 'b> FunctionCompiler<'a, 'b> {
+    /// Performs the implicit int-to-float widening `types_compatible`
+    /// already allows at the type-checking level -- Cranelift has no
+    /// such thing as automatic numeric promotion, so every site that
+    /// accepts "an Int where a Float is expected" (return, assignment,
+    /// function-call and constructor arguments) has to actually insert
+    /// this conversion, not just type-check as if it happened. A no-op
+    /// (returns `val` unchanged) whenever the types already match.
+    fn coerce_for_target_type(&mut self, val: Value, actual: &Type, target: &Type) -> Value {
+        if *target == Type::Float && *actual == Type::Int {
+            self.builder.ins().fcvt_from_sint(types::F64, val)
+        } else {
+            val
+        }
+    }
+
     fn declare_local(&mut self, name: &str, ty: Type) -> Variable {
         let var = Variable::new(self.next_var_index);
         self.next_var_index += 1;
-        self.builder.declare_var(var, VALUE_TYPE);
+        self.builder.declare_var(var, cranelift_type_for(&ty));
         self.scopes.last_mut().expect("at least one scope").insert(name.to_string(), (var, ty));
         var
     }
@@ -2666,6 +2737,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let val = self.compile_expression(value)?;
                 self.retain_if_aliasing(value, val)?;
                 let (var, ty) = self.lookup_local(name);
+                let val = self.coerce_for_target_type(val, &value.type_, &ty);
                 let old_val = self.builder.use_var(var);
                 self.emit_release_for_type(&ty, old_val)?;
                 self.builder.def_var(var, val);
@@ -2683,6 +2755,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     Some(expr) => {
                         let val = self.compile_expression(expr)?;
                         self.retain_if_aliasing(expr, val)?;
+                        let val = self.coerce_for_target_type(val, &expr.type_, &self.current_return_type.clone());
                         self.release_all_active_scopes()?;
                         self.builder.ins().return_(&[val]);
                     }
@@ -2801,9 +2874,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
                 let val = self.compile_expression(value)?;
                 self.retain_if_aliasing(value, val)?;
+                let val = self.coerce_for_target_type(val, &value.type_, field_type);
 
                 let offset = self.class_field_offset(&class_name, field);
-                let old_val = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), object_val, offset);
+                let old_val = self.builder.ins().load(cranelift_type_for(field_type), MemFlags::new(), object_val, offset);
                 self.emit_release_for_type(field_type, old_val)?;
                 self.builder.ins().store(MemFlags::new(), val, object_val, offset);
 
@@ -2827,8 +2901,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn compile_expression(&mut self, expr: &TypedExpression) -> Result<Value> {
         match &expr.kind {
             TypedExpressionKind::Number(s) => {
-                let n: i64 = s.parse().map_err(|_| anyhow!("invalid integer literal '{}'", s))?;
-                Ok(self.builder.ins().iconst(VALUE_TYPE, n))
+                if expr.type_ == Type::Float {
+                    let n: f64 = s.parse().map_err(|_| anyhow!("invalid float literal '{}'", s))?;
+                    Ok(self.builder.ins().f64const(n))
+                } else {
+                    let n: i64 = s.parse().map_err(|_| anyhow!("invalid integer literal '{}'", s))?;
+                    Ok(self.builder.ins().iconst(VALUE_TYPE, n))
+                }
             }
             TypedExpressionKind::Boolean(b) => {
                 Ok(self.builder.ins().iconst(VALUE_TYPE, if *b { 1 } else { 0 }))
@@ -2842,6 +2921,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             TypedExpressionKind::Unary { operator, operand } => {
                 let val = self.compile_expression(operand)?;
                 match operator {
+                    UnaryOperator::Negate if operand.type_ == Type::Float => Ok(self.builder.ins().fneg(val)),
                     UnaryOperator::Negate => Ok(self.builder.ins().ineg(val)),
                     UnaryOperator::Not => {
                         let zero = self.builder.ins().iconst(VALUE_TYPE, 0);
@@ -2858,10 +2938,17 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 // constructor stores it into a field -- taking
                 // ownership of a reference distinct from wherever it
                 // came from, if it was a bare identifier.
+                let field_types: Vec<Type> = self.classes.get(class_name)
+                    .map(|info| info.fields.iter().map(|(_, ty)| ty.clone()).collect())
+                    .unwrap_or_default();
                 let mut arg_values = Vec::with_capacity(arguments.len());
-                for arg in arguments {
+                for (i, arg) in arguments.iter().enumerate() {
                     let val = self.compile_expression(arg)?;
                     self.retain_if_aliasing(arg, val)?;
+                    let val = match field_types.get(i) {
+                        Some(field_type) => self.coerce_for_target_type(val, &arg.type_, field_type),
+                        None => val,
+                    };
                     arg_values.push(val);
                 }
                 self.emit_class_new(class_name, &arg_values)
@@ -2876,7 +2963,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 };
                 let object_val = self.compile_expression(object)?;
                 let offset = self.class_field_offset(&class_name, field);
-                let field_val = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), object_val, offset);
+                let field_val = self.builder.ins().load(cranelift_type_for(&expr.type_), MemFlags::new(), object_val, offset);
 
                 if !expression_is_borrowed(object) {
                     // `object`'s value is a fresh, owned temporary
@@ -2910,6 +2997,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.builder.ins().uextend(VALUE_TYPE, cmp)
     }
 
+    fn compile_fcmp(&mut self, cc: FloatCC, l: Value, r: Value) -> Value {
+        let cmp = self.builder.ins().fcmp(cc, l, r);
+        self.builder.ins().uextend(VALUE_TYPE, cmp)
+    }
+
     fn compile_binary(&mut self, left: &TypedExpression, operator: &BinaryOperator, right: &TypedExpression) -> Result<Value> {
         // And/Or need real short-circuit control flow (the right-hand
         // side must not be evaluated when the left already decides the
@@ -2921,6 +3013,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
 
         let is_string_op = left.type_ == Type::String && right.type_ == Type::String;
+        // A numeric op is "float" if either side resolved to Float --
+        // matches the exact promotion direction the type checker
+        // already decided in numeric_binary_result_type (mixed int/
+        // float promotes to float), so codegen and type-checking never
+        // disagree about which representation a given expression uses.
+        let is_float_op = !is_string_op && (left.type_ == Type::Float || right.type_ == Type::Float);
 
         let l = self.compile_expression(left)?;
         let r = self.compile_expression(right)?;
@@ -2951,6 +3049,30 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.emit_string_release(r)?;
             }
             return Ok(result);
+        }
+
+        if is_float_op {
+            // A mixed int/float pair needs the int side explicitly
+            // converted -- Cranelift has no implicit numeric promotion
+            // the way the C/Java/Roze source-level semantics do, so
+            // this has to happen here, once per operand, rather than
+            // anywhere the value was originally produced (an Int-typed
+            // value stays a plain i64 everywhere else it's used).
+            let lf = if left.type_ == Type::Float { l } else { self.builder.ins().fcvt_from_sint(types::F64, l) };
+            let rf = if right.type_ == Type::Float { r } else { self.builder.ins().fcvt_from_sint(types::F64, r) };
+            return Ok(match operator {
+                BinaryOperator::Add => self.builder.ins().fadd(lf, rf),
+                BinaryOperator::Subtract => self.builder.ins().fsub(lf, rf),
+                BinaryOperator::Multiply => self.builder.ins().fmul(lf, rf),
+                BinaryOperator::Divide => self.builder.ins().fdiv(lf, rf),
+                BinaryOperator::Equal => self.compile_fcmp(FloatCC::Equal, lf, rf),
+                BinaryOperator::NotEqual => self.compile_fcmp(FloatCC::NotEqual, lf, rf),
+                BinaryOperator::LessThan => self.compile_fcmp(FloatCC::LessThan, lf, rf),
+                BinaryOperator::GreaterThan => self.compile_fcmp(FloatCC::GreaterThan, lf, rf),
+                BinaryOperator::LessEqual => self.compile_fcmp(FloatCC::LessThanOrEqual, lf, rf),
+                BinaryOperator::GreaterEqual => self.compile_fcmp(FloatCC::GreaterThanOrEqual, lf, rf),
+                BinaryOperator::And | BinaryOperator::Or => unreachable!("handled above"),
+            });
         }
 
         Ok(match operator {
@@ -3113,13 +3235,18 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
 
         let mut arg_values = Vec::with_capacity(arguments.len());
-        for arg in arguments {
+        let param_types = self.function_param_types.get(name).cloned().unwrap_or_default();
+        for (i, arg) in arguments.iter().enumerate() {
             let val = self.compile_expression(arg)?;
             // The callee will release this reference at its own scope
             // exit (parameters are tracked exactly like locals -- see
             // `compile_all_functions`), so it needs to receive a
             // reference it's safe to consume that way.
             self.retain_if_aliasing(arg, val)?;
+            let val = match param_types.get(i) {
+                Some(param_type) => self.coerce_for_target_type(val, &arg.type_, param_type),
+                None => val,
+            };
             arg_values.push(val);
         }
 
@@ -3165,6 +3292,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let val = self.compile_expression(arg)?;
                 self.emit_printf(self.fmt_int, val)
             }
+            Type::Float => {
+                let val = self.compile_expression(arg)?;
+                self.emit_printf_float(val)
+            }
             other => Err(anyhow!("println of a {} isn't supported on the native backend yet", other)),
         }
     }
@@ -3176,5 +3307,23 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         let call = self.builder.ins().call(printf_ref, &[fmt_ptr, arg]);
         let _ = self.builder.inst_results(call);
         Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
+    }
+
+    /// Prints a float value. Renders it into a small stack buffer via
+    /// gcvt first (see `gcvt_id`'s declaration for why this, and not a
+    /// direct variadic printf call, is used), then prints that buffer
+    /// as an ordinary string through the existing int/pointer-shaped
+    /// printf path.
+    fn emit_printf_float(&mut self, arg: Value) -> Result<Value> {
+        let buffer_size: i64 = 64; // ample for gcvt's rendering at 15 significant digits
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, buffer_size as u32));
+        let buffer_ptr = self.builder.ins().stack_addr(VALUE_TYPE, slot, 0);
+
+        let ndigit = self.builder.ins().iconst(types::I32, 15);
+        let gcvt_ref = self.module.declare_func_in_func(self.gcvt_id, self.builder.func);
+        let call = self.builder.ins().call(gcvt_ref, &[arg, ndigit, buffer_ptr]);
+        let _ = self.builder.inst_results(call);
+
+        self.emit_printf(self.fmt_str, buffer_ptr)
     }
 }

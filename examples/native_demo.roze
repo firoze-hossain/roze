@@ -3,15 +3,17 @@
 // standalone executable, no JVM/JDK involved at all.
 // Try it: roze run examples/native_demo.roze --target native
 //
-// Uses what the native backend supports today: int/bool/string/list/
-// map/class functions, arithmetic, string concatenation and equality,
-// list push/get/set/remove, map put/get/has/remove, class construction
-// and field read/write (all under ARC -- see
-// docs/MEMORY_MODEL_DECISION.md), if/while/for, and calling other
-// functions. Not supported yet: string/list/map elements or keys/
-// values inside a list/map specifically, a weak reference (so two
-// classes referencing each other will leak), and every Core/
-// Collections/IO/Web/Database intrinsic (JVM-specific today).
+// Uses what the native backend supports today: int/float/bool/string/
+// list/map/class functions, arithmetic (including mixed int/float),
+// string concatenation and equality, list push/get/set/remove, map
+// put/get/has/remove, class construction and field read/write (all
+// under ARC -- see docs/MEMORY_MODEL_DECISION.md, except float, an
+// ordinary value type since it needs no reference counting), if/
+// while/for, and calling other functions. Not supported yet: string/
+// list/map elements or keys/values inside a list/map specifically, a
+// weak reference (so two classes referencing each other will leak),
+// and every Core/Collections/IO/Web/Database intrinsic (JVM-specific
+// today).
 
 func fib(n: int) -> int {
     if n < 2 {
@@ -110,4 +112,13 @@ func main() {
     println(greet_person(alice));
     alice.age = 31;
     println(alice.age);
+
+    let price = 19.99;
+    let quantity = 3;
+    println(price * quantity);
+    println(average_float(price, 5.01));
+}
+
+func average_float(a: float, b: float) -> float {
+    return (a + b) / 2.0;
 }

@@ -80,8 +80,21 @@ impl<'a> Lexer<'a> {
 
     fn read_number(&mut self) -> String {
         let mut number = String::new();
+        let mut seen_dot = false;
         while let Some(c) = self.current_char {
-            if c.is_digit(10) || c == '.' {
+            if c.is_digit(10) {
+                number.push(c);
+                self.advance();
+            } else if c == '.' && !seen_dot {
+                // Only consume the dot as part of this number if it's
+                // actually followed by a digit -- otherwise this isn't
+                // a float literal at all, and the dot belongs to
+                // whatever comes next instead.
+                let next_is_digit = self.chars.peek().map(|c| c.is_ascii_digit()).unwrap_or(false);
+                if !next_is_digit {
+                    break;
+                }
+                seen_dot = true;
                 number.push(c);
                 self.advance();
             } else {

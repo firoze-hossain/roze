@@ -1431,6 +1431,144 @@ func main() {
 }
 
 #[test]
+fn float_arithmetic_comparisons_and_negation_are_correct() {
+    let source = "\
+func average(a: float, b: float) -> float {
+    return (a + b) / 2.0;
+}
+
+func main() {
+    let x = 3.14;
+    println(x);
+    let y = 2.0;
+    println(x + y);
+    println(x - y);
+    println(x * y);
+    println(x / y);
+    let z = 5;
+    println(x + z);
+    println(z + x);
+    println(x < 4.0);
+    println(x > 4.0);
+    println(-x);
+    println(average(3.0, 7.0));
+}
+";
+    let (stdout, stderr, ok) = run_native_source("float_ops", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(
+        program_output(&stdout).trim_end(),
+        "3.14\n5.14\n1.14\n6.28\n1.57\n8.14\n8.14\ntrue\nfalse\n-3.14\n5"
+    );
+}
+
+#[test]
+fn two_parameter_functions_returning_a_float_derived_from_a_parameter_are_correct() {
+    // A dedicated regression test for a real, subtle bug found and
+    // root-caused during development: Cranelift 0.103 has no support
+    // at all for the x86-64 SystemV ABI's variadic-call convention
+    // (the caller must set %al to the number of vector/XMM registers
+    // used for variadic arguments, so the callee's own varargs
+    // machinery knows whether to save them). The original float-
+    // printing implementation called printf/snprintf directly with a
+    // float argument -- a variadic call -- and without %al set
+    // correctly, it would sometimes read the right value and sometimes
+    // read stale garbage left behind by an unrelated *preceding* call,
+    // depending on what happened to be in %al at the time. This showed
+    // up specifically (and only) for functions with exactly two
+    // parameters returning a value derived from one of them, which is
+    // exactly what every case below exercises: every combination of
+    // which parameter is returned, and int/float parameter mixes.
+    // Fixed by switching to gcvt(double, int, char*), a genuinely
+    // non-variadic glibc function, sidestepping the ABI issue entirely
+    // rather than working around it.
+    let source = "\
+func first_of_two_floats(a: float, b: float) -> float {
+    return a;
+}
+func second_of_two_floats(a: float, b: float) -> float {
+    return b;
+}
+func float_from_int_and_float(a: int, b: float) -> float {
+    return b;
+}
+func float_from_float_and_int(a: float, b: int) -> float {
+    return a;
+}
+func computed_from_two_floats(a: float, b: float) -> float {
+    return a + b;
+}
+
+func main() {
+    println(first_of_two_floats(3.0, 7.0));
+    println(second_of_two_floats(3.0, 7.0));
+    println(float_from_int_and_float(1, 7.0));
+    println(float_from_float_and_int(3.0, 1));
+    println(computed_from_two_floats(3.0, 7.0));
+}
+";
+    let (stdout, stderr, ok) = run_native_source("float_two_param_regression", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(program_output(&stdout).trim_end(), "3\n7\n7\n3\n10");
+}
+
+#[test]
+fn implicit_int_to_float_widening_is_actually_performed_by_codegen() {
+    // A second real bug found alongside the one above: the type
+    // checker already allowed an int to flow into a float-expecting
+    // position (return, assignment, function-call and constructor
+    // arguments), but codegen never actually inserted the int-to-float
+    // conversion at three of those four sites, either producing a
+    // Cranelift verifier error (return) or a silent type mismatch.
+    // Exercises all three fixed sites together.
+    let source = "\
+func returns_float_from_int(a: int) -> float {
+    return a;
+}
+func takes_float(x: float) -> float {
+    return x;
+}
+
+func main() {
+    println(returns_float_from_int(5));
+    let x = 3.14;
+    x = 7;
+    println(x);
+    println(takes_float(5));
+}
+";
+    let (stdout, stderr, ok) = run_native_source("float_widening", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(program_output(&stdout).trim_end(), "5\n7\n5");
+}
+
+#[test]
+fn implicit_int_to_float_widening_into_a_class_field_is_also_performed() {
+    // A variant of the widening bug above, specific to class
+    // construction: the constructor argument itself was correctly
+    // coerced at the New expression's call site, but the constructor's
+    // own generated signature (both its initial declaration and the
+    // function body actually built for it) still declared every field
+    // uniformly as the int/pointer-shaped VALUE_TYPE, regardless of the
+    // field's real type -- so passing an already-coerced f64 argument
+    // into it was itself a mismatch. Also covers reading the field back
+    // out afterward, which had the same VALUE_TYPE-regardless-of-type
+    // bug on the load side.
+    let source = "\
+class Box {
+    value: float
+}
+func main() {
+    let b = new Box(4);
+    println(b.value);
+}
+";
+    let (stdout, stderr, ok) = run_native_source("float_field_widening", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(program_output(&stdout).trim_end(), "4");
+}
+
+#[test]
 fn jvm_backend_is_still_the_default_and_unaffected() {
     // No --target flag at all -- must still produce a working JVM build,
     // completely unaffected by the native backend's existence.

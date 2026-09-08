@@ -369,6 +369,96 @@ that use them, not just by writing the feature and assuming it works.
     set, and CI sets it (downloading H2 fresh each run) so this is
     genuinely exercised on every push, not just locally.
 
+## Added: real numbers (`float`), both backends
+
+The single most-flagged gap in the language-vs-Java/C++/Rust/Python/
+JavaScript comparison: Roze had no floating-point type at all, a hard
+blocker for any numerical work. Fixed on both backends, with the same
+rigor as everything else on this list -- correctness verified for real,
+not just "it compiled."
+
+**Language-level**: a number literal is `float` if its source text
+contains a decimal point (`3.14`), `int` otherwise (`42`) -- no
+separate literal syntax needed. Mixed int/float arithmetic (`1 +
+2.5`) promotes to float, in either operand order. An int value can
+flow implicitly into a float-expecting position (a `let`/reassignment,
+a function argument, a class field) -- the reverse (float narrowing to
+int) is deliberately rejected, since that would silently lose
+precision, and Roze has no cast syntax yet to make it explicit.
+`abs`/`max`/`min`'s return type now tracks their actual argument
+types (previously hard-coded to `int`, which would have produced
+Java code assigning a `double` into a declared `int` -- a compile
+error waiting to happen the moment a float argument was actually used).
+Also found and fixed a genuinely separate, broader gap while adding
+this: ordinary function calls had no argument count/type validation
+at all before now (unlike class construction, which already validated
+its constructor arguments) -- fixed for every function, not just the
+float-related cases that exposed it.
+
+**JVM backend**: needed remarkably little work -- Java's own overload
+resolution and int-to-double widening handled almost all of it once
+type information was threaded through correctly. Found and fixed two
+real bugs along the way: `abs`/`max`/`min` would have thrown
+`ClassCastException` on a float argument (an existing helper
+unconditionally unboxed to `Integer`), and `is_number` only recognized
+`Integer`, not `Double`.
+
+**Native backend**: a genuinely larger undertaking than the other three
+types (`string`/`list`/`map`) that got ARC support, since it required
+threading Cranelift's `f64` register class through function
+signatures, local variables, arithmetic, comparisons, and printing --
+none of which needed a second representation before. Found and fixed
+three real bugs, one of which was a compiler-backend-level surprise,
+not an application bug:
+
+1. **Implicit int-to-float widening was type-checked but never actually
+   performed in codegen**, at four call sites (return, assignment,
+   function-call and constructor arguments) -- either a silent type
+   mismatch or an outright Cranelift verifier rejection at `return`.
+   Fixed with one shared coercion helper applied everywhere the type
+   checker already permits the widening.
+
+2. **Cranelift 0.103 has no support at all for the x86-64 SystemV ABI's
+   variadic-call convention** (confirmed by its own source -- the word
+   "variadic" doesn't appear anywhere in the crate). The original
+   float-printing implementation called `printf`/`snprintf` directly
+   with a float argument -- a variadic call -- and without the caller
+   setting `%al` to the number of vector registers used (which that ABI
+   requires so the callee's own varargs machinery knows whether to save
+   them), it would sometimes read the right value and sometimes read
+   stale garbage left by an unrelated *preceding* call. This produced a
+   genuinely strange-looking failure pattern while narrowing it down (a
+   function with exactly two parameters, returning a value derived from
+   either one, with a float return type -- one parameter worked, three
+   worked, only exactly two broke) before disassembling the actual
+   linked machine code revealed the real cause. Sidestepped entirely by
+   switching to `gcvt(double, int, char*)`, a genuinely non-variadic
+   glibc function for double-to-string conversion -- no `%al` concern
+   applies to an ordinary, fixed-argument call.
+
+3. **A class-specific variant of bug 1**: the `New` expression's call
+   site correctly coerced a constructor argument, but the constructor's
+   own generated function -- both its initial signature declaration and
+   the actual function body built for it -- still declared every field
+   uniformly as the int/pointer-shaped `VALUE_TYPE`, regardless of the
+   field's real type, so handing it an already-coerced `f64` argument
+   was itself a mismatch. Reading a float field back out afterward had
+   the same bug on the load side. Fixed by using the same per-type
+   Cranelift-type helper already used for ordinary function signatures
+   and locals, applied to class field declarations and loads too.
+
+**Verified**: output-correctness tests on both backends (literals,
+all four arithmetic operators, mixed int/float arithmetic in both
+directions, comparisons, unary negation, function parameters and
+returns, `abs`/`max`/`min`/`is_number`), a dedicated regression test
+for the exact two-parameter/float-return bug (every combination of
+which parameter is returned, and int/float parameter mixes), a
+dedicated regression test for the implicit-widening codegen gap, and a
+dedicated regression test for the class-field variant of it. Also
+re-ran the *entire* existing native-backend test suite (including
+every Valgrind-gated ARC test from the string/list/map/class work)
+after these changes, confirming zero regressions.
+
 ## The bigger picture: one language, many targets
 
 You described the goal as being able to build *anything* in Roze --

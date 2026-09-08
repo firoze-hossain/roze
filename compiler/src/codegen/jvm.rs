@@ -1019,21 +1019,21 @@ impl JavaSourceGenerator {
             }
             "abs" if arguments.len() == 1 => {
                 source.push_str("Math.abs(");
-                self.generate_int_arg(source, &arguments[0])?;
+                self.generate_numeric_arg(source, &arguments[0])?;
                 source.push(')');
             }
             "max" if arguments.len() == 2 => {
                 source.push_str("Math.max(");
-                self.generate_int_arg(source, &arguments[0])?;
+                self.generate_numeric_arg(source, &arguments[0])?;
                 source.push_str(", ");
-                self.generate_int_arg(source, &arguments[1])?;
+                self.generate_numeric_arg(source, &arguments[1])?;
                 source.push(')');
             }
             "min" if arguments.len() == 2 => {
                 source.push_str("Math.min(");
-                self.generate_int_arg(source, &arguments[0])?;
+                self.generate_numeric_arg(source, &arguments[0])?;
                 source.push_str(", ");
-                self.generate_int_arg(source, &arguments[1])?;
+                self.generate_numeric_arg(source, &arguments[1])?;
                 source.push(')');
             }
             "to_string" if arguments.len() == 1 => {
@@ -1047,9 +1047,15 @@ impl JavaSourceGenerator {
                 source.push(')');
             }
             "is_number" if arguments.len() == 1 => {
+                // Integer and Double both extend java.lang.Number, and
+                // those are the only two boxed numeric types Roze's own
+                // runtime ever produces -- checking the common
+                // superclass once avoids evaluating the argument twice
+                // (which duplicating the instanceof check per-type
+                // would do, wrongly re-running any side effects).
                 source.push_str("((Object)(");
                 self.generate_expression(source, &arguments[0])?;
-                source.push_str(") instanceof Integer)");
+                source.push_str(") instanceof Number)");
             }
             "is_string" if arguments.len() == 1 => {
                 source.push_str("((Object)(");
@@ -1290,6 +1296,27 @@ impl JavaSourceGenerator {
             self.generate_expression(source, expr)?;
             source.push_str("))");
             Ok(())
+        }
+    }
+
+    /// Same idea as `generate_int_arg`, but for a numeric argument to
+    /// `abs`/`max`/`min` specifically, which have both an `int` and a
+    /// `double` overload on the Java side. A statically Float-typed
+    /// expression is left completely alone -- Java's own overload
+    /// resolution picks `Math.abs(double)` etc. for it, and
+    /// int-to-double widening handles a mixed int/float pair (e.g.
+    /// `max(3, 7.5)`) without any cast needed on either argument.
+    /// Anything else (Int, or an Unknown-typed value from an untyped
+    /// list/map element) falls back to `generate_int_arg`'s existing
+    /// Integer-unboxing behavior -- meaning a float value that ended up
+    /// boxed into an untyped container and read back out would still
+    /// crash here, a narrow, known limitation (fixing it needs a
+    /// runtime `instanceof`-based dispatch, not attempted here).
+    fn generate_numeric_arg(&self, source: &mut String, expr: &TypedExpression) -> Result<()> {
+        if expr.type_ == Type::Float {
+            self.generate_expression(source, expr)
+        } else {
+            self.generate_int_arg(source, expr)
         }
     }
 

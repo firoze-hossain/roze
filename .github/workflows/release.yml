@@ -1,16 +1,209 @@
 name: Release
 
-# NOTE: this is intentionally a placeholder. A real release workflow needs
-# decisions this project hasn't made yet: versioning scheme, which
-# platforms to publish prebuilt `roze` binaries for, and where they'd be
-# published (GitHub Releases? a package registry?). Wire this up once
-# those are settled -- see ROADMAP.md.
+# ==============================================================================
+# Automated Multi-Platform Release Workflow for Roze
+# 
+# Triggered ONLY when a version tag like 'v0.1.0' or '0.1.0' is pushed to the repository.
+# Standard code pushes to master/branches do NOT trigger this workflow.
+#
+# Builds compiler, runtime, stdlib, and developer tools across 3 parallel runner environments:
+#   - Linux:   Ubuntu/Debian .deb package + .tar.gz archive
+#   - Windows: Inno Setup .exe installer wizard (with PATH configuration) + .zip archive
+#   - macOS:   Apple .pkg installer package + .tar.gz archive
+#
+# Collects all artifacts, generates SHA-256 checksums, and publishes a GitHub Release.
+# ==============================================================================
 
 on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+*'
   workflow_dispatch:
 
 jobs:
-  placeholder:
-    runs-on: ubuntu-latest
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
     steps:
-      - run: echo "Release automation not configured yet -- see ROADMAP.md"
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Inno Setup
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          choco install innosetup -y
+          echo "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Derive version from Git tag
+        shell: bash
+        id: version
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.1.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Roze Workspace with Cargo
+        run: cargo build --release
+
+      # ------------------------------------------------------------------------
+      # Linux: Debian .deb package and .tar.gz archive
+      # ------------------------------------------------------------------------
+      - name: Package for Linux (.deb & .tar.gz)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p dist/deb-pkg/DEBIAN \
+                   dist/deb-pkg/usr/local/bin \
+                   dist/deb-pkg/usr/local/lib/roze/stdlib \
+                   dist/deb-pkg/usr/share/icons/hicolor/512x512/apps
+
+          cat << EOF > dist/deb-pkg/DEBIAN/control
+          Package: roze
+          Version: ${VERSION}
+          Section: devel
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Roze Ecosystem <maintainer@rozehub.dev>
+          Description: Roze - Modern High-Performance Programming Language and Toolchain
+           Roze is a modern systems and application programming language compiler,
+           runtime, and standard library featuring multi-target compilation and tooling.
+          EOF
+
+          # Copy binaries
+          cp target/release/roze dist/deb-pkg/usr/local/bin/
+          cp target/release/roze-build dist/deb-pkg/usr/local/bin/
+          cp target/release/roze-pkg dist/deb-pkg/usr/local/bin/
+          cp target/release/roze-lsp dist/deb-pkg/usr/local/bin/
+
+          # Copy standard library
+          cp -r stdlib/src/* dist/deb-pkg/usr/local/lib/roze/stdlib/
+
+          # Copy icon
+          cp packaging/linux/roze.png dist/deb-pkg/usr/share/icons/hicolor/512x512/apps/
+
+          # Build Debian package
+          dpkg-deb --build dist/deb-pkg "dist/roze_${VERSION}_amd64.deb"
+
+          # Create tar.gz archive
+          mkdir -p "dist/roze-${VERSION}-linux-x64/bin" "dist/roze-${VERSION}-linux-x64/stdlib"
+          cp target/release/roze target/release/roze-build target/release/roze-pkg target/release/roze-lsp "dist/roze-${VERSION}-linux-x64/bin/"
+          cp -r stdlib/src/* "dist/roze-${VERSION}-linux-x64/stdlib/"
+          tar -czf "dist/roze-${VERSION}-linux-x64.tar.gz" -C dist "roze-${VERSION}-linux-x64"
+
+          # Clean intermediate directories
+          rm -rf dist/deb-pkg dist/roze-${VERSION}-linux-x64
+
+      # ------------------------------------------------------------------------
+      # Windows: Inno Setup .exe installer wizard & .zip archive
+      # ------------------------------------------------------------------------
+      - name: Package for Windows (.exe & .zip)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version.outputs.version }}"
+          New-Item -ItemType Directory -Force -Path "dist\roze-win-bin\bin", "dist\roze-win-bin\stdlib"
+
+          Copy-Item "target\release\roze.exe" "dist\roze-win-bin\bin\"
+          Copy-Item "target\release\roze-build.exe" "dist\roze-win-bin\bin\"
+          Copy-Item "target\release\roze-pkg.exe" "dist\roze-win-bin\bin\"
+          Copy-Item "target\release\roze-lsp.exe" "dist\roze-win-bin\bin\"
+          Copy-Item -Recurse "stdlib\src\*" "dist\roze-win-bin\stdlib\"
+
+          # Inno Setup .exe compilation
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion="$ver" packaging\windows\setup.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed with exit code $LASTEXITCODE" }
+          if (Test-Path "packaging\windows\dist\*.exe") {
+            Move-Item -Path "packaging\windows\dist\*.exe" -Destination "dist\" -Force
+          }
+
+          # Zip archive
+          Compress-Archive -Path "dist\roze-win-bin\*" -DestinationPath "dist\roze-$ver-windows-x64.zip" -Force
+
+          # Clean intermediate directory
+          Remove-Item -Path "dist\roze-win-bin" -Recurse -Force
+
+      # ------------------------------------------------------------------------
+      # macOS: .pkg installer package & .tar.gz archive
+      # ------------------------------------------------------------------------
+      - name: Package for macOS (.pkg & .tar.gz)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p dist/mac-pkg-root/bin dist/mac-pkg-root/lib/roze/stdlib
+
+          cp target/release/roze dist/mac-pkg-root/bin/
+          cp target/release/roze-build dist/mac-pkg-root/bin/
+          cp target/release/roze-pkg dist/mac-pkg-root/bin/
+          cp target/release/roze-lsp dist/mac-pkg-root/bin/
+          cp -r stdlib/src/* dist/mac-pkg-root/lib/roze/stdlib/
+
+          # Build .pkg installer
+          pkgbuild \
+            --root dist/mac-pkg-root \
+            --identifier dev.rozehub.roze \
+            --version "${VERSION}" \
+            --install-location /usr/local \
+            "dist/Roze-${VERSION}-macos.pkg"
+
+          # Build .tar.gz archive
+          mkdir -p "dist/roze-${VERSION}-macos-x64/bin" "dist/roze-${VERSION}-macos-x64/stdlib"
+          cp target/release/roze target/release/roze-build target/release/roze-pkg target/release/roze-lsp "dist/roze-${VERSION}-macos-x64/bin/"
+          cp -r stdlib/src/* "dist/roze-${VERSION}-macos-x64/stdlib/"
+          tar -czf "dist/roze-${VERSION}-macos-x64.tar.gz" -C dist "roze-${VERSION}-macos-x64"
+
+          # Clean intermediate directory
+          rm -rf dist/mac-pkg-root dist/roze-${VERSION}-macos-x64
+
+      - name: Upload Installer Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: roze-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA-256 Checksums
+        run: |
+          cd dist
+          sha256sum *.* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: List Release Files
+        run: ls -la dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

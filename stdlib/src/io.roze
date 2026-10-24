@@ -10,22 +10,29 @@
 // and this file is never actually read by the compiler.
 //
 // Errors (file not found, permission denied, a network request that
-// fails) surface as a runtime crash rather than a Roze-level error
-// value -- Roze doesn't have a Result/Option type yet to report failure
-// any other way. See ROADMAP.md.
+// fails) can either surface as a runtime crash using legacy intrinsics,
+// or safely handled using Result-returning intrinsics (`read_file_result`,
+// `write_file_result`, `http_get_result`, etc.) combined with `?` error propagation.
+// See ROADMAP.md.
 
 // ---- File ----
-// read_file(path)            -> string : the file's full contents
-// write_file(path, content)  -> void   : overwrites the file with content
+// read_file(path)            -> string : the file's full contents (crashes on error)
+// read_file_result(path)     -> Result : Ok(contents) or Err(message)
+// write_file(path, content)  -> void   : overwrites the file with content (crashes on error)
+// write_file_result(path, c) -> Result : Ok(true) or Err(message)
 // append_file(path, content) -> void   : appends content to the end of the file
+// append_file_result(path, c)-> Result : Ok(true) or Err(message)
 // file_exists(path)          -> bool   : true if a file exists at path
 // delete_file(path)          -> bool   : true if a file existed and was deleted
+// delete_file_result(path)   -> Result : Ok(bool) or Err(message)
 // read_lines(path)           -> list   : the file's contents, one string per line
+// read_lines_result(path)    -> Result : Ok(list) or Err(message)
 
 // ---- Network ----
-// http_get(url)         -> string : the response body of a GET request
-// http_post(url, body)  -> string : the response body of a POST request
-//                                   (sent with Content-Type: application/json)
+// http_get(url)              -> string : the response body of a GET request
+// http_get_result(url)       -> Result : Ok(response body) or Err(message)
+// http_post(url, body)       -> string : the response body of a POST request
+// http_post_result(url, body)-> Result : Ok(response body) or Err(message)
 
 // Example:
 //

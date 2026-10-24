@@ -25,22 +25,24 @@
 // bigger picture.
 
 // ---- List ----
-// list_new()             -> list : a new, empty list
-// list_push(l, item)     -> bool : appends item to the end of l
-// list_get(l, index)     -> ?    : the element at index
-// list_set(l, index, v)  -> ?    : replaces the element at index with v, returns the old value
-// list_remove(l, index)  -> ?    : removes and returns the element at index
-// list_length(l)         -> int  : the number of elements in l
-// list_is_empty(l)       -> bool : true if l has no elements
+// list_new()             -> list   : a new, empty list
+// list_push(l, item)     -> bool   : appends item to the end of l
+// list_get(l, index)     -> ?      : the element at index
+// list_get_option(l, idx)-> Option : Some(element) if within bounds, None() otherwise
+// list_set(l, index, v)  -> ?      : replaces the element at index with v, returns the old value
+// list_remove(l, index)  -> ?      : removes and returns the element at index
+// list_length(l)         -> int    : the number of elements in l
+// list_is_empty(l)       -> bool   : true if l has no elements
 
 // ---- Map ----
-// map_new()          -> map  : a new, empty map
-// map_put(m, k, v)   -> ?    : associates key k with value v, returns the previous value (or nothing, if there wasn't one)
-// map_get(m, k)      -> ?    : the value associated with key k
-// map_has(m, k)      -> bool : true if m has an entry for key k
-// map_remove(m, k)   -> ?    : removes and returns the value associated with key k
-// map_size(m)        -> int  : the number of entries in m
-// map_is_empty(m)    -> bool : true if m has no entries
+// map_new()              -> map    : a new, empty map
+// map_put(m, k, v)       -> ?      : associates key k with value v, returns the previous value (or nothing, if there wasn't one)
+// map_get(m, k)          -> ?      : the value associated with key k
+// map_get_option(m, k)   -> Option : Some(value) if key exists, None() otherwise
+// map_has(m, k)          -> bool   : true if m has an entry for key k
+// map_remove(m, k)       -> ?      : removes and returns the value associated with key k
+// map_size(m)            -> int    : the number of entries in m
+// map_is_empty(m)        -> bool   : true if m has no entries
 
 // Example:
 //

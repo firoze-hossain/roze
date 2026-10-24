@@ -484,6 +484,219 @@ const SQL_HELPER_METHODS: &str = r#"
     }
 "#;
 
+const OPTION_RESULT_HELPER_CLASSES: &str = r#"
+class RozeOption {
+    public final boolean is_some;
+    public final Object value;
+    public RozeOption(boolean is_some, Object value) {
+        this.is_some = is_some;
+        this.value = value;
+    }
+    public static RozeOption some(Object val) { return new RozeOption(true, val); }
+    public static RozeOption none() { return new RozeOption(false, null); }
+    public boolean isSome() { return is_some; }
+    public boolean isNone() { return !is_some; }
+    public Object unwrap() {
+        if (!is_some) throw new RuntimeException("Called unwrap() on a None Option");
+        return value;
+    }
+    public Object unwrapOr(Object defaultVal) {
+        return is_some ? value : defaultVal;
+    }
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof RozeOption)) return false;
+        RozeOption other = (RozeOption) o;
+        if (this.is_some != other.is_some) return false;
+        return java.util.Objects.equals(this.value, other.value);
+    }
+    @Override
+    public int hashCode() {
+        return java.util.Objects.hash(is_some, value);
+    }
+    @Override
+    public String toString() {
+        return is_some ? ("Some(" + value + ")") : "None";
+    }
+}
+
+class RozeResult {
+    public final boolean is_ok;
+    public final Object value;
+    public final Object error;
+    public RozeResult(boolean is_ok, Object value, Object error) {
+        this.is_ok = is_ok;
+        this.value = value;
+        this.error = error;
+    }
+    public static RozeResult ok(Object val) { return new RozeResult(true, val, null); }
+    public static RozeResult err(Object err) { return new RozeResult(false, null, err); }
+    public boolean isOk() { return is_ok; }
+    public boolean isErr() { return !is_ok; }
+    public Object unwrap() {
+        if (!is_ok) throw new RuntimeException("Called unwrap() on an Err Result: " + error);
+        return value;
+    }
+    public Object unwrapErr() {
+        if (is_ok) throw new RuntimeException("Called unwrap_err() on an Ok Result: " + value);
+        return error;
+    }
+    public Object unwrapOr(Object defaultVal) {
+        return is_ok ? value : defaultVal;
+    }
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof RozeResult)) return false;
+        RozeResult other = (RozeResult) o;
+        if (this.is_ok != other.is_ok) return false;
+        return this.is_ok ? java.util.Objects.equals(this.value, other.value)
+                          : java.util.Objects.equals(this.error, other.error);
+    }
+    @Override
+    public int hashCode() {
+        return java.util.Objects.hash(is_ok, value, error);
+    }
+    @Override
+    public String toString() {
+        return is_ok ? ("Ok(" + value + ")") : ("Err(" + error + ")");
+    }
+}
+"#;
+
+const OPTION_RESULT_HELPER_METHODS: &str = r#"
+    private static Object __roze_unwrap(Object o) {
+        if (o instanceof RozeResult) return ((RozeResult) o).unwrap();
+        if (o instanceof RozeOption) return ((RozeOption) o).unwrap();
+        throw new RuntimeException("Cannot unwrap non-Result/Option value: " + o);
+    }
+
+    private static Object __roze_unwrap_or(Object o, Object defaultVal) {
+        if (o instanceof RozeResult) return ((RozeResult) o).unwrapOr(defaultVal);
+        if (o instanceof RozeOption) return ((RozeOption) o).unwrapOr(defaultVal);
+        return defaultVal;
+    }
+
+    private static boolean __roze_is_err_or_none(Object o) {
+        if (o instanceof RozeResult) return !((RozeResult) o).is_ok;
+        if (o instanceof RozeOption) return !((RozeOption) o).is_some;
+        return false;
+    }
+
+    private static Object __roze_unwrap_try(Object o) {
+        if (o instanceof RozeResult) return ((RozeResult) o).unwrap();
+        if (o instanceof RozeOption) return ((RozeOption) o).unwrap();
+        return o;
+    }
+
+    private static RozeResult __roze_read_file_result(String path) {
+        try {
+            return RozeResult.ok(new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path))));
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+            return RozeResult.err(msg);
+        }
+    }
+
+    private static RozeResult __roze_write_file_result(String path, String content) {
+        try {
+            java.nio.file.Files.write(java.nio.file.Paths.get(path), content.getBytes());
+            return RozeResult.ok(true);
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+            return RozeResult.err(msg);
+        }
+    }
+
+    private static RozeResult __roze_append_file_result(String path, String content) {
+        try {
+            java.nio.file.Files.write(
+                java.nio.file.Paths.get(path),
+                content.getBytes(),
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.APPEND
+            );
+            return RozeResult.ok(true);
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+            return RozeResult.err(msg);
+        }
+    }
+
+    private static RozeResult __roze_delete_file_result(String path) {
+        try {
+            boolean deleted = java.nio.file.Files.deleteIfExists(java.nio.file.Paths.get(path));
+            return RozeResult.ok(deleted);
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+            return RozeResult.err(msg);
+        }
+    }
+
+    private static RozeResult __roze_read_lines_result(String path) {
+        try {
+            return RozeResult.ok(new java.util.ArrayList(java.nio.file.Files.readAllLines(java.nio.file.Paths.get(path))));
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+            return RozeResult.err(msg);
+        }
+    }
+
+    private static RozeResult __roze_http_get_result(String url) {
+        try {
+            java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(url))
+                .GET()
+                .build();
+            java.net.http.HttpResponse<String> response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+            return RozeResult.ok(response.body());
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+            return RozeResult.err(msg);
+        }
+    }
+
+    private static RozeResult __roze_http_post_result(String url, String body) {
+        try {
+            java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(url))
+                .header("Content-Type", "application/json")
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
+                .build();
+            java.net.http.HttpResponse<String> response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+            return RozeResult.ok(response.body());
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+            return RozeResult.err(msg);
+        }
+    }
+
+    private static RozeResult __roze_to_int_result(String s) {
+        try {
+            return RozeResult.ok(Integer.parseInt(s.trim()));
+        } catch (Exception e) {
+            return RozeResult.err("Cannot parse integer from '" + s + "'");
+        }
+    }
+
+    private static RozeOption __roze_list_get_option(java.util.List list, int idx) {
+        if (list != null && idx >= 0 && idx < list.size()) {
+            return RozeOption.some(list.get(idx));
+        }
+        return RozeOption.none();
+    }
+
+    private static RozeOption __roze_map_get_option(java.util.Map map, Object key) {
+        if (map != null && map.containsKey(key)) {
+            return RozeOption.some(map.get(key));
+        }
+        return RozeOption.none();
+    }
+"#;
+
 /// Returns the Java return type for a built-in Core (string/math)
 /// intrinsic, or None if `name` isn't one. Keep this in sync with
 /// `semantic::builtin_signatures`.
@@ -539,6 +752,37 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "sql_query" => Some("java.util.List"),
         "sql_execute" => Some("int"),
         "sql_close" => Some("void"),
+
+        // Option
+        "option_some" | "Some" => Some("RozeOption"),
+        "option_none" | "None" => Some("RozeOption"),
+        "option_is_some" | "is_some" => Some("boolean"),
+        "option_is_none" | "is_none" => Some("boolean"),
+        "option_unwrap" => Some(OBJECT_TYPE),
+        "option_unwrap_or" => Some(OBJECT_TYPE),
+
+        // Result
+        "result_ok" | "Ok" => Some("RozeResult"),
+        "result_err" | "Err" => Some("RozeResult"),
+        "result_is_ok" | "is_ok" => Some("boolean"),
+        "result_is_err" | "is_err" => Some("boolean"),
+        "result_unwrap" | "unwrap" => Some(OBJECT_TYPE),
+        "result_unwrap_err" | "unwrap_err" => Some(OBJECT_TYPE),
+        "result_unwrap_or" | "unwrap_or" => Some(OBJECT_TYPE),
+
+        // Safe IO
+        "read_file_result" => Some("RozeResult"),
+        "write_file_result" => Some("RozeResult"),
+        "append_file_result" => Some("RozeResult"),
+        "delete_file_result" => Some("RozeResult"),
+        "read_lines_result" => Some("RozeResult"),
+        "http_get_result" => Some("RozeResult"),
+        "http_post_result" => Some("RozeResult"),
+        "to_int_result" => Some("RozeResult"),
+
+        // Safe collections
+        "list_get_option" => Some("RozeOption"),
+        "map_get_option" => Some("RozeOption"),
 
         _ => None,
     }
@@ -628,6 +872,7 @@ fn escape_for_java_string_literal(value: &str) -> String {
 pub struct JavaSourceGenerator {
     program: TypedProgram,
     class_name: String,
+    try_counter: std::cell::Cell<usize>,
 }
 
 impl JavaSourceGenerator {
@@ -638,7 +883,11 @@ impl JavaSourceGenerator {
     /// type from scratch (no local scope-tracking, no `infer_type`),
     /// it just reads `.type_` off whatever node it's rendering.
     pub fn new(program: TypedProgram, class_name: String) -> Self {
-        Self { program, class_name }
+        Self {
+            program,
+            class_name,
+            try_counter: std::cell::Cell::new(0),
+        }
     }
 
     pub fn generate(&self) -> Result<String> {
@@ -658,7 +907,7 @@ impl JavaSourceGenerator {
 
                 if name == "main" {
                     source.push_str("    public static void main(String[] args) {\n");
-                    self.generate_statement(&mut source, body, 2)?;
+                    self.generate_statement(&mut source, body, 2, &Type::Void)?;
                     source.push_str("    }\n");
                     main_found = true;
                 } else {
@@ -670,7 +919,7 @@ impl JavaSourceGenerator {
                         "    public static {} {}({}) {{\n",
                         java_type_name(return_type), escape_java_identifier(name), params_sig.join(", ")
                     ));
-                    self.generate_statement(&mut source, body, 2)?;
+                    self.generate_statement(&mut source, body, 2, return_type)?;
                     source.push_str("    }\n");
                 }
             }
@@ -686,7 +935,10 @@ impl JavaSourceGenerator {
         source.push_str(JSON_HELPER_METHODS);
         source.push_str(HTTP_SERVER_HELPER_METHODS);
         source.push_str(SQL_HELPER_METHODS);
+        source.push_str(OPTION_RESULT_HELPER_METHODS);
         source.push_str("}\n");
+
+        source.push_str(OPTION_RESULT_HELPER_CLASSES);
 
         for stmt in &self.program.statements {
             if let TypedStatement::ClassDecl { name, fields, .. } = stmt {
@@ -730,16 +982,130 @@ impl JavaSourceGenerator {
         Ok(())
     }
 
-    fn generate_statement(&self, source: &mut String, stmt: &TypedStatement, indent: usize) -> Result<()> {
+    fn hoist_try_expr(
+        &self,
+        expr: &TypedExpression,
+        hoisted_stmts: &mut String,
+        indent_str: &str,
+        return_type: &Type,
+    ) -> Result<TypedExpression> {
+        match &expr.kind {
+            TypedExpressionKind::Try(inner) => {
+                let hoisted_inner = self.hoist_try_expr(inner, hoisted_stmts, indent_str, return_type)?;
+                let c = self.try_counter.get();
+                self.try_counter.set(c + 2);
+                let temp_var = format!("__try_{}", c);
+                let unwrapped_var = format!("__unwrapped_{}", c + 1);
+
+                hoisted_stmts.push_str(indent_str);
+                hoisted_stmts.push_str(&format!("Object {} = ", temp_var));
+                self.generate_expression(hoisted_stmts, &hoisted_inner)?;
+                hoisted_stmts.push_str(";\n");
+
+                let ret_expr = match return_type {
+                    Type::Result => format!("(RozeResult) {}", temp_var),
+                    Type::Option => format!("(RozeOption) {}", temp_var),
+                    Type::Void => String::new(),
+                    _ => temp_var.clone(),
+                };
+
+                hoisted_stmts.push_str(indent_str);
+                if return_type == &Type::Void {
+                    hoisted_stmts.push_str(&format!("if (__roze_is_err_or_none({})) return;\n", temp_var));
+                } else {
+                    hoisted_stmts.push_str(&format!("if (__roze_is_err_or_none({})) return {};\n", temp_var, ret_expr));
+                }
+
+                hoisted_stmts.push_str(indent_str);
+                hoisted_stmts.push_str(&format!("Object {} = __roze_unwrap_try({});\n", unwrapped_var, temp_var));
+
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::Identifier(unwrapped_var),
+                    type_: expr.type_.clone(),
+                    location: expr.location.clone(),
+                })
+            }
+            TypedExpressionKind::Binary { left, operator, right } => {
+                let left_h = self.hoist_try_expr(left, hoisted_stmts, indent_str, return_type)?;
+                let right_h = self.hoist_try_expr(right, hoisted_stmts, indent_str, return_type)?;
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::Binary {
+                        left: Box::new(left_h),
+                        operator: operator.clone(),
+                        right: Box::new(right_h),
+                    },
+                    type_: expr.type_.clone(),
+                    location: expr.location.clone(),
+                })
+            }
+            TypedExpressionKind::Unary { operator, operand } => {
+                let op_h = self.hoist_try_expr(operand, hoisted_stmts, indent_str, return_type)?;
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::Unary {
+                        operator: operator.clone(),
+                        operand: Box::new(op_h),
+                    },
+                    type_: expr.type_.clone(),
+                    location: expr.location.clone(),
+                })
+            }
+            TypedExpressionKind::Call { function, arguments } => {
+                let mut args_h = Vec::with_capacity(arguments.len());
+                for arg in arguments {
+                    args_h.push(self.hoist_try_expr(arg, hoisted_stmts, indent_str, return_type)?);
+                }
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::Call {
+                        function: function.clone(),
+                        arguments: args_h,
+                    },
+                    type_: expr.type_.clone(),
+                    location: expr.location.clone(),
+                })
+            }
+            TypedExpressionKind::New { class_name, arguments } => {
+                let mut args_h = Vec::with_capacity(arguments.len());
+                for arg in arguments {
+                    args_h.push(self.hoist_try_expr(arg, hoisted_stmts, indent_str, return_type)?);
+                }
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::New {
+                        class_name: class_name.clone(),
+                        arguments: args_h,
+                    },
+                    type_: expr.type_.clone(),
+                    location: expr.location.clone(),
+                })
+            }
+            TypedExpressionKind::FieldAccess { object, field } => {
+                let obj_h = self.hoist_try_expr(object, hoisted_stmts, indent_str, return_type)?;
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::FieldAccess {
+                        object: Box::new(obj_h),
+                        field: field.clone(),
+                    },
+                    type_: expr.type_.clone(),
+                    location: expr.location.clone(),
+                })
+            }
+            _ => Ok(expr.clone()),
+        }
+    }
+
+    fn generate_statement(&self, source: &mut String, stmt: &TypedStatement, indent: usize, return_type: &Type) -> Result<()> {
         let indent_str = "    ".repeat(indent);
 
         match stmt {
             TypedStatement::Block { statements, .. } => {
                 for stmt in statements {
-                    self.generate_statement(source, stmt, indent)?;
+                    self.generate_statement(source, stmt, indent, return_type)?;
                 }
             }
             TypedStatement::Expression { expr, .. } => {
+                let mut hoisted = String::new();
+                let expr = self.hoist_try_expr(expr, &mut hoisted, &indent_str, return_type)?;
+                source.push_str(&hoisted);
+
                 if let TypedExpressionKind::Call { function, arguments } = &expr.kind {
                     if function == "println" {
                         source.push_str(&format!("{}System.out.println(", indent_str));
@@ -749,18 +1115,26 @@ impl JavaSourceGenerator {
                     }
                 }
                 source.push_str(&indent_str);
-                self.generate_expression(source, expr)?;
+                self.generate_expression(source, &expr)?;
                 source.push_str(";\n");
             }
             TypedStatement::Let { name, value, .. } => {
-                source.push_str(&format!("{}{} {} = ", indent_str, java_type_name(&value.type_), escape_java_identifier(name)));
-                self.generate_expression(source, value)?;
+                let mut hoisted = String::new();
+                let val = self.hoist_try_expr(value, &mut hoisted, &indent_str, return_type)?;
+                source.push_str(&hoisted);
+
+                source.push_str(&format!("{}{} {} = ", indent_str, java_type_name(&val.type_), escape_java_identifier(name)));
+                self.generate_expression(source, &val)?;
                 source.push_str(";\n");
             }
             TypedStatement::Return { value, .. } => {
                 if let Some(expr) = value {
+                    let mut hoisted = String::new();
+                    let expr = self.hoist_try_expr(expr, &mut hoisted, &indent_str, return_type)?;
+                    source.push_str(&hoisted);
+
                     source.push_str(&format!("{}return ", indent_str));
-                    self.generate_expression(source, expr)?;
+                    self.generate_expression(source, &expr)?;
                     source.push_str(";\n");
                 } else {
                     source.push_str(&format!("{}return;\n", indent_str));
@@ -777,25 +1151,38 @@ impl JavaSourceGenerator {
                 // (see `generate_class`).
             }
             TypedStatement::FieldAssign { object, field, value, .. } => {
+                let mut hoisted = String::new();
+                let obj = self.hoist_try_expr(object, &mut hoisted, &indent_str, return_type)?;
+                let val = self.hoist_try_expr(value, &mut hoisted, &indent_str, return_type)?;
+                source.push_str(&hoisted);
+
                 source.push_str(&indent_str);
-                self.generate_expression(source, object)?;
+                self.generate_expression(source, &obj)?;
                 source.push_str(&format!(".{} = ", escape_java_identifier(field)));
-                self.generate_expression(source, value)?;
+                self.generate_expression(source, &val)?;
                 source.push_str(";\n");
             }
             TypedStatement::Assign { name, value, .. } => {
+                let mut hoisted = String::new();
+                let val = self.hoist_try_expr(value, &mut hoisted, &indent_str, return_type)?;
+                source.push_str(&hoisted);
+
                 source.push_str(&format!("{}{} = ", indent_str, escape_java_identifier(name)));
-                self.generate_expression(source, value)?;
+                self.generate_expression(source, &val)?;
                 source.push_str(";\n");
             }
             TypedStatement::If { condition, then_branch, else_branch, .. } => {
-                self.generate_if_chain(source, condition, then_branch, else_branch.as_deref(), indent, true)?;
+                self.generate_if_chain(source, condition, then_branch, else_branch.as_deref(), indent, true, return_type)?;
             }
             TypedStatement::While { condition, body, .. } => {
+                let mut hoisted = String::new();
+                let cond = self.hoist_try_expr(condition, &mut hoisted, &indent_str, return_type)?;
+                source.push_str(&hoisted);
+
                 source.push_str(&format!("{}while (", indent_str));
-                self.generate_expression(source, condition)?;
+                self.generate_expression(source, &cond)?;
                 source.push_str(") {\n");
-                self.generate_statement(source, body, indent + 1)?;
+                self.generate_statement(source, body, indent + 1, return_type)?;
                 source.push_str(&format!("{}}}\n", indent_str));
             }
             TypedStatement::For { init, condition, update, body, .. } => {
@@ -806,7 +1193,7 @@ impl JavaSourceGenerator {
                 source.push_str("; ");
                 self.generate_for_clause(source, update)?;
                 source.push_str(") {\n");
-                self.generate_statement(source, body, indent + 1)?;
+                self.generate_statement(source, body, indent + 1, return_type)?;
                 source.push_str(&format!("{}}}\n", indent_str));
             }
         }
@@ -844,27 +1231,32 @@ impl JavaSourceGenerator {
         else_branch: Option<&TypedStatement>,
         indent: usize,
         write_indent: bool,
+        return_type: &Type,
     ) -> Result<()> {
         let indent_str = "    ".repeat(indent);
+
+        let mut hoisted = String::new();
+        let cond = self.hoist_try_expr(condition, &mut hoisted, &indent_str, return_type)?;
+        source.push_str(&hoisted);
 
         if write_indent {
             source.push_str(&indent_str);
         }
         source.push_str("if (");
-        self.generate_expression(source, condition)?;
+        self.generate_expression(source, &cond)?;
         source.push_str(") {\n");
-        self.generate_statement(source, then_branch, indent + 1)?;
+        self.generate_statement(source, then_branch, indent + 1, return_type)?;
         source.push_str(&format!("{}}}", indent_str));
 
         match else_branch {
             None => source.push('\n'),
             Some(TypedStatement::If { condition, then_branch, else_branch, .. }) => {
                 source.push_str(" else ");
-                self.generate_if_chain(source, condition, then_branch, else_branch.as_deref(), indent, false)?;
+                self.generate_if_chain(source, condition, then_branch, else_branch.as_deref(), indent, false, return_type)?;
             }
             Some(other) => {
                 source.push_str(" else {\n");
-                self.generate_statement(source, other, indent + 1)?;
+                self.generate_statement(source, other, indent + 1, return_type)?;
                 source.push_str(&format!("{}}}\n", indent_str));
             }
         }
@@ -984,6 +1376,11 @@ impl JavaSourceGenerator {
                 };
                 source.push_str(op);
                 self.generate_expression(source, operand)?;
+            }
+            TypedExpressionKind::Try(inner) => {
+                source.push_str("__roze_unwrap_try(");
+                self.generate_expression(source, inner)?;
+                source.push(')');
             }
         }
 
@@ -1261,6 +1658,141 @@ impl JavaSourceGenerator {
                 source.push_str("__roze_sql_close((java.sql.Connection)(");
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str("))");
+            }
+
+            // ---- Option ----
+            "Some" | "option_some" if arguments.len() == 1 => {
+                source.push_str("RozeOption.some(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "None" | "option_none" if arguments.is_empty() => {
+                source.push_str("RozeOption.none()");
+            }
+            "is_some" | "option_is_some" if arguments.len() == 1 => {
+                source.push_str("(((RozeOption) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")).isSome())");
+            }
+            "is_none" | "option_is_none" if arguments.len() == 1 => {
+                source.push_str("(((RozeOption) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")).isNone())");
+            }
+            "option_unwrap" if arguments.len() == 1 => {
+                source.push_str("(((RozeOption) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")).unwrap())");
+            }
+            "option_unwrap_or" if arguments.len() == 2 => {
+                source.push_str("(((RozeOption) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")).unwrapOr(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str("))");
+            }
+
+            // ---- Result ----
+            "Ok" | "result_ok" if arguments.len() == 1 => {
+                source.push_str("RozeResult.ok(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "Err" | "result_err" if arguments.len() == 1 => {
+                source.push_str("RozeResult.err(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "is_ok" | "result_is_ok" if arguments.len() == 1 => {
+                source.push_str("(((RozeResult) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")).isOk())");
+            }
+            "is_err" | "result_is_err" if arguments.len() == 1 => {
+                source.push_str("(((RozeResult) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")).isErr())");
+            }
+            "unwrap" | "result_unwrap" if arguments.len() == 1 => {
+                source.push_str("__roze_unwrap(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "unwrap_err" | "result_unwrap_err" if arguments.len() == 1 => {
+                source.push_str("(((RozeResult) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")).unwrapErr())");
+            }
+            "unwrap_or" | "result_unwrap_or" if arguments.len() == 2 => {
+                source.push_str("__roze_unwrap_or(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+
+            // ---- Safe IO ----
+            "read_file_result" if arguments.len() == 1 => {
+                source.push_str("__roze_read_file_result(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "write_file_result" if arguments.len() == 2 => {
+                source.push_str("__roze_write_file_result(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "append_file_result" if arguments.len() == 2 => {
+                source.push_str("__roze_append_file_result(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "delete_file_result" if arguments.len() == 1 => {
+                source.push_str("__roze_delete_file_result(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "read_lines_result" if arguments.len() == 1 => {
+                source.push_str("__roze_read_lines_result(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "http_get_result" if arguments.len() == 1 => {
+                source.push_str("__roze_http_get_result(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "http_post_result" if arguments.len() == 2 => {
+                source.push_str("__roze_http_post_result(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "to_int_result" if arguments.len() == 1 => {
+                source.push_str("__roze_to_int_result(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+
+            // ---- Safe Collections ----
+            "list_get_option" if arguments.len() == 2 => {
+                source.push_str("__roze_list_get_option(");
+                self.generate_list_receiver(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_int_arg(source, &arguments[1])?;
+                source.push(')');
+            }
+            "map_get_option" if arguments.len() == 2 => {
+                source.push_str("__roze_map_get_option(");
+                self.generate_map_receiver(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
             }
 
             "println" => {

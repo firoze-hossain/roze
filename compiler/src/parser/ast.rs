@@ -157,6 +157,11 @@ pub enum Expression {
         field: String,
         location: Location,
     },
+    /// `expr?` -- error propagation try operator. Unwraps a Result/Option or returns early from the current function.
+    Try {
+        expr: Box<Expression>,
+        location: Location,
+    },
 }
 
 #[derive(Debug, Clone)]

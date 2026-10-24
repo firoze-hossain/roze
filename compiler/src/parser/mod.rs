@@ -247,16 +247,7 @@ impl Parser {
             // Optional type annotation
             let param_type = if self.check(&Token::Colon) {
                 self.advance();
-                if !self.check(&Token::Identifier(String::new())) {
-                    return Err(self.error("Expected a type name after ':'"));
-                }
-                let type_token = self.current().clone();
-                let type_name = match &type_token.token {
-                    Token::Identifier(t) => Some(t.clone()),
-                    _ => None,
-                };
-                self.advance();
-                type_name
+                Some(self.parse_type_name()?)
             } else {
                 None
             };
@@ -294,16 +285,7 @@ impl Parser {
             while self.check(&Token::Newline) {
                 self.advance();
             }
-            if !self.check(&Token::Identifier(String::new())) {
-                return Err(self.error("Expected a return type after '->'"));
-            }
-            let type_token = self.current().clone();
-            let type_name = match &type_token.token {
-                Token::Identifier(t) => Some(t.clone()),
-                _ => None,
-            };
-            self.advance();
-            type_name
+            Some(self.parse_type_name()?)
         } else {
             None
         };
@@ -606,15 +588,7 @@ impl Parser {
             }
             self.advance(); // Skip ':'
 
-            let type_name = match &self.current().token {
-                Token::Identifier(t) => {
-                    let t = t.clone();
-                    self.advance();
-                    t
-                }
-                other => return Err(self.error(format!("Expected a type name after ':', found {}", other))),
-            };
-
+            let type_name = self.parse_type_name()?;
             fields.push(FunctionParam { name: field_name, type_name: Some(type_name) });
 
             while self.check(&Token::Newline) {
@@ -864,31 +838,78 @@ impl Parser {
         }
     }
 
+    fn parse_type_name(&mut self) -> Result<String> {
+        let base_name = match &self.current().token {
+            Token::Identifier(t) => {
+                let name = t.clone();
+                self.advance();
+                name
+            }
+            other => return Err(self.error(format!("Expected a type name, found {}", other))),
+        };
+
+        if self.check(&Token::LessThan) {
+            self.advance(); // Skip '<'
+            let mut params = Vec::new();
+            while !self.check(&Token::GreaterThan) && !self.check(&Token::EOF) {
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                let inner = self.parse_type_name()?;
+                params.push(inner);
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            if !self.check(&Token::GreaterThan) {
+                return Err(self.error("Expected '>' to close generic type arguments"));
+            }
+            self.advance(); // Skip '>'
+            Ok(format!("{}<{}>", base_name, params.join(", ")))
+        } else {
+            Ok(base_name)
+        }
+    }
+
     /// Wraps `parse_primary` with zero or more trailing `.field`
-    /// accesses (e.g. `a.b.c`), so field access composes with anything
-    /// a primary expression can produce -- a bare variable, a function
-    /// call's return value, or a chained field access itself.
+    /// accesses (e.g. `a.b.c`) or `?` error-propagation try operators (e.g. `f()?`).
     fn parse_postfix(&mut self) -> Result<Expression> {
         let mut expr = self.parse_primary()?;
 
-        while self.check(&Token::Dot) {
-            let location = Location::new(self.current().line, self.current().column);
-            self.advance(); // Skip '.'
+        loop {
+            if self.check(&Token::Dot) {
+                let location = Location::new(self.current().line, self.current().column);
+                self.advance(); // Skip '.'
 
-            let field = match &self.current().token {
-                Token::Identifier(name) => {
-                    let name = name.clone();
-                    self.advance();
-                    name
-                }
-                other => return Err(self.error(format!("Expected a field name after '.', found {}", other))),
-            };
+                let field = match &self.current().token {
+                    Token::Identifier(name) => {
+                        let name = name.clone();
+                        self.advance();
+                        name
+                    }
+                    other => return Err(self.error(format!("Expected a field name after '.', found {}", other))),
+                };
 
-            expr = Expression::FieldAccess {
-                object: Box::new(expr),
-                field,
-                location,
-            };
+                expr = Expression::FieldAccess {
+                    object: Box::new(expr),
+                    field,
+                    location,
+                };
+            } else if self.check(&Token::Question) {
+                let location = Location::new(self.current().line, self.current().column);
+                self.advance(); // Skip '?'
+                expr = Expression::Try {
+                    expr: Box::new(expr),
+                    location,
+                };
+            } else {
+                break;
+            }
         }
 
         Ok(expr)

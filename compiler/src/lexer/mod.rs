@@ -160,6 +160,7 @@ impl<'a> Lexer<'a> {
                 '}' => { self.advance(); Token::RightBrace }
                 ',' => { self.advance(); Token::Comma }
                 '.' => { self.advance(); Token::Dot }
+                '?' => { self.advance(); Token::Question }
                 ';' => { self.advance(); Token::Semicolon }
                 ':' => { self.advance(); Token::Colon }
 

@@ -24,6 +24,10 @@ pub enum Type {
     List,
     /// A map of untyped (Object-boxed) keys/values, for the same reason.
     Map,
+    /// An optional value (`Some(v)` or `None()`).
+    Option,
+    /// A result value (`Ok(v)` or `Err(e)`).
+    Result,
     /// An instance of a user-defined `class Name { field: type, ... }`.
     /// Unlike `list`/`map`'s elements, a class's field types *are*
     /// statically known (declared in the class body), which is what
@@ -58,6 +62,10 @@ impl Type {
             "void" => Type::Void,
             "list" | "List" => Type::List,
             "map" | "Map" => Type::Map,
+            "option" | "Option" => Type::Option,
+            "result" | "Result" => Type::Result,
+            name if name.starts_with("Option<") || name.starts_with("option<") => Type::Option,
+            name if name.starts_with("Result<") || name.starts_with("result<") => Type::Result,
             _ => Type::Unknown,
         }
     }
@@ -72,6 +80,8 @@ impl Type {
             Type::Unknown => "Object".to_string(),
             Type::List => "java.util.List".to_string(),
             Type::Map => "java.util.Map".to_string(),
+            Type::Option => "RozeOption".to_string(),
+            Type::Result => "RozeResult".to_string(),
             Type::Class(name) => name.clone(),
             Type::Function { .. } => "Object".to_string(),
         }
@@ -89,6 +99,8 @@ impl std::fmt::Display for Type {
             Type::Unknown => write!(f, "<unknown>"),
             Type::List => write!(f, "list"),
             Type::Map => write!(f, "map"),
+            Type::Option => write!(f, "Option"),
+            Type::Result => write!(f, "Result"),
             Type::Class(name) => write!(f, "{}", name),
             Type::Function { .. } => write!(f, "function"),
         }
@@ -268,6 +280,48 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("sql_query", vec![Type::Unknown, Type::String], Type::List),
         ("sql_execute", vec![Type::Unknown, Type::String], Type::Int),
         ("sql_close", vec![Type::Unknown], Type::Void),
+
+        // ---- Option ----
+        ("option_some", vec![Type::Unknown], Type::Option),
+        ("option_none", vec![], Type::Option),
+        ("option_is_some", vec![Type::Unknown], Type::Bool),
+        ("option_is_none", vec![Type::Unknown], Type::Bool),
+        ("option_unwrap", vec![Type::Unknown], Type::Unknown),
+        ("option_unwrap_or", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("Some", vec![Type::Unknown], Type::Option),
+        ("None", vec![], Type::Option),
+        ("is_some", vec![Type::Unknown], Type::Bool),
+        ("is_none", vec![Type::Unknown], Type::Bool),
+
+        // ---- Result ----
+        ("result_ok", vec![Type::Unknown], Type::Result),
+        ("result_err", vec![Type::Unknown], Type::Result),
+        ("result_is_ok", vec![Type::Unknown], Type::Bool),
+        ("result_is_err", vec![Type::Unknown], Type::Bool),
+        ("result_unwrap", vec![Type::Unknown], Type::Unknown),
+        ("result_unwrap_err", vec![Type::Unknown], Type::Unknown),
+        ("result_unwrap_or", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("Ok", vec![Type::Unknown], Type::Result),
+        ("Err", vec![Type::Unknown], Type::Result),
+        ("is_ok", vec![Type::Unknown], Type::Bool),
+        ("is_err", vec![Type::Unknown], Type::Bool),
+        ("unwrap", vec![Type::Unknown], Type::Unknown),
+        ("unwrap_err", vec![Type::Unknown], Type::Unknown),
+        ("unwrap_or", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+
+        // ---- Safe IO (returning Result) ----
+        ("read_file_result", vec![Type::String], Type::Result),
+        ("write_file_result", vec![Type::String, Type::String], Type::Result),
+        ("append_file_result", vec![Type::String, Type::String], Type::Result),
+        ("delete_file_result", vec![Type::String], Type::Result),
+        ("read_lines_result", vec![Type::String], Type::Result),
+        ("http_get_result", vec![Type::String], Type::Result),
+        ("http_post_result", vec![Type::String, Type::String], Type::Result),
+        ("to_int_result", vec![Type::String], Type::Result),
+
+        // ---- Safe Collections (returning Option) ----
+        ("list_get_option", vec![Type::List, Type::Int], Type::Option),
+        ("map_get_option", vec![Type::Map, Type::Unknown], Type::Option),
     ]
 }
 
@@ -898,6 +952,49 @@ impl TypeChecker {
                     location: location.clone(),
                 })
             }
+            Expression::Try { expr, location } => {
+                let typed_expr = self.check_expression(expr)?;
+                match &typed_expr.type_ {
+                    Type::Result => {
+                        if !matches!(self.current_return_type, Type::Result | Type::Unknown) {
+                            return Err(RozeError::type_error(
+                                format!(
+                                    "The '?' operator on a Result requires the enclosing function to return Result, but it returns {}",
+                                    self.current_return_type
+                                ),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                    }
+                    Type::Option => {
+                        if !matches!(self.current_return_type, Type::Option | Type::Unknown) {
+                            return Err(RozeError::type_error(
+                                format!(
+                                    "The '?' operator on an Option requires the enclosing function to return Option, but it returns {}",
+                                    self.current_return_type
+                                ),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                    }
+                    Type::Unknown => {}
+                    other => {
+                        return Err(RozeError::type_error(
+                            format!("The '?' operator can only be used on Result or Option, got {}", other),
+                            location.line,
+                            location.column,
+                        ).into());
+                    }
+                }
+
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::Try(Box::new(typed_expr)),
+                    type_: Type::Unknown,
+                    location: location.clone(),
+                })
+            }
         }
     }
 }
@@ -1337,5 +1434,74 @@ mod tests {
         // itself should never contain one either way.
         let ir = lower("func main() { }");
         assert!(!ir.statements.iter().any(|s| matches!(s, TypedStatement::Function { name, .. } if name.is_empty())));
+    }
+
+    #[test]
+    fn option_and_result_type_annotations_are_recognized() {
+        let result = check_source(
+            "func takes_opt(o: Option) -> Option { return o; } \
+             func takes_res(r: Result) -> Result { return r; } \
+             func generic_like(r: Result<string, string>) -> Option<int> { return None(); } \
+             func main() { \
+                 let o = takes_opt(Some(42)); \
+                 let r = takes_res(Ok(\"ok\")); \
+             }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn option_and_result_intrinsics_type_check() {
+        let result = check_source(
+            "func main() { \
+                 let o = Some(10); \
+                 let n = None(); \
+                 println(is_some(o)); \
+                 println(is_none(n)); \
+                 println(unwrap(o)); \
+                 println(unwrap_or(n, 0)); \
+                 let r = Ok(\"data\"); \
+                 let e = Err(\"fail\"); \
+                 println(is_ok(r)); \
+                 println(is_err(e)); \
+                 println(unwrap(r)); \
+                 println(unwrap_err(e)); \
+                 println(unwrap_or(e, \"fallback\")); \
+             }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn try_operator_type_checks_in_matching_function() {
+        let result = check_source(
+            "func get_val() -> Result { \
+                 let r = Ok(5); \
+                 let v = r?; \
+                 return Ok(v); \
+             } \
+             func get_opt() -> Option { \
+                 let o = Some(10); \
+                 let v = o?; \
+                 return Some(v); \
+             } \
+             func main() { }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn try_operator_on_result_in_void_or_int_function_is_error() {
+        let result = check_source(
+            "func calc() -> int { \
+                 let r = Ok(5); \
+                 let v = r?; \
+                 return v; \
+             } \
+             func main() { }"
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("requires the enclosing function to return Result"), "{}", err);
     }
 }

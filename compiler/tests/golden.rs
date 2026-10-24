@@ -512,3 +512,94 @@ fn sql_connect_query_execute_against_a_real_database() {
     let expected = "2\nAlice\n30\nBob\n1\n31\ndone";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn result_and_option_types_and_safe_error_propagation() {
+    let (stdout, stderr, ok) = run_fixture("result_option.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+true\n\
+false\n\
+false\n\
+true\n\
+42\n\
+100\n\
+true\n\
+apple\n\
+true\n\
+not found\n\
+localhost\n\
+default_db\n\
+true\n\
+false\n\
+false\n\
+true\n\
+operation succeeded\n\
+connection refused\n\
+fallback value\n\
+true\n\
+500\n\
+true\n\
+true\n\
+true\n\
+true\n\
+Safe I/O in Roze\n\
+true\n\
+21\n\
+true\n\
+1020\n\
+true\n\
+roze_lang\n\
+true";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
+fn try_operator_type_errors_report_cleanly() {
+    let dir = scratch_dir("try_type_errors");
+
+    // 1. Result ? inside int function
+    std::fs::write(
+        dir.join("bad_ret_type.roze"),
+        "func f() -> int { let res = Ok(1); let val = res?; return val; } func main() {}\n",
+    ).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("bad_ret_type.roze")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke roze");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("The '?' operator on a Result requires the enclosing function to return Result"), "got:\n{}", stderr);
+
+    // 2. Option ? inside Result function
+    std::fs::write(
+        dir.join("option_in_result.roze"),
+        "func f() -> Result { let opt = Some(1); let val = opt?; return Ok(val); } func main() {}\n",
+    ).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("option_in_result.roze")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke roze");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("The '?' operator on an Option requires the enclosing function to return Option"), "got:\n{}", stderr);
+
+    // 3. ? on integer
+    std::fs::write(
+        dir.join("try_on_int.roze"),
+        "func f() -> int { let x = 42; return x?; } func main() {}\n",
+    ).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("try_on_int.roze")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke roze");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("The '?' operator can only be used on Result or Option"), "got:\n{}", stderr);
+}

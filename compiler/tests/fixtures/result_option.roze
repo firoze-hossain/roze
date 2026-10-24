@@ -1,0 +1,97 @@
+func parse_and_wrap(s: string) -> Result {
+    let n = to_int_result(s)?;
+    return Ok(n);
+}
+
+func get_first(items: list) -> Option {
+    let item = list_get_option(items, 0)?;
+    return Some(item);
+}
+
+func test_try_chain(a: string, b: string) -> Result {
+    let v1 = to_int_result(a)?;
+    let v2 = to_int_result(b)?;
+    return Ok(string_concat(to_string(v1), to_string(v2)));
+}
+
+func main() {
+    // 1. Option basic constructors and methods
+    let opt_some = Some(42);
+    let opt_none = None();
+    println(is_some(opt_some));
+    println(is_none(opt_some));
+    println(is_some(opt_none));
+    println(is_none(opt_none));
+    println(unwrap(opt_some));
+    println(unwrap_or(opt_none, 100));
+
+    // 2. Safe collection indexing returning Option
+    let fruits = list_new();
+    list_push(fruits, "apple");
+    list_push(fruits, "banana");
+    let fruit0 = list_get_option(fruits, 0);
+    let fruit5 = list_get_option(fruits, 5);
+    println(is_some(fruit0));
+    println(unwrap(fruit0));
+    println(is_none(fruit5));
+    println(unwrap_or(fruit5, "not found"));
+
+    let config = map_new();
+    map_put(config, "host", "localhost");
+    let host_opt = map_get_option(config, "host");
+    let missing_opt = map_get_option(config, "database");
+    println(unwrap(host_opt));
+    println(unwrap_or(missing_opt, "default_db"));
+
+    // 3. Result basic constructors and methods
+    let res_ok = Ok("operation succeeded");
+    let res_err = Err("connection refused");
+    println(is_ok(res_ok));
+    println(is_err(res_ok));
+    println(is_ok(res_err));
+    println(is_err(res_err));
+    println(unwrap(res_ok));
+    println(unwrap_err(res_err));
+    println(unwrap_or(res_err, "fallback value"));
+
+    // 4. Safe I/O and parsing intrinsics returning Result
+    let parsed_ok = to_int_result("500");
+    let parsed_err = to_int_result("not a number");
+    println(is_ok(parsed_ok));
+    println(unwrap(parsed_ok));
+    println(is_err(parsed_err));
+
+    let missing_file = read_file_result("non_existent_file_safe_io_12345.txt");
+    println(is_err(missing_file));
+
+    let temp_file = "core01_test_output.txt";
+    let write_res = write_file_result(temp_file, "Safe I/O in Roze");
+    println(is_ok(write_res));
+    let read_res = read_file_result(temp_file);
+    println(is_ok(read_res));
+    println(unwrap(read_res));
+    let del_res = delete_file_result(temp_file);
+    println(is_ok(del_res));
+
+    // 5. Postfix `?` try operator with Result and Option
+    let try_success = parse_and_wrap("21");
+    println(unwrap(try_success));
+
+    let try_failure = parse_and_wrap("invalid");
+    println(is_err(try_failure));
+
+    let try_chain_ok = test_try_chain("10", "20");
+    println(unwrap(try_chain_ok));
+
+    let try_chain_err = test_try_chain("10", "bad");
+    println(is_err(try_chain_err));
+
+    let items_list = list_new();
+    list_push(items_list, "roze_lang");
+    let opt_chain_ok = get_first(items_list);
+    println(unwrap(opt_chain_ok));
+
+    let empty_list = list_new();
+    let opt_chain_none = get_first(empty_list);
+    println(is_none(opt_chain_none));
+}

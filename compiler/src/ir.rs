@@ -161,4 +161,6 @@ pub enum TypedExpressionKind {
         object: Box<TypedExpression>,
         field: String,
     },
+    /// `expr?` -- error propagation try operator
+    Try(Box<TypedExpression>),
 }

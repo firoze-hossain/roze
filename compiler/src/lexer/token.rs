@@ -39,6 +39,7 @@ pub enum Token {
     And,        // &&
     Or,         // ||
     Not,        // !
+    Question,   // ?
 
     // Delimiters
     LeftParen,   // (
@@ -91,6 +92,7 @@ impl fmt::Display for Token {
             Token::And => write!(f, "&&"),
             Token::Or => write!(f, "||"),
             Token::Not => write!(f, "!"),
+            Token::Question => write!(f, "?"),
             Token::LeftParen => write!(f, "("),
             Token::RightParen => write!(f, ")"),
             Token::LeftBrace => write!(f, "{{"),

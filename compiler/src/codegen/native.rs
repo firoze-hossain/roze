@@ -201,7 +201,7 @@ fn expression_is_borrowed(expr: &TypedExpression) -> bool {
 
 fn require_supported_type(ty: &Type, location: &Location, context: &str) -> Result<()> {
     match ty {
-        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) => Ok(()),
+        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result => Ok(()),
         Type::Function { .. } => Err(anyhow!(
             "line {}, column {}: the native backend doesn't support function values -- {}",
             location.line, location.column, context
@@ -2988,6 +2988,21 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 // plain variable (see retain_if_aliasing).
 
                 Ok(field_val)
+            }
+            TypedExpressionKind::Try(inner) => {
+                let inner_val = self.compile_expression(inner)?;
+                let status_flag = self.builder.ins().load(types::I64, MemFlags::new(), inner_val, 8);
+                let ok_block = self.builder.create_block();
+                let err_block = self.builder.create_block();
+                self.builder.ins().brif(status_flag, ok_block, &[], err_block, &[]);
+
+                self.builder.switch_to_block(err_block);
+                self.retain_if_aliasing(inner, inner_val)?;
+                self.builder.ins().return_(&[inner_val]);
+
+                self.builder.switch_to_block(ok_block);
+                let unwrapped = self.builder.ins().load(types::I64, MemFlags::new(), inner_val, 16);
+                Ok(unwrapped)
             }
         }
     }

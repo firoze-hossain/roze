@@ -52,11 +52,10 @@ int64_t __roze_thread_spawn(void* closure_ptr) {
     handle->joined = 0;
     pthread_mutex_init(&handle->lock, NULL);
 
-    // Retain closure for the background thread
-    __atomic_fetch_add(&handle->closure->refcount, 1, __ATOMIC_SEQ_CST);
-
     if (pthread_create(&handle->thread, NULL, roze_thread_runner, handle) != 0) {
-        __atomic_fetch_sub(&handle->closure->refcount, 1, __ATOMIC_SEQ_CST);
+        if (__atomic_fetch_sub(&handle->closure->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+            free(handle->closure);
+        }
         pthread_mutex_destroy(&handle->lock);
         free(handle);
         return 0;

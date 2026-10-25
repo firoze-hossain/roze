@@ -4446,7 +4446,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let func_ref = self.module.declare_func_in_func(self.concurrency.thread_spawn_id, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[closure_val]);
                 let result = self.builder.inst_results(call)[0];
-                self.release_if_fresh(&arguments[0], closure_val)?;
                 return Ok(result);
             }
             "thread_join" if arguments.len() == 1 => {

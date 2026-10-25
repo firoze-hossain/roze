@@ -48,7 +48,7 @@ use anyhow::{anyhow, Result};
 use cranelift::prelude::*;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::process::Command;
 
@@ -68,6 +68,135 @@ const STRING_HEADER_SIZE: i64 = 16;
 /// of using a literal costs no heap allocation or refcount traffic at
 /// all.
 const IMMORTAL_SENTINEL: i64 = -1;
+
+#[derive(Clone)]
+struct ClosureDecl {
+    id: usize,
+    params: Vec<(String, Type)>,
+    return_type: Type,
+    captures: Vec<(String, Type)>,
+    body: Box<TypedStatement>,
+}
+
+fn collect_closures_and_refs_from_stmt(
+    stmt: &TypedStatement,
+    closures: &mut Vec<ClosureDecl>,
+    func_refs: &mut HashSet<String>,
+) {
+    match stmt {
+        TypedStatement::Block { statements, .. } => {
+            for s in statements {
+                collect_closures_and_refs_from_stmt(s, closures, func_refs);
+            }
+        }
+        TypedStatement::Expression { expr, .. } => {
+            collect_closures_and_refs_from_expr(expr, closures, func_refs);
+        }
+        TypedStatement::Let { value, .. } => {
+            collect_closures_and_refs_from_expr(value, closures, func_refs);
+        }
+        TypedStatement::Assign { value, .. } => {
+            collect_closures_and_refs_from_expr(value, closures, func_refs);
+        }
+        TypedStatement::FieldAssign { object, value, .. } => {
+            collect_closures_and_refs_from_expr(object, closures, func_refs);
+            collect_closures_and_refs_from_expr(value, closures, func_refs);
+        }
+        TypedStatement::If { condition, then_branch, else_branch, .. } => {
+            collect_closures_and_refs_from_expr(condition, closures, func_refs);
+            collect_closures_and_refs_from_stmt(then_branch, closures, func_refs);
+            if let Some(other) = else_branch {
+                collect_closures_and_refs_from_stmt(other, closures, func_refs);
+            }
+        }
+        TypedStatement::While { condition, body, .. } => {
+            collect_closures_and_refs_from_expr(condition, closures, func_refs);
+            collect_closures_and_refs_from_stmt(body, closures, func_refs);
+        }
+        TypedStatement::For { init, condition, update, body, .. } => {
+            collect_closures_and_refs_from_stmt(init, closures, func_refs);
+            collect_closures_and_refs_from_expr(condition, closures, func_refs);
+            collect_closures_and_refs_from_stmt(update, closures, func_refs);
+            collect_closures_and_refs_from_stmt(body, closures, func_refs);
+        }
+        TypedStatement::Return { value, .. } => {
+            if let Some(val) = value {
+                collect_closures_and_refs_from_expr(val, closures, func_refs);
+            }
+        }
+        TypedStatement::Match { expr, arms, .. } => {
+            collect_closures_and_refs_from_expr(expr, closures, func_refs);
+            for arm in arms {
+                collect_closures_and_refs_from_stmt(&arm.body, closures, func_refs);
+            }
+        }
+        TypedStatement::Function { body, .. } => {
+            collect_closures_and_refs_from_stmt(body, closures, func_refs);
+        }
+        TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } => {}
+    }
+}
+
+fn collect_closures_and_refs_from_expr(
+    expr: &TypedExpression,
+    closures: &mut Vec<ClosureDecl>,
+    func_refs: &mut HashSet<String>,
+) {
+    match &expr.kind {
+        TypedExpressionKind::Closure { id, params, return_type, captures, body } => {
+            closures.push(ClosureDecl {
+                id: *id,
+                params: params.clone(),
+                return_type: return_type.clone(),
+                captures: captures.clone(),
+                body: body.clone(),
+            });
+            collect_closures_and_refs_from_stmt(body, closures, func_refs);
+        }
+        TypedExpressionKind::FunctionRef(name) => {
+            func_refs.insert(name.clone());
+        }
+        TypedExpressionKind::IndirectCall { callee, arguments } => {
+            collect_closures_and_refs_from_expr(callee, closures, func_refs);
+            for arg in arguments {
+                collect_closures_and_refs_from_expr(arg, closures, func_refs);
+            }
+        }
+        TypedExpressionKind::Call { arguments, .. } => {
+            for arg in arguments {
+                collect_closures_and_refs_from_expr(arg, closures, func_refs);
+            }
+        }
+        TypedExpressionKind::Binary { left, right, .. } => {
+            collect_closures_and_refs_from_expr(left, closures, func_refs);
+            collect_closures_and_refs_from_expr(right, closures, func_refs);
+        }
+        TypedExpressionKind::Unary { operand, .. } => {
+            collect_closures_and_refs_from_expr(operand, closures, func_refs);
+        }
+        TypedExpressionKind::FieldAccess { object, .. } => {
+            collect_closures_and_refs_from_expr(object, closures, func_refs);
+        }
+        TypedExpressionKind::New { arguments, .. } => {
+            for arg in arguments {
+                collect_closures_and_refs_from_expr(arg, closures, func_refs);
+            }
+        }
+        TypedExpressionKind::EnumConstruct { arguments, .. } => {
+            for arg in arguments {
+                collect_closures_and_refs_from_expr(arg, closures, func_refs);
+            }
+        }
+        TypedExpressionKind::Try(inner) => {
+            collect_closures_and_refs_from_expr(inner, closures, func_refs);
+        }
+        TypedExpressionKind::String(_)
+        | TypedExpressionKind::Number(_)
+        | TypedExpressionKind::Identifier(_)
+        | TypedExpressionKind::Boolean(_)
+        | TypedExpressionKind::Null => {}
+    }
+}
 
 /// Compiles `program` (the same typed IR the JVM backend consumes) to a
 /// native object file, then links it into an executable using the
@@ -89,9 +218,18 @@ pub fn compile_to_native(program: TypedProgram, input_file: &str) -> Result<()> 
     let mut module = ObjectModule::new(obj_builder);
 
     {
+        let mut closures = Vec::new();
+        let mut func_refs = HashSet::new();
+        for stmt in &program.statements {
+            collect_closures_and_refs_from_stmt(stmt, &mut closures, &mut func_refs);
+        }
+
         let mut generator = NativeGenerator::new(&mut module)?;
         generator.declare_all_classes(&program)?;
         generator.declare_all_functions(&program)?;
+        generator.declare_all_closures_and_trampolines(&closures, &func_refs, &program)?;
+        generator.compile_trampolines(&func_refs, &program)?;
+        generator.compile_closures(&closures)?;
         generator.compile_all_functions(&program)?;
     }
 
@@ -199,13 +337,9 @@ fn expression_is_borrowed(expr: &TypedExpression) -> bool {
     }
 }
 
-fn require_supported_type(ty: &Type, location: &Location, context: &str) -> Result<()> {
+fn require_supported_type(ty: &Type, _location: &Location, _context: &str) -> Result<()> {
     match ty {
-        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result | Type::Enum(_) => Ok(()),
-        Type::Function { .. } => Err(anyhow!(
-            "line {}, column {}: the native backend doesn't support function values -- {}",
-            location.line, location.column, context
-        )),
+        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result | Type::Enum(_) | Type::Function { .. } => Ok(()),
     }
 }
 
@@ -1952,6 +2086,8 @@ struct NativeGenerator<'a> {
     module: &'a mut ObjectModule,
     functions: HashMap<String, FuncId>,
     function_param_types: HashMap<String, Vec<Type>>,
+    closure_funcs: HashMap<usize, FuncId>,
+    trampoline_funcs: HashMap<String, FuncId>,
     printf_id: FuncId,
     gcvt_id: FuncId,
     malloc_id: FuncId,
@@ -2032,6 +2168,8 @@ impl<'a> NativeGenerator<'a> {
             module,
             functions: HashMap::new(),
             function_param_types: HashMap::new(),
+            closure_funcs: HashMap::new(),
+            trampoline_funcs: HashMap::new(),
             printf_id,
             gcvt_id,
             malloc_id,
@@ -2152,6 +2290,191 @@ impl<'a> NativeGenerator<'a> {
         Ok(())
     }
 
+    fn declare_all_closures_and_trampolines(
+        &mut self,
+        closures: &[ClosureDecl],
+        func_refs: &HashSet<String>,
+        program: &TypedProgram,
+    ) -> Result<()> {
+        for c in closures {
+            let mut sig = self.module.make_signature();
+            // Env pointer:
+            sig.params.push(AbiParam::new(VALUE_TYPE));
+            for (_, p_ty) in &c.params {
+                sig.params.push(AbiParam::new(cranelift_type_for(p_ty)));
+            }
+            if !matches!(c.return_type, Type::Void) {
+                sig.returns.push(AbiParam::new(cranelift_type_for(&c.return_type)));
+            }
+            let func_name = format!("__roze_closure_{}", c.id);
+            let func_id = self.module.declare_function(&func_name, Linkage::Local, &sig)
+                .map_err(|e| anyhow!(e.to_string()))?;
+            self.closure_funcs.insert(c.id, func_id);
+        }
+
+        for name in func_refs {
+            let func_stmt = program.statements.iter().find_map(|s| {
+                if let TypedStatement::Function { name: fn_name, params, return_type, .. } = s {
+                    if fn_name == name {
+                        return Some((params.clone(), return_type.clone()));
+                    }
+                }
+                None
+            });
+            if let Some((params, return_type)) = func_stmt {
+                let mut sig = self.module.make_signature();
+                // Env pointer:
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                for p in &params {
+                    sig.params.push(AbiParam::new(cranelift_type_for(&p.type_)));
+                }
+                if !matches!(return_type, Type::Void) {
+                    sig.returns.push(AbiParam::new(cranelift_type_for(&return_type)));
+                }
+                let trampoline_name = format!("__roze_trampoline_{}", name);
+                let func_id = self.module.declare_function(&trampoline_name, Linkage::Local, &sig)
+                    .map_err(|e| anyhow!(e.to_string()))?;
+                self.trampoline_funcs.insert(name.clone(), func_id);
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_trampolines(&mut self, func_refs: &HashSet<String>, _program: &TypedProgram) -> Result<()> {
+        let mut ctx = self.module.make_context();
+        for name in func_refs {
+            if let Some(trampoline_id) = self.trampoline_funcs.get(name).copied() {
+                let top_func_id = *self.functions.get(name)
+                    .expect("top-level function must be registered in functions");
+                let sig = self.module.declarations().get_function_decl(trampoline_id).signature.clone();
+                ctx.func.signature = sig;
+                {
+                    let mut func_ctx = FunctionBuilderContext::new();
+                    let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+                    let entry = builder.create_block();
+                    builder.append_block_params_for_function_params(entry);
+                    builder.switch_to_block(entry);
+                    builder.seal_block(entry);
+
+                    let mut forward_args = Vec::new();
+                    for p in &builder.block_params(entry)[1..] {
+                        forward_args.push(*p);
+                    }
+                    let top_ref = self.module.declare_func_in_func(top_func_id, builder.func);
+                    let call = builder.ins().call(top_ref, &forward_args);
+                    let results = builder.inst_results(call).to_vec();
+                    if results.is_empty() {
+                        builder.ins().return_(&[]);
+                    } else {
+                        builder.ins().return_(&results);
+                    }
+                    builder.finalize();
+                }
+                self.module.define_function(trampoline_id, &mut ctx).map_err(|e| anyhow!(e.to_string()))?;
+                self.module.clear_context(&mut ctx);
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_closures(&mut self, closures: &[ClosureDecl]) -> Result<()> {
+        let mut ctx = self.module.make_context();
+        for c in closures {
+            let func_id = *self.closure_funcs.get(&c.id).unwrap();
+            let sig = self.module.declarations().get_function_decl(func_id).signature.clone();
+            ctx.func.signature = sig;
+            {
+                let mut func_ctx = FunctionBuilderContext::new();
+                let builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+                let mut fc = FunctionCompiler {
+                    module: self.module,
+                    builder,
+                    functions: &self.functions,
+                    function_param_types: &self.function_param_types,
+                    closure_funcs: &self.closure_funcs,
+                    trampoline_funcs: &self.trampoline_funcs,
+                    printf_id: self.printf_id,
+                    gcvt_id: self.gcvt_id,
+                    malloc_id: self.malloc_id,
+                    fmt_int: self.fmt_int,
+                    fmt_str: self.fmt_str,
+                    true_str: self.true_str,
+                    false_str: self.false_str,
+                    string_retain_id: self.strings.retain_id,
+                    string_release_id: self.strings.release_id,
+                    string_concat_id: self.strings.concat_id,
+                    string_eq_id: self.strings.eq_id,
+                    list_new_id: self.lists.new_id,
+                    list_retain_id: self.lists.retain_id,
+                    list_release_id: self.lists.release_id,
+                    list_push_id: self.lists.push_id,
+                    list_get_id: self.lists.get_id,
+                    list_set_id: self.lists.set_id,
+                    list_remove_id: self.lists.remove_id,
+                    list_length_id: self.lists.length_id,
+                    list_is_empty_id: self.lists.is_empty_id,
+                    map_new_id: self.maps.new_id,
+                    map_retain_id: self.maps.retain_id,
+                    map_release_id: self.maps.release_id,
+                    map_put_id: self.maps.put_id,
+                    map_get_id: self.maps.get_id,
+                    map_has_id: self.maps.has_id,
+                    map_remove_id: self.maps.remove_id,
+                    map_size_id: self.maps.size_id,
+                    map_is_empty_id: self.maps.is_empty_id,
+                    classes: &self.classes,
+                    class_retain_id: self.class_retain_id,
+                    literal_counter: &mut self.literal_counter,
+                    scopes: vec![HashMap::new()],
+                    next_var_index: 0,
+                    current_return_type: c.return_type.clone(),
+                };
+
+                let entry = fc.builder.create_block();
+                fc.builder.append_block_params_for_function_params(entry);
+                fc.builder.switch_to_block(entry);
+                fc.builder.seal_block(entry);
+
+                let env_val = fc.builder.block_params(entry)[0];
+
+                for (i, (cap_name, cap_ty)) in c.captures.iter().enumerate() {
+                    let offset = (16 + i * 8) as i32;
+                    let cap_val = fc.builder.ins().load(cranelift_type_for(cap_ty), MemFlags::new(), env_val, offset);
+                    let var = fc.declare_local(cap_name, cap_ty.clone());
+                    fc.builder.def_var(var, cap_val);
+                }
+
+                for (i, (p_name, p_ty)) in c.params.iter().enumerate() {
+                    let var = fc.declare_local(p_name, p_ty.clone());
+                    let val = fc.builder.block_params(entry)[1 + i];
+                    fc.builder.def_var(var, val);
+                }
+
+                let terminated = if let TypedStatement::Block { statements, .. } = c.body.as_ref() {
+                    let mut terminated = false;
+                    for s in statements {
+                        if terminated {
+                            break;
+                        }
+                        terminated = fc.compile_statement(s)?;
+                    }
+                    terminated
+                } else {
+                    fc.compile_statement(&c.body)?
+                };
+
+                if !terminated {
+                    fc.release_frame(0)?;
+                    fc.builder.ins().return_(&[]);
+                }
+                fc.builder.finalize();
+            }
+            self.module.define_function(func_id, &mut ctx).map_err(|e| anyhow!(e.to_string()))?;
+            self.module.clear_context(&mut ctx);
+        }
+        Ok(())
+    }
+
     fn compile_all_functions(&mut self, program: &TypedProgram) -> Result<()> {
         let mut ctx = self.module.make_context();
 
@@ -2171,6 +2494,8 @@ impl<'a> NativeGenerator<'a> {
                         builder,
                         functions: &self.functions,
                         function_param_types: &self.function_param_types,
+                        closure_funcs: &self.closure_funcs,
+                        trampoline_funcs: &self.trampoline_funcs,
                         printf_id: self.printf_id,
                         gcvt_id: self.gcvt_id,
                         malloc_id: self.malloc_id,
@@ -2303,6 +2628,8 @@ struct FunctionCompiler<'a, 'b> {
     builder: FunctionBuilder<'b>,
     functions: &'a HashMap<String, FuncId>,
     function_param_types: &'a HashMap<String, Vec<Type>>,
+    closure_funcs: &'a HashMap<usize, FuncId>,
+    trampoline_funcs: &'a HashMap<String, FuncId>,
     printf_id: FuncId,
     gcvt_id: FuncId,
     malloc_id: FuncId,
@@ -2446,6 +2773,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             Type::List => self.emit_list_retain(val),
             Type::Map => self.emit_map_retain(val),
             Type::Class(_) => self.emit_class_retain(val),
+            Type::Function { .. } => self.emit_class_retain(val),
             _ => Ok(()),
         }
     }
@@ -3137,6 +3465,81 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
                 Ok(ptr)
             }
+            TypedExpressionKind::Closure { id, captures, .. } => {
+                let total_size = 16 + captures.len() * 8;
+                let size_val = self.builder.ins().iconst(VALUE_TYPE, total_size as i64);
+                let malloc_ref = self.module.declare_func_in_func(self.malloc_id, self.builder.func);
+                let call = self.builder.ins().call(malloc_ref, &[size_val]);
+                let closure_ptr = self.builder.inst_results(call)[0];
+
+                let one = self.builder.ins().iconst(VALUE_TYPE, 1);
+                self.builder.ins().store(MemFlags::new(), one, closure_ptr, 0);
+
+                let closure_func_id = *self.closure_funcs.get(id)
+                    .ok_or_else(|| anyhow!("closure {} not declared", id))?;
+                let func_ref = self.module.declare_func_in_func(closure_func_id, self.builder.func);
+                let fn_ptr = self.builder.ins().func_addr(VALUE_TYPE, func_ref);
+                self.builder.ins().store(MemFlags::new(), fn_ptr, closure_ptr, 8);
+
+                for (i, (cap_name, cap_ty)) in captures.iter().enumerate() {
+                    let (var, _ty) = self.lookup_local(cap_name);
+                    let val = self.builder.use_var(var);
+                    self.retain_for_arc_type(cap_ty, val)?;
+                    let offset = (16 + i * 8) as i32;
+                    self.builder.ins().store(MemFlags::new(), val, closure_ptr, offset);
+                }
+
+                Ok(closure_ptr)
+            }
+            TypedExpressionKind::FunctionRef(name) => {
+                let total_size = 16;
+                let size_val = self.builder.ins().iconst(VALUE_TYPE, total_size as i64);
+                let malloc_ref = self.module.declare_func_in_func(self.malloc_id, self.builder.func);
+                let call = self.builder.ins().call(malloc_ref, &[size_val]);
+                let closure_ptr = self.builder.inst_results(call)[0];
+
+                let one = self.builder.ins().iconst(VALUE_TYPE, 1);
+                self.builder.ins().store(MemFlags::new(), one, closure_ptr, 0);
+
+                let trampoline_id = *self.trampoline_funcs.get(name)
+                    .ok_or_else(|| anyhow!("trampoline for {} not declared", name))?;
+                let func_ref = self.module.declare_func_in_func(trampoline_id, self.builder.func);
+                let fn_ptr = self.builder.ins().func_addr(VALUE_TYPE, func_ref);
+                self.builder.ins().store(MemFlags::new(), fn_ptr, closure_ptr, 8);
+
+                Ok(closure_ptr)
+            }
+            TypedExpressionKind::IndirectCall { callee, arguments } => {
+                let closure_ptr = self.compile_expression(callee)?;
+                let fn_ptr = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), closure_ptr, 8);
+
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                for arg in arguments {
+                    sig.params.push(AbiParam::new(cranelift_type_for(&arg.type_)));
+                }
+                if !matches!(expr.type_, Type::Void) {
+                    sig.returns.push(AbiParam::new(cranelift_type_for(&expr.type_)));
+                }
+
+                let sig_ref = self.builder.import_signature(sig);
+
+                let mut call_args = Vec::with_capacity(arguments.len() + 1);
+                call_args.push(closure_ptr);
+                for arg in arguments {
+                    let arg_val = self.compile_expression(arg)?;
+                    self.retain_if_aliasing(arg, arg_val)?;
+                    call_args.push(arg_val);
+                }
+
+                let call = self.builder.ins().call_indirect(sig_ref, fn_ptr, &call_args);
+                let results = self.builder.inst_results(call);
+                if results.is_empty() {
+                    Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
+                } else {
+                    Ok(results[0])
+                }
+            }
         }
     }
 
@@ -3443,6 +3846,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             Type::Float => {
                 let val = self.compile_expression(arg)?;
                 self.emit_printf_float(val)
+            }
+            Type::Function { .. } => {
+                let _val = self.compile_expression(arg)?;
+                let fn_str = self.compile_string_literal("<function>")?;
+                let result = self.emit_printf(self.fmt_str, fn_str)?;
+                self.emit_string_release(fn_str)?;
+                Ok(result)
             }
             other => Err(anyhow!("println of a {} isn't supported on the native backend yet", other)),
         }

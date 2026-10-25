@@ -1114,6 +1114,54 @@ impl Parser {
     }
 
     fn parse_type_name(&mut self) -> Result<String> {
+        if self.check(&Token::Func) {
+            self.advance(); // Skip 'func'
+            if !self.check(&Token::LeftParen) {
+                return Err(self.error("Expected '(' after 'func' in function type"));
+            }
+            self.advance(); // Skip '('
+
+            let mut param_types = Vec::new();
+            while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::RightParen) {
+                    break;
+                }
+                param_types.push(self.parse_type_name()?);
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+
+            if !self.check(&Token::RightParen) {
+                return Err(self.error("Expected ')' in function type"));
+            }
+            self.advance(); // Skip ')'
+
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+
+            let ret_type = if self.check(&Token::Arrow) {
+                self.advance();
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                self.parse_type_name()?
+            } else {
+                "void".to_string()
+            };
+
+            return Ok(format!("func({}) -> {}", param_types.join(", "), ret_type));
+        }
+
         let base_name = match &self.current().token {
             Token::Identifier(t) => {
                 let name = t.clone();
@@ -1180,6 +1228,35 @@ impl Parser {
                 self.advance(); // Skip '?'
                 expr = Expression::Try {
                     expr: Box::new(expr),
+                    location,
+                };
+            } else if self.check(&Token::LeftParen) {
+                let location = Location::new(self.current().line, self.current().column);
+                self.advance(); // Skip '('
+                let mut args = Vec::new();
+                while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    if self.check(&Token::RightParen) {
+                        break;
+                    }
+                    args.push(self.parse_expression()?);
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    if !self.check(&Token::Comma) {
+                        break;
+                    }
+                    self.advance();
+                }
+                if !self.check(&Token::RightParen) {
+                    return Err(self.error("Expected ')' after function call arguments"));
+                }
+                self.advance(); // Skip ')'
+                expr = Expression::Call {
+                    function: Box::new(expr),
+                    arguments: args,
                     location,
                 };
             } else {
@@ -1381,6 +1458,9 @@ impl Parser {
                 self.advance();
                 Ok(expr)
             }
+            Token::Or | Token::Pipe => {
+                self.parse_closure(location)
+            }
             Token::Error => {
                 Err(RozeError::lexer("Unrecognized character", current_token.line, current_token.column).into())
             }
@@ -1390,6 +1470,96 @@ impl Parser {
                     .into())
             }
         }
+    }
+
+    fn parse_closure(&mut self, location: Location) -> Result<Expression> {
+        let mut params = Vec::new();
+
+        if self.check(&Token::Or) {
+            // Empty parameter list: ||
+            self.advance(); // Skip '||'
+        } else if self.check(&Token::Pipe) {
+            self.advance(); // Skip opening '|'
+
+            while !self.check(&Token::Pipe) && !self.check(&Token::EOF) {
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::Pipe) {
+                    break;
+                }
+
+                let param_name = match &self.current().token {
+                    Token::Identifier(name) => name.clone(),
+                    other => return Err(self.error(format!("Expected parameter name in closure, found {}", other))),
+                };
+                self.advance();
+
+                let param_type = if self.check(&Token::Colon) {
+                    self.advance(); // Skip ':'
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    Some(self.parse_type_name()?)
+                } else {
+                    None
+                };
+
+                params.push(FunctionParam {
+                    name: param_name,
+                    type_name: param_type,
+                });
+
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+
+            if !self.check(&Token::Pipe) {
+                return Err(self.error("Expected '|' to close closure parameters"));
+            }
+            self.advance(); // Skip closing '|'
+        }
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let return_type = if self.check(&Token::Arrow) {
+            self.advance(); // Skip '->'
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            Some(self.parse_type_name()?)
+        } else {
+            None
+        };
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let body = if self.check(&Token::LeftBrace) {
+            Box::new(self.parse_block()?)
+        } else {
+            let expr = self.parse_expression()?;
+            Box::new(Statement::Return {
+                value: Some(Box::new(expr)),
+                location: location.clone(),
+            })
+        };
+
+        Ok(Expression::Closure {
+            params,
+            return_type,
+            body,
+            location,
+        })
     }
 }
 

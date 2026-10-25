@@ -1624,3 +1624,66 @@ func main() {
     assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
     assert_eq!(program_output(&stdout).trim_end(), "300\n20\n0");
 }
+
+#[test]
+fn native_closures_and_first_class_functions() {
+    let source = "\
+func square(x: int) -> int {
+    return x * x;
+}
+
+func apply_fn(x: int, f: func(int) -> int) -> int {
+    return f(x);
+}
+
+func make_adder(base: int) -> func(int) -> int {
+    return |x: int| x + base;
+}
+
+func main() {
+    let add = |a: int, b: int| -> int {
+        return a + b;
+    };
+    println(add(3, 4));
+
+    let double = |x: int| x * 2;
+    println(double(21));
+
+    let answer = || 42;
+    println(answer());
+
+    let factor = 10;
+    let multiply_by_factor = |x: int| x * factor;
+    println(multiply_by_factor(5));
+
+    let res1 = apply_fn(7, |n: int| n + 3);
+    println(res1);
+
+    let res2 = apply_fn(9, square);
+    println(res2);
+
+    let add100 = make_adder(100);
+    println(add100(25));
+    let add50 = make_adder(50);
+    println(add50(25));
+
+    let logger = |msg: string| {
+        println(msg);
+    };
+    logger(\"native closures working!\");
+}
+";
+    let (stdout, stderr, ok) = run_native_source("closures_native", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+7
+42
+42
+50
+10
+81
+125
+75
+native closures working!";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}

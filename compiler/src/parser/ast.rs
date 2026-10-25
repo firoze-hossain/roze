@@ -221,6 +221,13 @@ pub enum Expression {
         arguments: Vec<Expression>,
         location: Location,
     },
+    /// `|param1: Type, ...| -> ReturnType { ... }` or `|| { ... }`
+    Closure {
+        params: Vec<FunctionParam>,
+        return_type: Option<String>,
+        body: Box<Statement>,
+        location: Location,
+    },
 }
 
 #[derive(Debug, Clone)]

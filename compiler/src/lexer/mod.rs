@@ -238,7 +238,7 @@ impl<'a> Lexer<'a> {
                         self.advance();
                         Token::Or
                     } else {
-                        Token::Error
+                        Token::Pipe
                     }
                 }
                 '"' => {

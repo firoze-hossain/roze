@@ -631,3 +631,20 @@ got something else
 got something else";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn closures_and_first_class_functions() {
+    let (stdout, stderr, ok) = run_fixture("closures.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+7
+42
+42
+50
+10
+81
+125
+75
+closures working smoothly!";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}

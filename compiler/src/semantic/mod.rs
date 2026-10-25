@@ -89,7 +89,7 @@ impl Type {
             Type::Result => "RozeResult".to_string(),
             Type::Class(name) => name.clone(),
             Type::Enum(name) => name.clone(),
-            Type::Function { .. } => "Object".to_string(),
+            Type::Function { .. } => "RozeFn".to_string(),
         }
     }
 }
@@ -125,10 +125,28 @@ impl std::fmt::Display for Type {
 /// conversion instead (not implemented yet -- there's no cast syntax
 /// in Roze at all currently).
 fn types_compatible(expected: &Type, actual: &Type) -> bool {
-    expected == actual
-        || matches!(expected, Type::Unknown)
-        || matches!(actual, Type::Unknown)
-        || (matches!(expected, Type::Float) && matches!(actual, Type::Int))
+    if expected == actual {
+        return true;
+    }
+    match (expected, actual) {
+        (Type::Unknown, _) | (_, Type::Unknown) => true,
+        (Type::Float, Type::Int) => true,
+        (
+            Type::Function { params: p1, return_type: r1 },
+            Type::Function { params: p2, return_type: r2 },
+        ) => {
+            if p1.len() != p2.len() {
+                return false;
+            }
+            for (a1, a2) in p1.iter().zip(p2.iter()) {
+                if !types_compatible(a1, a2) {
+                    return false;
+                }
+            }
+            types_compatible(r1, r2)
+        }
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -191,6 +209,15 @@ impl SymbolTable {
         for frame in self.scopes.iter().rev() {
             if let Some(sym) = frame.get(name) {
                 return Some(sym);
+            }
+        }
+        None
+    }
+
+    pub fn lookup_with_depth(&self, name: &str) -> Option<(&Symbol, usize)> {
+        for (depth, frame) in self.scopes.iter().enumerate().rev() {
+            if let Some(sym) = frame.get(name) {
+                return Some((sym, depth));
             }
         }
         None
@@ -349,6 +376,7 @@ pub struct TypeChecker {
     /// Roze level too instead of letting a mismatch surface later as a
     /// confusing javac error.
     pub in_main: bool,
+    pub closure_counter: usize,
     pub errors: Vec<String>,
 }
 
@@ -389,6 +417,7 @@ impl TypeChecker {
             current_function: None,
             current_return_type: Type::Void,
             in_main: false,
+            closure_counter: 0,
             errors: Vec::new(),
         }
     }
@@ -397,6 +426,65 @@ impl TypeChecker {
     /// first (so an enum named e.g. `Color` resolves to `Type::Enum("Color")`,
     /// and a class named `Point` resolves to `Type::Class("Point")`).
     fn resolve_type_name(&self, name: &str) -> Type {
+        let trimmed = name.trim();
+        if trimmed.starts_with("func(") || trimmed.starts_with("fn(") {
+            let without_prefix = if trimmed.starts_with("func(") {
+                &trimmed[5..]
+            } else {
+                &trimmed[3..]
+            };
+            let mut depth = 0;
+            let mut close_idx = None;
+            for (i, c) in without_prefix.char_indices() {
+                if c == '(' || c == '<' {
+                    depth += 1;
+                } else if c == ')' || c == '>' {
+                    if depth == 0 {
+                        close_idx = Some(i);
+                        break;
+                    }
+                    depth -= 1;
+                }
+            }
+
+            if let Some(paren_close) = close_idx {
+                let params_str = &without_prefix[..paren_close];
+                let rest = without_prefix[paren_close + 1..].trim();
+
+                let mut param_strs = Vec::new();
+                let mut p_depth = 0;
+                let mut start = 0;
+                for (i, c) in params_str.char_indices() {
+                    if c == '(' || c == '<' {
+                        p_depth += 1;
+                    } else if c == ')' || c == '>' {
+                        p_depth -= 1;
+                    } else if c == ',' && p_depth == 0 {
+                        param_strs.push(params_str[start..i].trim());
+                        start = i + 1;
+                    }
+                }
+                if start < params_str.len() {
+                    let last = params_str[start..].trim();
+                    if !last.is_empty() {
+                        param_strs.push(last);
+                    }
+                }
+
+                let params = param_strs.into_iter()
+                    .map(|s| self.resolve_type_name(s))
+                    .collect();
+
+                let ret_type = if rest.starts_with("->") {
+                    Box::new(self.resolve_type_name(rest[2..].trim()))
+                } else {
+                    Box::new(Type::Void)
+                };
+
+                return Type::Function { params, return_type: ret_type };
+            }
+        }
+
         if self.enums.contains_key(name) {
             Type::Enum(name.to_string())
         } else if self.classes.contains_key(name) {
@@ -895,6 +983,16 @@ impl TypeChecker {
                         location.line,
                         location.column,
                     ).with_length(name.chars().count()).into())
+                } else if let Some(sig) = self.functions.get(name) {
+                    let fn_type = Type::Function {
+                        params: sig.params.clone(),
+                        return_type: Box::new(sig.return_type.clone()),
+                    };
+                    Ok(TypedExpression {
+                        kind: TypedExpressionKind::FunctionRef(name.clone()),
+                        type_: fn_type,
+                        location: location.clone(),
+                    })
                 } else {
                     Err(RozeError::type_error(
                         format!("Undefined variable '{}'", name),
@@ -971,6 +1069,63 @@ impl TypeChecker {
                 }
 
                 if let Expression::Identifier { name, .. } = function.as_ref() {
+                    if let Some(symbol) = self.symbol_table.lookup(name) {
+                        let sym_type = symbol.type_.clone();
+                        match &sym_type {
+                            Type::Function { params, return_type } => {
+                                if typed_arguments.len() != params.len() {
+                                    return Err(RozeError::type_error(
+                                        format!("Function expects {} argument(s), but {} were given", params.len(), typed_arguments.len()),
+                                        location.line,
+                                        location.column,
+                                    ).into());
+                                }
+                                for (arg, p_ty) in typed_arguments.iter().zip(params.iter()) {
+                                    if !types_compatible(p_ty, &arg.type_) {
+                                        return Err(RozeError::type_error(
+                                            format!("Expected argument of type {}, got {}", p_ty, arg.type_),
+                                            location.line,
+                                            location.column,
+                                        ).into());
+                                    }
+                                }
+                                return Ok(TypedExpression {
+                                    kind: TypedExpressionKind::IndirectCall {
+                                        callee: Box::new(TypedExpression {
+                                            kind: TypedExpressionKind::Identifier(name.clone()),
+                                            type_: sym_type.clone(),
+                                            location: location.clone(),
+                                        }),
+                                        arguments: typed_arguments,
+                                    },
+                                    type_: (**return_type).clone(),
+                                    location: location.clone(),
+                                });
+                            }
+                            Type::Unknown => {
+                                return Ok(TypedExpression {
+                                    kind: TypedExpressionKind::IndirectCall {
+                                        callee: Box::new(TypedExpression {
+                                            kind: TypedExpressionKind::Identifier(name.clone()),
+                                            type_: sym_type,
+                                            location: location.clone(),
+                                        }),
+                                        arguments: typed_arguments,
+                                    },
+                                    type_: Type::Unknown,
+                                    location: location.clone(),
+                                });
+                            }
+                            other => {
+                                return Err(RozeError::type_error(
+                                    format!("Cannot call non-function variable '{}' of type {}", name, other),
+                                    location.line,
+                                    location.column,
+                                ).into());
+                            }
+                        }
+                    }
+
                     let return_type = if name == "println" {
                         Type::Void
                     } else if name == "abs" && typed_arguments.len() == 1 {
@@ -1099,16 +1254,49 @@ impl TypeChecker {
                         location: location.clone(),
                     })
                 } else {
-                    // Roze has no first-class function values, so the
-                    // parser never actually produces a Call whose
-                    // `function` isn't a bare Identifier -- kept as a
-                    // graceful fallback rather than a panic in case that
-                    // changes.
-                    Ok(TypedExpression {
-                        kind: TypedExpressionKind::Call { function: String::new(), arguments: typed_arguments },
-                        type_: Type::Unknown,
-                        location: location.clone(),
-                    })
+                    let typed_callee = self.check_expression(function)?;
+                    let callee_ty = typed_callee.type_.clone();
+                    match &callee_ty {
+                        Type::Function { params, return_type } => {
+                            if typed_arguments.len() != params.len() {
+                                return Err(RozeError::type_error(
+                                    format!("Function expects {} argument(s), but {} were given", params.len(), typed_arguments.len()),
+                                    location.line,
+                                    location.column,
+                                ).into());
+                            }
+                            for (arg, p_ty) in typed_arguments.iter().zip(params.iter()) {
+                                if !types_compatible(p_ty, &arg.type_) {
+                                    return Err(RozeError::type_error(
+                                        format!("Expected argument of type {}, got {}", p_ty, arg.type_),
+                                        location.line,
+                                        location.column,
+                                    ).into());
+                                }
+                            }
+                            Ok(TypedExpression {
+                                kind: TypedExpressionKind::IndirectCall {
+                                    callee: Box::new(typed_callee),
+                                    arguments: typed_arguments,
+                                },
+                                type_: (**return_type).clone(),
+                                location: location.clone(),
+                            })
+                        }
+                        Type::Unknown => Ok(TypedExpression {
+                            kind: TypedExpressionKind::IndirectCall {
+                                callee: Box::new(typed_callee),
+                                arguments: typed_arguments,
+                            },
+                            type_: Type::Unknown,
+                            location: location.clone(),
+                        }),
+                        other => Err(RozeError::type_error(
+                            format!("Cannot call non-function expression of type {}", other),
+                            location.line,
+                            location.column,
+                        ).into()),
+                    }
                 }
             }
             Expression::New { class_name, arguments, location } => {
@@ -1302,7 +1490,194 @@ impl TypeChecker {
                     location: location.clone(),
                 })
             }
+            Expression::Closure { params, return_type, body, location } => {
+                let mut typed_params = Vec::with_capacity(params.len());
+                let mut param_types = Vec::with_capacity(params.len());
+                for p in params {
+                    let ty = p.type_name.as_ref()
+                        .map(|t| self.resolve_type_name(t))
+                        .unwrap_or(Type::Unknown);
+                    typed_params.push((p.name.clone(), ty.clone()));
+                    param_types.push(ty);
+                }
+
+                let declared_ret = return_type.as_ref()
+                    .map(|t| self.resolve_type_name(t))
+                    .unwrap_or(Type::Unknown);
+
+                let closure_scope_depth = self.symbol_table.scopes.len();
+                self.symbol_table.push_scope();
+
+                for (p_name, p_ty) in &typed_params {
+                    self.symbol_table.define(p_name, p_ty.clone(), location.line, location.column)?;
+                }
+
+                let prev_ret = self.current_return_type.clone();
+                self.current_return_type = declared_ret.clone();
+
+                let typed_body = self.check_statement(body)?;
+                let typed_body = typed_body.unwrap_or_else(|| TypedStatement::Block {
+                    statements: vec![],
+                    location: location.clone(),
+                });
+
+                let mut referenced = Vec::new();
+                collect_referenced_identifiers(&typed_body, &mut referenced);
+
+                let mut captures: Vec<(String, Type)> = Vec::new();
+                for id in referenced {
+                    if let Some((sym, depth)) = self.symbol_table.lookup_with_depth(&id) {
+                        if depth < closure_scope_depth && !captures.iter().any(|(c, _)| c == &id) {
+                            captures.push((id, sym.type_.clone()));
+                        }
+                    }
+                }
+
+                self.symbol_table.pop_scope();
+                self.current_return_type = prev_ret;
+
+                let final_ret = if declared_ret != Type::Unknown {
+                    declared_ret
+                } else {
+                    let mut inferred = None;
+                    collect_return_types(&typed_body, &mut inferred);
+                    inferred.unwrap_or(Type::Void)
+                };
+
+                let fn_type = Type::Function {
+                    params: param_types,
+                    return_type: Box::new(final_ret.clone()),
+                };
+
+                let closure_id = self.closure_counter;
+                self.closure_counter += 1;
+
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::Closure {
+                        id: closure_id,
+                        params: typed_params,
+                        return_type: final_ret,
+                        captures,
+                        body: Box::new(typed_body),
+                    },
+                    type_: fn_type,
+                    location: location.clone(),
+                })
+            }
         }
+    }
+}
+
+fn collect_referenced_identifiers(stmt: &TypedStatement, idents: &mut Vec<String>) {
+    match stmt {
+        TypedStatement::Let { value, .. } => collect_from_expr(value, idents),
+        TypedStatement::Assign { name, value, .. } => {
+            idents.push(name.clone());
+            collect_from_expr(value, idents);
+        }
+        TypedStatement::Expression { expr, .. } => collect_from_expr(expr, idents),
+        TypedStatement::Return { value, .. } => {
+            if let Some(val) = value {
+                collect_from_expr(val, idents);
+            }
+        }
+        TypedStatement::Block { statements, .. } => {
+            for s in statements {
+                collect_referenced_identifiers(s, idents);
+            }
+        }
+        TypedStatement::If { condition, then_branch, else_branch, .. } => {
+            collect_from_expr(condition, idents);
+            collect_referenced_identifiers(then_branch, idents);
+            if let Some(eb) = else_branch {
+                collect_referenced_identifiers(eb, idents);
+            }
+        }
+        TypedStatement::While { condition, body, .. } => {
+            collect_from_expr(condition, idents);
+            collect_referenced_identifiers(body, idents);
+        }
+        TypedStatement::For { init, condition, update, body, .. } => {
+            collect_referenced_identifiers(init, idents);
+            collect_from_expr(condition, idents);
+            collect_referenced_identifiers(update, idents);
+            collect_referenced_identifiers(body, idents);
+        }
+        TypedStatement::FieldAssign { object, value, .. } => {
+            collect_from_expr(object, idents);
+            collect_from_expr(value, idents);
+        }
+        TypedStatement::Match { expr, arms, .. } => {
+            collect_from_expr(expr, idents);
+            for arm in arms {
+                collect_referenced_identifiers(&arm.body, idents);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_from_expr(expr: &TypedExpression, idents: &mut Vec<String>) {
+    match &expr.kind {
+        TypedExpressionKind::Identifier(name) => idents.push(name.clone()),
+        TypedExpressionKind::Binary { left, right, .. } => {
+            collect_from_expr(left, idents);
+            collect_from_expr(right, idents);
+        }
+        TypedExpressionKind::Unary { operand, .. } => collect_from_expr(operand, idents),
+        TypedExpressionKind::Call { arguments, .. } => {
+            for a in arguments {
+                collect_from_expr(a, idents);
+            }
+        }
+        TypedExpressionKind::IndirectCall { callee, arguments } => {
+            collect_from_expr(callee, idents);
+            for a in arguments {
+                collect_from_expr(a, idents);
+            }
+        }
+        TypedExpressionKind::New { arguments, .. } => {
+            for a in arguments {
+                collect_from_expr(a, idents);
+            }
+        }
+        TypedExpressionKind::FieldAccess { object, .. } => collect_from_expr(object, idents),
+        TypedExpressionKind::Try(inner) => collect_from_expr(inner, idents),
+        TypedExpressionKind::EnumConstruct { arguments, .. } => {
+            for a in arguments {
+                collect_from_expr(a, idents);
+            }
+        }
+        TypedExpressionKind::Closure { captures, .. } => {
+            for (cap, _) in captures {
+                idents.push(cap.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_return_types(stmt: &TypedStatement, inferred: &mut Option<Type>) {
+    match stmt {
+        TypedStatement::Return { value, .. } => {
+            if let Some(val) = value {
+                *inferred = Some(val.type_.clone());
+            } else {
+                *inferred = Some(Type::Void);
+            }
+        }
+        TypedStatement::Block { statements, .. } => {
+            for s in statements {
+                collect_return_types(s, inferred);
+            }
+        }
+        TypedStatement::If { then_branch, else_branch, .. } => {
+            collect_return_types(then_branch, inferred);
+            if let Some(eb) = else_branch {
+                collect_return_types(eb, inferred);
+            }
+        }
+        _ => {}
     }
 }
 

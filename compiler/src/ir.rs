@@ -212,4 +212,19 @@ pub enum TypedExpressionKind {
         tag: usize,
         arguments: Vec<TypedExpression>,
     },
+    /// `|param1: Type, ...| -> ReturnType { ... }`
+    Closure {
+        id: usize,
+        params: Vec<(String, Type)>,
+        return_type: Type,
+        captures: Vec<(String, Type)>,
+        body: Box<TypedStatement>,
+    },
+    /// A top-level function referenced as a first-class value
+    FunctionRef(String),
+    /// Calling a first-class function value: `callee(arg1, arg2)`
+    IndirectCall {
+        callee: Box<TypedExpression>,
+        arguments: Vec<TypedExpression>,
+    },
 }

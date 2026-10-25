@@ -1,0 +1,54 @@
+// closures.roze: Tests closures and first-class functions (CORE-03)
+
+func square(x: int) -> int {
+    return x * x;
+}
+
+func apply_fn(x: int, f: func(int) -> int) -> int {
+    return f(x);
+}
+
+func make_adder(base: int) -> func(int) -> int {
+    return |x: int| x + base;
+}
+
+func main() {
+    // 1. Basic closure with block body
+    let add = |a: int, b: int| -> int {
+        return a + b;
+    };
+    println(add(3, 4));
+
+    // 2. Concise closure
+    let double = |x: int| x * 2;
+    println(double(21));
+
+    // 3. Zero-arg closure
+    let answer = || 42;
+    println(answer());
+
+    // 4. Capturing outer variables
+    let factor = 10;
+    let multiply_by_factor = |x: int| x * factor;
+    println(multiply_by_factor(5));
+
+    // 5. Higher-order function with closure
+    let res1 = apply_fn(7, |n: int| n + 3);
+    println(res1);
+
+    // 6. Passing top-level function as value
+    let res2 = apply_fn(9, square);
+    println(res2);
+
+    // 7. Returning closure from function
+    let add100 = make_adder(100);
+    println(add100(25));
+    let add50 = make_adder(50);
+    println(add50(25));
+
+    // 8. Void closure
+    let logger = |msg: string| {
+        println(msg);
+    };
+    logger("closures working smoothly!");
+}

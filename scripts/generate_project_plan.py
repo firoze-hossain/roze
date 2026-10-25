@@ -190,13 +190,13 @@ s1_rows = [
         ("CORE-03", 8), ("Core / Basic", 3), ("Step 3", 8), "Frontend, JVM & Native", "Closures & First-Class Functions",
         "Enable passing functions as arguments. Strictly required for web request routing, callbacks, event handling, list map/filter, and concurrency task dispatch.",
         "Syntax 'let f = |x: int| -> int { x + 1 };'; function types 'func(int) -> int'; closure environment capture struct; JVM java.util.function emission; Native function pointer + env pointer.",
-        "Web Framework (Routing/Middleware), GUI, Games", "4 - 6 Days", ("Ready to Start", 7)
+        "Web Framework (Routing/Middleware), GUI, Games", "Completed", ("Completed", 6)
     ],
     [
         ("CORE-04", 8), ("Core / Basic", 3), ("Step 4", 8), "Type Checker & Native Codegen", "Generics (Parametric Polymorphism)",
         "Provide type-safe generic data structures (List<T>, Map<K, V>). Eliminates Object boxing on JVM and unlocks strings/structs inside native lists.",
         "Syntax 'class Container<T> { val: T }' and generic functions 'func id<T>(x: T) -> T'; Native monomorphization (specialize code per type); JVM type parameters with erasure.",
-        "All Domains, Core Stdlib, Self-Hosting", "1 - 2 Weeks", ("Planned", 8)
+        "All Domains, Core Stdlib, Self-Hosting", "1 - 2 Weeks", ("Ready to Start", 7)
     ],
     [
         ("CORE-05", 8), ("Core / Basic", 3), ("Step 5", 8), "Frontend & Semantic Checker", "Traits / Interfaces & Dynamic Dispatch",

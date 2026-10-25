@@ -216,13 +216,13 @@ s1_rows = [
         ("MED-02", 8), ("Medium", 4), ("Step 7", 8), "Native Runtime & Codegen", "Thread-Safe Atomic ARC",
         "Make memory management thread-safe. Prevents race conditions and use-after-free corruption when data is accessed across concurrent threads.",
         "Upgrade ARC retain and release helper functions in Cranelift from plain increment/decrement to atomic operations (lock xadd / Cranelift atomic load/store/rmw).",
-        "Web Servers, Multi-threaded Games, Systems", "2 - 3 Days", ("Ready to Start", 7)
+        "Web Servers, Multi-threaded Games, Systems", "Completed", ("Completed", 6)
     ],
     [
         ("MED-03", 8), ("Medium", 4), ("Step 8", 8), "Runtime & Standard Library", "Native Concurrency: Threads & Channels",
         "Allow spawning background worker threads and passing messages safely between threads without data races.",
         "'thread_spawn(func)' backed by OS threads (pthread / Windows CreateThread) or JVM virtual threads; channel primitives ('channel_new()', 'send()', 'recv()') with ring buffer and lock.",
-        "Enterprise Servers, Game Engines, Systems", "4 - 5 Days", ("Planned", 8)
+        "Enterprise Servers, Game Engines, Systems", "4 - 5 Days", ("Ready to Start", 7)
     ],
     [
         ("MED-04", 8), ("Medium", 4), ("Step 9", 8), "Standard Library (Web & Net)", "Concurrent Async HTTP Server & Router",
@@ -301,9 +301,9 @@ s2_rows = [
         "Spring-Boot-level servers, REST/gRPC APIs, Cloud services, banking & enterprise backends",
         "JVM HTTP accept loop, JSON, JDBC SQL, Result<T,E> & Option<T> Safe I/O",
         "Multi-threaded concurrency, closures/routing, generics, connection pooling",
-        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), CORE-05 (Done), MED-02, MED-04, ADV-03",
+        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), CORE-05 (Done), MED-02 (Done), MED-04, ADV-03",
         "Java (Spring Boot), Go (Gin/Fiber), C# (.NET)",
-        ("55% - Traits & Generics Ready", 6)
+        ("60% - Atomic Concurrency Ready", 6)
     ],
     [
         "Operating Systems & Kernels",
@@ -328,9 +328,9 @@ s2_rows = [
         "2D & 3D game engines, indie games, physics simulation, cross-platform game runtime",
         "ARC-managed classes and lists, IEEE-754 f64 math, fast native execution",
         "FFI to Raylib/SDL3/Vulkan, atomic multi-threaded rendering/audio threads, generics for ECS engines",
-        "CORE-04 (Done), MED-01 (Done), MED-02, ADV-04",
+        "CORE-04 (Done), MED-01 (Done), MED-02 (Done), ADV-04",
         "C++, C# (Unity), Rust (Bevy), C",
-        ("45% - FFI & Generics Monomorphized", 4)
+        ("50% - Atomic ARC & FFI Ready", 6)
     ],
     [
         "AI / Machine Learning",

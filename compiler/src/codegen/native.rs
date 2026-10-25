@@ -46,11 +46,12 @@ use crate::parser::ast::{BinaryOperator, Location, UnaryOperator};
 use crate::semantic::Type;
 use anyhow::{anyhow, Result};
 use cranelift::prelude::*;
-use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
+use cranelift_module::{DataDescription, DataId, FuncId, FuncOrDataId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::process::Command;
+use cranelift::codegen::ir::AtomicRmwOp;
 
 /// Every Roze value on the native backend is represented as a 64-bit
 /// integer: a real integer for `int`, 0/1 for `bool`, and a pointer
@@ -275,7 +276,7 @@ fn link_object_file(obj_path: &str, output_name: &str, extra_libs: &[String]) ->
         let mut cmd = Command::new(candidate);
         cmd.arg(obj_path).arg("-o").arg(output_name);
         for lib in extra_libs {
-            if lib.starts_with("-") || lib.ends_with(".a") || lib.ends_with(".so") || lib.ends_with(".dylib") || lib.ends_with(".lib") {
+            if lib.starts_with("-") || lib.ends_with(".a") || lib.ends_with(".so") || lib.ends_with(".dylib") || lib.ends_with(".lib") || lib.ends_with(".o") || lib.ends_with(".c") {
                 cmd.arg(lib);
             } else {
                 cmd.arg(format!("-l{}", lib));
@@ -400,6 +401,8 @@ struct StringRuntime {
     concat_id: FuncId,
     eq_id: FuncId,
     from_c_str_id: FuncId,
+    #[allow(dead_code)]
+    refcount_id: FuncId,
 }
 
 fn declare_string_runtime(module: &mut ObjectModule) -> Result<StringRuntime> {
@@ -437,8 +440,52 @@ fn declare_string_runtime(module: &mut ObjectModule) -> Result<StringRuntime> {
     let concat_id = build_string_concat(module, &mut ctx, malloc_id, memcpy_id)?;
     let eq_id = build_string_eq(module, &mut ctx, memcmp_id)?;
     let from_c_str_id = build_string_from_c_str(module, &mut ctx, malloc_id, memcpy_id, strlen_id)?;
+    let refcount_id = build_string_refcount(module, &mut ctx)?;
 
-    Ok(StringRuntime { retain_id, release_id, concat_id, eq_id, from_c_str_id })
+    Ok(StringRuntime { retain_id, release_id, concat_id, eq_id, from_c_str_id, refcount_id })
+}
+
+/// `__roze_string_refcount(ptr: i64) -> i64`: atomically/safely returns the refcount
+/// of the string, or 0 if ptr is null.
+fn build_string_refcount(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_string_refcount", Linkage::Export, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        let valid_block = builder.create_block();
+        let done_block = builder.create_block();
+        builder.append_block_param(done_block, VALUE_TYPE);
+
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let is_null = builder.ins().icmp(IntCC::Equal, ptr, zero);
+        builder.ins().brif(is_null, done_block, &[zero], valid_block, &[]);
+
+        builder.switch_to_block(valid_block);
+        builder.seal_block(valid_block);
+        let ref_addr = builder.ins().iadd_imm(ptr, -STRING_HEADER_SIZE);
+        let count = builder.ins().load(VALUE_TYPE, MemFlags::new(), ref_addr, 0);
+        builder.ins().jump(done_block, &[count]);
+
+        builder.switch_to_block(done_block);
+        builder.seal_block(done_block);
+        let result = builder.block_params(done_block)[0];
+        builder.ins().return_(&[result]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
 }
 
 /// `__roze_string_retain(ptr: i64) -> void`: increments the refcount,
@@ -446,7 +493,7 @@ fn declare_string_runtime(module: &mut ObjectModule) -> Result<StringRuntime> {
 fn build_string_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(VALUE_TYPE));
-    let func_id = module.declare_function("__roze_string_retain", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+    let func_id = module.declare_function("__roze_string_retain", Linkage::Export, &sig).map_err(|e| anyhow!(e.to_string()))?;
 
     ctx.func.signature = sig;
     {
@@ -468,8 +515,9 @@ fn build_string_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::
 
         builder.switch_to_block(retain_block);
         builder.seal_block(retain_block);
-        let incremented = builder.ins().iadd_imm(refcount, 1);
-        builder.ins().store(MemFlags::new(), incremented, ptr, -(STRING_HEADER_SIZE as i32));
+        let ref_addr = builder.ins().iadd_imm(ptr, -STRING_HEADER_SIZE);
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        builder.ins().atomic_rmw(VALUE_TYPE, MemFlags::new(), AtomicRmwOp::Add, ref_addr, one);
         builder.ins().jump(done_block, &[]);
 
         builder.switch_to_block(done_block);
@@ -482,13 +530,13 @@ fn build_string_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::
     Ok(func_id)
 }
 
-/// `__roze_string_release(ptr: i64) -> void`: decrements the refcount
+/// `__roze_string_release(ptr: i64) -> void`: atomically decrements the refcount
 /// and frees the allocation if it reaches zero, unless `ptr` is
 /// immortal (a no-op in that case).
 fn build_string_release(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, free_id: FuncId) -> Result<FuncId> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(VALUE_TYPE));
-    let func_id = module.declare_function("__roze_string_release", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+    let func_id = module.declare_function("__roze_string_release", Linkage::Export, &sig).map_err(|e| anyhow!(e.to_string()))?;
 
     ctx.func.signature = sig;
     {
@@ -510,11 +558,11 @@ fn build_string_release(module: &mut ObjectModule, ctx: &mut cranelift::codegen:
 
         builder.switch_to_block(mutate_block);
         builder.seal_block(mutate_block);
-        let decremented = builder.ins().iadd_imm(refcount, -1);
-        builder.ins().store(MemFlags::new(), decremented, ptr, -(STRING_HEADER_SIZE as i32));
+        let ref_addr = builder.ins().iadd_imm(ptr, -STRING_HEADER_SIZE);
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        let old_count = builder.ins().atomic_rmw(VALUE_TYPE, MemFlags::new(), AtomicRmwOp::Sub, ref_addr, one);
 
-        let zero = builder.ins().iconst(VALUE_TYPE, 0);
-        let should_free = builder.ins().icmp(IntCC::Equal, decremented, zero);
+        let should_free = builder.ins().icmp(IntCC::Equal, old_count, one);
         let free_block = builder.create_block();
         builder.ins().brif(should_free, free_block, &[], done_block, &[]);
 
@@ -912,11 +960,11 @@ fn build_list_new(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Conte
     Ok(func_id)
 }
 
-/// `__roze_list_retain(ptr: i64) -> void`
+/// `__roze_list_retain(ptr: i64) -> void`: atomically increments refcount.
 fn build_list_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(VALUE_TYPE));
-    let func_id = module.declare_function("__roze_list_retain", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+    let func_id = module.declare_function("__roze_list_retain", Linkage::Export, &sig).map_err(|e| anyhow!(e.to_string()))?;
 
     ctx.func.signature = sig;
     {
@@ -928,9 +976,8 @@ fn build_list_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Co
         builder.seal_block(entry);
         let ptr = builder.block_params(entry)[0];
 
-        let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
-        let incremented = builder.ins().iadd_imm(refcount, 1);
-        builder.ins().store(MemFlags::new(), incremented, ptr, 0);
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        builder.ins().atomic_rmw(VALUE_TYPE, MemFlags::new(), AtomicRmwOp::Add, ptr, one);
         builder.ins().return_(&[]);
         builder.finalize();
     }
@@ -939,12 +986,12 @@ fn build_list_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Co
     Ok(func_id)
 }
 
-/// `__roze_list_release(ptr: i64) -> void`: frees both the data buffer
-/// and the header itself once the refcount reaches zero.
+/// `__roze_list_release(ptr: i64) -> void`: atomically decrements refcount and frees
+/// both the data buffer and the header itself once the refcount reaches zero.
 fn build_list_release(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, free_id: FuncId) -> Result<FuncId> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(VALUE_TYPE));
-    let func_id = module.declare_function("__roze_list_release", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+    let func_id = module.declare_function("__roze_list_release", Linkage::Export, &sig).map_err(|e| anyhow!(e.to_string()))?;
 
     ctx.func.signature = sig;
     {
@@ -956,12 +1003,10 @@ fn build_list_release(module: &mut ObjectModule, ctx: &mut cranelift::codegen::C
         builder.seal_block(entry);
         let ptr = builder.block_params(entry)[0];
 
-        let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
-        let decremented = builder.ins().iadd_imm(refcount, -1);
-        builder.ins().store(MemFlags::new(), decremented, ptr, 0);
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        let old_count = builder.ins().atomic_rmw(VALUE_TYPE, MemFlags::new(), AtomicRmwOp::Sub, ptr, one);
 
-        let zero = builder.ins().iconst(VALUE_TYPE, 0);
-        let should_free = builder.ins().icmp(IntCC::Equal, decremented, zero);
+        let should_free = builder.ins().icmp(IntCC::Equal, old_count, one);
         let free_block = builder.create_block();
         let done_block = builder.create_block();
         builder.ins().brif(should_free, free_block, &[], done_block, &[]);
@@ -1551,11 +1596,11 @@ fn build_map_new(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Contex
     Ok(func_id)
 }
 
-/// `__roze_map_retain(ptr: i64) -> void`
+/// `__roze_map_retain(ptr: i64) -> void`: atomically increments refcount.
 fn build_map_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(VALUE_TYPE));
-    let func_id = module.declare_function("__roze_map_retain", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+    let func_id = module.declare_function("__roze_map_retain", Linkage::Export, &sig).map_err(|e| anyhow!(e.to_string()))?;
 
     ctx.func.signature = sig;
     {
@@ -1567,9 +1612,8 @@ fn build_map_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Con
         builder.seal_block(entry);
         let ptr = builder.block_params(entry)[0];
 
-        let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
-        let incremented = builder.ins().iadd_imm(refcount, 1);
-        builder.ins().store(MemFlags::new(), incremented, ptr, 0);
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        builder.ins().atomic_rmw(VALUE_TYPE, MemFlags::new(), AtomicRmwOp::Add, ptr, one);
         builder.ins().return_(&[]);
         builder.finalize();
     }
@@ -1578,11 +1622,12 @@ fn build_map_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Con
     Ok(func_id)
 }
 
-/// `__roze_map_release(ptr: i64) -> void`
+/// `__roze_map_release(ptr: i64) -> void`: atomically decrements refcount and frees
+/// both the slots buffer and the map header itself once the refcount reaches zero.
 fn build_map_release(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, free_id: FuncId) -> Result<FuncId> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(VALUE_TYPE));
-    let func_id = module.declare_function("__roze_map_release", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+    let func_id = module.declare_function("__roze_map_release", Linkage::Export, &sig).map_err(|e| anyhow!(e.to_string()))?;
 
     ctx.func.signature = sig;
     {
@@ -1594,12 +1639,10 @@ fn build_map_release(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Co
         builder.seal_block(entry);
         let ptr = builder.block_params(entry)[0];
 
-        let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
-        let decremented = builder.ins().iadd_imm(refcount, -1);
-        builder.ins().store(MemFlags::new(), decremented, ptr, 0);
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        let old_count = builder.ins().atomic_rmw(VALUE_TYPE, MemFlags::new(), AtomicRmwOp::Sub, ptr, one);
 
-        let zero = builder.ins().iconst(VALUE_TYPE, 0);
-        let should_free = builder.ins().icmp(IntCC::Equal, decremented, zero);
+        let should_free = builder.ins().icmp(IntCC::Equal, old_count, one);
         let free_block = builder.create_block();
         let done_block = builder.create_block();
         builder.ins().brif(should_free, free_block, &[], done_block, &[]);
@@ -2028,10 +2071,11 @@ const ENUM_HEADER_SIZE: i64 = 8;
 /// parameter list per class) or `release` (needs to know which
 /// specific fields to recursively release), so this one function is
 /// shared by every class rather than generated per class.
+/// `__roze_class_retain(ptr: i64) -> void`: atomically increments refcount.
 fn build_class_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(VALUE_TYPE));
-    let func_id = module.declare_function("__roze_class_retain", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+    let func_id = module.declare_function("__roze_class_retain", Linkage::Export, &sig).map_err(|e| anyhow!(e.to_string()))?;
 
     ctx.func.signature = sig;
     {
@@ -2043,9 +2087,8 @@ fn build_class_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::C
         builder.seal_block(entry);
         let ptr = builder.block_params(entry)[0];
 
-        let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
-        let incremented = builder.ins().iadd_imm(refcount, 1);
-        builder.ins().store(MemFlags::new(), incremented, ptr, 0);
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        builder.ins().atomic_rmw(VALUE_TYPE, MemFlags::new(), AtomicRmwOp::Add, ptr, one);
         builder.ins().return_(&[]);
         builder.finalize();
     }
@@ -2059,7 +2102,7 @@ fn build_class_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::C
 fn build_trait_release(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(VALUE_TYPE));
-    let func_id = module.declare_function("__roze_trait_release", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+    let func_id = module.declare_function("__roze_trait_release", Linkage::Export, &sig).map_err(|e| anyhow!(e.to_string()))?;
 
     ctx.func.signature = sig;
     {
@@ -2092,6 +2135,48 @@ fn build_trait_release(module: &mut ObjectModule, ctx: &mut cranelift::codegen::
         builder.switch_to_block(done_block);
         builder.seal_block(done_block);
         builder.ins().return_(&[]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_object_refcount(ptr: i64) -> i64`: safely returns the refcount of an
+/// ARC-managed object (list, map, class) whose refcount is at offset 0, or 0 if ptr is null.
+fn build_object_refcount(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_object_refcount", Linkage::Export, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        let valid_block = builder.create_block();
+        let done_block = builder.create_block();
+        builder.append_block_param(done_block, VALUE_TYPE);
+
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let is_null = builder.ins().icmp(IntCC::Equal, ptr, zero);
+        builder.ins().brif(is_null, done_block, &[zero], valid_block, &[]);
+
+        builder.switch_to_block(valid_block);
+        builder.seal_block(valid_block);
+        let count = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
+        builder.ins().jump(done_block, &[count]);
+
+        builder.switch_to_block(done_block);
+        builder.seal_block(done_block);
+        let result = builder.block_params(done_block)[0];
+        builder.ins().return_(&[result]);
         builder.finalize();
     }
     module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
@@ -2225,12 +2310,10 @@ fn build_class_runtime(
         builder.seal_block(entry);
         let ptr = builder.block_params(entry)[0];
 
-        let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 0);
-        let decremented = builder.ins().iadd_imm(refcount, -1);
-        builder.ins().store(MemFlags::new(), decremented, ptr, 0);
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        let old_count = builder.ins().atomic_rmw(VALUE_TYPE, MemFlags::new(), AtomicRmwOp::Sub, ptr, one);
 
-        let zero = builder.ins().iconst(VALUE_TYPE, 0);
-        let should_free = builder.ins().icmp(IntCC::Equal, decremented, zero);
+        let should_free = builder.ins().icmp(IntCC::Equal, old_count, one);
         let free_block = builder.create_block();
         let done_block = builder.create_block();
         builder.ins().brif(should_free, free_block, &[], done_block, &[]);
@@ -2281,6 +2364,8 @@ struct NativeGenerator<'a> {
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
+    #[allow(dead_code)]
+    object_refcount_id: FuncId,
     methods: HashMap<(String, String), FuncId>,
     trait_methods: HashMap<String, usize>,
     extern_functions: HashSet<String>,
@@ -2349,6 +2434,8 @@ impl<'a> NativeGenerator<'a> {
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
         let mut trait_ctx = module.make_context();
         let trait_release_id = build_trait_release(module, &mut trait_ctx)?;
+        let mut obj_ctx = module.make_context();
+        let object_refcount_id = build_object_refcount(module, &mut obj_ctx)?;
 
         Ok(Self {
             module,
@@ -2369,6 +2456,7 @@ impl<'a> NativeGenerator<'a> {
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
+            object_refcount_id,
             methods: HashMap::new(),
             trait_methods: HashMap::new(),
             extern_functions: HashSet::new(),
@@ -2448,7 +2536,7 @@ impl<'a> NativeGenerator<'a> {
 
                 let mut release_sig = self.module.make_signature();
                 release_sig.params.push(AbiParam::new(VALUE_TYPE));
-                let release_id = self.module.declare_function(&format!("__roze_class_{}_release", name), Linkage::Local, &release_sig)
+                let release_id = self.module.declare_function(&format!("__roze_class_{}_release", name), Linkage::Export, &release_sig)
                     .map_err(|e| anyhow!(e.to_string()))?;
 
                 self.classes.insert(name.clone(), ClassInfo { fields: fields.clone(), new_id, release_id, vtable_id: None });
@@ -2565,8 +2653,12 @@ impl<'a> NativeGenerator<'a> {
                     sig.returns.push(AbiParam::new(cranelift_type_for(return_type)));
                 }
 
-                let func_id = self.module.declare_function(name, Linkage::Import, &sig)
-                    .map_err(|e| anyhow!(e.to_string()))?;
+                let func_id = if let Some(FuncOrDataId::Func(existing_id)) = self.module.get_name(name) {
+                    existing_id
+                } else {
+                    self.module.declare_function(name, Linkage::Import, &sig)
+                        .map_err(|e| anyhow!(e.to_string()))?
+                };
                 self.functions.insert(name.clone(), func_id);
                 self.function_param_types.insert(name.clone(), params.iter().map(|p| p.type_.clone()).collect());
                 self.extern_functions.insert(name.clone());

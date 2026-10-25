@@ -1818,3 +1818,158 @@ Hello from C FFI!
 lang-c-ffi";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn atomic_arc_refcount_and_retain_release_helpers() {
+    let source = r#"
+class Node {
+    value: int
+}
+
+extern "C" func __roze_object_refcount(n: Node) -> int;
+extern "C" func __roze_class_retain(n: Node) -> void;
+extern "C" func __roze_class_Node_release(n: Node) -> void;
+extern "C" func __roze_string_refcount(s: string) -> int;
+
+func main() {
+    let n = new Node(42);
+    println(__roze_object_refcount(n));
+    __roze_class_retain(n);
+    println(__roze_object_refcount(n));
+    __roze_class_Node_release(n);
+    println(__roze_object_refcount(n));
+
+    let dynamic_str = "hello " + "world";
+    println(__roze_string_refcount(dynamic_str));
+}
+"#;
+    let (stdout, stderr, ok) = run_native_source("atomic_arc_helpers", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+1
+2
+1
+1";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
+fn multithreaded_atomic_arc_concurrency() {
+    let c_harness = r#"
+#include <pthread.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+extern void __roze_string_retain(void*);
+extern void __roze_string_release(void*);
+extern void __roze_list_retain(void*);
+extern void __roze_list_release(void*);
+extern void __roze_class_retain(void*);
+extern void __roze_class_Node_release(void*);
+extern int64_t __roze_object_refcount(void*);
+extern int64_t __roze_string_refcount(void*);
+
+typedef struct {
+    void* obj;
+    int type; // 0 = string, 1 = list, 2 = class
+    int iterations;
+} WorkerArg;
+
+static void* worker(void* ptr) {
+    WorkerArg* arg = (WorkerArg*)ptr;
+    for (int i = 0; i < arg->iterations; i++) {
+        switch (arg->type) {
+            case 0:
+                __roze_string_retain(arg->obj);
+                __roze_string_release(arg->obj);
+                break;
+            case 1:
+                __roze_list_retain(arg->obj);
+                __roze_list_release(arg->obj);
+                break;
+            case 2:
+                __roze_class_retain(arg->obj);
+                __roze_class_Node_release(arg->obj);
+                break;
+        }
+    }
+    return NULL;
+}
+
+int64_t run_concurrent_arc(void* obj, int type, int num_threads, int iterations) {
+    pthread_t threads[16];
+    WorkerArg args[16];
+    if (num_threads > 16) num_threads = 16;
+
+    for (int i = 0; i < num_threads; i++) {
+        args[i].obj = obj;
+        args[i].type = type;
+        args[i].iterations = iterations;
+        pthread_create(&threads[i], NULL, worker, &args[i]);
+    }
+
+    for (int i = 0; i < num_threads; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    if (type == 0) {
+        return __roze_string_refcount(obj);
+    } else {
+        return __roze_object_refcount(obj);
+    }
+}
+
+int64_t run_concurrent_arc_str(void* obj, int type, int num_threads, int iterations) {
+    return run_concurrent_arc(obj, type, num_threads, iterations);
+}
+
+int64_t run_concurrent_arc_list(void* obj, int type, int num_threads, int iterations) {
+    return run_concurrent_arc(obj, type, num_threads, iterations);
+}
+"#;
+    let harness_c_path = std::env::temp_dir().join("roze_test_atomic_arc_harness.c");
+    std::fs::write(&harness_c_path, c_harness).unwrap();
+
+    let roze_source = r#"
+class Node {
+    value: int
+}
+
+extern "C" func run_concurrent_arc(obj: Node, type_: int, num_threads: int, iterations: int) -> int;
+extern "C" func run_concurrent_arc_str(obj: string, type_: int, num_threads: int, iterations: int) -> int;
+extern "C" func run_concurrent_arc_list(obj: list, type_: int, num_threads: int, iterations: int) -> int;
+extern "C" func __roze_object_refcount(n: Node) -> int;
+extern "C" func __roze_string_refcount(s: string) -> int;
+
+func main() {
+    let n = new Node(999);
+    println(__roze_object_refcount(n));
+    let final_ref = run_concurrent_arc(n, 2, 8, 25000);
+    println(final_ref);
+
+    let s = "atomic " + "concurrent string";
+    println(__roze_string_refcount(s));
+    let str_ref = run_concurrent_arc_str(s, 0, 8, 25000);
+    println(str_ref);
+
+    let l = list_new();
+    list_push(l, 42);
+    let list_ref = run_concurrent_arc_list(l, 1, 8, 25000);
+    println(list_ref);
+}
+"#;
+    let (stdout, stderr, ok) = run_native_source_with_links(
+        "multithreaded_arc",
+        roze_source,
+        &[harness_c_path.to_str().unwrap(), "pthread"],
+    );
+    let _ = std::fs::remove_file(&harness_c_path);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+1
+1
+1
+1
+1";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}

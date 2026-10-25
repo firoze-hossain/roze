@@ -93,7 +93,7 @@ fn collect_statements(statements: &[Statement], ast: &mut Ast) {
 
 fn collect_statement(stmt: &Statement, ast: &mut Ast) {
     match stmt {
-        Statement::Function { name, params, return_type, body, location } => {
+        Statement::Function { name, params, return_type, body, location, .. } => {
             ast.functions.push(Function {
                 name: name.clone(),
                 params: params.iter()

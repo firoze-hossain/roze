@@ -840,6 +840,19 @@ fn escape_java_identifier(name: &str) -> String {
 fn java_type_name(ty: &Type) -> String {
     match ty {
         Type::Class(name) => escape_java_identifier(name),
+        Type::Generic { base, type_args } => {
+            if base == "List" || base == "list" {
+                "java.util.List".to_string()
+            } else if base == "Map" || base == "map" {
+                "java.util.Map".to_string()
+            } else if base == "Option" || base == "option" {
+                "RozeOption".to_string()
+            } else if base == "Result" || base == "result" {
+                "RozeResult".to_string()
+            } else {
+                escape_java_identifier(&crate::semantic::specialized_name(base, type_args))
+            }
+        }
         other => other.to_java(),
     }
 }
@@ -852,6 +865,20 @@ fn java_unbox(ty: &Type, expr_str: &str) -> String {
         Type::String => format!("((String) {})", expr_str),
         Type::Class(name) => format!("(({}) {})", escape_java_identifier(name), expr_str),
         Type::Enum(name) => format!("(({}) {})", escape_java_identifier(name), expr_str),
+        Type::Generic { base, type_args } => {
+            if base == "List" || base == "list" {
+                format!("((java.util.List) {})", expr_str)
+            } else if base == "Map" || base == "map" {
+                format!("((java.util.Map) {})", expr_str)
+            } else if base == "Option" || base == "option" {
+                format!("((RozeOption) {})", expr_str)
+            } else if base == "Result" || base == "result" {
+                format!("((RozeResult) {})", expr_str)
+            } else {
+                let spec = crate::semantic::specialized_name(base, type_args);
+                format!("(({}) {})", escape_java_identifier(&spec), expr_str)
+            }
+        }
         Type::Function { .. } => format!("((RozeFn) {})", expr_str),
         Type::List => format!("((java.util.List) {})", expr_str),
         Type::Map => format!("((java.util.Map) {})", expr_str),
@@ -1262,12 +1289,12 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &expr)?;
                 source.push_str(";\n");
             }
-            TypedStatement::Let { name, value, .. } => {
+            TypedStatement::Let { name, type_, value, .. } => {
                 let mut hoisted = String::new();
                 let val = self.hoist_try_expr(value, &mut hoisted, &indent_str, return_type)?;
                 source.push_str(&hoisted);
 
-                source.push_str(&format!("{}{} {} = ", indent_str, java_type_name(&val.type_), escape_java_identifier(name)));
+                source.push_str(&format!("{}{} {} = ", indent_str, java_type_name(type_), escape_java_identifier(name)));
                 self.generate_expression(source, &val)?;
                 source.push_str(";\n");
             }
@@ -1433,8 +1460,8 @@ impl JavaSourceGenerator {
     /// for-loop's init/update are always `Let` or `Assign`.
     fn generate_for_clause(&self, source: &mut String, stmt: &TypedStatement) -> Result<()> {
         match stmt {
-            TypedStatement::Let { name, value, .. } => {
-                source.push_str(&format!("{} {} = ", java_type_name(&value.type_), escape_java_identifier(name)));
+            TypedStatement::Let { name, type_, value, .. } => {
+                source.push_str(&format!("{} {} = ", java_type_name(type_), escape_java_identifier(name)));
                 self.generate_expression(source, value)?;
             }
             TypedStatement::Assign { name, value, .. } => {
@@ -1528,7 +1555,13 @@ impl JavaSourceGenerator {
                 source.push_str("null");
             }
             TypedExpressionKind::Call { function, arguments } => {
-                self.generate_call(source, function, arguments)?;
+                if (function == "list_get" || function == "map_get") && expr.type_ != Type::Unknown {
+                    let mut call_buf = String::new();
+                    self.generate_call(&mut call_buf, function, arguments)?;
+                    source.push_str(&java_unbox(&expr.type_, &call_buf));
+                } else {
+                    self.generate_call(source, function, arguments)?;
+                }
             }
             TypedExpressionKind::New { class_name, arguments } => {
                 source.push_str(&format!("new {}(", escape_java_identifier(class_name)));

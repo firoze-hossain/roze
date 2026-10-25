@@ -196,13 +196,13 @@ s1_rows = [
         ("CORE-04", 8), ("Core / Basic", 3), ("Step 4", 8), "Type Checker & Native Codegen", "Generics (Parametric Polymorphism)",
         "Provide type-safe generic data structures (List<T>, Map<K, V>). Eliminates Object boxing on JVM and unlocks strings/structs inside native lists.",
         "Syntax 'class Container<T> { val: T }' and generic functions 'func id<T>(x: T) -> T'; Native monomorphization (specialize code per type); JVM type parameters with erasure.",
-        "All Domains, Core Stdlib, Self-Hosting", "1 - 2 Weeks", ("Ready to Start", 7)
+        "All Domains, Core Stdlib, Self-Hosting", "Completed", ("Completed", 6)
     ],
     [
         ("CORE-05", 8), ("Core / Basic", 3), ("Step 5", 8), "Frontend & Semantic Checker", "Traits / Interfaces & Dynamic Dispatch",
         "Define behavioral contracts without inheritance. Foundation of Spring-Boot-style Dependency Injection (IoC) and pluggable modular architecture.",
         "Syntax 'trait Greeter { func greet() -> string; }' and 'impl Greeter for User { ... }'; JVM interface generation; Native vtable pointer in class headers.",
-        "Enterprise Architecture, Games, Plugins", "1 Week", ("Planned", 8)
+        "Enterprise Architecture, Games, Plugins", "1 Week", ("Ready to Start", 7)
     ],
 
     # MEDIUM STAGE
@@ -301,9 +301,9 @@ s2_rows = [
         "Spring-Boot-level servers, REST/gRPC APIs, Cloud services, banking & enterprise backends",
         "JVM HTTP accept loop, JSON, JDBC SQL, Result<T,E> & Option<T> Safe I/O",
         "Multi-threaded concurrency, closures/routing, generics, connection pooling",
-        "CORE-01 (Done), CORE-03, CORE-04, MED-02, MED-04, ADV-03",
+        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), MED-02, MED-04, ADV-03",
         "Java (Spring Boot), Go (Gin/Fiber), C# (.NET)",
-        ("40% - Safe Error Handling", 6)
+        ("50% - Generics & Closures Ready", 6)
     ],
     [
         "Operating Systems & Kernels",
@@ -328,36 +328,36 @@ s2_rows = [
         "2D & 3D game engines, indie games, physics simulation, cross-platform game runtime",
         "ARC-managed classes and lists, IEEE-754 f64 math, fast native execution",
         "FFI to Raylib/SDL3/Vulkan, atomic multi-threaded rendering/audio threads, generics for ECS engines",
-        "CORE-04, MED-01, MED-02, ADV-04",
+        "CORE-04 (Done), MED-01, MED-02, ADV-04",
         "C++, C# (Unity), Rust (Bevy), C",
-        ("25% - Unlocked by FFI", 4)
+        ("35% - Generics Monomorphized", 4)
     ],
     [
         "AI / Machine Learning",
         "Local LLM inference (Llama), computer vision, neural net inference, data pipelines",
         "Fast f64 double precision numbers, basic arrays/lists, Result safety",
         "C-FFI to bind ONNX Runtime, libtorch, or GGML tensor libraries",
-        "CORE-04, MED-01, ADV-05",
+        "CORE-04 (Done), MED-01, ADV-05",
         "Python (PyTorch wrapper), C++",
-        ("20% - Unlocked by FFI", 4)
+        ("30% - Generics Monomorphized", 4)
     ],
     [
         "Desktop GUI Applications",
         "Cross-platform desktop tools, productivity software, native UI apps",
         "Fast standalone executables on Windows, Linux, and macOS",
         "FFI to native UI toolkits (GTK4, Qt, Win32, Cocoa), closure event handlers",
-        "CORE-03, MED-01",
+        "CORE-03 (Done), MED-01",
         "C# (WPF), Rust (Tauri), C++ (Qt)",
-        ("30% - Unlocked by FFI", 4)
+        ("35% - Closures Completed", 4)
     ],
     [
         "Self-Hosting Compiler",
         "The Roze compiler written entirely in Roze with zero external dependencies",
         "Clean AST/IR, Result/Option safe error handling with '?' try operator",
         "Generics, Enums/Pattern Matching, file I/O on native backend",
-        "CORE-01 (Done), CORE-02 (Done), CORE-04, ADV-06",
+        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), ADV-06",
         "Rust (rustc), Go (gc), Swift",
-        ("45% - Enums & Pattern Matching Added", 6)
+        ("60% - Generics & Enums Completed", 6)
     ]
 ]
 

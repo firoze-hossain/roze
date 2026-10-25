@@ -1,0 +1,73 @@
+// compiler/tests/fixtures/generics.roze
+// Tests CORE-04: Generics (Parametric Polymorphism) & Monomorphization
+
+class Box<T> {
+    val: T,
+}
+
+class Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+func id<T>(x: T) -> T {
+    return x;
+}
+
+func swap_pair<A, B>(p: Pair<A, B>) -> Pair<B, A> {
+    return new Pair<B, A>(p.second, p.first);
+}
+
+func main() {
+    // 1. Generic function with explicit type args
+    let a: int = id<int>(100);
+    println(a);
+
+    let s: string = id<string>("generics working!");
+    println(s);
+
+    // 2. Generic function with inferred type args
+    let b = id(200);
+    println(b);
+
+    let greeting = id("hello roze");
+    println(greeting);
+
+    // 3. Generic class instantiation (explicit)
+    let int_box = new Box<int>(42);
+    println(int_box.val);
+    int_box.val = 84;
+    println(int_box.val);
+
+    let str_box = new Box<string>("boxed string");
+    println(str_box.val);
+
+    // 4. Generic class instantiation (inferred)
+    let auto_box = new Box(999);
+    println(auto_box.val);
+
+    // 5. Multi-parameter generic class & function
+    let p = new Pair<int, string>(1, "one");
+    println(p.first);
+    println(p.second);
+
+    let swapped = swap_pair(p);
+    println(swapped.first);
+    println(swapped.second);
+
+    // 6. Generic List<T>
+    let nums: List<int> = list_new();
+    list_push(nums, 10);
+    list_push(nums, 20);
+    list_push(nums, 30);
+    println(list_get(nums, 0));
+    println(list_get(nums, 1));
+    println(list_get(nums, 2));
+
+    // 7. Generic Map<K, V>
+    let ages: Map<int, int> = map_new();
+    map_put(ages, 1, 30);
+    map_put(ages, 2, 25);
+    println(map_get(ages, 1));
+    println(map_get(ages, 2));
+}

@@ -1687,3 +1687,93 @@ func main() {
 native closures working!";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn native_generics_and_parametric_polymorphism() {
+    let source = "
+class Box<T> {
+    val: T,
+}
+
+class Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+func id<T>(x: T) -> T {
+    return x;
+}
+
+func swap_pair<A, B>(p: Pair<A, B>) -> Pair<B, A> {
+    return new Pair<B, A>(p.second, p.first);
+}
+
+func main() {
+    let a: int = id<int>(100);
+    println(a);
+
+    let s: string = id<string>(\"generics working!\");
+    println(s);
+
+    let b = id(200);
+    println(b);
+
+    let greeting = id(\"hello roze\");
+    println(greeting);
+
+    let int_box = new Box<int>(42);
+    println(int_box.val);
+    int_box.val = 84;
+    println(int_box.val);
+
+    let str_box = new Box<string>(\"boxed string\");
+    println(str_box.val);
+
+    let auto_box = new Box(999);
+    println(auto_box.val);
+
+    let p = new Pair<int, string>(1, \"one\");
+    println(p.first);
+    println(p.second);
+
+    let swapped = swap_pair(p);
+    println(swapped.first);
+    println(swapped.second);
+
+    let nums: List<int> = list_new();
+    list_push(nums, 10);
+    list_push(nums, 20);
+    list_push(nums, 30);
+    println(list_get(nums, 0));
+    println(list_get(nums, 1));
+    println(list_get(nums, 2));
+
+    let ages: Map<int, int> = map_new();
+    map_put(ages, 1, 30);
+    map_put(ages, 2, 25);
+    println(map_get(ages, 1));
+    println(map_get(ages, 2));
+}
+";
+    let (stdout, stderr, ok) = run_native_source("generics_native", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+100
+generics working!
+200
+hello roze
+42
+84
+boxed string
+999
+1
+one
+one
+1
+10
+20
+30
+30
+25";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}

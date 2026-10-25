@@ -648,3 +648,28 @@ fn closures_and_first_class_functions() {
 closures working smoothly!";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn generics_and_parametric_polymorphism() {
+    let (stdout, stderr, ok) = run_fixture("generics.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+100
+generics working!
+200
+hello roze
+42
+84
+boxed string
+999
+1
+one
+one
+1
+10
+20
+30
+30
+25";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}

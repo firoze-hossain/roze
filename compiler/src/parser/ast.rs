@@ -28,6 +28,7 @@ impl Program {
 pub enum Statement {
     Let {
         name: String,
+        type_name: Option<String>,
         value: Box<Expression>,
         location: Location,
     },
@@ -45,6 +46,7 @@ pub enum Statement {
     },
     Function {
         name: String,
+        type_params: Vec<String>,
         params: Vec<FunctionParam>,
         return_type: Option<String>,
         body: Box<Statement>,
@@ -83,6 +85,7 @@ pub enum Statement {
     /// since it's already exactly "a name plus an optional type name."
     ClassDecl {
         name: String,
+        type_params: Vec<String>,
         fields: Vec<FunctionParam>,
         location: Location,
     },
@@ -99,6 +102,7 @@ pub enum Statement {
     /// `enum Name { Variant1, Variant2(Type), ... }`
     EnumDecl {
         name: String,
+        type_params: Vec<String>,
         variants: Vec<EnumVariant>,
         location: Location,
     },
@@ -193,10 +197,18 @@ pub enum Expression {
         arguments: Vec<Expression>,
         location: Location,
     },
-    /// `new ClassName(arg1, arg2, ...)` -- arguments are positional, in
+    /// `new ClassName<T1, ...>(arg1, arg2, ...)` -- arguments are positional, in
     /// the class's declared field order (see `Statement::ClassDecl`).
     New {
         class_name: String,
+        type_args: Vec<String>,
+        arguments: Vec<Expression>,
+        location: Location,
+    },
+    /// Explicit generic function call: `fn_name<Type1, ...>(arg1, arg2, ...)`
+    GenericCall {
+        function: String,
+        type_args: Vec<String>,
         arguments: Vec<Expression>,
         location: Location,
     },

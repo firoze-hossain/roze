@@ -5,7 +5,7 @@ use crate::ir::{
     TypedProgram, TypedStatement,
 };
 use crate::parser::ast::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,6 +41,11 @@ pub enum Type {
     Class(String),
     /// An instance of a user-defined enum / algebraic data type (`enum Name { Variant, ... }`).
     Enum(String),
+    /// A generic type instantiation, e.g. `List<int>`, `Map<string, int>`, `Option<int>`, `Result<int, string>`.
+    Generic {
+        base: String,
+        type_args: Vec<Type>,
+    },
     /// Reserved for when Roze gets first-class function values/closures
     /// -- nothing constructs this yet (there's no syntax for a function
     /// *value*, only calls), but the other Type variants already match
@@ -53,13 +58,76 @@ pub enum Type {
     },
 }
 
+pub fn split_type_args(s: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' | '(' => depth += 1,
+            '>' | ')' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(s[start..i].trim().to_string());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < s.len() {
+        let remaining = s[start..].trim();
+        if !remaining.is_empty() {
+            parts.push(remaining.to_string());
+        }
+    }
+    parts
+}
+
+pub fn specialized_name(base: &str, type_args: &[Type]) -> String {
+    let args_str = type_args.iter().map(|t| type_mangle_name(t)).collect::<Vec<_>>().join("__");
+    format!("{}__{}", base, args_str)
+}
+
+fn type_mangle_name(ty: &Type) -> String {
+    match ty {
+        Type::Int => "int".to_string(),
+        Type::Float => "float".to_string(),
+        Type::String => "string".to_string(),
+        Type::Bool => "bool".to_string(),
+        Type::Void => "void".to_string(),
+        Type::Unknown => "unknown".to_string(),
+        Type::List => "list".to_string(),
+        Type::Map => "map".to_string(),
+        Type::Option => "option".to_string(),
+        Type::Result => "result".to_string(),
+        Type::Class(c) => c.clone(),
+        Type::Enum(e) => e.clone(),
+        Type::Generic { base, type_args } => specialized_name(base, type_args),
+        Type::Function { .. } => "fn".to_string(),
+    }
+}
+
 impl Type {
     /// Maps a Roze source-level type name (e.g. from a `: string` parameter
     /// annotation or a `-> int` return type) to our internal Type. Anything
     /// unrecognized falls back to Unknown rather than erroring, since Roze
     /// doesn't have user-defined types yet.
     pub fn from_name(name: &str) -> Type {
-        match name {
+        let trimmed = name.trim();
+        if let Some(open) = trimmed.find('<') {
+            if trimmed.ends_with('>') {
+                let base = trimmed[..open].trim();
+                let inner = &trimmed[open + 1..trimmed.len() - 1];
+                let type_args = split_type_args(inner)
+                    .into_iter()
+                    .map(|s| Type::from_name(&s))
+                    .collect();
+                return Type::Generic {
+                    base: base.to_string(),
+                    type_args,
+                };
+            }
+        }
+        match trimmed {
             "int" => Type::Int,
             "float" => Type::Float,
             "string" => Type::String,
@@ -69,8 +137,6 @@ impl Type {
             "map" | "Map" => Type::Map,
             "option" | "Option" => Type::Option,
             "result" | "Result" => Type::Result,
-            name if name.starts_with("Option<") || name.starts_with("option<") => Type::Option,
-            name if name.starts_with("Result<") || name.starts_with("result<") => Type::Result,
             _ => Type::Unknown,
         }
     }
@@ -89,6 +155,19 @@ impl Type {
             Type::Result => "RozeResult".to_string(),
             Type::Class(name) => name.clone(),
             Type::Enum(name) => name.clone(),
+            Type::Generic { base, type_args } => {
+                if base == "List" || base == "list" {
+                    "java.util.List".to_string()
+                } else if base == "Map" || base == "map" {
+                    "java.util.Map".to_string()
+                } else if base == "Option" || base == "option" {
+                    "RozeOption".to_string()
+                } else if base == "Result" || base == "result" {
+                    "RozeResult".to_string()
+                } else {
+                    specialized_name(base, type_args)
+                }
+            }
             Type::Function { .. } => "RozeFn".to_string(),
         }
     }
@@ -109,6 +188,10 @@ impl std::fmt::Display for Type {
             Type::Result => write!(f, "Result"),
             Type::Class(name) => write!(f, "{}", name),
             Type::Enum(name) => write!(f, "{}", name),
+            Type::Generic { base, type_args } => {
+                let args_str = type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ");
+                write!(f, "{}<{}>", base, args_str)
+            }
             Type::Function { .. } => write!(f, "function"),
         }
     }
@@ -131,6 +214,33 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
     match (expected, actual) {
         (Type::Unknown, _) | (_, Type::Unknown) => true,
         (Type::Float, Type::Int) => true,
+        // List <-> List<T>
+        (Type::List, Type::Generic { base, .. }) if base == "List" || base == "list" => true,
+        (Type::Generic { base, .. }, Type::List) if base == "List" || base == "list" => true,
+        // Map <-> Map<K, V>
+        (Type::Map, Type::Generic { base, .. }) if base == "Map" || base == "map" => true,
+        (Type::Generic { base, .. }, Type::Map) if base == "Map" || base == "map" => true,
+        // Option <-> Option<T>
+        (Type::Option, Type::Generic { base, .. }) if base == "Option" || base == "option" => true,
+        (Type::Generic { base, .. }, Type::Option) if base == "Option" || base == "option" => true,
+        // Result <-> Result<T, E>
+        (Type::Result, Type::Generic { base, .. }) if base == "Result" || base == "result" => true,
+        (Type::Generic { base, .. }, Type::Result) if base == "Result" || base == "result" => true,
+        // Generic with matching base and compatible type arguments:
+        (
+            Type::Generic { base: b1, type_args: a1 },
+            Type::Generic { base: b2, type_args: a2 },
+        ) if b1 == b2 && a1.len() == a2.len() => {
+            a1.iter().zip(a2.iter()).all(|(x, y)| types_compatible(x, y))
+        }
+        (
+            Type::Generic { base, type_args },
+            Type::Class(c),
+        ) if c == &specialized_name(base, type_args) => true,
+        (
+            Type::Class(c),
+            Type::Generic { base, type_args },
+        ) if c == &specialized_name(base, type_args) => true,
         (
             Type::Function { params: p1, return_type: r1 },
             Type::Function { params: p2, return_type: r2 },
@@ -359,6 +469,263 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
     ]
 }
 
+#[derive(Clone, Debug)]
+pub struct GenericClassDef {
+    pub name: String,
+    pub type_params: Vec<String>,
+    pub fields: Vec<FunctionParam>,
+    pub location: Location,
+}
+
+#[derive(Clone, Debug)]
+pub struct GenericFuncDef {
+    pub name: String,
+    pub type_params: Vec<String>,
+    pub params: Vec<FunctionParam>,
+    pub return_type: Option<String>,
+    pub body: Statement,
+    pub location: Location,
+}
+
+#[derive(Clone, Debug)]
+pub struct GenericEnumDef {
+    pub name: String,
+    pub type_params: Vec<String>,
+    pub variants: Vec<EnumVariant>,
+    pub location: Location,
+}
+
+fn substitute_type_string(s: &str, map: &HashMap<String, String>) -> String {
+    let mut result = String::new();
+    let mut current_word = String::new();
+    for c in s.chars() {
+        if c.is_alphanumeric() || c == '_' {
+            current_word.push(c);
+        } else {
+            if !current_word.is_empty() {
+                if let Some(replacement) = map.get(&current_word) {
+                    result.push_str(replacement);
+                } else {
+                    result.push_str(&current_word);
+                }
+                current_word.clear();
+            }
+            result.push(c);
+        }
+    }
+    if !current_word.is_empty() {
+        if let Some(replacement) = map.get(&current_word) {
+            result.push_str(replacement);
+        } else {
+            result.push_str(&current_word);
+        }
+    }
+    result
+}
+
+fn substitute_statement(stmt: &Statement, map: &HashMap<String, String>) -> Statement {
+    match stmt {
+        Statement::Let { name, type_name, value, location } => Statement::Let {
+            name: name.clone(),
+            type_name: type_name.as_ref().map(|t| substitute_type_string(t, map)),
+            value: Box::new(substitute_expression(value, map)),
+            location: location.clone(),
+        },
+        Statement::Expression { expr, location } => Statement::Expression {
+            expr: Box::new(substitute_expression(expr, map)),
+            location: location.clone(),
+        },
+        Statement::Return { value, location } => Statement::Return {
+            value: value.as_ref().map(|v| Box::new(substitute_expression(v, map))),
+            location: location.clone(),
+        },
+        Statement::Block { statements, location } => Statement::Block {
+            statements: statements.iter().map(|s| substitute_statement(s, map)).collect(),
+            location: location.clone(),
+        },
+        Statement::Function { name, type_params, params, return_type, body, location } => {
+            let new_params = params.iter().map(|p| FunctionParam {
+                name: p.name.clone(),
+                type_name: p.type_name.as_ref().map(|t| substitute_type_string(t, map)),
+            }).collect();
+            let new_return_type = return_type.as_ref().map(|t| substitute_type_string(t, map));
+            Statement::Function {
+                name: name.clone(),
+                type_params: type_params.clone(),
+                params: new_params,
+                return_type: new_return_type,
+                body: Box::new(substitute_statement(body, map)),
+                location: location.clone(),
+            }
+        }
+        Statement::Import { path, location } => Statement::Import {
+            path: path.clone(),
+            location: location.clone(),
+        },
+        Statement::If { condition, then_branch, else_branch, location } => Statement::If {
+            condition: Box::new(substitute_expression(condition, map)),
+            then_branch: Box::new(substitute_statement(then_branch, map)),
+            else_branch: else_branch.as_ref().map(|b| Box::new(substitute_statement(b, map))),
+            location: location.clone(),
+        },
+        Statement::While { condition, body, location } => Statement::While {
+            condition: Box::new(substitute_expression(condition, map)),
+            body: Box::new(substitute_statement(body, map)),
+            location: location.clone(),
+        },
+        Statement::Assign { name, value, location } => Statement::Assign {
+            name: name.clone(),
+            value: Box::new(substitute_expression(value, map)),
+            location: location.clone(),
+        },
+        Statement::For { init, condition, update, body, location } => Statement::For {
+            init: Box::new(substitute_statement(init, map)),
+            condition: Box::new(substitute_expression(condition, map)),
+            update: Box::new(substitute_statement(update, map)),
+            body: Box::new(substitute_statement(body, map)),
+            location: location.clone(),
+        },
+        Statement::ClassDecl { name, type_params, fields, location } => {
+            let new_fields = fields.iter().map(|f| FunctionParam {
+                name: f.name.clone(),
+                type_name: f.type_name.as_ref().map(|t| substitute_type_string(t, map)),
+            }).collect();
+            Statement::ClassDecl {
+                name: name.clone(),
+                type_params: type_params.clone(),
+                fields: new_fields,
+                location: location.clone(),
+            }
+        }
+        Statement::FieldAssign { object, field, value, location } => Statement::FieldAssign {
+            object: Box::new(substitute_expression(object, map)),
+            field: field.clone(),
+            value: Box::new(substitute_expression(value, map)),
+            location: location.clone(),
+        },
+        Statement::EnumDecl { name, type_params, variants, location } => {
+            let new_variants = variants.iter().map(|v| EnumVariant {
+                name: v.name.clone(),
+                payload_types: v.payload_types.iter().map(|t| substitute_type_string(t, map)).collect(),
+                location: v.location.clone(),
+            }).collect();
+            Statement::EnumDecl {
+                name: name.clone(),
+                type_params: type_params.clone(),
+                variants: new_variants,
+                location: location.clone(),
+            }
+        }
+        Statement::Match { expr, arms, location } => Statement::Match {
+            expr: Box::new(substitute_expression(expr, map)),
+            arms: arms.iter().map(|arm| MatchArm {
+                pattern: arm.pattern.clone(),
+                body: Box::new(substitute_statement(&arm.body, map)),
+                location: arm.location.clone(),
+            }).collect(),
+            location: location.clone(),
+        },
+    }
+}
+
+fn substitute_expression(expr: &Expression, map: &HashMap<String, String>) -> Expression {
+    match expr {
+        Expression::Number { value, location } => Expression::Number { value: value.clone(), location: location.clone() },
+        Expression::String { value, location } => Expression::String { value: value.clone(), location: location.clone() },
+        Expression::Identifier { name, location } => Expression::Identifier { name: name.clone(), location: location.clone() },
+        Expression::Boolean { value, location } => Expression::Boolean { value: *value, location: location.clone() },
+        Expression::Null { location } => Expression::Null { location: location.clone() },
+        Expression::Binary { left, operator, right, location } => Expression::Binary {
+            left: Box::new(substitute_expression(left, map)),
+            operator: operator.clone(),
+            right: Box::new(substitute_expression(right, map)),
+            location: location.clone(),
+        },
+        Expression::Unary { operator, operand, location } => Expression::Unary {
+            operator: operator.clone(),
+            operand: Box::new(substitute_expression(operand, map)),
+            location: location.clone(),
+        },
+        Expression::Call { function, arguments, location } => Expression::Call {
+            function: Box::new(substitute_expression(function, map)),
+            arguments: arguments.iter().map(|a| substitute_expression(a, map)).collect(),
+            location: location.clone(),
+        },
+        Expression::New { class_name, type_args, arguments, location } => Expression::New {
+            class_name: class_name.clone(),
+            type_args: type_args.iter().map(|t| substitute_type_string(t, map)).collect(),
+            arguments: arguments.iter().map(|a| substitute_expression(a, map)).collect(),
+            location: location.clone(),
+        },
+        Expression::GenericCall { function, type_args, arguments, location } => Expression::GenericCall {
+            function: function.clone(),
+            type_args: type_args.iter().map(|t| substitute_type_string(t, map)).collect(),
+            arguments: arguments.iter().map(|a| substitute_expression(a, map)).collect(),
+            location: location.clone(),
+        },
+        Expression::FieldAccess { object, field, location } => Expression::FieldAccess {
+            object: Box::new(substitute_expression(object, map)),
+            field: field.clone(),
+            location: location.clone(),
+        },
+        Expression::Try { expr, location } => Expression::Try {
+            expr: Box::new(substitute_expression(expr, map)),
+            location: location.clone(),
+        },
+        Expression::EnumConstruct { enum_name, variant, arguments, location } => Expression::EnumConstruct {
+            enum_name: enum_name.clone(),
+            variant: variant.clone(),
+            arguments: arguments.iter().map(|a| substitute_expression(a, map)).collect(),
+            location: location.clone(),
+        },
+        Expression::Closure { params, return_type, body, location } => Expression::Closure {
+            params: params.iter().map(|p| FunctionParam {
+                name: p.name.clone(),
+                type_name: p.type_name.as_ref().map(|t| substitute_type_string(t, map)),
+            }).collect(),
+            return_type: return_type.as_ref().map(|t| substitute_type_string(t, map)),
+            body: Box::new(substitute_statement(body, map)),
+            location: location.clone(),
+        },
+    }
+}
+
+fn infer_type_param(
+    pattern: &str,
+    actual: &Type,
+    type_params: &[String],
+    inferred: &mut HashMap<String, Type>,
+) {
+    let pattern = pattern.trim();
+    if type_params.contains(&pattern.to_string()) {
+        inferred.entry(pattern.to_string()).or_insert_with(|| actual.clone());
+        return;
+    }
+    if let Some(open) = pattern.find('<') {
+        if pattern.ends_with('>') {
+            let base = pattern[..open].trim();
+            let inner = &pattern[open + 1..pattern.len() - 1];
+            let sub_patterns = split_type_args(inner);
+            match actual {
+                Type::Generic { base: act_base, type_args } if act_base == base => {
+                    for (sub_pat, act_ty) in sub_patterns.iter().zip(type_args.iter()) {
+                        infer_type_param(sub_pat, act_ty, type_params, inferred);
+                    }
+                }
+                Type::Class(class_name) if class_name.starts_with(&format!("{}_", base)) => {
+                    let suffix = &class_name[base.len() + 2..];
+                    let parts: Vec<&str> = suffix.split("__").collect();
+                    for (sub_pat, part) in sub_patterns.iter().zip(parts.iter()) {
+                        let ty = Type::from_name(part);
+                        infer_type_param(sub_pat, &ty, type_params, inferred);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 pub struct TypeChecker {
     pub symbol_table: SymbolTable,
     pub functions: HashMap<String, FunctionSig>,
@@ -368,6 +735,13 @@ pub struct TypeChecker {
     pub classes: HashMap<String, Vec<(String, Type)>>,
     pub enums: HashMap<String, Vec<(String, Vec<Type>)>>,
     pub variant_to_enum: HashMap<String, Vec<String>>,
+    pub generic_classes: HashMap<String, GenericClassDef>,
+    pub generic_functions: HashMap<String, GenericFuncDef>,
+    pub generic_enums: HashMap<String, GenericEnumDef>,
+    pub generated_class_decls: Vec<TypedStatement>,
+    pub generated_func_decls: Vec<TypedStatement>,
+    pub instantiated_classes: HashSet<String>,
+    pub instantiated_functions: HashSet<String>,
     pub current_function: Option<String>,
     pub current_return_type: Type,
     /// True while checking `main`'s body -- codegen always hard-codes
@@ -414,6 +788,13 @@ impl TypeChecker {
             classes: HashMap::new(),
             enums: HashMap::new(),
             variant_to_enum: HashMap::new(),
+            generic_classes: HashMap::new(),
+            generic_functions: HashMap::new(),
+            generic_enums: HashMap::new(),
+            generated_class_decls: Vec::new(),
+            generated_func_decls: Vec::new(),
+            instantiated_classes: HashSet::new(),
+            instantiated_functions: HashSet::new(),
             current_function: None,
             current_return_type: Type::Void,
             in_main: false,
@@ -422,10 +803,197 @@ impl TypeChecker {
         }
     }
 
+    pub fn instantiate_generic_class(&mut self, base: &str, type_args: &[Type]) -> Result<String> {
+        let template = self.generic_classes.get(base).cloned().ok_or_else(|| {
+            RozeError::type_error(format!("Undefined generic class '{}'", base), 1, 1)
+        })?;
+
+        if template.type_params.len() != type_args.len() {
+            return Err(RozeError::type_error(
+                format!(
+                    "Generic class '{}' expects {} type argument(s), got {}",
+                    base, template.type_params.len(), type_args.len()
+                ),
+                template.location.line,
+                template.location.column,
+            ).into());
+        }
+
+        let spec_name = specialized_name(base, type_args);
+        if self.instantiated_classes.contains(&spec_name) {
+            return Ok(spec_name);
+        }
+        self.instantiated_classes.insert(spec_name.clone());
+
+        let map: HashMap<String, String> = template.type_params.iter().zip(type_args.iter())
+            .map(|(param, ty)| (param.clone(), ty.to_string()))
+            .collect();
+
+        let mut specialized_fields = Vec::with_capacity(template.fields.len());
+        for field in &template.fields {
+            let field_ty = match &field.type_name {
+                Some(tn) => {
+                    let subbed = substitute_type_string(tn, &map);
+                    self.resolve_type_name(&subbed)
+                }
+                None => Type::Unknown,
+            };
+            specialized_fields.push((field.name.clone(), field_ty));
+        }
+
+        self.classes.insert(spec_name.clone(), specialized_fields.clone());
+        self.generated_class_decls.push(TypedStatement::ClassDecl {
+            name: spec_name.clone(),
+            fields: specialized_fields,
+            location: template.location.clone(),
+        });
+
+        Ok(spec_name)
+    }
+
+    pub fn instantiate_generic_function(&mut self, base: &str, type_args: &[Type]) -> Result<String> {
+        let template = self.generic_functions.get(base).cloned().ok_or_else(|| {
+            RozeError::type_error(format!("Undefined generic function '{}'", base), 1, 1)
+        })?;
+
+        if template.type_params.len() != type_args.len() {
+            return Err(RozeError::type_error(
+                format!(
+                    "Generic function '{}' expects {} type argument(s), got {}",
+                    base, template.type_params.len(), type_args.len()
+                ),
+                template.location.line,
+                template.location.column,
+            ).into());
+        }
+
+        let spec_name = specialized_name(base, type_args);
+        if self.instantiated_functions.contains(&spec_name) {
+            return Ok(spec_name);
+        }
+        self.instantiated_functions.insert(spec_name.clone());
+
+        let map: HashMap<String, String> = template.type_params.iter().zip(type_args.iter())
+            .map(|(param, ty)| (param.clone(), ty.to_string()))
+            .collect();
+
+        let subbed_params: Vec<FunctionParam> = template.params.iter().map(|p| FunctionParam {
+            name: p.name.clone(),
+            type_name: p.type_name.as_ref().map(|t| substitute_type_string(t, &map)),
+        }).collect();
+
+        let subbed_return_type = template.return_type.as_ref().map(|t| substitute_type_string(t, &map));
+        let subbed_body = substitute_statement(&template.body, &map);
+
+        let concrete_stmt = Statement::Function {
+            name: spec_name.clone(),
+            type_params: Vec::new(),
+            params: subbed_params.clone(),
+            return_type: subbed_return_type.clone(),
+            body: Box::new(subbed_body),
+            location: template.location.clone(),
+        };
+
+        let mut param_types = Vec::with_capacity(subbed_params.len());
+        for p in &subbed_params {
+            param_types.push(p.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown));
+        }
+        let ret_ty = subbed_return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
+        self.functions.insert(spec_name.clone(), FunctionSig { params: param_types, return_type: ret_ty });
+
+        let old_symbols = std::mem::replace(&mut self.symbol_table, SymbolTable::new());
+        let typed_stmt = self.check_statement(&concrete_stmt)?;
+        self.symbol_table = old_symbols;
+
+        if let Some(s) = typed_stmt {
+            self.generated_func_decls.push(s);
+        }
+
+        Ok(spec_name)
+    }
+
+    pub fn infer_func_type_args(
+        &self,
+        template: &GenericFuncDef,
+        args: &[TypedExpression],
+        call_loc: &Location,
+    ) -> Result<Vec<Type>> {
+        if args.len() != template.params.len() {
+            return Err(RozeError::type_error(
+                format!(
+                    "Generic function '{}' takes {} argument(s), but {} were given",
+                    template.name, template.params.len(), args.len()
+                ),
+                call_loc.line,
+                call_loc.column,
+            ).into());
+        }
+
+        let mut inferred = HashMap::new();
+        for (param, arg) in template.params.iter().zip(args.iter()) {
+            if let Some(type_name) = &param.type_name {
+                infer_type_param(type_name, &arg.type_, &template.type_params, &mut inferred);
+            }
+        }
+
+        let mut result = Vec::with_capacity(template.type_params.len());
+        for tp in &template.type_params {
+            if let Some(ty) = inferred.get(tp) {
+                result.push(ty.clone());
+            } else {
+                return Err(RozeError::type_error(
+                    format!("Could not infer type parameter '{}' for function '{}'", tp, template.name),
+                    call_loc.line,
+                    call_loc.column,
+                ).into());
+            }
+        }
+        Ok(result)
+    }
+
+    pub fn infer_class_type_args(
+        &self,
+        template: &GenericClassDef,
+        args: &[TypedExpression],
+        ctor_loc: &Location,
+    ) -> Result<Vec<Type>> {
+        if args.len() != template.fields.len() {
+            return Err(RozeError::type_error(
+                format!(
+                    "Generic class '{}' has {} field(s), but 'new {}(...)' was given {} argument(s)",
+                    template.name, template.fields.len(), template.name, args.len()
+                ),
+                ctor_loc.line,
+                ctor_loc.column,
+            ).into());
+        }
+
+        let mut inferred = HashMap::new();
+        for (field, arg) in template.fields.iter().zip(args.iter()) {
+            if let Some(type_name) = &field.type_name {
+                infer_type_param(type_name, &arg.type_, &template.type_params, &mut inferred);
+            }
+        }
+
+        let mut result = Vec::with_capacity(template.type_params.len());
+        for tp in &template.type_params {
+            if let Some(ty) = inferred.get(tp) {
+                result.push(ty.clone());
+            } else {
+                return Err(RozeError::type_error(
+                    format!("Could not infer type parameter '{}' for class '{}'", tp, template.name),
+                    ctor_loc.line,
+                    ctor_loc.column,
+                ).into());
+            }
+        }
+        Ok(result)
+    }
+
     /// Resolves a source-level type name, checking user-defined enums and classes
     /// first (so an enum named e.g. `Color` resolves to `Type::Enum("Color")`,
     /// and a class named `Point` resolves to `Type::Class("Point")`).
-    fn resolve_type_name(&self, name: &str) -> Type {
+    fn resolve_type_name(&mut self, name: &str) -> Type {
         let trimmed = name.trim();
         if trimmed.starts_with("func(") || trimmed.starts_with("fn(") {
             let without_prefix = if trimmed.starts_with("func(") {
@@ -451,28 +1019,9 @@ impl TypeChecker {
                 let params_str = &without_prefix[..paren_close];
                 let rest = without_prefix[paren_close + 1..].trim();
 
-                let mut param_strs = Vec::new();
-                let mut p_depth = 0;
-                let mut start = 0;
-                for (i, c) in params_str.char_indices() {
-                    if c == '(' || c == '<' {
-                        p_depth += 1;
-                    } else if c == ')' || c == '>' {
-                        p_depth -= 1;
-                    } else if c == ',' && p_depth == 0 {
-                        param_strs.push(params_str[start..i].trim());
-                        start = i + 1;
-                    }
-                }
-                if start < params_str.len() {
-                    let last = params_str[start..].trim();
-                    if !last.is_empty() {
-                        param_strs.push(last);
-                    }
-                }
-
+                let param_strs = split_type_args(params_str);
                 let params = param_strs.into_iter()
-                    .map(|s| self.resolve_type_name(s))
+                    .map(|s| self.resolve_type_name(&s))
                     .collect();
 
                 let ret_type = if rest.starts_with("->") {
@@ -482,6 +1031,28 @@ impl TypeChecker {
                 };
 
                 return Type::Function { params, return_type: ret_type };
+            }
+        }
+
+        if let Some(open) = trimmed.find('<') {
+            if trimmed.ends_with('>') {
+                let base = trimmed[..open].trim();
+                let inner = &trimmed[open + 1..trimmed.len() - 1];
+                let type_args_strs = split_type_args(inner);
+                let type_args: Vec<Type> = type_args_strs.into_iter()
+                    .map(|s| self.resolve_type_name(&s))
+                    .collect();
+
+                if self.generic_classes.contains_key(base) {
+                    if let Ok(spec_name) = self.instantiate_generic_class(base, &type_args) {
+                        return Type::Class(spec_name);
+                    }
+                }
+
+                return Type::Generic {
+                    base: base.to_string(),
+                    type_args,
+                };
             }
         }
 
@@ -501,45 +1072,82 @@ impl TypeChecker {
     /// correctly regardless of source order.
     pub fn check_program(&mut self, program: &Program) -> Result<TypedProgram> {
         for stmt in &program.statements {
-            if let Statement::EnumDecl { name, variants, .. } = stmt {
-                let mut resolved_variants = Vec::with_capacity(variants.len());
-                for v in variants {
-                    let mut tys = Vec::with_capacity(v.payload_types.len());
-                    for t in &v.payload_types {
-                        tys.push(self.resolve_type_name(t));
+            if let Statement::EnumDecl { name, type_params, variants, location } = stmt {
+                if !type_params.is_empty() {
+                    self.generic_enums.insert(name.clone(), GenericEnumDef {
+                        name: name.clone(),
+                        type_params: type_params.clone(),
+                        variants: variants.clone(),
+                        location: location.clone(),
+                    });
+                } else {
+                    let mut resolved_variants = Vec::with_capacity(variants.len());
+                    for v in variants {
+                        let mut tys = Vec::with_capacity(v.payload_types.len());
+                        for t in &v.payload_types {
+                            tys.push(self.resolve_type_name(t));
+                        }
+                        self.variant_to_enum.entry(v.name.clone()).or_default().push(name.clone());
+                        resolved_variants.push((v.name.clone(), tys));
                     }
-                    self.variant_to_enum.entry(v.name.clone()).or_default().push(name.clone());
-                    resolved_variants.push((v.name.clone(), tys));
+                    self.enums.insert(name.clone(), resolved_variants);
                 }
-                self.enums.insert(name.clone(), resolved_variants);
             }
         }
 
         for stmt in &program.statements {
-            if let Statement::ClassDecl { name, fields, .. } = stmt {
-                let resolved_fields = fields.iter()
-                    .map(|f| (f.name.clone(), f.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown)))
-                    .collect();
-                self.classes.insert(name.clone(), resolved_fields);
+            if let Statement::ClassDecl { name, type_params, fields, location } = stmt {
+                if !type_params.is_empty() {
+                    self.generic_classes.insert(name.clone(), GenericClassDef {
+                        name: name.clone(),
+                        type_params: type_params.clone(),
+                        fields: fields.clone(),
+                        location: location.clone(),
+                    });
+                } else {
+                    let mut resolved_fields = Vec::with_capacity(fields.len());
+                    for f in fields {
+                        let ty = f.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown);
+                        resolved_fields.push((f.name.clone(), ty));
+                    }
+                    self.classes.insert(name.clone(), resolved_fields);
+                }
             }
         }
 
         for stmt in &program.statements {
-            if let Statement::Function { name, params, return_type, .. } = stmt {
-                let param_types = params.iter()
-                    .map(|p| p.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown))
-                    .collect();
-                let ret = return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
-                self.functions.insert(name.clone(), FunctionSig { params: param_types, return_type: ret });
+            if let Statement::Function { name, type_params, params, return_type, body, location } = stmt {
+                if !type_params.is_empty() {
+                    self.generic_functions.insert(name.clone(), GenericFuncDef {
+                        name: name.clone(),
+                        type_params: type_params.clone(),
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                        body: (**body).clone(),
+                        location: location.clone(),
+                    });
+                } else {
+                    let mut param_types = Vec::with_capacity(params.len());
+                    for p in params {
+                        param_types.push(p.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown));
+                    }
+                    let ret = return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
+                    self.functions.insert(name.clone(), FunctionSig { params: param_types, return_type: ret });
+                }
             }
         }
 
-        let mut statements = Vec::with_capacity(program.statements.len());
+        let mut user_statements = Vec::with_capacity(program.statements.len());
         for stmt in &program.statements {
             if let Some(typed) = self.check_statement(stmt)? {
-                statements.push(typed);
+                user_statements.push(typed);
             }
         }
+
+        let mut statements = Vec::with_capacity(self.generated_class_decls.len() + user_statements.len() + self.generated_func_decls.len());
+        statements.extend(self.generated_class_decls.clone());
+        statements.extend(user_statements);
+        statements.extend(self.generated_func_decls.clone());
         Ok(TypedProgram { statements })
     }
 
@@ -548,7 +1156,10 @@ impl TypeChecker {
     /// counterpart -- see `ir::TypedStatement`'s doc comment).
     pub fn check_statement(&mut self, stmt: &Statement) -> Result<Option<TypedStatement>> {
         match stmt {
-            Statement::Function { name, params, return_type, body, location } => {
+            Statement::Function { name, type_params, params, return_type, body, location } => {
+                if !type_params.is_empty() {
+                    return Ok(None);
+                }
                 if name == "main" && return_type.is_some() {
                     return Err(RozeError::type_error(
                         "'main' always returns void and cannot declare a return type",
@@ -587,11 +1198,28 @@ impl TypeChecker {
                     location: location.clone(),
                 }))
             }
-            Statement::Let { name, value, location } => {
+            Statement::Let { name, type_name, value, location } => {
                 let typed_value = self.check_expression(value)?;
-                self.symbol_table.define(name, typed_value.type_.clone(), location.line, location.column)?;
+                let var_type = if let Some(tn) = type_name {
+                    let expected = self.resolve_type_name(tn);
+                    if !types_compatible(&expected, &typed_value.type_) {
+                        return Err(RozeError::type_error(
+                            format!(
+                                "Variable '{}' is declared as {}, but initialized with {}",
+                                name, expected, typed_value.type_
+                            ),
+                            location.line,
+                            location.column,
+                        ).into());
+                    }
+                    expected
+                } else {
+                    typed_value.type_.clone()
+                };
+                self.symbol_table.define(name, var_type.clone(), location.line, location.column)?;
                 Ok(Some(TypedStatement::Let {
                     name: name.clone(),
+                    type_: var_type,
                     value: typed_value,
                     location: location.clone(),
                 }))
@@ -717,7 +1345,10 @@ impl TypeChecker {
                 // way (see `ir::TypedStatement`'s doc comment).
                 Ok(None)
             }
-            Statement::ClassDecl { name, location, .. } => {
+            Statement::ClassDecl { name, type_params, location, .. } => {
+                if !type_params.is_empty() {
+                    return Ok(None);
+                }
                 // Already fully resolved into self.classes during
                 // check_program's first pass (needed there so function
                 // signatures declared earlier in the file can reference
@@ -800,7 +1431,10 @@ impl TypeChecker {
                 }
                 Ok(Some(TypedStatement::Assign { name: name.clone(), value: typed_value, location: location.clone() }))
             }
-            Statement::EnumDecl { name, location, .. } => {
+            Statement::EnumDecl { name, type_params, location, .. } => {
+                if !type_params.is_empty() {
+                    return Ok(None);
+                }
                 let variants = self.enums.get(name)
                     .expect("check_program registers every enum before any statement is checked")
                     .clone();
@@ -1154,6 +1788,104 @@ impl TypeChecker {
                                 location.line,
                                 location.column,
                             ))?
+                    } else if let Some(gen_fn) = self.generic_functions.get(name).cloned() {
+                        let concrete_type_args = self.infer_func_type_args(&gen_fn, &typed_arguments, location)?;
+                        let spec_name = self.instantiate_generic_function(name, &concrete_type_args)?;
+                        let sig = self.functions.get(&spec_name).unwrap().clone();
+                        for (arg, param_type) in typed_arguments.iter().zip(sig.params.iter()) {
+                            if !types_compatible(param_type, &arg.type_) {
+                                return Err(RozeError::type_error(
+                                    format!("'{}' expects {} for this argument, got {}", name, param_type, arg.type_),
+                                    location.line,
+                                    location.column,
+                                ).into());
+                            }
+                        }
+                        return Ok(TypedExpression {
+                            kind: TypedExpressionKind::Call {
+                                function: spec_name,
+                                arguments: typed_arguments,
+                            },
+                            type_: sig.return_type.clone(),
+                            location: location.clone(),
+                        });
+                    } else if name == "list_get" && typed_arguments.len() == 2 {
+                        let elem_ty = match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "List" || base == "list") && !type_args.is_empty() => {
+                                type_args[0].clone()
+                            }
+                            _ => Type::Unknown,
+                        };
+                        elem_ty
+                    } else if name == "list_set" && typed_arguments.len() == 3 {
+                        let elem_ty = match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "List" || base == "list") && !type_args.is_empty() => {
+                                if !types_compatible(&type_args[0], &typed_arguments[2].type_) {
+                                    return Err(RozeError::type_error(
+                                        format!("list_set expects element type {}, got {}", type_args[0], typed_arguments[2].type_),
+                                        location.line,
+                                        location.column,
+                                    ).into());
+                                }
+                                type_args[0].clone()
+                            }
+                            _ => Type::Unknown,
+                        };
+                        elem_ty
+                    } else if name == "list_push" && typed_arguments.len() == 2 {
+                        if let Type::Generic { base, type_args } = &typed_arguments[0].type_ {
+                            if (base == "List" || base == "list") && !type_args.is_empty() {
+                                if !types_compatible(&type_args[0], &typed_arguments[1].type_) {
+                                    return Err(RozeError::type_error(
+                                        format!("list_push expects element type {}, got {}", type_args[0], typed_arguments[1].type_),
+                                        location.line,
+                                        location.column,
+                                    ).into());
+                                }
+                            }
+                        }
+                        Type::Bool
+                    } else if name == "map_put" && typed_arguments.len() == 3 {
+                        if let Type::Generic { base, type_args } = &typed_arguments[0].type_ {
+                            if (base == "Map" || base == "map") && type_args.len() >= 2 {
+                                if !types_compatible(&type_args[0], &typed_arguments[1].type_) {
+                                    return Err(RozeError::type_error(
+                                        format!("map_put expects key type {}, got {}", type_args[0], typed_arguments[1].type_),
+                                        location.line,
+                                        location.column,
+                                    ).into());
+                                }
+                                if !types_compatible(&type_args[1], &typed_arguments[2].type_) {
+                                    return Err(RozeError::type_error(
+                                        format!("map_put expects value type {}, got {}", type_args[1], typed_arguments[2].type_),
+                                        location.line,
+                                        location.column,
+                                    ).into());
+                                }
+                            }
+                        }
+                        let val_ty = match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "Map" || base == "map") && type_args.len() >= 2 => {
+                                type_args[1].clone()
+                            }
+                            _ => Type::Unknown,
+                        };
+                        val_ty
+                    } else if name == "map_get" && typed_arguments.len() == 2 {
+                        let val_ty = match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "Map" || base == "map") && type_args.len() >= 2 => {
+                                if !types_compatible(&type_args[0], &typed_arguments[1].type_) {
+                                    return Err(RozeError::type_error(
+                                        format!("map_get expects key type {}, got {}", type_args[0], typed_arguments[1].type_),
+                                        location.line,
+                                        location.column,
+                                    ).into());
+                                }
+                                type_args[1].clone()
+                            }
+                            _ => Type::Unknown,
+                        };
+                        val_ty
                     } else if let Some(sig) = self.functions.get(name) {
                         // Validate argument count and each argument's
                         // type against the declared signature -- the
@@ -1299,12 +2031,32 @@ impl TypeChecker {
                     }
                 }
             }
-            Expression::New { class_name, arguments, location } => {
-                let fields = self.classes.get(class_name).cloned().ok_or_else(|| RozeError::type_error(
-                    format!("Undefined class '{}'", class_name),
+            Expression::New { class_name, type_args, arguments, location } => {
+                let actual_class_name = if self.generic_classes.contains_key(class_name) {
+                    let template = self.generic_classes.get(class_name).unwrap().clone();
+                    let concrete_type_args = if !type_args.is_empty() {
+                        let mut resolved = Vec::with_capacity(type_args.len());
+                        for ta in type_args {
+                            resolved.push(self.resolve_type_name(ta));
+                        }
+                        resolved
+                    } else {
+                        let mut typed_args = Vec::with_capacity(arguments.len());
+                        for arg in arguments {
+                            typed_args.push(self.check_expression(arg)?);
+                        }
+                        self.infer_class_type_args(&template, &typed_args, location)?
+                    };
+                    self.instantiate_generic_class(class_name, &concrete_type_args)?
+                } else {
+                    class_name.clone()
+                };
+
+                let fields = self.classes.get(&actual_class_name).cloned().ok_or_else(|| RozeError::type_error(
+                    format!("Undefined class '{}'", actual_class_name),
                     location.line,
                     location.column,
-                ).with_length(class_name.chars().count()))?;
+                ).with_length(actual_class_name.chars().count()))?;
 
                 if arguments.len() != fields.len() {
                     return Err(RozeError::type_error(
@@ -1334,10 +2086,59 @@ impl TypeChecker {
                 }
 
                 Ok(TypedExpression {
-                    kind: TypedExpressionKind::New { class_name: class_name.clone(), arguments: typed_arguments },
-                    type_: Type::Class(class_name.clone()),
+                    kind: TypedExpressionKind::New { class_name: actual_class_name.clone(), arguments: typed_arguments },
+                    type_: Type::Class(actual_class_name),
                     location: location.clone(),
                 })
+            }
+            Expression::GenericCall { function, type_args, arguments, location } => {
+                if let Some(_template) = self.generic_functions.get(function).cloned() {
+                    let mut resolved_type_args = Vec::with_capacity(type_args.len());
+                    for ta in type_args {
+                        resolved_type_args.push(self.resolve_type_name(ta));
+                    }
+                    let spec_name = self.instantiate_generic_function(function, &resolved_type_args)?;
+                    let sig = self.functions.get(&spec_name).unwrap().clone();
+
+                    if arguments.len() != sig.params.len() {
+                        return Err(RozeError::type_error(
+                            format!(
+                                "'{}' takes {} argument(s), but {} were given",
+                                function, sig.params.len(), arguments.len()
+                            ),
+                            location.line,
+                            location.column,
+                        ).into());
+                    }
+
+                    let mut typed_arguments = Vec::with_capacity(arguments.len());
+                    for (arg, param_type) in arguments.iter().zip(sig.params.iter()) {
+                        let typed_arg = self.check_expression(arg)?;
+                        if !types_compatible(param_type, &typed_arg.type_) {
+                            return Err(RozeError::type_error(
+                                format!("'{}' expects {} for this argument, got {}", function, param_type, typed_arg.type_),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                        typed_arguments.push(typed_arg);
+                    }
+
+                    Ok(TypedExpression {
+                        kind: TypedExpressionKind::Call {
+                            function: spec_name,
+                            arguments: typed_arguments,
+                        },
+                        type_: sig.return_type.clone(),
+                        location: location.clone(),
+                    })
+                } else {
+                    return Err(RozeError::type_error(
+                        format!("Undefined generic function '{}'", function),
+                        location.line,
+                        location.column,
+                    ).into());
+                }
             }
             Expression::FieldAccess { object, field, location } => {
                 let typed_object = self.check_expression(object)?;

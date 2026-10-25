@@ -339,7 +339,7 @@ fn expression_is_borrowed(expr: &TypedExpression) -> bool {
 
 fn require_supported_type(ty: &Type, _location: &Location, _context: &str) -> Result<()> {
     match ty {
-        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result | Type::Enum(_) | Type::Function { .. } => Ok(()),
+        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result | Type::Enum(_) | Type::Function { .. } | Type::Generic { .. } => Ok(()),
     }
 }
 
@@ -1971,6 +1971,16 @@ fn arc_release_call_for_field_type(
         Type::List => Some(list_release_id),
         Type::Map => Some(map_release_id),
         Type::Class(name) => other_class_release_ids.get(name).copied(),
+        Type::Generic { base, type_args } => {
+            if base == "List" || base == "list" {
+                Some(list_release_id)
+            } else if base == "Map" || base == "map" {
+                Some(map_release_id)
+            } else {
+                let spec = crate::semantic::specialized_name(base, type_args);
+                other_class_release_ids.get(&spec).copied()
+            }
+        }
         _ => None,
     }
 }
@@ -2727,7 +2737,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn release_frame(&mut self, frame_index: usize) -> Result<()> {
         let arc_vars: Vec<(Variable, Type)> = self.scopes[frame_index]
             .values()
-            .filter(|(_, ty)| matches!(ty, Type::String | Type::List | Type::Map | Type::Class(_)))
+            .filter(|(_, ty)| matches!(ty, Type::String | Type::List | Type::Map | Type::Class(_) | Type::Generic { .. }))
             .cloned()
             .collect();
         for (var, ty) in arc_vars {
@@ -2774,6 +2784,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             Type::Map => self.emit_map_retain(val),
             Type::Class(_) => self.emit_class_retain(val),
             Type::Function { .. } => self.emit_class_retain(val),
+            Type::Generic { base, .. } if base == "List" || base == "list" => self.emit_list_retain(val),
+            Type::Generic { base, .. } if base == "Map" || base == "map" => self.emit_map_retain(val),
+            Type::Generic { .. } => self.emit_class_retain(val),
             _ => Ok(()),
         }
     }
@@ -2840,6 +2853,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     .expect("every class referenced by a typed value was declared and registered in declare_all_classes");
                 let release_ref = self.module.declare_func_in_func(release_id, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "List" || base == "list" => self.emit_list_release(val),
+            Type::Generic { base, .. } if base == "Map" || base == "map" => self.emit_map_release(val),
+            Type::Generic { base, type_args } => {
+                let spec = crate::semantic::specialized_name(base, type_args);
+                if let Some(info) = self.classes.get(&spec) {
+                    let release_ref = self.module.declare_func_in_func(info.release_id, self.builder.func);
+                    self.builder.ins().call(release_ref, &[val]);
+                }
                 Ok(())
             }
             _ => Ok(()),
@@ -3060,11 +3083,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.scopes.pop();
                 Ok(terminated)
             }
-            TypedStatement::Let { name, value, .. } => {
-                require_supported_type(&value.type_, &value.location, &format!("variable '{}'", name))?;
+            TypedStatement::Let { name, type_, value, .. } => {
+                require_supported_type(type_, &value.location, &format!("variable '{}'", name))?;
                 let val = self.compile_expression(value)?;
                 self.retain_if_aliasing(value, val)?;
-                let var = self.declare_local(name, value.type_.clone());
+                let var = self.declare_local(name, type_.clone());
                 self.builder.def_var(var, val);
                 Ok(false)
             }

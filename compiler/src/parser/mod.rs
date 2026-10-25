@@ -210,6 +210,8 @@ impl Parser {
         };
         self.advance();
 
+        let type_params = self.parse_type_params()?;
+
         // Skip newlines before parenthesis
         while self.check(&Token::Newline) {
             self.advance();
@@ -302,6 +304,7 @@ impl Parser {
 
         Ok(Statement::Function {
             name,
+            type_params,
             params,
             return_type,
             body: Box::new(body),
@@ -329,6 +332,16 @@ impl Parser {
         };
         self.advance();
 
+        let type_name = if self.check(&Token::Colon) {
+            self.advance(); // Skip ':'
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            Some(self.parse_type_name()?)
+        } else {
+            None
+        };
+
         // Skip newlines
         while self.check(&Token::Newline) {
             self.advance();
@@ -353,6 +366,7 @@ impl Parser {
 
         Ok(Statement::Let {
             name,
+            type_name,
             value: Box::new(value),
             location,
         })
@@ -562,6 +576,8 @@ impl Parser {
             other => return Err(self.error(format!("Expected a class name after 'class', found {}", other))),
         };
 
+        let type_params = self.parse_type_params()?;
+
         while self.check(&Token::Newline) {
             self.advance();
         }
@@ -609,7 +625,7 @@ impl Parser {
         }
         self.advance(); // Skip '}'
 
-        Ok(Statement::ClassDecl { name, fields, location })
+        Ok(Statement::ClassDecl { name, type_params, fields, location })
     }
 
     fn parse_enum(&mut self) -> Result<Statement> {
@@ -624,6 +640,8 @@ impl Parser {
             }
             other => return Err(self.error(format!("Expected an enum name after 'enum', found {}", other))),
         };
+
+        let type_params = self.parse_type_params()?;
 
         while self.check(&Token::Newline) {
             self.advance();
@@ -698,7 +716,7 @@ impl Parser {
         }
         self.advance(); // Skip '}'
 
-        Ok(Statement::EnumDecl { name, variants, location })
+        Ok(Statement::EnumDecl { name, type_params, variants, location })
     }
 
     fn parse_match(&mut self) -> Result<Statement> {
@@ -916,7 +934,7 @@ impl Parser {
                 self.advance();
             }
             let value = self.parse_expression()?;
-            Ok(Statement::Let { name, value: Box::new(value), location })
+            Ok(Statement::Let { name, type_name: None, value: Box::new(value), location })
         } else if matches!(self.current().token, Token::Identifier(_)) {
             let name = match self.current().token.clone() {
                 Token::Identifier(n) => n,
@@ -1199,6 +1217,72 @@ impl Parser {
         }
     }
 
+    fn parse_type_params(&mut self) -> Result<Vec<String>> {
+        if !self.check(&Token::LessThan) {
+            return Ok(Vec::new());
+        }
+        self.advance(); // Skip '<'
+        let mut params = Vec::new();
+        while !self.check(&Token::GreaterThan) && !self.check(&Token::EOF) {
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&Token::GreaterThan) {
+                break;
+            }
+            match &self.current().token {
+                Token::Identifier(name) => {
+                    params.push(name.clone());
+                    self.advance();
+                }
+                other => return Err(self.error(format!("Expected type parameter name, found {}", other))),
+            }
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&Token::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if !self.check(&Token::GreaterThan) {
+            return Err(self.error("Expected '>' to close type parameters"));
+        }
+        self.advance(); // Skip '>'
+        Ok(params)
+    }
+
+    fn parse_type_args(&mut self) -> Result<Vec<String>> {
+        if !self.check(&Token::LessThan) {
+            return Ok(Vec::new());
+        }
+        self.advance(); // Skip '<'
+        let mut args = Vec::new();
+        while !self.check(&Token::GreaterThan) && !self.check(&Token::EOF) {
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&Token::GreaterThan) {
+                break;
+            }
+            args.push(self.parse_type_name()?);
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&Token::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if !self.check(&Token::GreaterThan) {
+            return Err(self.error("Expected '>' to close type arguments"));
+        }
+        self.advance(); // Skip '>'
+        Ok(args)
+    }
+
     /// Wraps `parse_primary` with zero or more trailing `.field`
     /// accesses (e.g. `a.b.c`) or `?` error-propagation try operators (e.g. `f()?`).
     fn parse_postfix(&mut self) -> Result<Expression> {
@@ -1259,6 +1343,55 @@ impl Parser {
                     arguments: args,
                     location,
                 };
+            } else if let Expression::Identifier { ref name, location: ref id_loc } = expr {
+                if self.check(&Token::LessThan) {
+                    let saved_pos = self.position;
+                    let fn_name = name.clone();
+                    let fn_loc = id_loc.clone();
+                    if let Ok(type_args) = self.parse_type_args() {
+                        if !type_args.is_empty() && self.check(&Token::LeftParen) {
+                            self.advance(); // Skip '('
+                            let mut args = Vec::new();
+                            let mut parse_ok = true;
+                            while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                                while self.check(&Token::Newline) {
+                                    self.advance();
+                                }
+                                if self.check(&Token::RightParen) {
+                                    break;
+                                }
+                                match self.parse_expression() {
+                                    Ok(arg) => args.push(arg),
+                                    Err(_) => {
+                                        parse_ok = false;
+                                        break;
+                                    }
+                                }
+                                while self.check(&Token::Newline) {
+                                    self.advance();
+                                }
+                                if !self.check(&Token::Comma) {
+                                    break;
+                                }
+                                self.advance();
+                            }
+                            if parse_ok && self.check(&Token::RightParen) {
+                                self.advance(); // Skip ')'
+                                expr = Expression::GenericCall {
+                                    function: fn_name,
+                                    type_args,
+                                    arguments: args,
+                                    location: fn_loc,
+                                };
+                                continue;
+                            }
+                        }
+                    }
+                    self.position = saved_pos;
+                    break;
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
@@ -1317,6 +1450,8 @@ impl Parser {
                     other => return Err(self.error(format!("Expected a class name after 'new', found {}", other))),
                 };
 
+                let type_args = self.parse_type_args()?;
+
                 if !self.check(&Token::LeftParen) {
                     return Err(self.error(format!("Expected '(' after 'new {}'", class_name)));
                 }
@@ -1346,7 +1481,7 @@ impl Parser {
                 }
                 self.advance(); // Skip ')'
 
-                Ok(Expression::New { class_name, arguments: args, location })
+                Ok(Expression::New { class_name, type_args, arguments: args, location })
             }
             Token::Underscore => {
                 self.advance();

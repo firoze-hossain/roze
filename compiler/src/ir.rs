@@ -41,6 +41,7 @@ pub struct TypedFunctionParam {
 pub enum TypedStatement {
     Let {
         name: String,
+        type_: Type,
         value: TypedExpression,
         location: Location,
     },

@@ -721,3 +721,19 @@ true
 1";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn concurrent_async_http_server_and_router() {
+    let (stdout, stderr, ok) = run_fixture("web_server.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+123
+admin
+Roze Server
+42
+assets/styles/main.css
+100
+200
+5";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}

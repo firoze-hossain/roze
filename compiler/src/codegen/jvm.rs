@@ -95,6 +95,12 @@ const IO_HELPER_METHODS: &str = r#"
             throw new RuntimeException(e);
         }
     }
+
+    private static int __roze_to_int(Object v) {
+        if (v == null) return 0;
+        if (v instanceof Number) return ((Number) v).intValue();
+        return Integer.parseInt(String.valueOf(v).trim());
+    }
 "#;
 
 /// JSON encode/decode helpers. There is no JSON support in the standard
@@ -312,9 +318,115 @@ const JSON_HELPER_METHODS: &str = r#"
 /// the pragmatic alternative. No concurrency: one request is fully
 /// handled before the next is accepted. See stdlib/src/io.roze.
 const HTTP_SERVER_HELPER_METHODS: &str = r#"
+    public static class RozeHttpServer {
+        private final java.net.ServerSocket serverSocket;
+        private final java.util.concurrent.ExecutorService executor;
+        private final Thread acceptThread;
+        private volatile boolean running = true;
+
+        public RozeHttpServer(int port, RozeFn handler) throws java.io.IOException {
+            this.serverSocket = new java.net.ServerSocket(port);
+            java.util.concurrent.ExecutorService exec = null;
+            try {
+                // Java 21+ virtual thread per task executor via reflection
+                exec = (java.util.concurrent.ExecutorService) java.util.concurrent.Executors.class
+                    .getMethod("newVirtualThreadPerTaskExecutor").invoke(null);
+            } catch (Throwable t) {
+                // Fallback: cached thread pool (scales to thousands of concurrent workers)
+                exec = java.util.concurrent.Executors.newCachedThreadPool();
+            }
+            this.executor = exec;
+
+            this.acceptThread = new Thread(() -> {
+                while (running && !serverSocket.isClosed()) {
+                    try {
+                        java.net.Socket socket = serverSocket.accept();
+                        executor.submit(() -> {
+                            try {
+                                handleConnection(socket, handler);
+                            } catch (Throwable t) {
+                                try { socket.close(); } catch (Exception ignored) {}
+                            }
+                        });
+                    } catch (java.io.IOException e) {
+                        if (!running) break;
+                    }
+                }
+            }, "Roze-HttpServer-Acceptor");
+            this.acceptThread.setDaemon(true);
+            this.acceptThread.start();
+        }
+
+        private static void handleConnection(java.net.Socket socket, RozeFn handler) {
+            try {
+                socket.setSoTimeout(30000);
+                java.io.InputStream in = socket.getInputStream();
+                java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+                byte[] chunk = new byte[8192];
+                int headerEnd = -1;
+                while (headerEnd < 0) {
+                    int n = in.read(chunk);
+                    if (n <= 0) break;
+                    buffer.write(chunk, 0, n);
+                    headerEnd = __roze_find_header_end(buffer.toByteArray());
+                }
+                if (headerEnd < 0) {
+                    socket.close();
+                    return;
+                }
+
+                java.util.Map<Object, Object> request = __roze_parse_request_from_stream(
+                    buffer.toByteArray(), headerEnd, socket, in, chunk
+                );
+
+                handler.apply(request);
+
+                Boolean handled = (Boolean) request.get("__handled");
+                if (handled == null || !handled) {
+                    if (!socket.isClosed()) {
+                        __roze_http_server_respond(request, 200, "OK");
+                    }
+                }
+            } catch (Throwable t) {
+                try {
+                    if (!socket.isClosed()) {
+                        String errMsg = t.getMessage() != null ? t.getMessage() : t.toString();
+                        String errJson = "{\"error\":\"" + errMsg.replace("\"", "\\\"").replace("\n", " ") + "\"}";
+                        byte[] b = errJson.getBytes("UTF-8");
+                        String resp = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: "
+                            + b.length + "\r\nConnection: close\r\n\r\n" + errJson;
+                        socket.getOutputStream().write(resp.getBytes("UTF-8"));
+                        socket.getOutputStream().flush();
+                        socket.close();
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+
+        public void stop() {
+            this.running = false;
+            try {
+                this.serverSocket.close();
+            } catch (Exception ignored) {}
+            this.executor.shutdownNow();
+            try {
+                this.acceptThread.join(1000);
+            } catch (Exception ignored) {}
+        }
+    }
+
     private static java.net.ServerSocket __roze_http_server_start(int port) {
         try {
             return new java.net.ServerSocket(port);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static RozeHttpServer __roze_http_server_listen(int port, Object handlerObj) {
+        try {
+            RozeFn handler = (RozeFn) handlerObj;
+            return new RozeHttpServer(port, handler);
         } catch (java.io.IOException e) {
             throw new RuntimeException(e);
         }
@@ -327,6 +439,92 @@ const HTTP_SERVER_HELPER_METHODS: &str = r#"
             }
         }
         return -1;
+    }
+
+    private static java.util.Map<Object, Object> __roze_parse_request_from_stream(
+        byte[] all, int headerEnd, java.net.Socket socket, java.io.InputStream in, byte[] chunk
+    ) throws java.io.IOException {
+        String headerText = new String(all, 0, Math.max(headerEnd, 0), "UTF-8");
+        String[] lines = headerText.split("\r\n");
+        String[] requestLineParts = lines.length > 0 ? lines[0].split(" ") : new String[0];
+        String method = requestLineParts.length > 0 ? requestLineParts[0].toUpperCase() : "GET";
+        String rawPath = requestLineParts.length > 1 ? requestLineParts[1] : "/";
+
+        java.util.Map<Object, Object> headersMap = new java.util.HashMap<Object, Object>();
+        int contentLength = 0;
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i];
+            int colon = line.indexOf(':');
+            if (colon > 0) {
+                String hKey = line.substring(0, colon).trim().toLowerCase();
+                String hVal = line.substring(colon + 1).trim();
+                headersMap.put(hKey, hVal);
+                if (hKey.equals("content-length")) {
+                    try { contentLength = Integer.parseInt(hVal); } catch (Exception ignored) {}
+                }
+            }
+        }
+
+        String path = rawPath;
+        java.util.Map<Object, Object> queryMap = new java.util.HashMap<Object, Object>();
+        int qIdx = rawPath.indexOf('?');
+        if (qIdx >= 0) {
+            path = rawPath.substring(0, qIdx);
+            String queryString = rawPath.substring(qIdx + 1);
+            String[] pairs = queryString.split("&");
+            for (String pair : pairs) {
+                if (!pair.isEmpty()) {
+                    int eqIdx = pair.indexOf('=');
+                    if (eqIdx >= 0) {
+                        String k = java.net.URLDecoder.decode(pair.substring(0, eqIdx), "UTF-8");
+                        String v = java.net.URLDecoder.decode(pair.substring(eqIdx + 1), "UTF-8");
+                        queryMap.put(k, v);
+                    } else {
+                        queryMap.put(java.net.URLDecoder.decode(pair, "UTF-8"), "");
+                    }
+                }
+            }
+        }
+
+        int bodyStart = headerEnd + 4;
+        java.io.ByteArrayOutputStream bodyBuffer = new java.io.ByteArrayOutputStream();
+        if (bodyStart < all.length) {
+            bodyBuffer.write(all, bodyStart, all.length - bodyStart);
+        }
+        while (bodyBuffer.size() < contentLength) {
+            int toRead = Math.min(chunk.length, contentLength - bodyBuffer.size());
+            int n = in.read(chunk, 0, toRead);
+            if (n <= 0) break;
+            bodyBuffer.write(chunk, 0, n);
+        }
+        String body = bodyBuffer.toString("UTF-8");
+
+        Object jsonObj = null;
+        String trimmedBody = body.trim();
+        if (!trimmedBody.isEmpty()) {
+            String contentType = (String) headersMap.get("content-type");
+            boolean isJson = (contentType != null && contentType.toLowerCase().contains("application/json"))
+                    || (trimmedBody.startsWith("{") && trimmedBody.endsWith("}"))
+                    || (trimmedBody.startsWith("[") && trimmedBody.endsWith("]"));
+            if (isJson) {
+                try {
+                    jsonObj = __roze_json_decode(trimmedBody);
+                } catch (Exception ignored) {}
+            }
+        }
+
+        java.util.Map<Object, Object> request = new java.util.HashMap<Object, Object>();
+        request.put("method", method);
+        request.put("path", path);
+        request.put("raw_path", rawPath);
+        request.put("query", queryMap);
+        request.put("headers", headersMap);
+        request.put("body", body);
+        request.put("json", jsonObj);
+        request.put("params", new java.util.HashMap<Object, Object>());
+        request.put("__socket", socket);
+        request.put("__handled", false);
+        return request;
     }
 
     private static java.util.Map __roze_http_server_accept(java.net.ServerSocket server) {
@@ -343,37 +541,7 @@ const HTTP_SERVER_HELPER_METHODS: &str = r#"
                 headerEnd = __roze_find_header_end(buffer.toByteArray());
             }
             byte[] all = buffer.toByteArray();
-            String headerText = new String(all, 0, Math.max(headerEnd, 0), "UTF-8");
-            String[] lines = headerText.split("\r\n");
-            String[] requestLineParts = lines.length > 0 ? lines[0].split(" ") : new String[0];
-            String method = requestLineParts.length > 0 ? requestLineParts[0] : "GET";
-            String path = requestLineParts.length > 1 ? requestLineParts[1] : "/";
-
-            int contentLength = 0;
-            for (String line : lines) {
-                if (line.toLowerCase().startsWith("content-length:")) {
-                    contentLength = Integer.parseInt(line.substring(line.indexOf(':') + 1).trim());
-                }
-            }
-
-            int bodyStart = headerEnd + 4;
-            java.io.ByteArrayOutputStream bodyBuffer = new java.io.ByteArrayOutputStream();
-            if (bodyStart < all.length) {
-                bodyBuffer.write(all, bodyStart, all.length - bodyStart);
-            }
-            while (bodyBuffer.size() < contentLength) {
-                int n = in.read(chunk);
-                if (n <= 0) break;
-                bodyBuffer.write(chunk, 0, n);
-            }
-            String body = bodyBuffer.toString("UTF-8");
-
-            java.util.Map<Object, Object> request = new java.util.HashMap<Object, Object>();
-            request.put("method", method);
-            request.put("path", path);
-            request.put("body", body);
-            request.put("__socket", socket);
-            return request;
+            return __roze_parse_request_from_stream(all, headerEnd, socket, in, chunk);
         } catch (java.io.IOException e) {
             throw new RuntimeException(e);
         }
@@ -393,9 +561,11 @@ const HTTP_SERVER_HELPER_METHODS: &str = r#"
         return "Unknown";
     }
 
-    private static void __roze_http_server_respond(java.util.Map request, int status, String body) {
+    private static void __roze_http_server_respond(Object requestObj, int status, Object bodyObj) {
         try {
+            java.util.Map request = (java.util.Map) requestObj;
             java.net.Socket socket = (java.net.Socket) request.get("__socket");
+            String body = bodyObj != null ? String.valueOf(bodyObj) : "";
             byte[] bodyBytes = body.getBytes("UTF-8");
             String header = "HTTP/1.1 " + status + " " + __roze_http_status_text(status) + "\r\n"
                 + "Content-Type: text/plain; charset=utf-8\r\n"
@@ -403,20 +573,143 @@ const HTTP_SERVER_HELPER_METHODS: &str = r#"
                 + "Connection: close\r\n\r\n";
             java.io.OutputStream out = socket.getOutputStream();
             out.write(header.getBytes("UTF-8"));
-            out.write(bodyBytes);
+            if (bodyBytes.length > 0) {
+                out.write(bodyBytes);
+            }
             out.flush();
             socket.close();
+            request.put("__handled", true);
         } catch (java.io.IOException e) {
             throw new RuntimeException(e);
         }
     }
 
-    private static void __roze_http_server_stop(java.net.ServerSocket server) {
+    private static void __roze_http_server_respond_json(Object requestObj, int status, Object data) {
         try {
-            server.close();
+            java.util.Map request = (java.util.Map) requestObj;
+            java.net.Socket socket = (java.net.Socket) request.get("__socket");
+            String jsonStr = __roze_json_encode(data);
+            byte[] bodyBytes = jsonStr.getBytes("UTF-8");
+            String header = "HTTP/1.1 " + status + " " + __roze_http_status_text(status) + "\r\n"
+                + "Content-Type: application/json; charset=utf-8\r\n"
+                + "Content-Length: " + bodyBytes.length + "\r\n"
+                + "Connection: close\r\n\r\n";
+            java.io.OutputStream out = socket.getOutputStream();
+            out.write(header.getBytes("UTF-8"));
+            out.write(bodyBytes);
+            out.flush();
+            socket.close();
+            request.put("__handled", true);
         } catch (java.io.IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private static void __roze_http_server_respond_headers(Object requestObj, int status, Object customHeadersObj, Object bodyObj) {
+        try {
+            java.util.Map request = (java.util.Map) requestObj;
+            java.net.Socket socket = (java.net.Socket) request.get("__socket");
+            java.util.Map customHeaders = customHeadersObj instanceof java.util.Map ? (java.util.Map) customHeadersObj : null;
+            String body = bodyObj != null ? String.valueOf(bodyObj) : "";
+            byte[] bodyBytes = body.getBytes("UTF-8");
+            StringBuilder sb = new StringBuilder();
+            sb.append("HTTP/1.1 ").append(status).append(" ").append(__roze_http_status_text(status)).append("\r\n");
+            boolean hasContentType = false;
+            if (customHeaders != null) {
+                for (Object k : customHeaders.keySet()) {
+                    String key = String.valueOf(k);
+                    String val = String.valueOf(customHeaders.get(k));
+                    if (key.equalsIgnoreCase("content-type")) hasContentType = true;
+                    sb.append(key).append(": ").append(val).append("\r\n");
+                }
+            }
+            if (!hasContentType) {
+                sb.append("Content-Type: text/plain; charset=utf-8\r\n");
+            }
+            sb.append("Content-Length: ").append(bodyBytes.length).append("\r\n");
+            sb.append("Connection: close\r\n\r\n");
+
+            java.io.OutputStream out = socket.getOutputStream();
+            out.write(sb.toString().getBytes("UTF-8"));
+            if (bodyBytes.length > 0) {
+                out.write(bodyBytes);
+            }
+            out.flush();
+            socket.close();
+            request.put("__handled", true);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void __roze_http_server_stop(Object serverObj) {
+        if (serverObj instanceof RozeHttpServer) {
+            ((RozeHttpServer) serverObj).stop();
+        } else if (serverObj instanceof java.net.ServerSocket) {
+            try {
+                ((java.net.ServerSocket) serverObj).close();
+            } catch (java.io.IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    private static java.util.Map __roze_url_route_match(Object patternObj, Object pathObj) {
+        if (patternObj == null || pathObj == null) return null;
+        String pattern = String.valueOf(patternObj);
+        String path = String.valueOf(pathObj);
+        int qIdx = path.indexOf('?');
+        if (qIdx >= 0) {
+            path = path.substring(0, qIdx);
+        }
+        String p1 = pattern.startsWith("/") ? pattern.substring(1) : pattern;
+        String p2 = path.startsWith("/") ? path.substring(1) : path;
+        if (p1.endsWith("/")) p1 = p1.substring(0, p1.length() - 1);
+        if (p2.endsWith("/")) p2 = p2.substring(0, p2.length() - 1);
+
+        String[] segs1 = p1.isEmpty() ? new String[0] : p1.split("/");
+        String[] segs2 = p2.isEmpty() ? new String[0] : p2.split("/");
+
+        java.util.Map<Object, Object> params = new java.util.HashMap<Object, Object>();
+
+        int i = 0;
+        int j = 0;
+        while (i < segs1.length && j < segs2.length) {
+            String s1 = segs1[i];
+            String s2 = segs2[j];
+
+            if (s1.startsWith("*")) {
+                String paramName = s1.length() > 1 ? s1.substring(1) : "wildcard";
+                StringBuilder rest = new StringBuilder();
+                for (int k = j; k < segs2.length; k++) {
+                    if (rest.length() > 0) rest.append("/");
+                    rest.append(segs2[k]);
+                }
+                params.put(paramName, rest.toString());
+                return params;
+            } else if (s1.startsWith(":")) {
+                String paramName = s1.substring(1);
+                params.put(paramName, s2);
+                i++;
+                j++;
+            } else if (s1.equals(s2)) {
+                i++;
+                j++;
+            } else {
+                return null;
+            }
+        }
+
+        if (i == segs1.length - 1 && segs1[i].startsWith("*")) {
+            String paramName = segs1[i].length() > 1 ? segs1[i].substring(1) : "wildcard";
+            params.put(paramName, "");
+            return params;
+        }
+
+        if (i == segs1.length && j == segs2.length) {
+            return params;
+        }
+        return null;
     }
 "#;
 
@@ -917,7 +1210,7 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "list_is_empty" => Some("boolean"),
 
         "map_new" => Some("java.util.Map"),
-        "map_put" => Some(OBJECT_TYPE),
+        "map_put" | "map_set" => Some(OBJECT_TYPE),
         "map_get" => Some(OBJECT_TYPE),
         "map_has" => Some("boolean"),
         "map_remove" => Some(OBJECT_TYPE),
@@ -941,6 +1234,10 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "http_server_accept" => Some("java.util.Map"),
         "http_server_respond" => Some("void"),
         "http_server_stop" => Some("void"),
+        "http_server_listen" => Some(OBJECT_TYPE),
+        "http_server_respond_json" => Some("void"),
+        "http_server_respond_headers" => Some("void"),
+        "url_route_match" => Some("java.util.Map"),
 
         "sql_connect" => Some(OBJECT_TYPE),
         "sql_query" => Some("java.util.List"),
@@ -1154,11 +1451,11 @@ impl JavaSourceGenerator {
     pub fn generate(&self) -> Result<String> {
         let mut source = String::new();
         source.push_str("// Generated by Roze compiler v0.1\n");
+        source.push_str("@FunctionalInterface\n");
+        source.push_str("interface RozeFn {\n");
+        source.push_str("    Object apply(Object... args);\n");
+        source.push_str("}\n\n");
         source.push_str(&format!("public class {} {{\n", self.class_name));
-        source.push_str("    @FunctionalInterface\n");
-        source.push_str("    public interface RozeFn {\n");
-        source.push_str("        Object apply(Object... args);\n");
-        source.push_str("    }\n\n");
 
         let mut main_found = false;
         for stmt in &self.program.statements {
@@ -1742,13 +2039,19 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &val)?;
                 source.push_str(";\n");
             }
-            TypedStatement::Assign { name, value, .. } => {
+            TypedStatement::Assign { name, target_type, value, .. } => {
                 let mut hoisted = String::new();
                 let val = self.hoist_try_expr(value, &mut hoisted, &indent_str, return_type)?;
                 source.push_str(&hoisted);
 
                 source.push_str(&format!("{}{} = ", indent_str, escape_java_identifier(name)));
-                self.generate_expression(source, &val)?;
+                if target_type != &Type::Unknown && val.type_ == Type::Unknown {
+                    let mut val_str = String::new();
+                    self.generate_expression(&mut val_str, &val)?;
+                    source.push_str(&java_unbox(target_type, &val_str));
+                } else {
+                    self.generate_expression(source, &val)?;
+                }
                 source.push_str(";\n");
             }
             TypedStatement::If { condition, then_branch, else_branch, .. } => {
@@ -1799,9 +2102,15 @@ impl JavaSourceGenerator {
                     self.generate_expression(source, value)?;
                 }
             }
-            TypedStatement::Assign { name, value, .. } => {
+            TypedStatement::Assign { name, target_type, value, .. } => {
                 source.push_str(&format!("{} = ", escape_java_identifier(name)));
-                self.generate_expression(source, value)?;
+                if target_type != &Type::Unknown && value.type_ == Type::Unknown {
+                    let mut val_str = String::new();
+                    self.generate_expression(&mut val_str, value)?;
+                    source.push_str(&java_unbox(target_type, &val_str));
+                } else {
+                    self.generate_expression(source, value)?;
+                }
             }
             _ => unreachable!("for-loop init/update is always Let or Assign (enforced by the parser)"),
         }
@@ -1899,10 +2208,28 @@ impl JavaSourceGenerator {
                 }
             }
             TypedExpressionKind::New { class_name, arguments } => {
+                let class_fields: Option<Vec<Type>> = self.program.statements.iter().find_map(|s| {
+                    if let TypedStatement::ClassDecl { name, fields, .. } = s {
+                        if name == class_name {
+                            return Some(fields.iter().map(|(_, ty)| ty.clone()).collect());
+                        }
+                    }
+                    None
+                });
+
                 source.push_str(&format!("new {}(", escape_java_identifier(class_name)));
                 for (i, arg) in arguments.iter().enumerate() {
                     if i > 0 {
                         source.push_str(", ");
+                    }
+                    let expected_ty = class_fields.as_ref().and_then(|f| f.get(i));
+                    if let Some(exp_ty) = expected_ty {
+                        if exp_ty != &Type::Unknown && arg.type_ == Type::Unknown {
+                            let mut arg_str = String::new();
+                            self.generate_expression(&mut arg_str, arg)?;
+                            source.push_str(&java_unbox(exp_ty, &arg_str));
+                            continue;
+                        }
                     }
                     self.generate_expression(source, arg)?;
                 }
@@ -2122,7 +2449,7 @@ impl JavaSourceGenerator {
                 source.push(')');
             }
             "to_int" if arguments.len() == 1 => {
-                source.push_str("Integer.parseInt(");
+                source.push_str("__roze_to_int(");
                 self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
@@ -2190,7 +2517,7 @@ impl JavaSourceGenerator {
             "map_new" if arguments.is_empty() => {
                 source.push_str("new java.util.HashMap()");
             }
-            "map_put" if arguments.len() == 3 => {
+            "map_put" | "map_set" if arguments.len() == 3 => {
                 self.generate_map_receiver(source, &arguments[0])?;
                 source.push_str(".put(");
                 self.generate_expression(source, &arguments[1])?;
@@ -2297,6 +2624,13 @@ impl JavaSourceGenerator {
                 self.generate_int_arg(source, &arguments[0])?;
                 source.push(')');
             }
+            "http_server_listen" if arguments.len() == 2 => {
+                source.push_str("__roze_http_server_listen(");
+                self.generate_int_arg(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
             "http_server_accept" if arguments.len() == 1 => {
                 source.push_str("__roze_http_server_accept((java.net.ServerSocket)(");
                 self.generate_expression(source, &arguments[0])?;
@@ -2311,10 +2645,37 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[2])?;
                 source.push(')');
             }
-            "http_server_stop" if arguments.len() == 1 => {
-                source.push_str("__roze_http_server_stop((java.net.ServerSocket)(");
+            "http_server_respond_json" if arguments.len() == 3 => {
+                source.push_str("__roze_http_server_respond_json(");
                 self.generate_expression(source, &arguments[0])?;
-                source.push_str("))");
+                source.push_str(", ");
+                self.generate_int_arg(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "http_server_respond_headers" if arguments.len() == 4 => {
+                source.push_str("__roze_http_server_respond_headers(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_int_arg(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[3])?;
+                source.push(')');
+            }
+            "url_route_match" if arguments.len() == 2 => {
+                source.push_str("__roze_url_route_match(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "http_server_stop" if arguments.len() == 1 => {
+                source.push_str("__roze_http_server_stop(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
             }
 
             // ---- Database (SQL) ----

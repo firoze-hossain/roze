@@ -1,73 +1,159 @@
 // stdlib/src/web.roze
 //
-// Web (JSON, HTTP server) reference for Roze.
+// Roze Web & Router Standard Library Module (MED-04)
+// High-performance concurrent asynchronous HTTP routing, JSON auto-deserialization,
+// middleware pipeline, and dynamic URL matching (:param, *wildcard).
 //
-// STATUS: every function below is a compiler INTRINSIC, the same way
-// Core's string/math functions are (see stdlib/src/core.roze) -- the
-// compiler recognizes these names directly (see
-// compiler/src/codegen/jvm.rs) and maps them to real code. They're
-// available in every program automatically, with no import required,
-// and this file is never actually read by the compiler.
-//
-// The HTTP *client* functions (http_get, http_post) live in
-// stdlib/src/io.roze instead, alongside file IO -- this file covers
-// JSON and the HTTP *server* side.
+// Bundled directly into the Roze binary at compile time (via compiler/src/imports.rs).
 
-// ---- JSON ----
-//
-// There is no JSON support anywhere in the standard JDK (not even an
-// API, unlike java.sql or java.net.http), so this is a small hand-
-// written encoder/decoder rather than a wrapper around something
-// already in the JVM. It works directly with the same untyped
-// list/map values the Collections intrinsics use, so a decoded JSON
-// object is immediately usable with map_get, a decoded array with
-// list_get, and so on -- no separate "JSON value" type.
-//
-// json_encode(value)  -> string : value (a string/bool/number/list/map,
-//                                 possibly nested) rendered as JSON text
-// json_decode(json)   -> ?      : json parsed back into the same shapes
-//                                 (JSON object -> map, JSON array ->
-//                                 list, string/bool/null passed through,
-//                                 a number -> Integer/Long/Double
-//                                 depending on its shape -- Roze has no
-//                                 float type, so a decoded float is an
-//                                 untyped Double, usable with
-//                                 to_string but not int-specific
-//                                 intrinsics like abs/max/min)
+class Route {
+    method: string,
+    pattern: string,
+    handler: func(map) -> void
+}
 
-// ---- HTTP server ----
-//
-// Roze has no closures/lambdas yet, so there's no way to hand the
-// server a per-request callback the way most web frameworks do.
-// Instead, this is a synchronous accept/respond loop that you write
-// yourself: `http_server_accept` blocks until a request arrives and
-// hands it back as a plain `map` (so map_get/map_has work on it
-// directly -- no separate "request" type either), and you call
-// `http_server_respond` when you're ready to answer it. No
-// concurrency: one request is fully handled before the next is
-// accepted, which is a real limitation for anything under real load,
-// but is a genuine, working starting point.
-//
-// http_server_start(port)             -> ?    : starts listening on port
-// http_server_accept(server)          -> map   : blocks for the next request;
-//                                                 the map has "method", "path",
-//                                                 and "body" keys
-// http_server_respond(req, status, body) -> void : sends a response and
-//                                                    closes that connection
-// http_server_stop(server)            -> void : stops listening
+class Router {
+    routes: list,
+    middlewares: list
+}
 
-// Example:
-//
-// func main() {
-//     let server = http_server_start(8080);
-//     println("listening on 8080");
-//     while true {
-//         let req = http_server_accept(server);
-//         println(map_get(req, "method") + " " + map_get(req, "path"));
-//         if map_get(req, "path") == "/hello" {
-//             http_server_respond(req, 200, json_encode(map_new()));
-//         } else {
-//             http_server_respond(req, 404, "not found");
-//         }
-//     }
-// }
+func router_new() -> Router {
+    let rts = list_new();
+    let mws = list_new();
+    return new Router(rts, mws);
+}
+
+func router_use(r: Router, middleware) {
+    list_push(r.middlewares, middleware);
+}
+
+func router_route(r: Router, method: string, pattern: string, handler: func(map) -> void) {
+    let route = new Route(method, pattern, handler);
+    list_push(r.routes, route);
+}
+
+func router_get(r: Router, pattern: string, handler: func(map) -> void) {
+    router_route(r, "GET", pattern, handler);
+}
+
+func router_post(r: Router, pattern: string, handler: func(map) -> void) {
+    router_route(r, "POST", pattern, handler);
+}
+
+func router_put(r: Router, pattern: string, handler: func(map) -> void) {
+    router_route(r, "PUT", pattern, handler);
+}
+
+func router_delete(r: Router, pattern: string, handler: func(map) -> void) {
+    router_route(r, "DELETE", pattern, handler);
+}
+
+func router_patch(r: Router, pattern: string, handler: func(map) -> void) {
+    router_route(r, "PATCH", pattern, handler);
+}
+
+func router_all(r: Router, pattern: string, handler: func(map) -> void) {
+    router_route(r, "*", pattern, handler);
+}
+
+func router_handle(r: Router, req: map) {
+    // 1. Middleware pipeline execution
+    let m_len = list_length(r.middlewares);
+    let mi = 0;
+    while mi < m_len {
+        let mw = list_get(r.middlewares, mi);
+        mw(req);
+        if map_has(req, "__handled") {
+            let handled = map_get(req, "__handled");
+            if handled == true {
+                return;
+            }
+        }
+        mi = mi + 1;
+    }
+
+    // 2. Dynamic route matching
+    let req_method = map_get(req, "method");
+    let req_path = map_get(req, "path");
+    let r_len = list_length(r.routes);
+    let ri = 0;
+    while ri < r_len {
+        let route: Route = list_get(r.routes, ri);
+        if route.method == "*" || route.method == req_method {
+            let matched_params = url_route_match(route.pattern, req_path);
+            if matched_params != null {
+                map_set(req, "params", matched_params);
+                let h = route.handler;
+                h(req);
+                return;
+            }
+        }
+        ri = ri + 1;
+    }
+
+    // 3. Fallback: 404 Not Found
+    let not_found_data = map_new();
+    map_set(not_found_data, "error", "Not Found");
+    map_set(not_found_data, "path", req_path);
+    http_server_respond_json(req, 404, not_found_data);
+}
+
+func router_listen(r: Router, port: int) -> Unknown {
+    return http_server_listen(port, |req: map| {
+        router_handle(r, req);
+    });
+}
+
+func router_stop(server) {
+    http_server_stop(server);
+}
+
+func respond_json(req: map, status: int, data) {
+    http_server_respond_json(req, status, data);
+}
+
+func respond_text(req: map, status: int, text) {
+    http_server_respond(req, status, to_string(text));
+}
+
+func respond_headers(req: map, status: int, headers: map, body) {
+    http_server_respond_headers(req, status, headers, to_string(body));
+}
+
+func logger_middleware() -> func(map) -> void {
+    return |req: map| {
+        let method = map_get(req, "method");
+        let path = map_get(req, "path");
+        println("[HTTP] " + method + " " + path);
+    };
+}
+
+func auth_bearer_middleware(secret_token: string) -> func(map) -> void {
+    return |req: map| {
+        let headers = map_get(req, "headers");
+        let auth = "";
+        if map_has(headers, "authorization") {
+            auth = map_get(headers, "authorization");
+        }
+        let expected = "Bearer " + secret_token;
+        if auth != expected {
+            let err = map_new();
+            map_set(err, "error", "Unauthorized");
+            map_set(err, "message", "Invalid or missing Bearer token");
+            respond_json(req, 401, err);
+        }
+    };
+}
+
+func cors_middleware() -> func(map) -> void {
+    return |req: map| {
+        let method = map_get(req, "method");
+        if method == "OPTIONS" {
+            let headers = map_new();
+            map_set(headers, "Access-Control-Allow-Origin", "*");
+            map_set(headers, "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
+            map_set(headers, "Access-Control-Allow-Headers", "Content-Type, Authorization");
+            respond_headers(req, 204, headers, "");
+        }
+    };
+}

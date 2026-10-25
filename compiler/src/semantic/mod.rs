@@ -391,6 +391,7 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
 
         ("map_new", vec![], Type::Map),
         ("map_put", vec![Type::Map, Type::Unknown, Type::Unknown], Type::Unknown),
+        ("map_set", vec![Type::Map, Type::Unknown, Type::Unknown], Type::Unknown),
         ("map_get", vec![Type::Map, Type::Unknown], Type::Unknown),
         ("map_has", vec![Type::Map, Type::Unknown], Type::Bool),
         ("map_remove", vec![Type::Map, Type::Unknown], Type::Unknown),
@@ -431,6 +432,10 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("http_server_accept", vec![Type::Unknown], Type::Map),
         ("http_server_respond", vec![Type::Map, Type::Int, Type::String], Type::Void),
         ("http_server_stop", vec![Type::Unknown], Type::Void),
+        ("http_server_listen", vec![Type::Int, Type::Unknown], Type::Unknown),
+        ("http_server_respond_json", vec![Type::Map, Type::Int, Type::Unknown], Type::Void),
+        ("http_server_respond_headers", vec![Type::Map, Type::Int, Type::Map, Type::String], Type::Void),
+        ("url_route_match", vec![Type::String, Type::String], Type::Unknown),
 
         // ---- Database (SQL) ----
         // Roze has no bundled JDBC driver (the JDK itself doesn't ship
@@ -1626,7 +1631,13 @@ impl TypeChecker {
                         }
                     }
                 }
-                Ok(Some(TypedStatement::Assign { name: name.clone(), value: typed_value, location: location.clone() }))
+                let target_type = self.symbol_table.lookup(name).map(|s| s.type_.clone()).unwrap_or(Type::Unknown);
+                Ok(Some(TypedStatement::Assign {
+                    name: name.clone(),
+                    target_type,
+                    value: typed_value,
+                    location: location.clone(),
+                }))
             }
             Statement::EnumDecl { name, type_params, location, .. } => {
                 if !type_params.is_empty() {
@@ -2128,7 +2139,7 @@ impl TypeChecker {
                             }
                         }
                         Type::Bool
-                    } else if name == "map_put" && typed_arguments.len() == 3 {
+                    } else if (name == "map_put" || name == "map_set") && typed_arguments.len() == 3 {
                         if let Type::Generic { base, type_args } = &typed_arguments[0].type_ {
                             if (base == "Map" || base == "map") && type_args.len() >= 2 {
                                 if !types_compatible(&type_args[0], &typed_arguments[1].type_) {

@@ -1,0 +1,101 @@
+// compiler/tests/fixtures/web_server.roze
+//
+// Golden test fixture for MED-04:
+// - Modern Router with dynamic URL route matching (:param, *wildcard)
+// - Query parameter extraction
+// - JSON body auto-deserialization
+// - Middleware pipeline
+// - Concurrent asynchronous request handling via worker pool / virtual threads
+
+import "web";
+import "concurrency";
+
+func handle_user(req: map) {
+    let params = map_get(req, "params");
+    let query = map_get(req, "query");
+    let user_id = map_get(params, "id");
+    let role = "user";
+    if map_has(query, "role") {
+        role = map_get(query, "role");
+    }
+    let res = map_new();
+    map_set(res, "id", user_id);
+    map_set(res, "role", role);
+    respond_json(req, 200, res);
+}
+
+func handle_echo(req: map) {
+    let json_body = map_get(req, "json");
+    let title = map_get(json_body, "title");
+    let count = map_get(json_body, "count");
+    let res = map_new();
+    map_set(res, "title", title);
+    map_set(res, "count", count);
+    respond_json(req, 200, res);
+}
+
+func handle_static(req: map) {
+    let params = map_get(req, "params");
+    let filepath = map_get(params, "filepath");
+    respond_text(req, 200, filepath);
+}
+
+func main() {
+    let app = router_new();
+
+    // Middleware: track hits in a list box
+    let hits = list_new();
+    router_use(app, |req: map| {
+        list_push(hits, map_get(req, "path"));
+    });
+
+    // Register routes
+    router_get(app, "/api/users/:id", handle_user);
+    router_post(app, "/api/echo", handle_echo);
+    router_get(app, "/static/*filepath", handle_static);
+
+    let port = 18089;
+    let server = router_listen(app, port);
+
+    // Give server acceptor a moment to bind
+    sleep(100);
+
+    // Test 1: Dynamic route param & query string
+    let res1_str = http_get("http://localhost:18089/api/users/123?role=admin");
+    let res1 = json_decode(res1_str);
+    println(map_get(res1, "id"));
+    println(map_get(res1, "role"));
+
+    // Test 2: JSON body auto-deserialization on POST
+    let res2_str = http_post("http://localhost:18089/api/echo", "{\"title\":\"Roze Server\",\"count\":42}");
+    let res2 = json_decode(res2_str);
+    println(map_get(res2, "title"));
+    println(map_get(res2, "count"));
+
+    // Test 3: Wildcard rest-of-path
+    let res3 = http_get("http://localhost:18089/static/assets/styles/main.css");
+    println(res3);
+
+    // Test 4: Concurrency with background worker threads
+    let t1 = spawn(|| -> int {
+        let r = http_get("http://localhost:18089/api/users/100");
+        let d = json_decode(r);
+        return to_int(map_get(d, "id"));
+    });
+
+    let t2 = spawn(|| -> int {
+        let r = http_get("http://localhost:18089/api/users/200");
+        let d = json_decode(r);
+        return to_int(map_get(d, "id"));
+    });
+
+    let id1 = thread_join(t1);
+    let id2 = thread_join(t2);
+    println(id1);
+    println(id2);
+
+    // Verify middleware recorded hits
+    println(list_length(hits));
+
+    router_stop(server);
+}

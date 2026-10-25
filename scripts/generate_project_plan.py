@@ -228,13 +228,13 @@ s1_rows = [
         ("MED-04", 8), ("Medium", 4), ("Step 9", 8), "Standard Library (Web & Net)", "Concurrent Async HTTP Server & Router",
         "Replace single-threaded synchronous server with a high-performance HTTP server capable of serving thousands of simultaneous requests.",
         "Thread pool worker dispatch loop; URL route matcher ('/api/users/:id'); JSON body auto-deserialization; middleware pipeline for auth/logging.",
-        "Enterprise Web Backends, Cloud Services", "1 Week", ("Ready to Start", 7)
+        "Enterprise Web Backends, Cloud Services", "Completed", ("Completed", 6)
     ],
     [
         ("MED-05", 8), ("Medium", 4), ("Step 10", 8), "Frontend & Native Backend", "Unsafe Raw Pointers & Direct Memory",
         "Low-level direct memory access for security research, packet inspection, hardware I/O, binary reverse-engineering, and high-speed game buffers.",
         "'unsafe { ... }' block syntax; raw pointer types '*raw u8', '*raw int'; pointer read/write intrinsics; direct memory allocation without ARC header overhead.",
-        "Security/Hacking, OS Development, Game Engines", "3 - 5 Days", ("Planned", 8)
+        "Security/Hacking, OS Development, Game Engines", "3 - 5 Days", ("Ready to Start", 7)
     ],
     [
         ("MED-06", 8), ("Medium", 4), ("Step 11", 8), "Tooling (roze-pkg)", "Package Registry & Dependency Resolver",
@@ -301,9 +301,9 @@ s2_rows = [
         "Spring-Boot-level servers, REST/gRPC APIs, Cloud services, banking & enterprise backends",
         "JVM HTTP accept loop, JSON, JDBC SQL, Result<T,E> & Option<T> Safe I/O",
         "Multi-threaded concurrency, closures/routing, generics, connection pooling",
-        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), CORE-05 (Done), MED-02 (Done), MED-04, ADV-03",
+        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), CORE-05 (Done), MED-02 (Done), MED-04 (Done), ADV-03",
         "Java (Spring Boot), Go (Gin/Fiber), C# (.NET)",
-        ("60% - Atomic Concurrency Ready", 6)
+        ("75% - Concurrent Server & Router Ready", 6)
     ],
     [
         "Operating Systems & Kernels",

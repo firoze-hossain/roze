@@ -42,13 +42,16 @@ const CORE_DISPLAY_NAME: &str = "core (built-in)";
 const CONCURRENCY_SOURCE: &str = include_str!("../../stdlib/src/concurrency.roze");
 const CONCURRENCY_DISPLAY_NAME: &str = "concurrency (built-in)";
 
+const WEB_SOURCE: &str = include_str!("../../stdlib/src/web.roze");
+const WEB_DISPLAY_NAME: &str = "web (built-in)";
+
 /// Walks `program`'s top-level statements, replacing every `Import` with
 /// the functions it pulls in. `base_dir` is the directory of the file
 /// being compiled, used to resolve relative import paths.
 pub fn resolve_imports(program: Program, base_dir: &Path) -> Result<Program> {
     let mut defined_names: HashSet<String> = program.statements.iter()
         .filter_map(|stmt| match stmt {
-            Statement::Function { name, .. } | Statement::ExternFunction { name, .. } => Some(name.clone()),
+            Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
             _ => None,
         })
         .collect();
@@ -78,12 +81,12 @@ pub fn resolve_imports(program: Program, base_dir: &Path) -> Result<Program> {
                 };
 
                 for module_stmt in module_program.statements {
-                    if let Statement::Function { ref name, .. } | Statement::ExternFunction { ref name, .. } = module_stmt {
+                    if let Statement::Function { ref name, .. } | Statement::ExternFunction { ref name, .. } | Statement::ClassDecl { ref name, .. } = module_stmt {
                         if defined_names.contains(name) {
                             // Either the importing file itself, or an
                             // earlier import, already provided this name
                             // -- that one wins, so skip this one rather
-                            // than emitting a duplicate Java method.
+                            // than emitting a duplicate Java method/class.
                             continue;
                         }
                         defined_names.insert(name.clone());
@@ -111,6 +114,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "concurrency" {
         return Ok((CONCURRENCY_SOURCE.to_string(), CONCURRENCY_DISPLAY_NAME.to_string()));
+    }
+    if path == "web" {
+        return Ok((WEB_SOURCE.to_string(), WEB_DISPLAY_NAME.to_string()));
     }
 
     let file_path: PathBuf = if path.ends_with(".roze") {

@@ -77,6 +77,7 @@ pub enum TypedStatement {
     },
     Assign {
         name: String,
+        target_type: Type,
         value: TypedExpression,
         location: Location,
     },

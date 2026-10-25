@@ -222,13 +222,13 @@ s1_rows = [
         ("MED-03", 8), ("Medium", 4), ("Step 8", 8), "Runtime & Standard Library", "Native Concurrency: Threads & Channels",
         "Allow spawning background worker threads and passing messages safely between threads without data races.",
         "'thread_spawn(func)' backed by OS threads (pthread / Windows CreateThread) or JVM virtual threads; channel primitives ('channel_new()', 'send()', 'recv()') with ring buffer and lock.",
-        "Enterprise Servers, Game Engines, Systems", "4 - 5 Days", ("Ready to Start", 7)
+        "Enterprise Servers, Game Engines, Systems", "Completed", ("Completed", 6)
     ],
     [
         ("MED-04", 8), ("Medium", 4), ("Step 9", 8), "Standard Library (Web & Net)", "Concurrent Async HTTP Server & Router",
         "Replace single-threaded synchronous server with a high-performance HTTP server capable of serving thousands of simultaneous requests.",
         "Thread pool worker dispatch loop; URL route matcher ('/api/users/:id'); JSON body auto-deserialization; middleware pipeline for auth/logging.",
-        "Enterprise Web Backends, Cloud Services", "1 Week", ("Planned", 8)
+        "Enterprise Web Backends, Cloud Services", "1 Week", ("Ready to Start", 7)
     ],
     [
         ("MED-05", 8), ("Medium", 4), ("Step 10", 8), "Frontend & Native Backend", "Unsafe Raw Pointers & Direct Memory",

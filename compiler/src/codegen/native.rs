@@ -253,7 +253,13 @@ pub fn compile_to_native(program: TypedProgram, input_file: &str, extra_libs: &[
     fs::write(&obj_path, &bytes)?;
     println!("📝 Generated native object file: {}", obj_path);
 
-    link_object_file(&obj_path, &output_name, extra_libs)?;
+    let mut all_libs = extra_libs.to_vec();
+    let temp_concurrency_c = std::env::temp_dir().join("roze_concurrency.c");
+    fs::write(&temp_concurrency_c, CONCURRENCY_RUNTIME_C)?;
+    all_libs.push(temp_concurrency_c.to_string_lossy().to_string());
+    all_libs.push("pthread".to_string());
+
+    link_object_file(&obj_path, &output_name, &all_libs)?;
 
     Ok(())
 }
@@ -2046,6 +2052,89 @@ fn build_map_is_empty(module: &mut ObjectModule, ctx: &mut cranelift::codegen::C
     Ok(func_id)
 }
 
+static CONCURRENCY_RUNTIME_C: &str = include_str!("concurrency.c");
+
+struct ConcurrencyRuntime {
+    thread_spawn_id: FuncId,
+    thread_join_id: FuncId,
+    thread_sleep_id: FuncId,
+    thread_current_id: FuncId,
+    thread_retain_id: FuncId,
+    thread_release_id: FuncId,
+    channel_new_id: FuncId,
+    channel_send_id: FuncId,
+    channel_recv_id: FuncId,
+    channel_close_id: FuncId,
+    channel_is_closed_id: FuncId,
+    channel_len_id: FuncId,
+    channel_retain_id: FuncId,
+    channel_release_id: FuncId,
+}
+
+fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyRuntime> {
+    let mut i64_to_i64 = module.make_signature();
+    i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_to_void = module.make_signature();
+    i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut void_to_i64 = module.make_signature();
+    void_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_i64_to_i64 = module.make_signature();
+    i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let thread_spawn_id = module.declare_function("__roze_thread_spawn", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let thread_join_id = module.declare_function("__roze_thread_join", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let thread_sleep_id = module.declare_function("__roze_thread_sleep", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let thread_current_id = module.declare_function("__roze_thread_current_id", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let thread_retain_id = module.declare_function("__roze_thread_retain", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let thread_release_id = module.declare_function("__roze_thread_release", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    let channel_new_id = module.declare_function("__roze_channel_new", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let channel_send_id = module.declare_function("__roze_channel_send", Linkage::Import, &i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let channel_recv_id = module.declare_function("__roze_channel_recv", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let channel_close_id = module.declare_function("__roze_channel_close", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let channel_is_closed_id = module.declare_function("__roze_channel_is_closed", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let channel_len_id = module.declare_function("__roze_channel_len", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let channel_retain_id = module.declare_function("__roze_channel_retain", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let channel_release_id = module.declare_function("__roze_channel_release", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    Ok(ConcurrencyRuntime {
+        thread_spawn_id,
+        thread_join_id,
+        thread_sleep_id,
+        thread_current_id,
+        thread_retain_id,
+        thread_release_id,
+        channel_new_id,
+        channel_send_id,
+        channel_recv_id,
+        channel_close_id,
+        channel_is_closed_id,
+        channel_len_id,
+        channel_retain_id,
+        channel_release_id,
+    })
+}
+
 /// A native class instance is a pointer to a heap block:
 ///
 ///   [0..8)          i64  refcount
@@ -2361,6 +2450,7 @@ struct NativeGenerator<'a> {
     strings: StringRuntime,
     lists: ListRuntime,
     maps: MapRuntime,
+    concurrency: ConcurrencyRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -2429,6 +2519,7 @@ impl<'a> NativeGenerator<'a> {
         let strings = declare_string_runtime(module)?;
         let lists = declare_list_runtime(module, printf_id)?;
         let maps = declare_map_runtime(module)?;
+        let concurrency = declare_concurrency_runtime(module)?;
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
@@ -2453,6 +2544,7 @@ impl<'a> NativeGenerator<'a> {
             strings,
             lists,
             maps,
+            concurrency,
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
@@ -2800,6 +2892,7 @@ impl<'a> NativeGenerator<'a> {
                     map_remove_id: self.maps.remove_id,
                     map_size_id: self.maps.size_id,
                     map_is_empty_id: self.maps.is_empty_id,
+                    concurrency: &self.concurrency,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
@@ -2912,6 +3005,7 @@ impl<'a> NativeGenerator<'a> {
                                 map_remove_id: self.maps.remove_id,
                                 map_size_id: self.maps.size_id,
                                 map_is_empty_id: self.maps.is_empty_id,
+                                concurrency: &self.concurrency,
                                 classes: &self.classes,
                                 class_retain_id: self.class_retain_id,
                                 literal_counter: &mut self.literal_counter,
@@ -3009,6 +3103,7 @@ impl<'a> NativeGenerator<'a> {
                         map_remove_id: self.maps.remove_id,
                         map_size_id: self.maps.size_id,
                         map_is_empty_id: self.maps.is_empty_id,
+                        concurrency: &self.concurrency,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
@@ -3147,6 +3242,7 @@ struct FunctionCompiler<'a, 'b> {
     map_remove_id: FuncId,
     map_size_id: FuncId,
     map_is_empty_id: FuncId,
+    concurrency: &'a ConcurrencyRuntime,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -3267,6 +3363,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             Type::Function { .. } => self.emit_class_retain(val),
             Type::Generic { base, .. } if base == "List" || base == "list" => self.emit_list_retain(val),
             Type::Generic { base, .. } if base == "Map" || base == "map" => self.emit_map_retain(val),
+            Type::Generic { base, .. } if base == "Channel" || base == "channel" => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.channel_retain_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "Thread" || base == "thread" => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.thread_retain_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
             Type::Generic { .. } => self.emit_class_retain(val),
             _ => Ok(()),
         }
@@ -3343,6 +3449,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             Type::Generic { base, .. } if base == "List" || base == "list" => self.emit_list_release(val),
             Type::Generic { base, .. } if base == "Map" || base == "map" => self.emit_map_release(val),
+            Type::Generic { base, .. } if base == "Channel" || base == "channel" => {
+                let release_ref = self.module.declare_func_in_func(self.concurrency.channel_release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "Thread" || base == "thread" => {
+                let release_ref = self.module.declare_func_in_func(self.concurrency.thread_release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
             Type::Generic { base, type_args } => {
                 let spec = crate::semantic::specialized_name(base, type_args);
                 if let Some(info) = self.classes.get(&spec) {
@@ -4321,6 +4437,87 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let map = self.compile_expression(&arguments[0])?;
                 let result = self.emit_map_is_empty(map)?;
                 self.release_if_fresh(&arguments[0], map)?;
+                return Ok(result);
+            }
+
+            // ---- Concurrency: Threads & Channels (MED-03) ----
+            "thread_spawn" if arguments.len() == 1 => {
+                let closure_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.thread_spawn_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[closure_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], closure_val)?;
+                return Ok(result);
+            }
+            "thread_join" if arguments.len() == 1 => {
+                let handle_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.thread_join_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[handle_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], handle_val)?;
+                return Ok(result);
+            }
+            "thread_sleep" if arguments.len() == 1 => {
+                let ms_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.thread_sleep_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[ms_val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "thread_current_id" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.thread_current_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "channel_new" => {
+                let cap_val = if arguments.len() == 1 {
+                    self.compile_expression(&arguments[0])?
+                } else {
+                    self.builder.ins().iconst(VALUE_TYPE, 64)
+                };
+                let func_ref = self.module.declare_func_in_func(self.concurrency.channel_new_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[cap_val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "channel_send" | "send" if arguments.len() == 2 => {
+                let chan_val = self.compile_expression(&arguments[0])?;
+                let item_val = self.compile_expression(&arguments[1])?;
+                self.retain_for_arc_type(&arguments[1].type_, item_val)?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.channel_send_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[chan_val, item_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], chan_val)?;
+                self.release_if_fresh(&arguments[1], item_val)?;
+                return Ok(result);
+            }
+            "channel_recv" | "recv" if arguments.len() == 1 => {
+                let chan_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.channel_recv_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[chan_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], chan_val)?;
+                return Ok(result);
+            }
+            "channel_close" if arguments.len() == 1 => {
+                let chan_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.channel_close_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[chan_val]);
+                self.release_if_fresh(&arguments[0], chan_val)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "channel_is_closed" if arguments.len() == 1 => {
+                let chan_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.channel_is_closed_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[chan_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], chan_val)?;
+                return Ok(result);
+            }
+            "channel_len" if arguments.len() == 1 => {
+                let chan_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.channel_len_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[chan_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], chan_val)?;
                 return Ok(result);
             }
             _ => {}

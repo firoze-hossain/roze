@@ -39,6 +39,9 @@ use std::path::{Path, PathBuf};
 const CORE_SOURCE: &str = include_str!("../../stdlib/src/core.roze");
 const CORE_DISPLAY_NAME: &str = "core (built-in)";
 
+const CONCURRENCY_SOURCE: &str = include_str!("../../stdlib/src/concurrency.roze");
+const CONCURRENCY_DISPLAY_NAME: &str = "concurrency (built-in)";
+
 /// Walks `program`'s top-level statements, replacing every `Import` with
 /// the functions it pulls in. `base_dir` is the directory of the file
 /// being compiled, used to resolve relative import paths.
@@ -106,6 +109,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "core" {
         return Ok((CORE_SOURCE.to_string(), CORE_DISPLAY_NAME.to_string()));
     }
+    if path == "concurrency" {
+        return Ok((CONCURRENCY_SOURCE.to_string(), CONCURRENCY_DISPLAY_NAME.to_string()));
+    }
 
     let file_path: PathBuf = if path.ends_with(".roze") {
         base_dir.join(path)
@@ -120,7 +126,7 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
             location.line,
             location.column,
         )
-        .with_hint("built-in modules: \"core\" -- anything else is a path to a .roze file, relative to the importing file")
+        .with_hint("built-in modules: \"core\", \"concurrency\" -- anything else is a path to a .roze file, relative to the importing file")
         .into()),
     }
 }

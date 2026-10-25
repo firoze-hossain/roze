@@ -1,0 +1,49 @@
+import "concurrency";
+
+func main() {
+    // 1. Thread spawn and join
+    let t1 = thread_spawn(|| {
+        thread_sleep(10);
+        return 42;
+    });
+    let res1: int = thread_join(t1);
+    println(res1);
+
+    // 2. Channels: send and receive
+    let ch = channel_new(4);
+    println(channel_len(ch));
+    println(channel_is_closed(ch));
+
+    send(ch, 100);
+    send(ch, 200);
+    println(channel_len(ch));
+
+    let v1: int = recv(ch);
+    let v2: int = recv(ch);
+    println(v1);
+    println(v2);
+    println(channel_len(ch));
+
+    // 3. Worker thread communicating via channel
+    let t2 = thread_spawn(|| {
+        send(ch, 999);
+        return 0;
+    });
+    let v3: int = recv(ch);
+    println(v3);
+    thread_join(t2);
+
+    channel_close(ch);
+    println(channel_is_closed(ch));
+
+    // 4. Concurrency stdlib helpers
+    let ch2 = channel();
+    let t3 = spawn(|| {
+        send(ch2, 777);
+        return 1;
+    });
+    let v4: int = recv(ch2);
+    println(v4);
+    let res3: int = thread_join(t3);
+    println(res3);
+}

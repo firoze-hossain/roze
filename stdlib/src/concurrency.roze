@@ -1,0 +1,38 @@
+// stdlib/src/concurrency.roze
+//
+// Roze Concurrency Module (MED-03)
+// Provides OS threads and bounded/unbounded thread-safe channels.
+//
+// Bundled directly into the Roze binary at compile time (via compiler/src/imports.rs).
+//
+// ---- Intrinsics (always available, no import needed) ----
+//
+//   thread_spawn(func)       -> Thread  : spawns a background OS thread / JVM virtual thread
+//   thread_join(thread)      -> T       : joins a thread and waits for its return value
+//   thread_sleep(ms)         -> void    : sleeps current thread for specified milliseconds
+//   thread_current_id()      -> int     : returns unique ID of current running thread
+//
+//   channel_new([capacity])  -> Channel : creates thread-safe FIFO ring-buffer channel (default cap: 64)
+//   send(chan, val)          -> bool    : enqueues val into chan (blocks if full, false if closed)
+//   recv(chan)               -> T       : dequeues val from chan (blocks if empty, null/0 if closed)
+//   channel_close(chan)      -> void    : closes chan and notifies all waiting senders/receivers
+//   channel_is_closed(chan)  -> bool    : true if chan has been closed
+//   channel_len(chan)        -> int     : current number of pending items in channel buffer
+//
+// ---- Concurrency Utilities (available via `import "concurrency";`) ----
+
+func spawn(worker: func() -> int) -> Thread {
+    return thread_spawn(worker);
+}
+
+func sleep(ms: int) {
+    thread_sleep(ms);
+}
+
+func channel() -> Channel {
+    return channel_new(64);
+}
+
+func bounded_channel(capacity: int) -> Channel {
+    return channel_new(capacity);
+}

@@ -140,6 +140,8 @@ impl Type {
             "map" | "Map" => Type::Map,
             "option" | "Option" => Type::Option,
             "result" | "Result" => Type::Result,
+            "channel" | "Channel" => Type::Generic { base: "Channel".to_string(), type_args: vec![] },
+            "thread" | "Thread" => Type::Generic { base: "Thread".to_string(), type_args: vec![] },
             _ => Type::Unknown,
         }
     }
@@ -168,6 +170,10 @@ impl Type {
                     "RozeOption".to_string()
                 } else if base == "Result" || base == "result" {
                     "RozeResult".to_string()
+                } else if base == "Channel" || base == "channel" {
+                    "RozeChannel".to_string()
+                } else if base == "Thread" || base == "thread" {
+                    "Thread".to_string()
                 } else {
                     specialized_name(base, type_args)
                 }
@@ -231,6 +237,12 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
         // Result <-> Result<T, E>
         (Type::Result, Type::Generic { base, .. }) if base == "Result" || base == "result" => true,
         (Type::Generic { base, .. }, Type::Result) if base == "Result" || base == "result" => true,
+        // Channel <-> Channel<T>
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "Channel" || b1 == "channel") && (b2 == "Channel" || b2 == "channel") => true,
+        // Thread <-> Thread
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "Thread" || b1 == "thread") && (b2 == "Thread" || b2 == "thread") => true,
         // Generic with matching base and compatible type arguments:
         (
             Type::Generic { base: b1, type_args: a1 },
@@ -471,6 +483,21 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         // ---- Safe Collections (returning Option) ----
         ("list_get_option", vec![Type::List, Type::Int], Type::Option),
         ("map_get_option", vec![Type::Map, Type::Unknown], Type::Option),
+
+        // ---- Concurrency: Threads & Channels (MED-03) ----
+        ("thread_spawn", vec![Type::Unknown], Type::Generic { base: "Thread".to_string(), type_args: vec![] }),
+        ("thread_join", vec![Type::Unknown], Type::Unknown),
+        ("thread_sleep", vec![Type::Int], Type::Void),
+        ("thread_current_id", vec![], Type::Int),
+
+        ("channel_new", vec![], Type::Generic { base: "Channel".to_string(), type_args: vec![] }),
+        ("channel_send", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("send", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("channel_recv", vec![Type::Unknown], Type::Unknown),
+        ("recv", vec![Type::Unknown], Type::Unknown),
+        ("channel_close", vec![Type::Unknown], Type::Void),
+        ("channel_is_closed", vec![Type::Unknown], Type::Bool),
+        ("channel_len", vec![Type::Unknown], Type::Int),
     ]
 }
 
@@ -2142,6 +2169,59 @@ impl TypeChecker {
                             _ => Type::Unknown,
                         };
                         val_ty
+                    } else if name == "channel_new" {
+                        if typed_arguments.len() > 1 {
+                            return Err(RozeError::type_error(
+                                format!("'channel_new' takes 0 or 1 argument, but {} were given", typed_arguments.len()),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                        if typed_arguments.len() == 1 && !types_compatible(&Type::Int, &typed_arguments[0].type_) {
+                            return Err(RozeError::type_error(
+                                format!("'channel_new' expects capacity of type int, got {}", typed_arguments[0].type_),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                        Type::Generic { base: "Channel".to_string(), type_args: vec![] }
+                    } else if (name == "send" || name == "channel_send") && typed_arguments.len() == 2 {
+                        let chan_ty = &typed_arguments[0].type_;
+                        match chan_ty {
+                            Type::Generic { base, type_args } if (base == "Channel" || base == "channel") && !type_args.is_empty() => {
+                                if !types_compatible(&type_args[0], &typed_arguments[1].type_) {
+                                    return Err(RozeError::type_error(
+                                        format!("'{}' expects value of type {}, got {}", name, type_args[0], typed_arguments[1].type_),
+                                        location.line,
+                                        location.column,
+                                    ).into());
+                                }
+                            }
+                            _ => {}
+                        }
+                        Type::Bool
+                    } else if (name == "recv" || name == "channel_recv") && typed_arguments.len() == 1 {
+                        let chan_ty = &typed_arguments[0].type_;
+                        match chan_ty {
+                            Type::Generic { base, type_args } if (base == "Channel" || base == "channel") && !type_args.is_empty() => {
+                                type_args[0].clone()
+                            }
+                            _ => Type::Unknown,
+                        }
+                    } else if name == "thread_spawn" && typed_arguments.len() == 1 {
+                        let ret_type = match &typed_arguments[0].type_ {
+                            Type::Function { return_type, .. } => vec![*return_type.clone()],
+                            _ => vec![],
+                        };
+                        Type::Generic { base: "Thread".to_string(), type_args: ret_type }
+                    } else if name == "thread_join" && typed_arguments.len() == 1 {
+                        let th_ty = &typed_arguments[0].type_;
+                        match th_ty {
+                            Type::Generic { base, type_args } if (base == "Thread" || base == "thread") && !type_args.is_empty() => {
+                                type_args[0].clone()
+                            }
+                            _ => Type::Unknown,
+                        }
                     } else if let Some(sig) = self.functions.get(name) {
                         // Validate argument count and each argument's
                         // type against the declared signature -- the

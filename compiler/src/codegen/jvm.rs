@@ -697,6 +697,200 @@ const OPTION_RESULT_HELPER_METHODS: &str = r#"
     }
 "#;
 
+const CONCURRENCY_HELPER_CLASSES: &str = r#"
+class RozeThreadHandle {
+    public final Thread thread;
+    public volatile Object result = null;
+    public volatile Throwable error = null;
+
+    public RozeThreadHandle(java.util.concurrent.Callable<Object> task) {
+        Runnable runnable = () -> {
+            try {
+                this.result = task.call();
+            } catch (Throwable t) {
+                this.error = t;
+            }
+        };
+        Thread t = null;
+        try {
+            Object ofVirtual = Thread.class.getMethod("ofVirtual").invoke(null);
+            t = (Thread) ofVirtual.getClass().getMethod("start", Runnable.class).invoke(ofVirtual, runnable);
+        } catch (Throwable ignored) {
+            t = new Thread(runnable);
+            t.start();
+        }
+        this.thread = t;
+    }
+
+    public Object join() {
+        try {
+            this.thread.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
+        if (this.error != null) {
+            if (this.error instanceof RuntimeException) throw (RuntimeException) this.error;
+            throw new RuntimeException(this.error);
+        }
+        return this.result;
+    }
+}
+
+class RozeChannel {
+    private final Object[] buffer;
+    private final int capacity;
+    private int head = 0;
+    private int tail = 0;
+    private int count = 0;
+    private boolean closed = false;
+    private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
+    private final java.util.concurrent.locks.Condition notEmpty = lock.newCondition();
+    private final java.util.concurrent.locks.Condition notFull = lock.newCondition();
+
+    public RozeChannel(int capacity) {
+        if (capacity <= 0) capacity = 64;
+        this.capacity = capacity;
+        this.buffer = new Object[capacity];
+    }
+
+    public boolean send(Object val) {
+        lock.lock();
+        try {
+            while (count == capacity && !closed) {
+                notFull.await();
+            }
+            if (closed) return false;
+            buffer[tail] = val;
+            tail = (tail + 1) % capacity;
+            count++;
+            notEmpty.signal();
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public Object recv() {
+        lock.lock();
+        try {
+            while (count == 0 && !closed) {
+                notEmpty.await();
+            }
+            if (count == 0 && closed) return null;
+            Object val = buffer[head];
+            buffer[head] = null;
+            head = (head + 1) % capacity;
+            count--;
+            notFull.signal();
+            return val;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void close() {
+        lock.lock();
+        try {
+            closed = true;
+            notEmpty.signalAll();
+            notFull.signalAll();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public boolean isClosed() {
+        lock.lock();
+        try {
+            return closed;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public int len() {
+        lock.lock();
+        try {
+            return count;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+"#;
+
+const CONCURRENCY_HELPER_METHODS: &str = r#"
+    private static RozeThreadHandle __roze_thread_spawn(Object fnObj) {
+        RozeFn fn = (RozeFn) fnObj;
+        return new RozeThreadHandle(() -> fn.apply());
+    }
+
+    private static Object __roze_thread_join(Object handleObj) {
+        if (handleObj instanceof RozeThreadHandle) {
+            return ((RozeThreadHandle) handleObj).join();
+        }
+        return null;
+    }
+
+    private static void __roze_thread_sleep(long ms) {
+        if (ms <= 0) return;
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static int __roze_thread_current_id() {
+        return (int) Thread.currentThread().getId();
+    }
+
+    private static RozeChannel __roze_channel_new(int capacity) {
+        return new RozeChannel(capacity);
+    }
+
+    private static boolean __roze_channel_send(Object chan, Object val) {
+        if (chan instanceof RozeChannel) {
+            return ((RozeChannel) chan).send(val);
+        }
+        return false;
+    }
+
+    private static Object __roze_channel_recv(Object chan) {
+        if (chan instanceof RozeChannel) {
+            return ((RozeChannel) chan).recv();
+        }
+        return null;
+    }
+
+    private static void __roze_channel_close(Object chan) {
+        if (chan instanceof RozeChannel) {
+            ((RozeChannel) chan).close();
+        }
+    }
+
+    private static boolean __roze_channel_is_closed(Object chan) {
+        if (chan instanceof RozeChannel) {
+            return ((RozeChannel) chan).isClosed();
+        }
+        return true;
+    }
+
+    private static int __roze_channel_len(Object chan) {
+        if (chan instanceof RozeChannel) {
+            return ((RozeChannel) chan).len();
+        }
+        return 0;
+    }
+"#;
+
 /// Returns the Java return type for a built-in Core (string/math)
 /// intrinsic, or None if `name` isn't one. Keep this in sync with
 /// `semantic::builtin_signatures`.
@@ -784,6 +978,18 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "list_get_option" => Some("RozeOption"),
         "map_get_option" => Some("RozeOption"),
 
+        // Concurrency: Threads & Channels (MED-03)
+        "thread_spawn" => Some("RozeThreadHandle"),
+        "thread_join" => Some(OBJECT_TYPE),
+        "thread_sleep" => Some("void"),
+        "thread_current_id" => Some("int"),
+        "channel_new" => Some("RozeChannel"),
+        "channel_send" | "send" => Some("boolean"),
+        "channel_recv" | "recv" => Some(OBJECT_TYPE),
+        "channel_close" => Some("void"),
+        "channel_is_closed" => Some("boolean"),
+        "channel_len" => Some("int"),
+
         _ => None,
     }
 }
@@ -852,6 +1058,10 @@ fn java_type_name(ty: &Type) -> String {
                 "RozeOption".to_string()
             } else if base == "Result" || base == "result" {
                 "RozeResult".to_string()
+            } else if base == "Channel" || base == "channel" {
+                "RozeChannel".to_string()
+            } else if base == "Thread" || base == "thread" {
+                "RozeThreadHandle".to_string()
             } else {
                 escape_java_identifier(&crate::semantic::specialized_name(base, type_args))
             }
@@ -877,6 +1087,10 @@ fn java_unbox(ty: &Type, expr_str: &str) -> String {
                 format!("((RozeOption) {})", expr_str)
             } else if base == "Result" || base == "result" {
                 format!("((RozeResult) {})", expr_str)
+            } else if base == "Channel" || base == "channel" {
+                format!("((RozeChannel) {})", expr_str)
+            } else if base == "Thread" || base == "thread" {
+                format!("((RozeThreadHandle) {})", expr_str)
             } else {
                 let spec = crate::semantic::specialized_name(base, type_args);
                 format!("(({}) {})", escape_java_identifier(&spec), expr_str)
@@ -1001,9 +1215,11 @@ impl JavaSourceGenerator {
         source.push_str(HTTP_SERVER_HELPER_METHODS);
         source.push_str(SQL_HELPER_METHODS);
         source.push_str(OPTION_RESULT_HELPER_METHODS);
+        source.push_str(CONCURRENCY_HELPER_METHODS);
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);
+        source.push_str(CONCURRENCY_HELPER_CLASSES);
 
         for stmt in &self.program.statements {
             match stmt {
@@ -1401,7 +1617,13 @@ impl JavaSourceGenerator {
                 source.push_str(&hoisted);
 
                 source.push_str(&format!("{}{} {} = ", indent_str, java_type_name(type_), escape_java_identifier(name)));
-                self.generate_expression(source, &val)?;
+                if type_ != &Type::Unknown && val.type_ == Type::Unknown {
+                    let mut val_str = String::new();
+                    self.generate_expression(&mut val_str, &val)?;
+                    source.push_str(&java_unbox(type_, &val_str));
+                } else {
+                    self.generate_expression(source, &val)?;
+                }
                 source.push_str(";\n");
             }
             TypedStatement::Return { value, .. } => {
@@ -1569,7 +1791,13 @@ impl JavaSourceGenerator {
         match stmt {
             TypedStatement::Let { name, type_, value, .. } => {
                 source.push_str(&format!("{} {} = ", java_type_name(type_), escape_java_identifier(name)));
-                self.generate_expression(source, value)?;
+                if type_ != &Type::Unknown && value.type_ == Type::Unknown {
+                    let mut val_str = String::new();
+                    self.generate_expression(&mut val_str, value)?;
+                    source.push_str(&java_unbox(type_, &val_str));
+                } else {
+                    self.generate_expression(source, value)?;
+                }
             }
             TypedStatement::Assign { name, value, .. } => {
                 source.push_str(&format!("{} = ", escape_java_identifier(name)));
@@ -1662,7 +1890,7 @@ impl JavaSourceGenerator {
                 source.push_str("null");
             }
             TypedExpressionKind::Call { function, arguments } => {
-                if (function == "list_get" || function == "map_get") && expr.type_ != Type::Unknown {
+                if (function == "list_get" || function == "map_get" || function == "channel_recv" || function == "recv" || function == "thread_join") && expr.type_ != Type::Unknown {
                     let mut call_buf = String::new();
                     self.generate_call(&mut call_buf, function, arguments)?;
                     source.push_str(&java_unbox(&expr.type_, &call_buf));
@@ -2247,6 +2475,62 @@ impl JavaSourceGenerator {
                 self.generate_map_receiver(source, &arguments[0])?;
                 source.push_str(", ");
                 self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+
+            // ---- Concurrency: Threads & Channels (MED-03) ----
+            "thread_spawn" if arguments.len() == 1 => {
+                source.push_str("__roze_thread_spawn(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "thread_join" if arguments.len() == 1 => {
+                source.push_str("__roze_thread_join(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "thread_sleep" if arguments.len() == 1 => {
+                source.push_str("__roze_thread_sleep(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "thread_current_id" if arguments.is_empty() => {
+                source.push_str("__roze_thread_current_id()");
+            }
+            "channel_new" => {
+                source.push_str("__roze_channel_new(");
+                if arguments.len() == 1 {
+                    self.generate_expression(source, &arguments[0])?;
+                } else {
+                    source.push_str("64");
+                }
+                source.push(')');
+            }
+            "channel_send" | "send" if arguments.len() == 2 => {
+                source.push_str("__roze_channel_send(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "channel_recv" | "recv" if arguments.len() == 1 => {
+                source.push_str("__roze_channel_recv(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "channel_close" if arguments.len() == 1 => {
+                source.push_str("__roze_channel_close(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "channel_is_closed" if arguments.len() == 1 => {
+                source.push_str("__roze_channel_is_closed(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "channel_len" if arguments.len() == 1 => {
+                source.push_str("__roze_channel_len(");
+                self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
 

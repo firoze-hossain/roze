@@ -702,3 +702,22 @@ fn c_ffi_throws_unsupported_on_jvm() {
         stderr
     );
 }
+
+#[test]
+fn concurrency_threads_and_channels() {
+    let (stdout, stderr, ok) = run_fixture("concurrency.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+42
+0
+false
+2
+100
+200
+0
+999
+true
+777
+1";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}

@@ -1973,3 +1973,186 @@ func main() {
 1";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn native_concurrency_threads_and_channels() {
+    let source = r#"
+import "concurrency";
+
+func main() {
+    // 1. Thread spawn and join
+    let t1 = thread_spawn(|| {
+        thread_sleep(10);
+        return 42;
+    });
+    let res1: int = thread_join(t1);
+    println(res1);
+
+    // 2. Thread ID
+    let tid = thread_current_id();
+    println(tid != 0);
+
+    // 3. Channels: bounded FIFO buffer
+    let ch = channel_new(4);
+    println(channel_len(ch));
+    println(channel_is_closed(ch));
+
+    send(ch, 100);
+    send(ch, 200);
+    println(channel_len(ch));
+
+    let v1: int = recv(ch);
+    let v2: int = recv(ch);
+    println(v1);
+    println(v2);
+    println(channel_len(ch));
+
+    // 4. Background thread communicating via channel
+    let t2 = thread_spawn(|| {
+        thread_sleep(5);
+        send(ch, 999);
+        return 0;
+    });
+    let v3: int = recv(ch);
+    println(v3);
+    thread_join(t2);
+
+    channel_close(ch);
+    println(channel_is_closed(ch));
+
+    // 5. Concurrency stdlib helpers
+    let ch2 = channel();
+    let t3 = spawn(|| {
+        send(ch2, 777);
+        return 1;
+    });
+    let v4: int = recv(ch2);
+    println(v4);
+    let res3: int = thread_join(t3);
+    println(res3);
+}
+"#;
+    let (stdout, stderr, ok) = run_native_source("native_concurrency", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+42
+true
+0
+false
+2
+100
+200
+0
+999
+true
+777
+1";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
+fn native_concurrency_worker_pool_pipeline() {
+    let source = r#"
+func main() {
+    let tasks = channel_new(10);
+    let results = channel_new(10);
+
+    // Spawn 4 worker threads
+    let w1 = thread_spawn(|| {
+        let x: int = recv(tasks);
+        send(results, x * 2);
+        return 0;
+    });
+    let w2 = thread_spawn(|| {
+        let x: int = recv(tasks);
+        send(results, x * 2);
+        return 0;
+    });
+    let w3 = thread_spawn(|| {
+        let x: int = recv(tasks);
+        send(results, x * 2);
+        return 0;
+    });
+    let w4 = thread_spawn(|| {
+        let x: int = recv(tasks);
+        send(results, x * 2);
+        return 0;
+    });
+
+    // Send 4 tasks
+    send(tasks, 10);
+    send(tasks, 20);
+    send(tasks, 30);
+    send(tasks, 40);
+
+    // Collect 4 results and sum
+    let total = 0;
+    for let i = 0; i < 4; i = i + 1 {
+        let r: int = recv(results);
+        total = total + r;
+    }
+    println(total);
+
+    thread_join(w1);
+    thread_join(w2);
+    thread_join(w3);
+    thread_join(w4);
+}
+"#;
+    let (stdout, stderr, ok) = run_native_source("native_worker_pool", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(program_output(&stdout).trim_end(), "200");
+}
+
+#[test]
+fn no_leak_in_multithreaded_channels_and_threads() {
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_in_multithreaded_channels_and_threads: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_concurrency");
+    let source = r#"
+func main() {
+    for let i = 0; i < 50; i = i + 1 {
+        let ch = channel_new(8);
+        let t = thread_spawn(|| {
+            send(ch, 42);
+            return 100;
+        });
+        let val: int = recv(ch);
+        let res: int = thread_join(t);
+        channel_close(ch);
+    }
+}
+"#;
+    let file_name = "conc_leak.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./conc_leak")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}

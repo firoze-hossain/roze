@@ -15,6 +15,8 @@ pub enum Token {
     Class,
     New,
     Import,
+    Enum,
+    Match,
     True,
     False,
     Null,
@@ -50,7 +52,10 @@ pub enum Token {
     Dot,         // .
     Semicolon,   // ;
     Colon,       // :
+    ColonColon,  // ::
     Arrow,       // ->
+    FatArrow,    // =>
+    Underscore,  // _
 
     // Special
     Newline,
@@ -72,6 +77,8 @@ impl fmt::Display for Token {
             Token::Class => write!(f, "class"),
             Token::New => write!(f, "new"),
             Token::Import => write!(f, "import"),
+            Token::Enum => write!(f, "enum"),
+            Token::Match => write!(f, "match"),
             Token::True => write!(f, "true"),
             Token::False => write!(f, "false"),
             Token::Null => write!(f, "null"),
@@ -101,7 +108,10 @@ impl fmt::Display for Token {
             Token::Dot => write!(f, "."),
             Token::Semicolon => write!(f, ";"),
             Token::Colon => write!(f, ":"),
+            Token::ColonColon => write!(f, "::"),
             Token::Arrow => write!(f, "->"),
+            Token::FatArrow => write!(f, "=>"),
+            Token::Underscore => write!(f, "_"),
             Token::Newline => write!(f, "\\n"),
             Token::EOF => write!(f, "EOF"),
             Token::Error => write!(f, "ERROR"),

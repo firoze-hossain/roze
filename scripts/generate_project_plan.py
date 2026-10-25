@@ -184,13 +184,13 @@ s1_rows = [
         ("CORE-02", 8), ("Core / Basic", 3), ("Step 2", 8), "Frontend & Type Checker", "Enums (ADTs) & Pattern Matching",
         "Essential for representing AST nodes, tokens, and domain states cleanly without hacky integer flags or unsafe casting.",
         "Syntax 'enum Name { Variant(Type), ... }'; pattern matching 'match expr { Variant(val) => ... }'; lower to Typed IR; codegen tagged union with tag + payload in Cranelift native; Java sealed classes/records in JVM.",
-        "Compiler Self-Hosting, Web, Security", "3 - 5 Days", ("Ready to Start", 7)
+        "Compiler Self-Hosting, Web, Security", "Completed", ("Completed", 6)
     ],
     [
         ("CORE-03", 8), ("Core / Basic", 3), ("Step 3", 8), "Frontend, JVM & Native", "Closures & First-Class Functions",
         "Enable passing functions as arguments. Strictly required for web request routing, callbacks, event handling, list map/filter, and concurrency task dispatch.",
         "Syntax 'let f = |x: int| -> int { x + 1 };'; function types 'func(int) -> int'; closure environment capture struct; JVM java.util.function emission; Native function pointer + env pointer.",
-        "Web Framework (Routing/Middleware), GUI, Games", "4 - 6 Days", ("Planned", 8)
+        "Web Framework (Routing/Middleware), GUI, Games", "4 - 6 Days", ("Ready to Start", 7)
     ],
     [
         ("CORE-04", 8), ("Core / Basic", 3), ("Step 4", 8), "Type Checker & Native Codegen", "Generics (Parametric Polymorphism)",
@@ -355,9 +355,9 @@ s2_rows = [
         "The Roze compiler written entirely in Roze with zero external dependencies",
         "Clean AST/IR, Result/Option safe error handling with '?' try operator",
         "Generics, Enums/Pattern Matching, file I/O on native backend",
-        "CORE-01 (Done), CORE-02, CORE-04, ADV-06",
+        "CORE-01 (Done), CORE-02 (Done), CORE-04, ADV-06",
         "Rust (rustc), Go (gc), Swift",
-        ("35% - Result/Option Added", 6)
+        ("45% - Enums & Pattern Matching Added", 6)
     ]
 ]
 
@@ -372,10 +372,10 @@ s3_rows = [
     [
         ("Phase 1", 3),
         "Core Language Maturity & Safety",
-        "Result/Option error types (Done), Enums with Pattern Matching, Closures/Lambdas, Generics, Traits/Interfaces",
+        "Result/Option error types (Done), Enums with Pattern Matching (Done), Closures/Lambdas, Generics, Traits/Interfaces",
         "Existing 1.99.1 Compiler",
         "v0.2.0-alpha",
-        ("IN PROGRESS (CORE-01 Completed)", 6)
+        ("IN PROGRESS (CORE-01, CORE-02 Completed)", 6)
     ],
     [
         ("Phase 2", 4),

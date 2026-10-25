@@ -111,6 +111,8 @@ impl Parser {
             Token::While => self.parse_while(),
             Token::For => self.parse_for(),
             Token::Class => self.parse_class(),
+            Token::Enum => self.parse_enum(),
+            Token::Match => self.parse_match(),
             _ => {
                 // Parse a full expression first, then decide: if `=`
                 // follows, this is an assignment (either to a bare name
@@ -610,6 +612,279 @@ impl Parser {
         Ok(Statement::ClassDecl { name, fields, location })
     }
 
+    fn parse_enum(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // Skip 'enum'
+
+        let name = match &self.current().token {
+            Token::Identifier(n) => {
+                let n = n.clone();
+                self.advance();
+                n
+            }
+            other => return Err(self.error(format!("Expected an enum name after 'enum', found {}", other))),
+        };
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        if !self.check(&Token::LeftBrace) {
+            return Err(self.error(format!("Expected '{{' after enum name '{}'", name)));
+        }
+        self.advance(); // Skip '{'
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let mut variants = Vec::new();
+        while !self.check(&Token::RightBrace) && !self.check(&Token::EOF) {
+            let variant_loc = Location::new(self.current().line, self.current().column);
+            let variant_name = match &self.current().token {
+                Token::Identifier(n) => {
+                    let n = n.clone();
+                    self.advance();
+                    n
+                }
+                other => return Err(self.error(format!("Expected a variant name in enum '{}', found {}", name, other))),
+            };
+
+            let mut payload_types = Vec::new();
+            if self.check(&Token::LeftParen) {
+                self.advance(); // Skip '('
+                while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    if self.check(&Token::RightParen) {
+                        break;
+                    }
+                    let ty = self.parse_type_name()?;
+                    payload_types.push(ty);
+
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    if self.check(&Token::Comma) {
+                        self.advance();
+                    } else if !self.check(&Token::RightParen) {
+                        return Err(self.error("Expected ',' or ')' in enum variant payload parameters"));
+                    }
+                }
+                if !self.check(&Token::RightParen) {
+                    return Err(self.error(format!("Expected ')' after payload types of variant '{}'", variant_name)));
+                }
+                self.advance(); // Skip ')'
+            }
+
+            variants.push(EnumVariant {
+                name: variant_name,
+                payload_types,
+                location: variant_loc,
+            });
+
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&Token::Comma) {
+                self.advance();
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+            }
+        }
+
+        if !self.check(&Token::RightBrace) {
+            return Err(self.error(format!("Expected '}}' to close enum '{}'", name)));
+        }
+        self.advance(); // Skip '}'
+
+        Ok(Statement::EnumDecl { name, variants, location })
+    }
+
+    fn parse_match(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // Skip 'match'
+
+        let expr = self.parse_expression()?;
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        if !self.check(&Token::LeftBrace) {
+            return Err(self.error("Expected '{' after match target expression"));
+        }
+        self.advance(); // Skip '{'
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let mut arms = Vec::new();
+        while !self.check(&Token::RightBrace) && !self.check(&Token::EOF) {
+            let arm_loc = Location::new(self.current().line, self.current().column);
+            let pattern = self.parse_pattern()?;
+
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if !self.check(&Token::FatArrow) {
+                return Err(self.error(format!("Expected '=>' after pattern in match arm, found {}", self.current().token)));
+            }
+            self.advance(); // Skip '=>'
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+
+            let body = if self.check(&Token::LeftBrace) {
+                self.parse_block()?
+            } else {
+                self.parse_statement()?
+            };
+
+            arms.push(MatchArm {
+                pattern,
+                body: Box::new(body),
+                location: arm_loc,
+            });
+
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&Token::Comma) {
+                self.advance();
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+            }
+        }
+
+        if !self.check(&Token::RightBrace) {
+            return Err(self.error("Expected '}' to close match block"));
+        }
+        self.advance(); // Skip '}'
+
+        Ok(Statement::Match { expr: Box::new(expr), arms, location })
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern> {
+        let location = Location::new(self.current().line, self.current().column);
+        match &self.current().token {
+            Token::Underscore => {
+                self.advance();
+                Ok(Pattern::Wildcard { location })
+            }
+            Token::Number(n) => {
+                let n = n.clone();
+                self.advance();
+                Ok(Pattern::Literal {
+                    expr: Box::new(Expression::Number { value: n, location: location.clone() }),
+                    location,
+                })
+            }
+            Token::String(s) => {
+                let s = s.clone();
+                self.advance();
+                Ok(Pattern::Literal {
+                    expr: Box::new(Expression::String { value: s, location: location.clone() }),
+                    location,
+                })
+            }
+            Token::True => {
+                self.advance();
+                Ok(Pattern::Literal {
+                    expr: Box::new(Expression::Boolean { value: true, location: location.clone() }),
+                    location,
+                })
+            }
+            Token::False => {
+                self.advance();
+                Ok(Pattern::Literal {
+                    expr: Box::new(Expression::Boolean { value: false, location: location.clone() }),
+                    location,
+                })
+            }
+            Token::Identifier(first_name) => {
+                let first_name = first_name.clone();
+                self.advance();
+
+                let (enum_name, variant_name) = if self.check(&Token::ColonColon) {
+                    self.advance(); // Skip '::'
+                    match &self.current().token {
+                        Token::Identifier(v) => {
+                            let v = v.clone();
+                            self.advance();
+                            (Some(first_name), v)
+                        }
+                        other => return Err(self.error(format!("Expected variant name after '::', found {}", other))),
+                    }
+                } else {
+                    (None, first_name)
+                };
+
+                let mut bindings = Vec::new();
+                if self.check(&Token::LeftParen) {
+                    self.advance(); // Skip '('
+                    while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                        while self.check(&Token::Newline) {
+                            self.advance();
+                        }
+                        if self.check(&Token::RightParen) {
+                            break;
+                        }
+                        let b = match &self.current().token {
+                            Token::Identifier(id) => {
+                                let id = id.clone();
+                                self.advance();
+                                id
+                            }
+                            Token::Underscore => {
+                                self.advance();
+                                "_".to_string()
+                            }
+                            other => return Err(self.error(format!("Expected variable name in pattern bindings, found {}", other))),
+                        };
+                        bindings.push(b);
+
+                        while self.check(&Token::Newline) {
+                            self.advance();
+                        }
+                        if self.check(&Token::Comma) {
+                            self.advance();
+                        } else if !self.check(&Token::RightParen) {
+                            return Err(self.error("Expected ',' or ')' in pattern bindings"));
+                        }
+                    }
+                    if !self.check(&Token::RightParen) {
+                        return Err(self.error("Expected ')' after pattern bindings"));
+                    }
+                    self.advance(); // Skip ')'
+
+                    Ok(Pattern::Variant {
+                        enum_name,
+                        variant: variant_name,
+                        bindings,
+                        location,
+                    })
+                } else {
+                    let is_upper = variant_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+                    if enum_name.is_some() || is_upper {
+                        Ok(Pattern::Variant {
+                            enum_name,
+                            variant: variant_name,
+                            bindings: vec![],
+                            location,
+                        })
+                    } else {
+                        Ok(Pattern::Variable {
+                            name: variant_name,
+                            location,
+                        })
+                    }
+                }
+            }
+            other => Err(self.error(format!("Expected pattern in match arm, found {}", other))),
+        }
+    }
+
     /// The for-loop's init clause: either `let name = expr` (declares a
     /// new loop variable, scoped to the loop) or `name = expr`
     /// (reassigns an existing variable).
@@ -996,11 +1271,61 @@ impl Parser {
 
                 Ok(Expression::New { class_name, arguments: args, location })
             }
+            Token::Underscore => {
+                self.advance();
+                Ok(Expression::Identifier {
+                    name: "_".to_string(),
+                    location,
+                })
+            }
             Token::Identifier(name) => {
                 self.advance();
 
-                // Check if it's a function call
-                if self.check(&Token::LeftParen) {
+                // Check for :: (e.g. Shape::Circle(r) or Shape::Point)
+                if self.check(&Token::ColonColon) {
+                    self.advance(); // Skip '::'
+                    let variant = match &self.current().token {
+                        Token::Identifier(v) => {
+                            let v = v.clone();
+                            self.advance();
+                            v
+                        }
+                        other => return Err(self.error(format!("Expected variant name after '::', found {}", other))),
+                    };
+
+                    let mut args = Vec::new();
+                    if self.check(&Token::LeftParen) {
+                        self.advance(); // Skip '('
+                        while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                            while self.check(&Token::Newline) {
+                                self.advance();
+                            }
+                            if self.check(&Token::RightParen) {
+                                break;
+                            }
+                            let arg = self.parse_expression()?;
+                            args.push(arg);
+                            while self.check(&Token::Newline) {
+                                self.advance();
+                            }
+                            if !self.check(&Token::Comma) {
+                                break;
+                            }
+                            self.advance(); // Skip comma
+                        }
+                        if !self.check(&Token::RightParen) {
+                            return Err(self.error(format!("Expected ')' after arguments to '{}::{}'", name, variant)));
+                        }
+                        self.advance(); // Skip ')'
+                    }
+
+                    Ok(Expression::EnumConstruct {
+                        enum_name: Some(name),
+                        variant,
+                        arguments: args,
+                        location,
+                    })
+                } else if self.check(&Token::LeftParen) {
                     self.advance();
                     let mut args = Vec::new();
                     while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {

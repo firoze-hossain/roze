@@ -162,13 +162,24 @@ impl<'a> Lexer<'a> {
                 '.' => { self.advance(); Token::Dot }
                 '?' => { self.advance(); Token::Question }
                 ';' => { self.advance(); Token::Semicolon }
-                ':' => { self.advance(); Token::Colon }
+                ':' => {
+                    self.advance();
+                    if self.current_char == Some(':') {
+                        self.advance();
+                        Token::ColonColon
+                    } else {
+                        Token::Colon
+                    }
+                }
 
                 '=' => {
                     self.advance();
                     if self.current_char == Some('=') {
                         self.advance();
                         Token::EqualsEquals
+                    } else if self.current_char == Some('>') {
+                        self.advance();
+                        Token::FatArrow
                     } else {
                         Token::Equals
                     }
@@ -252,9 +263,12 @@ impl<'a> Lexer<'a> {
                             "class" => Token::Class,
                             "new" => Token::New,
                             "import" => Token::Import,
+                            "enum" => Token::Enum,
+                            "match" => Token::Match,
                             "true" => Token::True,
                             "false" => Token::False,
                             "null" => Token::Null,
+                            "_" => Token::Underscore,
                             _ => Token::Identifier(ident),
                         }
                     } else {
@@ -378,5 +392,16 @@ mod tests {
         let tokens = tokenize("a\nb\nc");
         let lines: Vec<usize> = tokens.iter().filter(|t| t.token != Token::EOF).map(|t| t.line).collect();
         assert_eq!(lines, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn enum_and_match_tokens_lex_correctly() {
+        let tokens = tokenize("enum Shape { Circle(float) } match s { Shape::Circle(r) => r, _ => 0 }");
+        let non_eof: Vec<&Token> = tokens.iter().map(|t| &t.token).filter(|t| **t != Token::EOF).collect();
+        assert!(non_eof.contains(&&Token::Enum));
+        assert!(non_eof.contains(&&Token::Match));
+        assert!(non_eof.contains(&&Token::ColonColon));
+        assert!(non_eof.contains(&&Token::FatArrow));
+        assert!(non_eof.contains(&&Token::Underscore));
     }
 }

@@ -1587,3 +1587,40 @@ fn jvm_backend_is_still_the_default_and_unaffected() {
     assert!(stdout.contains("Generated Java source"), "expected the JVM backend's own log line, got:\n{}", stdout);
     assert_eq!(program_output(&stdout).trim_end(), "still jvm");
 }
+
+#[test]
+fn native_enums_and_pattern_matching() {
+    let source = "\
+enum Shape {
+    Circle(int),
+    Rectangle(int, int),
+    Point,
+}
+
+func calculate_area(s: Shape) -> int {
+    match s {
+        Circle(r) => {
+            return 3 * r * r;
+        }
+        Rectangle(w, h) => {
+            return w * h;
+        }
+        Point => {
+            return 0;
+        }
+    }
+}
+
+func main() {
+    let c = Shape::Circle(10);
+    let r = Rectangle(4, 5);
+    let p = Point;
+    println(calculate_area(c));
+    println(calculate_area(r));
+    println(calculate_area(p));
+}
+";
+    let (stdout, stderr, ok) = run_native_source("enums_native", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(program_output(&stdout).trim_end(), "300\n20\n0");
+}

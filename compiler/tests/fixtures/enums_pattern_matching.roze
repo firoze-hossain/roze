@@ -1,0 +1,116 @@
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+enum Shape {
+    Circle(int),
+    Rectangle(int, int),
+    Point,
+}
+
+enum WebMessage {
+    Quit,
+    Move(int, int),
+    Write(string),
+    ChangeColor(int, int, int),
+}
+
+func print_color(c: Color) {
+    match c {
+        Color::Red => {
+            println("color is red");
+        }
+        Color::Green => {
+            println("color is green");
+        }
+        Color::Blue => {
+            println("color is blue");
+        }
+    }
+}
+
+func calculate_area(s: Shape) -> int {
+    match s {
+        Circle(r) => {
+            return 3 * r * r;
+        }
+        Rectangle(w, h) => {
+            return w * h;
+        }
+        Point => {
+            return 0;
+        }
+    }
+}
+
+func handle_web_message(msg: WebMessage) {
+    match msg {
+        Quit => {
+            println("action: quit");
+        }
+        Move(x, y) => {
+            println("action: move");
+            println(x);
+            println(y);
+        }
+        Write(text) => {
+            println("action: write");
+            println(text);
+        }
+        ChangeColor(r, g, b) => {
+            println("action: change_color");
+            println(r);
+            println(g);
+            println(b);
+        }
+    }
+}
+
+func test_wildcard(s: Shape) {
+    match s {
+        Circle(r) => {
+            println("got circle");
+            println(r);
+        }
+        _ => {
+            println("got something else");
+        }
+    }
+}
+
+func main() {
+    // 1. Unit variants & scoped syntax
+    let c1 = Color::Red;
+    let c2 = Color::Green;
+    let c3 = Color::Blue;
+    print_color(c1);
+    print_color(c2);
+    print_color(c3);
+
+    // 2. Payload variants & calculations
+    let circle = Shape::Circle(10);
+    let rect = Rectangle(4, 5);
+    let pt = Point;
+
+    println(calculate_area(circle));
+    println(calculate_area(rect));
+    println(calculate_area(pt));
+
+    // 3. Web messages with various payloads
+    let m1 = Quit;
+    let m2 = Move(100, 250);
+    let m3 = Write("Hello Roze enums!");
+    let m4 = ChangeColor(255, 128, 0);
+
+    handle_web_message(m1);
+    handle_web_message(m2);
+    handle_web_message(m3);
+    handle_web_message(m4);
+
+    // 4. Wildcard matching
+    test_wildcard(circle);
+    test_wildcard(rect);
+    test_wildcard(pt);
+}

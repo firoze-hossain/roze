@@ -1,4 +1,4 @@
-use crate::ir::{TypedExpression, TypedExpressionKind, TypedProgram, TypedStatement};
+use crate::ir::{TypedExpression, TypedExpressionKind, TypedPattern, TypedProgram, TypedStatement};
 use crate::parser::ast::{BinaryOperator, UnaryOperator};
 use crate::semantic::Type;
 use anyhow::Result;
@@ -941,12 +941,88 @@ impl JavaSourceGenerator {
         source.push_str(OPTION_RESULT_HELPER_CLASSES);
 
         for stmt in &self.program.statements {
-            if let TypedStatement::ClassDecl { name, fields, .. } = stmt {
-                self.generate_class(&mut source, name, fields)?;
+            match stmt {
+                TypedStatement::ClassDecl { name, fields, .. } => {
+                    self.generate_class(&mut source, name, fields)?;
+                }
+                TypedStatement::EnumDecl { name, variants, .. } => {
+                    self.generate_enum(&mut source, name, variants)?;
+                }
+                _ => {}
             }
         }
 
         Ok(source)
+    }
+
+    fn generate_enum(&self, source: &mut String, name: &str, variants: &[(String, Vec<Type>)]) -> Result<()> {
+        let escaped_name = escape_java_identifier(name);
+        source.push_str(&format!("abstract class {} {{\n", escaped_name));
+        source.push_str("    public abstract int __tag();\n\n");
+
+        for (tag, (vname, payload_types)) in variants.iter().enumerate() {
+            let escaped_vname = escape_java_identifier(vname);
+            source.push_str(&format!("    public static class {} extends {} {{\n", escaped_vname, escaped_name));
+
+            for (i, ptype) in payload_types.iter().enumerate() {
+                source.push_str(&format!("        public {} _{};\n", java_type_name(ptype), i));
+            }
+
+            let ctor_params: Vec<String> = payload_types.iter().enumerate()
+                .map(|(i, ptype)| format!("{} _{}", java_type_name(ptype), i))
+                .collect();
+            source.push_str(&format!("        public {}({}) {{\n", escaped_vname, ctor_params.join(", ")));
+            for i in 0..payload_types.len() {
+                source.push_str(&format!("            this._{} = _{};\n", i, i));
+            }
+            source.push_str("        }\n");
+
+            source.push_str(&format!("        @Override public int __tag() {{ return {}; }}\n", tag));
+
+            if payload_types.is_empty() {
+                source.push_str(&format!("        @Override public String toString() {{ return \"{}::{}\"; }}\n", name, vname));
+            } else {
+                let parts: Vec<String> = (0..payload_types.len()).map(|i| format!("_{}", i)).collect();
+                source.push_str(&format!(
+                    "        @Override public String toString() {{ return \"{}::{}(\" + {} + \")\"; }}\n",
+                    name, vname, parts.join(" + \", \" + ")
+                ));
+            }
+
+            source.push_str("        @Override public boolean equals(Object o) {\n");
+            source.push_str("            if (this == o) return true;\n");
+            source.push_str(&format!("            if (!(o instanceof {})) return false;\n", escaped_vname));
+            if payload_types.is_empty() {
+                source.push_str("            return true;\n");
+            } else {
+                source.push_str(&format!("            {} other = ({}) o;\n", escaped_vname, escaped_vname));
+                let mut conds = Vec::new();
+                for (i, ptype) in payload_types.iter().enumerate() {
+                    match ptype {
+                        Type::Int | Type::Bool => conds.push(format!("this._{} == other._{}", i, i)),
+                        Type::Float => conds.push(format!("Double.compare(this._{}, other._{}) == 0", i, i)),
+                        _ => conds.push(format!("java.util.Objects.equals(this._{}, other._{})", i, i)),
+                    }
+                }
+                source.push_str(&format!("            return {};\n", conds.join(" && ")));
+            }
+            source.push_str("        }\n");
+
+            let hash_fields: Vec<String> = (0..payload_types.len()).map(|i| format!("_{}", i)).collect();
+            if hash_fields.is_empty() {
+                source.push_str(&format!("        @Override public int hashCode() {{ return {}; }}\n", tag));
+            } else {
+                source.push_str(&format!(
+                    "        @Override public int hashCode() {{ return java.util.Objects.hash({}, {}); }}\n",
+                    tag, hash_fields.join(", ")
+                ));
+            }
+
+            source.push_str("    }\n\n");
+        }
+
+        source.push_str("}\n\n");
+        Ok(())
     }
 
     /// Emits a Roze `class` as a real, separate Java class in the same
@@ -1088,6 +1164,22 @@ impl JavaSourceGenerator {
                     location: expr.location.clone(),
                 })
             }
+            TypedExpressionKind::EnumConstruct { enum_name, variant, tag, arguments } => {
+                let mut args_h = Vec::with_capacity(arguments.len());
+                for arg in arguments {
+                    args_h.push(self.hoist_try_expr(arg, hoisted_stmts, indent_str, return_type)?);
+                }
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::EnumConstruct {
+                        enum_name: enum_name.clone(),
+                        variant: variant.clone(),
+                        tag: *tag,
+                        arguments: args_h,
+                    },
+                    type_: expr.type_.clone(),
+                    location: expr.location.clone(),
+                })
+            }
             _ => Ok(expr.clone()),
         }
     }
@@ -1149,6 +1241,85 @@ impl JavaSourceGenerator {
                 // top-level class declarations are collected and
                 // emitted as real Java classes directly in `generate`
                 // (see `generate_class`).
+            }
+            TypedStatement::EnumDecl { .. } => {
+                // Like ClassDecl, emitted as top-level Java classes in `generate`.
+            }
+            TypedStatement::Match { expr, arms, .. } => {
+                let mut hoisted = String::new();
+                let expr = self.hoist_try_expr(expr, &mut hoisted, &indent_str, return_type)?;
+                source.push_str(&hoisted);
+
+                let id = self.try_counter.get();
+                self.try_counter.set(id + 1);
+                let target_var = format!("__match_val_{}", id);
+
+                source.push_str(&format!("{}Object {} = ", indent_str, target_var));
+                self.generate_expression(source, &expr)?;
+                source.push_str(";\n");
+
+                let mut is_first = true;
+                for arm in arms {
+                    source.push_str(&indent_str);
+                    if !is_first {
+                        source.push_str("else ");
+                    }
+                    is_first = false;
+
+                    match &arm.pattern {
+                        TypedPattern::Wildcard { .. } => {
+                            source.push_str("{\n");
+                            self.generate_statement(source, &arm.body, indent + 1, return_type)?;
+                            source.push_str(&format!("{}}}\n", indent_str));
+                        }
+                        TypedPattern::Variable { name, type_, .. } => {
+                            source.push_str("{\n");
+                            source.push_str(&format!(
+                                "{}    {} {} = ({}) {};\n",
+                                indent_str, java_type_name(type_), escape_java_identifier(name), java_type_name(type_), target_var
+                            ));
+                            self.generate_statement(source, &arm.body, indent + 1, return_type)?;
+                            source.push_str(&format!("{}}}\n", indent_str));
+                        }
+                        TypedPattern::Literal { expr: lit, .. } => {
+                            source.push_str(&format!("if (java.util.Objects.equals({}, ", target_var));
+                            self.generate_expression(source, lit)?;
+                            source.push_str(")) {\n");
+                            self.generate_statement(source, &arm.body, indent + 1, return_type)?;
+                            source.push_str(&format!("{}}}\n", indent_str));
+                        }
+                        TypedPattern::Variant { enum_name, variant, bindings, .. } => {
+                            let variant_class = format!("{}.{}", escape_java_identifier(enum_name), escape_java_identifier(variant));
+                            source.push_str(&format!("if ({} instanceof {}) {{\n", target_var, variant_class));
+
+                            if !bindings.is_empty() {
+                                let arm_var = format!("__arm_val_{}", self.try_counter.get());
+                                self.try_counter.set(self.try_counter.get() + 1);
+                                source.push_str(&format!(
+                                    "{}    {} {} = ({}) {};\n",
+                                    indent_str, variant_class, arm_var, variant_class, target_var
+                                ));
+                                for (i, (b_name, b_type)) in bindings.iter().enumerate() {
+                                    if b_name != "_" {
+                                        source.push_str(&format!(
+                                            "{}    {} {} = {}._{};\n",
+                                            indent_str, java_type_name(b_type), escape_java_identifier(b_name), arm_var, i
+                                        ));
+                                    }
+                                }
+                            }
+                            self.generate_statement(source, &arm.body, indent + 1, return_type)?;
+                            source.push_str(&format!("{}}}\n", indent_str));
+                        }
+                    }
+                }
+
+                let has_catchall = arms.iter().any(|arm| matches!(arm.pattern, TypedPattern::Wildcard { .. } | TypedPattern::Variable { .. }));
+                if !has_catchall && !arms.is_empty() {
+                    source.push_str(&format!("{}else {{\n", indent_str));
+                    source.push_str(&format!("{}    throw new RuntimeException(\"Pattern matching failed: no arm matched \" + {});\n", indent_str, target_var));
+                    source.push_str(&format!("{}}}\n", indent_str));
+                }
             }
             TypedStatement::FieldAssign { object, field, value, .. } => {
                 let mut hoisted = String::new();
@@ -1380,6 +1551,16 @@ impl JavaSourceGenerator {
             TypedExpressionKind::Try(inner) => {
                 source.push_str("__roze_unwrap_try(");
                 self.generate_expression(source, inner)?;
+                source.push(')');
+            }
+            TypedExpressionKind::EnumConstruct { enum_name, variant, arguments, .. } => {
+                source.push_str(&format!("new {}.{}(", escape_java_identifier(enum_name), escape_java_identifier(variant)));
+                for (i, arg) in arguments.iter().enumerate() {
+                    if i > 0 {
+                        source.push_str(", ");
+                    }
+                    self.generate_expression(source, arg)?;
+                }
                 source.push(')');
             }
         }

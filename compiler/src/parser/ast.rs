@@ -96,6 +96,58 @@ pub enum Statement {
         value: Box<Expression>,
         location: Location,
     },
+    /// `enum Name { Variant1, Variant2(Type), ... }`
+    EnumDecl {
+        name: String,
+        variants: Vec<EnumVariant>,
+        location: Location,
+    },
+    /// `match expr { Pattern => Body, ... }`
+    Match {
+        expr: Box<Expression>,
+        arms: Vec<MatchArm>,
+        location: Location,
+    },
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct EnumVariant {
+    pub name: String,
+    pub payload_types: Vec<String>,
+    pub location: Location,
+}
+
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Box<Statement>,
+    pub location: Location,
+}
+
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    /// `EnumName::Variant(v1, v2)` or `Variant(v1, v2)` or unit `EnumName::Variant` / `Variant`
+    Variant {
+        enum_name: Option<String>,
+        variant: String,
+        bindings: Vec<String>,
+        location: Location,
+    },
+    /// `_` wildcard
+    Wildcard {
+        location: Location,
+    },
+    /// Literal pattern, e.g. `42`, `"hello"`, `true`
+    Literal {
+        expr: Box<Expression>,
+        location: Location,
+    },
+    /// Variable binding, e.g. `x`
+    Variable {
+        name: String,
+        location: Location,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -160,6 +212,13 @@ pub enum Expression {
     /// `expr?` -- error propagation try operator. Unwraps a Result/Option or returns early from the current function.
     Try {
         expr: Box<Expression>,
+        location: Location,
+    },
+    /// `EnumName::Variant(arg1, ...)` or `EnumName::Variant` (unit variant)
+    EnumConstruct {
+        enum_name: Option<String>,
+        variant: String,
+        arguments: Vec<Expression>,
         location: Location,
     },
 }

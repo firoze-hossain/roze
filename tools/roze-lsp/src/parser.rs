@@ -146,7 +146,12 @@ fn collect_statement(stmt: &Statement, ast: &mut Ast) {
         // part of adding `class` to the language itself. `object.field
         // = value` doesn't introduce a new symbol either way, the same
         // as a plain `Assign`.
-        Statement::ClassDecl { .. } | Statement::FieldAssign { .. } => {}
+        Statement::ClassDecl { .. } | Statement::FieldAssign { .. } | Statement::EnumDecl { .. } => {}
+        Statement::Match { arms, .. } => {
+            for arm in arms {
+                collect_statement(&arm.body, ast);
+            }
+        }
     }
 }
 

@@ -1,6 +1,9 @@
 // compiler/src/semantic/mod.rs
 use crate::error::RozeError;
-use crate::ir::{TypedExpression, TypedExpressionKind, TypedFunctionParam, TypedProgram, TypedStatement};
+use crate::ir::{
+    TypedExpression, TypedExpressionKind, TypedFunctionParam, TypedMatchArm, TypedPattern,
+    TypedProgram, TypedStatement,
+};
 use crate::parser::ast::*;
 use std::collections::HashMap;
 use anyhow::Result;
@@ -36,6 +39,8 @@ pub enum Type {
     /// its declared type, the same way a typed function parameter
     /// already is.
     Class(String),
+    /// An instance of a user-defined enum / algebraic data type (`enum Name { Variant, ... }`).
+    Enum(String),
     /// Reserved for when Roze gets first-class function values/closures
     /// -- nothing constructs this yet (there's no syntax for a function
     /// *value*, only calls), but the other Type variants already match
@@ -83,6 +88,7 @@ impl Type {
             Type::Option => "RozeOption".to_string(),
             Type::Result => "RozeResult".to_string(),
             Type::Class(name) => name.clone(),
+            Type::Enum(name) => name.clone(),
             Type::Function { .. } => "Object".to_string(),
         }
     }
@@ -102,6 +108,7 @@ impl std::fmt::Display for Type {
             Type::Option => write!(f, "Option"),
             Type::Result => write!(f, "Result"),
             Type::Class(name) => write!(f, "{}", name),
+            Type::Enum(name) => write!(f, "{}", name),
             Type::Function { .. } => write!(f, "function"),
         }
     }
@@ -332,6 +339,8 @@ pub struct TypeChecker {
     /// `new Name(a, b)`'s arguments are positional, matched against
     /// this order).
     pub classes: HashMap<String, Vec<(String, Type)>>,
+    pub enums: HashMap<String, Vec<(String, Vec<Type>)>>,
+    pub variant_to_enum: HashMap<String, Vec<String>>,
     pub current_function: Option<String>,
     pub current_return_type: Type,
     /// True while checking `main`'s body -- codegen always hard-codes
@@ -375,6 +384,8 @@ impl TypeChecker {
             symbol_table: SymbolTable::new(),
             functions,
             classes: HashMap::new(),
+            enums: HashMap::new(),
+            variant_to_enum: HashMap::new(),
             current_function: None,
             current_return_type: Type::Void,
             in_main: false,
@@ -382,13 +393,13 @@ impl TypeChecker {
         }
     }
 
-    /// Resolves a source-level type name, checking user-defined classes
-    /// first (so a class named e.g. `Point` correctly resolves to
-    /// `Type::Class("Point")` rather than falling through to Unknown
-    /// the way `Type::from_name` alone would, having no way to know
-    /// about classes registered on this specific checker instance).
+    /// Resolves a source-level type name, checking user-defined enums and classes
+    /// first (so an enum named e.g. `Color` resolves to `Type::Enum("Color")`,
+    /// and a class named `Point` resolves to `Type::Class("Point")`).
     fn resolve_type_name(&self, name: &str) -> Type {
-        if self.classes.contains_key(name) {
+        if self.enums.contains_key(name) {
+            Type::Enum(name.to_string())
+        } else if self.classes.contains_key(name) {
             Type::Class(name.to_string())
         } else {
             Type::from_name(name)
@@ -397,12 +408,25 @@ impl TypeChecker {
 
     /// Type-checks `program` and, on success, returns the fully
     /// type-annotated IR for it (see `crate::ir`). Registers every
-    /// class and top-level function's signature before checking any
+    /// enum, class, and top-level function's signature before checking any
     /// bodies, so forward references and mutual recursion type-check
-    /// correctly regardless of source order. Classes are registered
-    /// before functions specifically, so a function's parameter/return
-    /// type can reference a class declared later in the file.
+    /// correctly regardless of source order.
     pub fn check_program(&mut self, program: &Program) -> Result<TypedProgram> {
+        for stmt in &program.statements {
+            if let Statement::EnumDecl { name, variants, .. } = stmt {
+                let mut resolved_variants = Vec::with_capacity(variants.len());
+                for v in variants {
+                    let mut tys = Vec::with_capacity(v.payload_types.len());
+                    for t in &v.payload_types {
+                        tys.push(self.resolve_type_name(t));
+                    }
+                    self.variant_to_enum.entry(v.name.clone()).or_default().push(name.clone());
+                    resolved_variants.push((v.name.clone(), tys));
+                }
+                self.enums.insert(name.clone(), resolved_variants);
+            }
+        }
+
         for stmt in &program.statements {
             if let Statement::ClassDecl { name, fields, .. } = stmt {
                 let resolved_fields = fields.iter()
@@ -688,6 +712,132 @@ impl TypeChecker {
                 }
                 Ok(Some(TypedStatement::Assign { name: name.clone(), value: typed_value, location: location.clone() }))
             }
+            Statement::EnumDecl { name, location, .. } => {
+                let variants = self.enums.get(name)
+                    .expect("check_program registers every enum before any statement is checked")
+                    .clone();
+                Ok(Some(TypedStatement::EnumDecl {
+                    name: name.clone(),
+                    variants,
+                    location: location.clone(),
+                }))
+            }
+            Statement::Match { expr, arms, location } => {
+                let typed_expr = self.check_expression(expr)?;
+                let mut typed_arms = Vec::with_capacity(arms.len());
+
+                for arm in arms {
+                    self.symbol_table.push_scope();
+
+                    let typed_pattern = match &arm.pattern {
+                        Pattern::Wildcard { location: pat_loc } => {
+                            TypedPattern::Wildcard { location: pat_loc.clone() }
+                        }
+                        Pattern::Literal { expr: lit_expr, location: pat_loc } => {
+                            let typed_lit = self.check_expression(lit_expr)?;
+                            TypedPattern::Literal { expr: typed_lit, location: pat_loc.clone() }
+                        }
+                        Pattern::Variable { name, location: pat_loc } => {
+                            self.symbol_table.define(name, typed_expr.type_.clone(), pat_loc.line, pat_loc.column)?;
+                            TypedPattern::Variable {
+                                name: name.clone(),
+                                type_: typed_expr.type_.clone(),
+                                location: pat_loc.clone(),
+                            }
+                        }
+                        Pattern::Variant { enum_name, variant, bindings, location: pat_loc } => {
+                            let target_enum = match enum_name {
+                                Some(en) => {
+                                    if !self.enums.contains_key(en) {
+                                        return Err(RozeError::type_error(
+                                            format!("Unknown enum '{}' in match pattern", en),
+                                            pat_loc.line,
+                                            pat_loc.column,
+                                        ).into());
+                                    }
+                                    en.clone()
+                                }
+                                None => {
+                                    if let Type::Enum(en) = &typed_expr.type_ {
+                                        en.clone()
+                                    } else if let Some(candidates) = self.variant_to_enum.get(variant) {
+                                        if candidates.len() == 1 {
+                                            candidates[0].clone()
+                                        } else {
+                                            return Err(RozeError::type_error(
+                                                format!("Ambiguous variant '{}': belongs to multiple enums ({:?}). Qualify it with 'EnumName::{}'", variant, candidates, variant),
+                                                pat_loc.line,
+                                                pat_loc.column,
+                                            ).into());
+                                        }
+                                    } else {
+                                        return Err(RozeError::type_error(
+                                            format!("Unknown variant '{}' in match pattern", variant),
+                                            pat_loc.line,
+                                            pat_loc.column,
+                                        ).into());
+                                    }
+                                }
+                            };
+
+                            let variants = self.enums.get(&target_enum).unwrap();
+                            let (tag, (_, payload_types)) = variants.iter().enumerate()
+                                .find(|(_, (vname, _))| vname == variant)
+                                .ok_or_else(|| RozeError::type_error(
+                                    format!("Enum '{}' has no variant '{}'", target_enum, variant),
+                                    pat_loc.line,
+                                    pat_loc.column,
+                                ))?;
+
+                            if bindings.len() != payload_types.len() {
+                                return Err(RozeError::type_error(
+                                    format!(
+                                        "Variant '{}::{}' expects {} argument(s), but pattern has {}",
+                                        target_enum, variant, payload_types.len(), bindings.len()
+                                    ),
+                                    pat_loc.line,
+                                    pat_loc.column,
+                                ).into());
+                            }
+
+                            let mut typed_bindings = Vec::with_capacity(bindings.len());
+                            for (b_name, b_type) in bindings.iter().zip(payload_types.iter()) {
+                                if b_name != "_" {
+                                    self.symbol_table.define(b_name, b_type.clone(), pat_loc.line, pat_loc.column)?;
+                                }
+                                typed_bindings.push((b_name.clone(), b_type.clone()));
+                            }
+
+                            TypedPattern::Variant {
+                                enum_name: target_enum,
+                                variant: variant.clone(),
+                                tag,
+                                bindings: typed_bindings,
+                                location: pat_loc.clone(),
+                            }
+                        }
+                    };
+
+                    let typed_body = match self.check_statement(&arm.body)? {
+                        Some(s) => s,
+                        None => TypedStatement::Block { statements: vec![], location: arm.location.clone() },
+                    };
+
+                    self.symbol_table.pop_scope();
+
+                    typed_arms.push(TypedMatchArm {
+                        pattern: typed_pattern,
+                        body: Box::new(typed_body),
+                        location: arm.location.clone(),
+                    });
+                }
+
+                Ok(Some(TypedStatement::Match {
+                    expr: typed_expr,
+                    arms: typed_arms,
+                    location: location.clone(),
+                }))
+            }
         }
     }
 
@@ -720,6 +870,31 @@ impl TypeChecker {
                         type_: symbol.type_.clone(),
                         location: location.clone(),
                     })
+                } else if let Some(candidates) = self.variant_to_enum.get(name) {
+                    if candidates.len() == 1 {
+                        let target_enum = &candidates[0];
+                        let variants = self.enums.get(target_enum).unwrap();
+                        let (tag, (_, payload_types)) = variants.iter().enumerate()
+                            .find(|(_, (vname, _))| vname == name)
+                            .unwrap();
+                        if payload_types.is_empty() {
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::EnumConstruct {
+                                    enum_name: target_enum.clone(),
+                                    variant: name.clone(),
+                                    tag,
+                                    arguments: vec![],
+                                },
+                                type_: Type::Enum(target_enum.clone()),
+                                location: location.clone(),
+                            });
+                        }
+                    }
+                    Err(RozeError::type_error(
+                        format!("Undefined variable '{}'", name),
+                        location.line,
+                        location.column,
+                    ).with_length(name.chars().count()).into())
                 } else {
                     Err(RozeError::type_error(
                         format!("Undefined variable '{}'", name),
@@ -861,6 +1036,55 @@ impl TypeChecker {
                             }
                         }
                         sig.return_type.clone()
+                    } else if let Some(candidates) = self.variant_to_enum.get(name) {
+                        if candidates.len() == 1 {
+                            let target_enum = candidates[0].clone();
+                            let variants = self.enums.get(&target_enum).unwrap();
+                            let (tag, (_, expected_types)) = variants.iter().enumerate()
+                                .find(|(_, (vname, _))| vname == name)
+                                .unwrap();
+
+                            if typed_arguments.len() != expected_types.len() {
+                                return Err(RozeError::type_error(
+                                    format!(
+                                        "Variant '{}::{}' takes {} argument(s), but {} were given",
+                                        target_enum, name, expected_types.len(), typed_arguments.len()
+                                    ),
+                                    location.line,
+                                    location.column,
+                                ).into());
+                            }
+
+                            for (arg, expected_ty) in typed_arguments.iter().zip(expected_types.iter()) {
+                                if !types_compatible(expected_ty, &arg.type_) {
+                                    return Err(RozeError::type_error(
+                                        format!(
+                                            "'{}::{}' expects {} for argument, got {}",
+                                            target_enum, name, expected_ty, arg.type_
+                                        ),
+                                        location.line,
+                                        location.column,
+                                    ).into());
+                                }
+                            }
+
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::EnumConstruct {
+                                    enum_name: target_enum.clone(),
+                                    variant: name.clone(),
+                                    tag,
+                                    arguments: typed_arguments,
+                                },
+                                type_: Type::Enum(target_enum),
+                                location: location.clone(),
+                            });
+                        } else {
+                            return Err(RozeError::type_error(
+                                format!("Ambiguous variant '{}': belongs to multiple enums ({:?})", name, candidates),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
                     } else {
                         return Err(RozeError::type_error(
                             format!("Call to undefined function '{}'", name),
@@ -992,6 +1216,89 @@ impl TypeChecker {
                 Ok(TypedExpression {
                     kind: TypedExpressionKind::Try(Box::new(typed_expr)),
                     type_: Type::Unknown,
+                    location: location.clone(),
+                })
+            }
+            Expression::EnumConstruct { enum_name, variant, arguments, location } => {
+                let target_enum = match enum_name {
+                    Some(en) => {
+                        if !self.enums.contains_key(en) {
+                            return Err(RozeError::type_error(
+                                format!("Unknown enum '{}'", en),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                        en.clone()
+                    }
+                    None => {
+                        if let Some(candidates) = self.variant_to_enum.get(variant) {
+                            if candidates.len() == 1 {
+                                candidates[0].clone()
+                            } else {
+                                return Err(RozeError::type_error(
+                                    format!("Ambiguous variant '{}': belongs to multiple enums ({:?}). Qualify with 'EnumName::{}'", variant, candidates, variant),
+                                    location.line,
+                                    location.column,
+                                ).into());
+                            }
+                        } else {
+                            return Err(RozeError::type_error(
+                                format!("Unknown enum variant '{}'", variant),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                    }
+                };
+
+                let (tag, expected_types) = {
+                    let variants = self.enums.get(&target_enum).unwrap();
+                    let (tag, (_, expected_types)) = variants.iter().enumerate()
+                        .find(|(_, (vname, _))| vname == variant)
+                        .ok_or_else(|| RozeError::type_error(
+                            format!("Enum '{}' has no variant '{}'", target_enum, variant),
+                            location.line,
+                            location.column,
+                        ))?;
+                    (tag, expected_types.clone())
+                };
+
+                if arguments.len() != expected_types.len() {
+                    return Err(RozeError::type_error(
+                        format!(
+                            "Variant '{}::{}' takes {} argument(s), but {} were given",
+                            target_enum, variant, expected_types.len(), arguments.len()
+                        ),
+                        location.line,
+                        location.column,
+                    ).into());
+                }
+
+                let mut typed_args = Vec::with_capacity(arguments.len());
+                for (arg, expected_ty) in arguments.iter().zip(expected_types.iter()) {
+                    let typed_arg = self.check_expression(arg)?;
+                    if !types_compatible(expected_ty, &typed_arg.type_) {
+                        return Err(RozeError::type_error(
+                            format!(
+                                "'{}::{}' expects {} for argument, got {}",
+                                target_enum, variant, expected_ty, typed_arg.type_
+                            ),
+                            location.line,
+                            location.column,
+                        ).into());
+                    }
+                    typed_args.push(typed_arg);
+                }
+
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::EnumConstruct {
+                        enum_name: target_enum.clone(),
+                        variant: variant.clone(),
+                        tag,
+                        arguments: typed_args,
+                    },
+                    type_: Type::Enum(target_enum),
                     location: location.clone(),
                 })
             }
@@ -1503,5 +1810,67 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("requires the enclosing function to return Result"), "{}", err);
+    }
+
+    #[test]
+    fn enum_definition_and_matching_type_checks_cleanly() {
+        let result = check_source(
+            "enum Color { Red, Green, Blue } \
+             enum Shape { Circle(int), Rect(int, int) } \
+             func area(s: Shape) -> int { \
+                 match s { \
+                     Circle(r) => { return r * r; } \
+                     Rect(w, h) => { return w * h; } \
+                 } \
+             } \
+             func main() { \
+                 let c = Color::Red; \
+                 let s = Shape::Circle(5); \
+                 let a = area(s); \
+             }"
+        );
+        assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn enum_variant_argument_count_mismatch_is_error() {
+        let result = check_source(
+            "enum Shape { Circle(int) } \
+             func main() { \
+                 let s = Shape::Circle(1, 2); \
+             }"
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("takes 1 argument(s), but 2 were given"), "{}", err);
+    }
+
+    #[test]
+    fn enum_variant_argument_type_mismatch_is_error() {
+        let result = check_source(
+            "enum Shape { Circle(int) } \
+             func main() { \
+                 let s = Shape::Circle(\"invalid\"); \
+             }"
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("expects int for argument, got string"), "{}", err);
+    }
+
+    #[test]
+    fn enum_match_pattern_variable_binding_count_mismatch_is_error() {
+        let result = check_source(
+            "enum Shape { Circle(int) } \
+             func main() { \
+                 let s = Shape::Circle(5); \
+                 match s { \
+                     Circle(a, b) => {} \
+                 } \
+             }"
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("expects 1 argument(s), but pattern has 2"), "{}", err);
     }
 }

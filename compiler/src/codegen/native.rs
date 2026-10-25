@@ -41,7 +41,7 @@
 // content equality, `if`/`else`/`while`/`for`, calling other Roze
 // functions (including recursion), and `println` of any int/bool/
 // string value (not just literals anymore).
-use crate::ir::{TypedExpression, TypedExpressionKind, TypedProgram, TypedStatement};
+use crate::ir::{TypedExpression, TypedExpressionKind, TypedPattern, TypedProgram, TypedStatement};
 use crate::parser::ast::{BinaryOperator, Location, UnaryOperator};
 use crate::semantic::Type;
 use anyhow::{anyhow, Result};
@@ -201,7 +201,7 @@ fn expression_is_borrowed(expr: &TypedExpression) -> bool {
 
 fn require_supported_type(ty: &Type, location: &Location, context: &str) -> Result<()> {
     match ty {
-        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result => Ok(()),
+        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result | Type::Enum(_) => Ok(()),
         Type::Function { .. } => Err(anyhow!(
             "line {}, column {}: the native backend doesn't support function values -- {}",
             location.line, location.column, context
@@ -1954,6 +1954,7 @@ struct NativeGenerator<'a> {
     function_param_types: HashMap<String, Vec<Type>>,
     printf_id: FuncId,
     gcvt_id: FuncId,
+    malloc_id: FuncId,
     fmt_int: DataId,
     fmt_str: DataId,
     true_str: DataId,
@@ -2009,6 +2010,12 @@ impl<'a> NativeGenerator<'a> {
         let gcvt_id = module.declare_function("gcvt", Linkage::Import, &gcvt_sig)
             .map_err(|e| anyhow!(e.to_string()))?;
 
+        let mut malloc_sig = module.make_signature();
+        malloc_sig.params.push(AbiParam::new(VALUE_TYPE));
+        malloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
+        let malloc_id = module.declare_function("malloc", Linkage::Import, &malloc_sig)
+            .map_err(|e| anyhow!(e.to_string()))?;
+
         let fmt_int = Self::declare_c_string(module, "__roze_fmt_int", b"%lld\n")?;
         let fmt_str = Self::declare_c_string(module, "__roze_fmt_str", b"%s\n")?;
         let true_str = Self::declare_c_string(module, "__roze_true_str", b"true")?;
@@ -2027,6 +2034,7 @@ impl<'a> NativeGenerator<'a> {
             function_param_types: HashMap::new(),
             printf_id,
             gcvt_id,
+            malloc_id,
             fmt_int,
             fmt_str,
             true_str,
@@ -2086,10 +2094,7 @@ impl<'a> NativeGenerator<'a> {
             .map(|(name, info)| (name.clone(), info.release_id))
             .collect();
 
-        let mut malloc_sig = self.module.make_signature();
-        malloc_sig.params.push(AbiParam::new(VALUE_TYPE));
-        malloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
-        let malloc_id = self.module.declare_function("malloc", Linkage::Import, &malloc_sig).map_err(|e| anyhow!(e.to_string()))?;
+        let malloc_id = self.malloc_id;
 
         let mut free_sig = self.module.make_signature();
         free_sig.params.push(AbiParam::new(VALUE_TYPE));
@@ -2168,6 +2173,7 @@ impl<'a> NativeGenerator<'a> {
                         function_param_types: &self.function_param_types,
                         printf_id: self.printf_id,
                         gcvt_id: self.gcvt_id,
+                        malloc_id: self.malloc_id,
                         fmt_int: self.fmt_int,
                         fmt_str: self.fmt_str,
                         true_str: self.true_str,
@@ -2299,6 +2305,7 @@ struct FunctionCompiler<'a, 'b> {
     function_param_types: &'a HashMap<String, Vec<Type>>,
     printf_id: FuncId,
     gcvt_id: FuncId,
+    malloc_id: FuncId,
     fmt_int: DataId,
     fmt_str: DataId,
     true_str: DataId,
@@ -2862,6 +2869,111 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 // native doesn't exist yet at all.
                 Ok(false)
             }
+            TypedStatement::EnumDecl { .. } => {
+                // Top-level construct, handled elsewhere.
+                Ok(false)
+            }
+            TypedStatement::Match { expr, arms, .. } => {
+                let target_val = self.compile_expression(expr)?;
+                let tag_val = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), target_val, CLASS_HEADER_SIZE as i32);
+
+                let exit_block = self.builder.create_block();
+                let mut all_terminated = !arms.is_empty();
+
+                for arm in arms {
+                    let next_arm_block = self.builder.create_block();
+                    let arm_body_block = self.builder.create_block();
+
+                    match &arm.pattern {
+                        TypedPattern::Variant { tag, bindings, .. } => {
+                            let expected_tag = self.builder.ins().iconst(VALUE_TYPE, *tag as i64);
+                            let matches_tag = self.builder.ins().icmp(IntCC::Equal, tag_val, expected_tag);
+                            self.builder.ins().brif(matches_tag, arm_body_block, &[], next_arm_block, &[]);
+
+                            self.builder.switch_to_block(arm_body_block);
+                            self.builder.seal_block(arm_body_block);
+                            self.push_scope();
+
+                            for (i, (b_name, b_type)) in bindings.iter().enumerate() {
+                                if b_name != "_" {
+                                    let offset = (CLASS_HEADER_SIZE + 8 + (i as i64) * 8) as i32;
+                                    let cranelift_ty = cranelift_type_for(b_type);
+                                    let val = self.builder.ins().load(cranelift_ty, MemFlags::new(), target_val, offset);
+                                    let var = self.declare_local(b_name, b_type.clone());
+                                    self.builder.def_var(var, val);
+                                }
+                            }
+
+                            let terminated = self.compile_statement(&arm.body)?;
+                            if !terminated {
+                                self.release_frame(self.scopes.len() - 1)?;
+                                self.builder.ins().jump(exit_block, &[]);
+                                all_terminated = false;
+                            } else {
+                                self.release_frame(self.scopes.len() - 1)?;
+                            }
+                            self.scopes.pop();
+
+                            self.builder.switch_to_block(next_arm_block);
+                            self.builder.seal_block(next_arm_block);
+                        }
+                        TypedPattern::Wildcard { .. } => {
+                            self.builder.ins().jump(arm_body_block, &[]);
+                            self.builder.switch_to_block(arm_body_block);
+                            self.builder.seal_block(arm_body_block);
+
+                            let terminated = self.compile_statement(&arm.body)?;
+                            if !terminated {
+                                self.builder.ins().jump(exit_block, &[]);
+                                all_terminated = false;
+                            }
+
+                            self.builder.switch_to_block(next_arm_block);
+                            self.builder.seal_block(next_arm_block);
+                        }
+                        TypedPattern::Variable { name, type_: ty, .. } => {
+                            self.builder.ins().jump(arm_body_block, &[]);
+                            self.builder.switch_to_block(arm_body_block);
+                            self.builder.seal_block(arm_body_block);
+                            self.push_scope();
+
+                            if name != "_" {
+                                let var = self.declare_local(name, ty.clone());
+                                self.builder.def_var(var, target_val);
+                            }
+
+                            let terminated = self.compile_statement(&arm.body)?;
+                            if !terminated {
+                                self.release_frame(self.scopes.len() - 1)?;
+                                self.builder.ins().jump(exit_block, &[]);
+                                all_terminated = false;
+                            } else {
+                                self.release_frame(self.scopes.len() - 1)?;
+                            }
+                            self.scopes.pop();
+
+                            self.builder.switch_to_block(next_arm_block);
+                            self.builder.seal_block(next_arm_block);
+                        }
+                        _ => {
+                            self.builder.ins().jump(exit_block, &[]);
+                            all_terminated = false;
+                            self.builder.switch_to_block(next_arm_block);
+                            self.builder.seal_block(next_arm_block);
+                        }
+                    }
+                }
+
+                self.builder.ins().trap(TrapCode::UnreachableCodeReached);
+
+                if !all_terminated {
+                    self.builder.switch_to_block(exit_block);
+                    self.builder.seal_block(exit_block);
+                    Ok(false)
+                } else {
+                    Ok(true)
+                }
+            }
             TypedStatement::FieldAssign { object, field, field_type, value, .. } => {
                 let class_name = match &object.type_ {
                     Type::Class(name) => name.clone(),
@@ -3003,6 +3115,27 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.switch_to_block(ok_block);
                 let unwrapped = self.builder.ins().load(types::I64, MemFlags::new(), inner_val, 16);
                 Ok(unwrapped)
+            }
+            TypedExpressionKind::EnumConstruct { tag, arguments, .. } => {
+                let malloc_ref = self.module.declare_func_in_func(self.malloc_id, self.builder.func);
+                let total_size = CLASS_HEADER_SIZE + 8 + (arguments.len() as i64) * 8;
+                let size_val = self.builder.ins().iconst(VALUE_TYPE, total_size);
+                let call = self.builder.ins().call(malloc_ref, &[size_val]);
+                let ptr = self.builder.inst_results(call)[0];
+
+                let one = self.builder.ins().iconst(VALUE_TYPE, 1);
+                self.builder.ins().store(MemFlags::new(), one, ptr, 0);
+
+                let tag_val = self.builder.ins().iconst(VALUE_TYPE, *tag as i64);
+                self.builder.ins().store(MemFlags::new(), tag_val, ptr, CLASS_HEADER_SIZE as i32);
+
+                for (i, arg) in arguments.iter().enumerate() {
+                    let arg_val = self.compile_expression(arg)?;
+                    let offset = (CLASS_HEADER_SIZE + 8 + (i as i64) * 8) as i32;
+                    self.builder.ins().store(MemFlags::new(), arg_val, ptr, offset);
+                }
+
+                Ok(ptr)
             }
         }
     }

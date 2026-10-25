@@ -108,10 +108,52 @@ pub enum TypedStatement {
         value: TypedExpression,
         location: Location,
     },
+    EnumDecl {
+        name: String,
+        variants: Vec<(String, Vec<Type>)>,
+        location: Location,
+    },
+    Match {
+        expr: TypedExpression,
+        arms: Vec<TypedMatchArm>,
+        location: Location,
+    },
     // Deliberately no `Import` variant: imports are resolved into real
     // functions before type-checking ever runs (see
     // imports::resolve_imports), so by the time this IR exists, no
     // Import statement is left anywhere in the tree.
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct TypedMatchArm {
+    pub pattern: TypedPattern,
+    pub body: Box<TypedStatement>,
+    pub location: Location,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum TypedPattern {
+    Variant {
+        enum_name: String,
+        variant: String,
+        tag: usize,
+        bindings: Vec<(String, Type)>,
+        location: Location,
+    },
+    Wildcard {
+        location: Location,
+    },
+    Literal {
+        expr: TypedExpression,
+        location: Location,
+    },
+    Variable {
+        name: String,
+        type_: Type,
+        location: Location,
+    },
 }
 
 /// An expression, annotated with its resolved type. `kind` is the
@@ -163,4 +205,11 @@ pub enum TypedExpressionKind {
     },
     /// `expr?` -- error propagation try operator
     Try(Box<TypedExpression>),
+    /// `EnumName::Variant(args)`
+    EnumConstruct {
+        enum_name: String,
+        variant: String,
+        tag: usize,
+        arguments: Vec<TypedExpression>,
+    },
 }

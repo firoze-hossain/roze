@@ -603,3 +603,31 @@ fn try_operator_type_errors_report_cleanly() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("The '?' operator can only be used on Result or Option"), "got:\n{}", stderr);
 }
+
+#[test]
+fn enums_and_pattern_matching() {
+    let (stdout, stderr, ok) = run_fixture("enums_pattern_matching.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+color is red
+color is green
+color is blue
+300
+20
+0
+action: quit
+action: move
+100
+250
+action: write
+Hello Roze enums!
+action: change_color
+255
+128
+0
+got circle
+10
+got something else
+got something else";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}

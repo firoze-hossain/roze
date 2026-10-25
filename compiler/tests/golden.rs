@@ -673,3 +673,21 @@ one
 25";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn traits_and_dynamic_dispatch() {
+    let (stdout, stderr, ok) = run_fixture("traits.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+Hello, Alice!
+Beep boop, I am R2D2.
+Hello, Alice!
+Beep boop, I am R2D2.
+Hello, Alice!
+Beep boop, I am R2D2.
+50
+30
+50
+30";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}

@@ -1,0 +1,77 @@
+trait Greeter {
+    func greet() -> string;
+}
+
+trait Shape {
+    func area() -> int;
+    func perimeter() -> int;
+}
+
+class User {
+    name: string,
+}
+
+class Robot {
+    model: string,
+}
+
+class Rectangle {
+    width: int,
+    height: int,
+}
+
+impl Greeter for User {
+    func greet() -> string {
+        return "Hello, " + this.name + "!";
+    }
+}
+
+impl Greeter for Robot {
+    func greet() -> string {
+        return "Beep boop, I am " + this.model + ".";
+    }
+}
+
+impl Shape for Rectangle {
+    func area() -> int {
+        return this.width * this.height;
+    }
+
+    func perimeter() -> int {
+        return 2 * (this.width + this.height);
+    }
+}
+
+func announce(g: Greeter) -> string {
+    return g.greet();
+}
+
+func print_shape_info(s: Shape) {
+    println(s.area());
+    println(s.perimeter());
+}
+
+func main() {
+    let alice = new User("Alice");
+    let bot = new Robot("R2D2");
+
+    // Direct method calls on concrete types
+    println(alice.greet());
+    println(bot.greet());
+
+    // Dynamic dispatch via trait parameters
+    println(announce(alice));
+    println(announce(bot));
+
+    // Dynamic dispatch via trait variables
+    let g1: Greeter = alice;
+    let g2: Greeter = bot;
+    println(g1.greet());
+    println(g2.greet());
+
+    // Multiple methods on a trait
+    let rect = new Rectangle(5, 10);
+    println(rect.area());
+    println(rect.perimeter());
+    print_shape_info(rect);
+}

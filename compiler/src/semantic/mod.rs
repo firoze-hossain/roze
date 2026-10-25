@@ -41,6 +41,8 @@ pub enum Type {
     Class(String),
     /// An instance of a user-defined enum / algebraic data type (`enum Name { Variant, ... }`).
     Enum(String),
+    /// A trait / interface contract (`trait Name { func method(...) -> Type; }`).
+    Trait(String),
     /// A generic type instantiation, e.g. `List<int>`, `Map<string, int>`, `Option<int>`, `Result<int, string>`.
     Generic {
         base: String,
@@ -101,6 +103,7 @@ fn type_mangle_name(ty: &Type) -> String {
         Type::Result => "result".to_string(),
         Type::Class(c) => c.clone(),
         Type::Enum(e) => e.clone(),
+        Type::Trait(t) => t.clone(),
         Type::Generic { base, type_args } => specialized_name(base, type_args),
         Type::Function { .. } => "fn".to_string(),
     }
@@ -155,6 +158,7 @@ impl Type {
             Type::Result => "RozeResult".to_string(),
             Type::Class(name) => name.clone(),
             Type::Enum(name) => name.clone(),
+            Type::Trait(name) => name.clone(),
             Type::Generic { base, type_args } => {
                 if base == "List" || base == "list" {
                     "java.util.List".to_string()
@@ -188,6 +192,7 @@ impl std::fmt::Display for Type {
             Type::Result => write!(f, "Result"),
             Type::Class(name) => write!(f, "{}", name),
             Type::Enum(name) => write!(f, "{}", name),
+            Type::Trait(name) => write!(f, "{}", name),
             Type::Generic { base, type_args } => {
                 let args_str = type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ");
                 write!(f, "{}<{}>", base, args_str)
@@ -495,6 +500,13 @@ pub struct GenericEnumDef {
     pub location: Location,
 }
 
+#[derive(Clone, Debug)]
+pub struct TraitDef {
+    pub name: String,
+    pub methods: HashMap<String, FunctionSig>,
+    pub location: Location,
+}
+
 fn substitute_type_string(s: &str, map: &HashMap<String, String>) -> String {
     let mut result = String::new();
     let mut current_word = String::new();
@@ -625,6 +637,17 @@ fn substitute_statement(stmt: &Statement, map: &HashMap<String, String>) -> Stat
             }).collect(),
             location: location.clone(),
         },
+        Statement::TraitDecl { name, methods, location } => Statement::TraitDecl {
+            name: name.clone(),
+            methods: methods.clone(),
+            location: location.clone(),
+        },
+        Statement::ImplDecl { trait_name, class_name, methods, location } => Statement::ImplDecl {
+            trait_name: trait_name.clone(),
+            class_name: class_name.clone(),
+            methods: methods.iter().map(|s| substitute_statement(s, map)).collect(),
+            location: location.clone(),
+        },
     }
 }
 
@@ -687,6 +710,12 @@ fn substitute_expression(expr: &Expression, map: &HashMap<String, String>) -> Ex
             body: Box::new(substitute_statement(body, map)),
             location: location.clone(),
         },
+        Expression::MethodCall { object, method, arguments, location } => Expression::MethodCall {
+            object: Box::new(substitute_expression(object, map)),
+            method: method.clone(),
+            arguments: arguments.iter().map(|a| substitute_expression(a, map)).collect(),
+            location: location.clone(),
+        },
     }
 }
 
@@ -738,6 +767,12 @@ pub struct TypeChecker {
     pub generic_classes: HashMap<String, GenericClassDef>,
     pub generic_functions: HashMap<String, GenericFuncDef>,
     pub generic_enums: HashMap<String, GenericEnumDef>,
+    pub traits: HashMap<String, TraitDef>,
+    pub trait_methods: HashMap<String, usize>,
+    pub next_trait_slot: usize,
+    pub class_traits: HashMap<String, Vec<String>>,
+    pub class_methods: HashMap<String, HashMap<String, FunctionSig>>,
+    pub current_class: Option<String>,
     pub generated_class_decls: Vec<TypedStatement>,
     pub generated_func_decls: Vec<TypedStatement>,
     pub instantiated_classes: HashSet<String>,
@@ -791,6 +826,12 @@ impl TypeChecker {
             generic_classes: HashMap::new(),
             generic_functions: HashMap::new(),
             generic_enums: HashMap::new(),
+            traits: HashMap::new(),
+            trait_methods: HashMap::new(),
+            next_trait_slot: 1,
+            class_traits: HashMap::new(),
+            class_methods: HashMap::new(),
+            current_class: None,
             generated_class_decls: Vec::new(),
             generated_func_decls: Vec::new(),
             instantiated_classes: HashSet::new(),
@@ -1056,12 +1097,32 @@ impl TypeChecker {
             }
         }
 
-        if self.enums.contains_key(name) {
+        if self.traits.contains_key(name) {
+            Type::Trait(name.to_string())
+        } else if self.enums.contains_key(name) {
             Type::Enum(name.to_string())
         } else if self.classes.contains_key(name) {
             Type::Class(name.to_string())
         } else {
             Type::from_name(name)
+        }
+    }
+
+    pub fn is_compatible(&self, expected: &Type, actual: &Type) -> bool {
+        if types_compatible(expected, actual) {
+            return true;
+        }
+        match (expected, actual) {
+            (Type::Trait(t), Type::Class(c)) => {
+                if let Some(traits) = self.class_traits.get(c) {
+                    traits.contains(t)
+                } else if let Some((base, _)) = c.split_once("__") {
+                    self.class_traits.get(base).map(|tr| tr.contains(t)).unwrap_or(false)
+                } else {
+                    false
+                }
+            }
+            _ => false,
         }
     }
 
@@ -1111,6 +1172,90 @@ impl TypeChecker {
                         resolved_fields.push((f.name.clone(), ty));
                     }
                     self.classes.insert(name.clone(), resolved_fields);
+                }
+            }
+        }
+
+        for stmt in &program.statements {
+            if let Statement::TraitDecl { name, methods, location } = stmt {
+                let mut method_map = HashMap::new();
+                for m in methods {
+                    let mut param_types = Vec::with_capacity(m.params.len());
+                    for p in &m.params {
+                        param_types.push(p.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown));
+                    }
+                    let ret = m.return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
+                    let sig = FunctionSig { params: param_types, return_type: ret };
+                    method_map.insert(m.name.clone(), sig);
+
+                    if !self.trait_methods.contains_key(&m.name) {
+                        let slot = self.next_trait_slot;
+                        self.next_trait_slot += 1;
+                        self.trait_methods.insert(m.name.clone(), slot);
+                    }
+                }
+                self.traits.insert(name.clone(), TraitDef {
+                    name: name.clone(),
+                    methods: method_map,
+                    location: location.clone(),
+                });
+            }
+        }
+
+        for stmt in &program.statements {
+            if let Statement::ImplDecl { trait_name, class_name, methods, location } = stmt {
+                if let Some(t_name) = trait_name {
+                    let trait_def = self.traits.get(t_name).cloned().ok_or_else(|| {
+                        RozeError::type_error(format!("Undefined trait '{}'", t_name), location.line, location.column)
+                    })?;
+                    self.class_traits.entry(class_name.clone()).or_default().push(t_name.clone());
+
+                    for m_stmt in methods {
+                        if let Statement::Function { name, params, return_type, location: m_loc, .. } = m_stmt {
+                            let mut param_types = Vec::with_capacity(params.len());
+                            for p in params {
+                                param_types.push(p.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown));
+                            }
+                            let ret = return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
+                            let sig = FunctionSig { params: param_types, return_type: ret };
+
+                            if let Some(expected_sig) = trait_def.methods.get(name) {
+                                if sig.params.len() != expected_sig.params.len() {
+                                    return Err(RozeError::type_error(
+                                        format!("Method '{}' expects {} parameters in trait '{}', but implementation has {}", name, expected_sig.params.len(), t_name, sig.params.len()),
+                                        m_loc.line, m_loc.column,
+                                    ).into());
+                                }
+                                for (p_actual, p_expected) in sig.params.iter().zip(expected_sig.params.iter()) {
+                                    if p_actual != p_expected {
+                                        return Err(RozeError::type_error(
+                                            format!("Parameter type mismatch in method '{}' of trait '{}': expected {}, got {}", name, t_name, p_expected, p_actual),
+                                            m_loc.line, m_loc.column,
+                                        ).into());
+                                    }
+                                }
+                                if sig.return_type != expected_sig.return_type {
+                                    return Err(RozeError::type_error(
+                                        format!("Return type mismatch in method '{}' of trait '{}': expected {}, got {}", name, t_name, expected_sig.return_type, sig.return_type),
+                                        m_loc.line, m_loc.column,
+                                    ).into());
+                                }
+                            }
+                            self.class_methods.entry(class_name.clone()).or_default().insert(name.clone(), sig);
+                        }
+                    }
+                } else {
+                    for m_stmt in methods {
+                        if let Statement::Function { name, params, return_type, .. } = m_stmt {
+                            let mut param_types = Vec::with_capacity(params.len());
+                            for p in params {
+                                param_types.push(p.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown));
+                            }
+                            let ret = return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
+                            let sig = FunctionSig { params: param_types, return_type: ret };
+                            self.class_methods.entry(class_name.clone()).or_default().insert(name.clone(), sig);
+                        }
+                    }
                 }
             }
         }
@@ -1202,7 +1347,7 @@ impl TypeChecker {
                 let typed_value = self.check_expression(value)?;
                 let var_type = if let Some(tn) = type_name {
                     let expected = self.resolve_type_name(tn);
-                    if !types_compatible(&expected, &typed_value.type_) {
+                    if !self.is_compatible(&expected, &typed_value.type_) {
                         return Err(RozeError::type_error(
                             format!(
                                 "Variable '{}' is declared as {}, but initialized with {}",
@@ -1232,7 +1377,7 @@ impl TypeChecker {
                 let typed_value = match value {
                     Some(expr) => {
                         let typed = self.check_expression(expr)?;
-                        if !types_compatible(&self.current_return_type, &typed.type_) {
+                        if !self.is_compatible(&self.current_return_type, &typed.type_) {
                             let fn_name = self.current_function.as_deref().unwrap_or("<anonymous>");
                             return Err(RozeError::type_error(
                                 format!(
@@ -1380,7 +1525,7 @@ impl TypeChecker {
                     ))?;
 
                 let typed_value = self.check_expression(value)?;
-                if !types_compatible(&field_type, &typed_value.type_) {
+                if !self.is_compatible(&field_type, &typed_value.type_) {
                     return Err(RozeError::type_error(
                         format!(
                             "Cannot assign a value of type {} to '{}.{}', which is declared as {}",
@@ -1414,7 +1559,7 @@ impl TypeChecker {
                         // declared type -- `let x = 5;` followed later by
                         // `x = "hi";` is a type error, the same as it
                         // would be at the `let`.
-                        if !types_compatible(&symbol.type_, &typed_value.type_) {
+                        if !self.is_compatible(&symbol.type_, &typed_value.type_) {
                             return Err(RozeError::type_error(
                                 format!(
                                     "Cannot assign a value of type {} to '{}', which was declared as {}",
@@ -1557,6 +1702,74 @@ impl TypeChecker {
                 Ok(Some(TypedStatement::Match {
                     expr: typed_expr,
                     arms: typed_arms,
+                    location: location.clone(),
+                }))
+            }
+            Statement::TraitDecl { name, methods, location } => {
+                let mut typed_methods = Vec::with_capacity(methods.len());
+                for m in methods {
+                    let mut typed_params = Vec::with_capacity(m.params.len());
+                    for p in &m.params {
+                        let ty = p.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown);
+                        typed_params.push(TypedFunctionParam {
+                            name: p.name.clone(),
+                            type_: ty,
+                        });
+                    }
+                    let ret = m.return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
+                    typed_methods.push(crate::ir::TypedTraitMethod {
+                        name: m.name.clone(),
+                        params: typed_params,
+                        return_type: ret,
+                        location: m.location.clone(),
+                    });
+                }
+                Ok(Some(TypedStatement::TraitDecl {
+                    name: name.clone(),
+                    methods: typed_methods,
+                    location: location.clone(),
+                }))
+            }
+            Statement::ImplDecl { trait_name, class_name, methods, location } => {
+                self.current_class = Some(class_name.clone());
+                let mut typed_methods = Vec::with_capacity(methods.len());
+                for m in methods {
+                    if let Statement::Function { name, params, return_type, body, location: f_loc, .. } = m {
+                        let resolved_return_type = return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
+                        let outer_function = self.current_function.replace(name.clone());
+                        let outer_return_type = std::mem::replace(&mut self.current_return_type, resolved_return_type.clone());
+
+                        self.symbol_table.push_scope();
+                        self.symbol_table.define("this", Type::Class(class_name.clone()), f_loc.line, f_loc.column)?;
+
+                        let mut typed_params = Vec::with_capacity(params.len());
+                        for param in params {
+                            let param_type = param.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown);
+                            self.symbol_table.define(&param.name, param_type.clone(), f_loc.line, f_loc.column)?;
+                            typed_params.push(TypedFunctionParam { name: param.name.clone(), type_: param_type });
+                        }
+
+                        let typed_body = self.check_statement(body)?
+                            .expect("a method body is always a Block, which always has an IR form");
+
+                        self.symbol_table.pop_scope();
+                        self.current_function = outer_function;
+                        self.current_return_type = outer_return_type;
+
+                        typed_methods.push(TypedStatement::Function {
+                            name: name.clone(),
+                            params: typed_params,
+                            return_type: resolved_return_type,
+                            body: Box::new(typed_body),
+                            location: f_loc.clone(),
+                        });
+                    }
+                }
+                self.current_class = None;
+                Ok(Some(TypedStatement::ImplDecl {
+                    trait_name: trait_name.clone(),
+                    class_name: class_name.clone(),
+                    methods: typed_methods,
                     location: location.clone(),
                 }))
             }
@@ -1715,7 +1928,7 @@ impl TypeChecker {
                                     ).into());
                                 }
                                 for (arg, p_ty) in typed_arguments.iter().zip(params.iter()) {
-                                    if !types_compatible(p_ty, &arg.type_) {
+                                    if !self.is_compatible(p_ty, &arg.type_) {
                                         return Err(RozeError::type_error(
                                             format!("Expected argument of type {}, got {}", p_ty, arg.type_),
                                             location.line,
@@ -1793,7 +2006,7 @@ impl TypeChecker {
                         let spec_name = self.instantiate_generic_function(name, &concrete_type_args)?;
                         let sig = self.functions.get(&spec_name).unwrap().clone();
                         for (arg, param_type) in typed_arguments.iter().zip(sig.params.iter()) {
-                            if !types_compatible(param_type, &arg.type_) {
+                            if !self.is_compatible(param_type, &arg.type_) {
                                 return Err(RozeError::type_error(
                                     format!("'{}' expects {} for this argument, got {}", name, param_type, arg.type_),
                                     location.line,
@@ -1910,7 +2123,7 @@ impl TypeChecker {
                                 ).into());
                             }
                             for (arg, param_type) in typed_arguments.iter().zip(sig.params.iter()) {
-                                if !types_compatible(param_type, &arg.type_) {
+                                if !self.is_compatible(param_type, &arg.type_) {
                                     return Err(RozeError::type_error(
                                         format!(
                                             "'{}' expects {} for this argument, got {}",
@@ -1943,7 +2156,7 @@ impl TypeChecker {
                             }
 
                             for (arg, expected_ty) in typed_arguments.iter().zip(expected_types.iter()) {
-                                if !types_compatible(expected_ty, &arg.type_) {
+                                if !self.is_compatible(expected_ty, &arg.type_) {
                                     return Err(RozeError::type_error(
                                         format!(
                                             "'{}::{}' expects {} for argument, got {}",
@@ -1998,7 +2211,7 @@ impl TypeChecker {
                                 ).into());
                             }
                             for (arg, p_ty) in typed_arguments.iter().zip(params.iter()) {
-                                if !types_compatible(p_ty, &arg.type_) {
+                                if !self.is_compatible(p_ty, &arg.type_) {
                                     return Err(RozeError::type_error(
                                         format!("Expected argument of type {}, got {}", p_ty, arg.type_),
                                         location.line,
@@ -2072,7 +2285,7 @@ impl TypeChecker {
                 let mut typed_arguments = Vec::with_capacity(arguments.len());
                 for (arg, (field_name, field_type)) in arguments.iter().zip(fields.iter()) {
                     let typed_arg = self.check_expression(arg)?;
-                    if !types_compatible(field_type, &typed_arg.type_) {
+                    if !self.is_compatible(field_type, &typed_arg.type_) {
                         return Err(RozeError::type_error(
                             format!(
                                 "'{}.{}' is declared as {}, but 'new {}(...)' was given {} for it",
@@ -2114,7 +2327,7 @@ impl TypeChecker {
                     let mut typed_arguments = Vec::with_capacity(arguments.len());
                     for (arg, param_type) in arguments.iter().zip(sig.params.iter()) {
                         let typed_arg = self.check_expression(arg)?;
-                        if !types_compatible(param_type, &typed_arg.type_) {
+                        if !self.is_compatible(param_type, &typed_arg.type_) {
                             return Err(RozeError::type_error(
                                 format!("'{}' expects {} for this argument, got {}", function, param_type, typed_arg.type_),
                                 location.line,
@@ -2364,6 +2577,86 @@ impl TypeChecker {
                     type_: fn_type,
                     location: location.clone(),
                 })
+            }
+            Expression::MethodCall { object, method, arguments, location } => {
+                let typed_obj = self.check_expression(object)?;
+                let mut typed_args = Vec::with_capacity(arguments.len());
+                for arg in arguments {
+                    typed_args.push(self.check_expression(arg)?);
+                }
+
+                let obj_type = typed_obj.type_.clone();
+                match &obj_type {
+                    Type::Trait(trait_name) => {
+                        let trait_def = self.traits.get(trait_name).cloned().ok_or_else(|| {
+                            RozeError::type_error(format!("Undefined trait '{}'", trait_name), location.line, location.column)
+                        })?;
+                        let sig = trait_def.methods.get(method).cloned().ok_or_else(|| {
+                            RozeError::type_error(format!("Trait '{}' has no method '{}'", trait_name, method), location.line, location.column)
+                        })?;
+                        if typed_args.len() != sig.params.len() {
+                            return Err(RozeError::type_error(
+                                format!("Method '{}' expects {} arguments, got {}", method, sig.params.len(), typed_args.len()),
+                                location.line, location.column,
+                            ).into());
+                        }
+                        for (arg, expected_ty) in typed_args.iter().zip(sig.params.iter()) {
+                            if !self.is_compatible(expected_ty, &arg.type_) {
+                                return Err(RozeError::type_error(
+                                    format!("Argument type mismatch for method '{}': expected {}, got {}", method, expected_ty, arg.type_),
+                                    location.line, location.column,
+                                ).into());
+                            }
+                        }
+                        let slot = *self.trait_methods.get(method).expect("trait method has slot");
+                        Ok(TypedExpression {
+                            kind: TypedExpressionKind::TraitMethodCall {
+                                object: Box::new(typed_obj),
+                                trait_name: trait_name.clone(),
+                                method: method.clone(),
+                                slot,
+                                arguments: typed_args,
+                            },
+                            type_: sig.return_type,
+                            location: location.clone(),
+                        })
+                    }
+                    Type::Class(class_name) => {
+                        let sig = self.class_methods.get(class_name).and_then(|m| m.get(method)).cloned().ok_or_else(|| {
+                            RozeError::type_error(format!("Class '{}' has no method '{}'", class_name, method), location.line, location.column)
+                        })?;
+                        if typed_args.len() != sig.params.len() {
+                            return Err(RozeError::type_error(
+                                format!("Method '{}' expects {} arguments, got {}", method, sig.params.len(), typed_args.len()),
+                                location.line, location.column,
+                            ).into());
+                        }
+                        for (arg, expected_ty) in typed_args.iter().zip(sig.params.iter()) {
+                            if !self.is_compatible(expected_ty, &arg.type_) {
+                                return Err(RozeError::type_error(
+                                    format!("Argument type mismatch for method '{}': expected {}, got {}", method, expected_ty, arg.type_),
+                                    location.line, location.column,
+                                ).into());
+                            }
+                        }
+                        Ok(TypedExpression {
+                            kind: TypedExpressionKind::MethodCall {
+                                object: Box::new(typed_obj),
+                                class_name: class_name.clone(),
+                                method: method.clone(),
+                                arguments: typed_args,
+                            },
+                            type_: sig.return_type,
+                            location: location.clone(),
+                        })
+                    }
+                    other => {
+                        return Err(RozeError::type_error(
+                            format!("Cannot call method '{}' on non-class/trait type '{}'", method, other),
+                            location.line, location.column,
+                        ).into());
+                    }
+                }
             }
         }
     }

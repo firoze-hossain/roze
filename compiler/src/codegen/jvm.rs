@@ -821,6 +821,9 @@ const JAVA_RESERVED_WORDS: &[&str] = &[
 /// original name at a use site, which javac would reject as an
 /// undefined symbol.
 fn escape_java_identifier(name: &str) -> String {
+    if name == "this" {
+        return "this".to_string();
+    }
     if JAVA_RESERVED_WORDS.contains(&name) {
         format!("{}_", name)
     } else {
@@ -839,7 +842,7 @@ fn escape_java_identifier(name: &str) -> String {
 /// call site but not in the type position right next to it.
 fn java_type_name(ty: &Type) -> String {
     match ty {
-        Type::Class(name) => escape_java_identifier(name),
+        Type::Class(name) | Type::Trait(name) => escape_java_identifier(name),
         Type::Generic { base, type_args } => {
             if base == "List" || base == "list" {
                 "java.util.List".to_string()
@@ -863,7 +866,7 @@ fn java_unbox(ty: &Type, expr_str: &str) -> String {
         Type::Float => format!("((Number) {}).doubleValue()", expr_str),
         Type::Bool => format!("((Boolean) {})", expr_str),
         Type::String => format!("((String) {})", expr_str),
-        Type::Class(name) => format!("(({}) {})", escape_java_identifier(name), expr_str),
+        Type::Class(name) | Type::Trait(name) => format!("(({}) {})", escape_java_identifier(name), expr_str),
         Type::Enum(name) => format!("(({}) {})", escape_java_identifier(name), expr_str),
         Type::Generic { base, type_args } => {
             if base == "List" || base == "list" {
@@ -990,6 +993,9 @@ impl JavaSourceGenerator {
 
         for stmt in &self.program.statements {
             match stmt {
+                TypedStatement::TraitDecl { name, methods, .. } => {
+                    self.generate_trait(&mut source, name, methods)?;
+                }
                 TypedStatement::ClassDecl { name, fields, .. } => {
                     self.generate_class(&mut source, name, fields)?;
                 }
@@ -1081,9 +1087,46 @@ impl JavaSourceGenerator {
     /// `public` and it matches the filename -- that's always the main
     /// class here, so every class generated from a Roze `class`
     /// declaration is deliberately package-private.
+    fn generate_trait(&self, source: &mut String, name: &str, methods: &[crate::ir::TypedTraitMethod]) -> Result<()> {
+        let escaped_name = escape_java_identifier(name);
+        source.push_str(&format!("interface {} {{\n", escaped_name));
+        for m in methods {
+            let params_sig: Vec<String> = m.params.iter()
+                .map(|p| format!("{} {}", java_type_name(&p.type_), escape_java_identifier(&p.name)))
+                .collect();
+            source.push_str(&format!(
+                "    {} {}({});\n",
+                java_type_name(&m.return_type), escape_java_identifier(&m.name), params_sig.join(", ")
+            ));
+        }
+        source.push_str("}\n\n");
+        Ok(())
+    }
+
     fn generate_class(&self, source: &mut String, name: &str, fields: &[(String, Type)]) -> Result<()> {
         let escaped_name = escape_java_identifier(name);
-        source.push_str(&format!("class {} {{\n", escaped_name));
+        let mut implements_traits: Vec<String> = Vec::new();
+        let mut class_methods: Vec<&TypedStatement> = Vec::new();
+        for stmt in &self.program.statements {
+            if let TypedStatement::ImplDecl { trait_name, class_name, methods, .. } = stmt {
+                if class_name == name {
+                    if let Some(t) = trait_name {
+                        implements_traits.push(escape_java_identifier(t));
+                    }
+                    for m in methods {
+                        class_methods.push(m);
+                    }
+                }
+            }
+        }
+
+        let impl_clause = if implements_traits.is_empty() {
+            String::new()
+        } else {
+            format!(" implements {}", implements_traits.join(", "))
+        };
+
+        source.push_str(&format!("class {}{} {{\n", escaped_name, impl_clause));
 
         for (field_name, field_type) in fields {
             source.push_str(&format!(
@@ -1102,7 +1145,21 @@ impl JavaSourceGenerator {
         }
         source.push_str("    }\n");
 
-        source.push_str("}\n");
+        for method_stmt in class_methods {
+            if let TypedStatement::Function { name: m_name, params, return_type, body, .. } = method_stmt {
+                let params_sig: Vec<String> = params.iter()
+                    .map(|p| format!("{} {}", java_type_name(&p.type_), escape_java_identifier(&p.name)))
+                    .collect();
+                source.push_str(&format!(
+                    "    public {} {}({}) {{\n",
+                    java_type_name(return_type), escape_java_identifier(m_name), params_sig.join(", ")
+                ));
+                self.generate_statement(source, body, 2, return_type, false)?;
+                source.push_str("    }\n");
+            }
+        }
+
+        source.push_str("}\n\n");
         Ok(())
     }
 
@@ -1237,6 +1294,41 @@ impl JavaSourceGenerator {
                 Ok(TypedExpression {
                     kind: TypedExpressionKind::IndirectCall {
                         callee: Box::new(callee_h),
+                        arguments: args_h,
+                    },
+                    type_: expr.type_.clone(),
+                    location: expr.location.clone(),
+                })
+            }
+            TypedExpressionKind::MethodCall { object, class_name, method, arguments } => {
+                let obj_h = self.hoist_try_expr(object, hoisted_stmts, indent_str, return_type)?;
+                let mut args_h = Vec::with_capacity(arguments.len());
+                for arg in arguments {
+                    args_h.push(self.hoist_try_expr(arg, hoisted_stmts, indent_str, return_type)?);
+                }
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::MethodCall {
+                        object: Box::new(obj_h),
+                        class_name: class_name.clone(),
+                        method: method.clone(),
+                        arguments: args_h,
+                    },
+                    type_: expr.type_.clone(),
+                    location: expr.location.clone(),
+                })
+            }
+            TypedExpressionKind::TraitMethodCall { object, trait_name, method, slot, arguments } => {
+                let obj_h = self.hoist_try_expr(object, hoisted_stmts, indent_str, return_type)?;
+                let mut args_h = Vec::with_capacity(arguments.len());
+                for arg in arguments {
+                    args_h.push(self.hoist_try_expr(arg, hoisted_stmts, indent_str, return_type)?);
+                }
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::TraitMethodCall {
+                        object: Box::new(obj_h),
+                        trait_name: trait_name.clone(),
+                        method: method.clone(),
+                        slot: *slot,
                         arguments: args_h,
                     },
                     type_: expr.type_.clone(),
@@ -1448,6 +1540,7 @@ impl JavaSourceGenerator {
                 self.generate_statement(source, body, indent + 1, return_type, is_closure)?;
                 source.push_str(&format!("{}}}\n", indent_str));
             }
+            TypedStatement::TraitDecl { .. } | TypedStatement::ImplDecl { .. } => {}
         }
 
         Ok(())
@@ -1715,6 +1808,20 @@ impl JavaSourceGenerator {
                 } else {
                     source.push_str(&java_unbox(&expr.type_, &call_str));
                 }
+            }
+            TypedExpressionKind::MethodCall { object, method, arguments, .. } |
+            TypedExpressionKind::TraitMethodCall { object, method, arguments, .. } => {
+                source.push('(');
+                self.generate_expression(source, object)?;
+                source.push(')');
+                source.push_str(&format!(".{}(", escape_java_identifier(method)));
+                for (i, arg) in arguments.iter().enumerate() {
+                    if i > 0 {
+                        source.push_str(", ");
+                    }
+                    self.generate_expression(source, arg)?;
+                }
+                source.push(')');
             }
         }
 

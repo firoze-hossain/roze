@@ -113,6 +113,8 @@ impl Parser {
             Token::Class => self.parse_class(),
             Token::Enum => self.parse_enum(),
             Token::Match => self.parse_match(),
+            Token::Trait => self.parse_trait(),
+            Token::Impl => self.parse_impl(),
             _ => {
                 // Parse a full expression first, then decide: if `=`
                 // follows, this is an assignment (either to a bare name
@@ -783,6 +785,216 @@ impl Parser {
         Ok(Statement::Match { expr: Box::new(expr), arms, location })
     }
 
+    fn parse_trait(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // Skip 'trait'
+
+        let name = match &self.current().token {
+            Token::Identifier(n) => {
+                let n = n.clone();
+                self.advance();
+                n
+            }
+            other => return Err(self.error(format!("Expected a trait name after 'trait', found {}", other))),
+        };
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        if !self.check(&Token::LeftBrace) {
+            return Err(self.error(format!("Expected '{{' after trait name '{}'", name)));
+        }
+        self.advance(); // Skip '{'
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let mut methods = Vec::new();
+        while !self.check(&Token::RightBrace) && !self.check(&Token::EOF) {
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&Token::RightBrace) {
+                break;
+            }
+            let method_loc = Location::new(self.current().line, self.current().column);
+            if !self.check(&Token::Func) {
+                return Err(self.error(format!("Expected 'func' in trait definition, found {}", self.current().token)));
+            }
+            self.advance(); // Skip 'func'
+
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+
+            let method_name = match &self.current().token {
+                Token::Identifier(n) => {
+                    let n = n.clone();
+                    self.advance();
+                    n
+                }
+                other => return Err(self.error(format!("Expected method name, found {}", other))),
+            };
+
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+
+            if !self.check(&Token::LeftParen) {
+                return Err(self.error("Expected '(' after method name"));
+            }
+            self.advance();
+
+            let mut params = Vec::new();
+            while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::RightParen) {
+                    break;
+                }
+                if !self.check(&Token::Identifier(String::new())) {
+                    return Err(self.error("Expected a parameter name"));
+                }
+                let param_token = self.current().clone();
+                let param_name = match &param_token.token {
+                    Token::Identifier(n) => n.clone(),
+                    _ => return Err(self.error_at("Invalid parameter name", &param_token)),
+                };
+                self.advance();
+
+                let param_type = if self.check(&Token::Colon) {
+                    self.advance();
+                    Some(self.parse_type_name()?)
+                } else {
+                    None
+                };
+
+                params.push(FunctionParam {
+                    name: param_name,
+                    type_name: param_type,
+                });
+
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if !self.check(&Token::Comma) {
+                    break;
+                }
+                self.advance();
+            }
+
+            if !self.check(&Token::RightParen) {
+                return Err(self.error("Expected ')' after parameters"));
+            }
+            self.advance();
+
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+
+            let mut return_type = None;
+            if self.match_token(&Token::Arrow) {
+                return_type = Some(self.parse_type_name()?);
+            }
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&Token::Semicolon) {
+                self.advance();
+            }
+
+            methods.push(TraitMethod {
+                name: method_name,
+                params,
+                return_type,
+                location: method_loc,
+            });
+
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+        }
+
+        if !self.check(&Token::RightBrace) {
+            return Err(self.error("Expected '}' to close trait definition"));
+        }
+        self.advance(); // Skip '}'
+
+        Ok(Statement::TraitDecl {
+            name,
+            methods,
+            location,
+        })
+    }
+
+    fn parse_impl(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // Skip 'impl'
+
+        let first_ident = match &self.current().token {
+            Token::Identifier(n) => {
+                let n = n.clone();
+                self.advance();
+                n
+            }
+            other => return Err(self.error(format!("Expected trait or class name after 'impl', found {}", other))),
+        };
+
+        let (trait_name, class_name) = if self.check(&Token::For) {
+            self.advance(); // Skip 'for'
+            let second_ident = match &self.current().token {
+                Token::Identifier(n) => {
+                    let n = n.clone();
+                    self.advance();
+                    n
+                }
+                other => return Err(self.error(format!("Expected class name after 'for', found {}", other))),
+            };
+            (Some(first_ident), second_ident)
+        } else {
+            (None, first_ident)
+        };
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        if !self.check(&Token::LeftBrace) {
+            return Err(self.error("Expected '{' after impl declaration"));
+        }
+        self.advance(); // Skip '{'
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let mut methods = Vec::new();
+        while !self.check(&Token::RightBrace) && !self.check(&Token::EOF) {
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&Token::RightBrace) {
+                break;
+            }
+            let method = self.parse_function()?;
+            methods.push(method);
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+        }
+
+        if !self.check(&Token::RightBrace) {
+            return Err(self.error("Expected '}' to close impl block"));
+        }
+        self.advance(); // Skip '}'
+
+        Ok(Statement::ImplDecl {
+            trait_name,
+            class_name,
+            methods,
+            location,
+        })
+    }
+
     fn parse_pattern(&mut self) -> Result<Pattern> {
         let location = Location::new(self.current().line, self.current().column);
         match &self.current().token {
@@ -1293,20 +1505,52 @@ impl Parser {
                 let location = Location::new(self.current().line, self.current().column);
                 self.advance(); // Skip '.'
 
-                let field = match &self.current().token {
+                let member = match &self.current().token {
                     Token::Identifier(name) => {
                         let name = name.clone();
                         self.advance();
                         name
                     }
-                    other => return Err(self.error(format!("Expected a field name after '.', found {}", other))),
+                    other => return Err(self.error(format!("Expected an identifier after '.', found {}", other))),
                 };
 
-                expr = Expression::FieldAccess {
-                    object: Box::new(expr),
-                    field,
-                    location,
-                };
+                if self.check(&Token::LeftParen) {
+                    self.advance(); // Skip '('
+                    let mut args = Vec::new();
+                    while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                        while self.check(&Token::Newline) {
+                            self.advance();
+                        }
+                        if self.check(&Token::RightParen) {
+                            break;
+                        }
+                        args.push(self.parse_expression()?);
+                        while self.check(&Token::Newline) {
+                            self.advance();
+                        }
+                        if !self.check(&Token::Comma) {
+                            break;
+                        }
+                        self.advance();
+                    }
+                    if !self.check(&Token::RightParen) {
+                        return Err(self.error("Expected ')' after method call arguments"));
+                    }
+                    self.advance(); // Skip ')'
+
+                    expr = Expression::MethodCall {
+                        object: Box::new(expr),
+                        method: member,
+                        arguments: args,
+                        location,
+                    };
+                } else {
+                    expr = Expression::FieldAccess {
+                        object: Box::new(expr),
+                        field: member,
+                        location,
+                    };
+                }
             } else if self.check(&Token::Question) {
                 let location = Location::new(self.current().line, self.current().column);
                 self.advance(); // Skip '?'
@@ -1487,6 +1731,13 @@ impl Parser {
                 self.advance();
                 Ok(Expression::Identifier {
                     name: "_".to_string(),
+                    location,
+                })
+            }
+            Token::This => {
+                self.advance();
+                Ok(Expression::Identifier {
+                    name: "this".to_string(),
                     location,
                 })
             }

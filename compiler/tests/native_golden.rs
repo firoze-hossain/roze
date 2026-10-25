@@ -1777,3 +1777,23 @@ one
 25";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn traits_and_dynamic_dispatch_native() {
+    let source = std::fs::read_to_string("tests/fixtures/traits.roze")
+        .expect("traits.roze fixture should exist");
+    let (stdout, stderr, ok) = run_native_source("traits_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+Hello, Alice!
+Beep boop, I am R2D2.
+Hello, Alice!
+Beep boop, I am R2D2.
+Hello, Alice!
+Beep boop, I am R2D2.
+50
+30
+50
+30";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}

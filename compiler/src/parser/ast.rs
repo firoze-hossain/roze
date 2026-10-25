@@ -112,6 +112,27 @@ pub enum Statement {
         arms: Vec<MatchArm>,
         location: Location,
     },
+    /// `trait Name { func method(...) -> Type; ... }`
+    TraitDecl {
+        name: String,
+        methods: Vec<TraitMethod>,
+        location: Location,
+    },
+    /// `impl TraitName for ClassName { ... }` or `impl ClassName { ... }`
+    ImplDecl {
+        trait_name: Option<String>,
+        class_name: String,
+        methods: Vec<Statement>,
+        location: Location,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitMethod {
+    pub name: String,
+    pub params: Vec<FunctionParam>,
+    pub return_type: Option<String>,
+    pub location: Location,
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +259,13 @@ pub enum Expression {
         params: Vec<FunctionParam>,
         return_type: Option<String>,
         body: Box<Statement>,
+        location: Location,
+    },
+    /// `object.method(arg1, arg2, ...)`
+    MethodCall {
+        object: Box<Expression>,
+        method: String,
+        arguments: Vec<Expression>,
         location: Location,
     },
 }

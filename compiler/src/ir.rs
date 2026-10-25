@@ -119,10 +119,29 @@ pub enum TypedStatement {
         arms: Vec<TypedMatchArm>,
         location: Location,
     },
+    TraitDecl {
+        name: String,
+        methods: Vec<TypedTraitMethod>,
+        location: Location,
+    },
+    ImplDecl {
+        trait_name: Option<String>,
+        class_name: String,
+        methods: Vec<TypedStatement>,
+        location: Location,
+    },
     // Deliberately no `Import` variant: imports are resolved into real
     // functions before type-checking ever runs (see
     // imports::resolve_imports), so by the time this IR exists, no
     // Import statement is left anywhere in the tree.
+}
+
+#[derive(Debug, Clone)]
+pub struct TypedTraitMethod {
+    pub name: String,
+    pub params: Vec<TypedFunctionParam>,
+    pub return_type: Type,
+    pub location: Location,
 }
 
 #[derive(Debug, Clone)]
@@ -226,6 +245,21 @@ pub enum TypedExpressionKind {
     /// Calling a first-class function value: `callee(arg1, arg2)`
     IndirectCall {
         callee: Box<TypedExpression>,
+        arguments: Vec<TypedExpression>,
+    },
+    /// Static or direct method call: `object.method(args...)` on a concrete class
+    MethodCall {
+        object: Box<TypedExpression>,
+        class_name: String,
+        method: String,
+        arguments: Vec<TypedExpression>,
+    },
+    /// Dynamic dispatch trait method call: `trait_obj.method(args...)`
+    TraitMethodCall {
+        object: Box<TypedExpression>,
+        trait_name: String,
+        method: String,
+        slot: usize,
         arguments: Vec<TypedExpression>,
     },
 }

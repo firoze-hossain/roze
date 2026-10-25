@@ -133,7 +133,12 @@ fn collect_closures_and_refs_from_stmt(
         TypedStatement::Function { body, .. } => {
             collect_closures_and_refs_from_stmt(body, closures, func_refs);
         }
-        TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } => {}
+        TypedStatement::ImplDecl { methods, .. } => {
+            for m in methods {
+                collect_closures_and_refs_from_stmt(m, closures, func_refs);
+            }
+        }
+        TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } | TypedStatement::TraitDecl { .. } => {}
     }
 }
 
@@ -190,6 +195,13 @@ fn collect_closures_and_refs_from_expr(
         TypedExpressionKind::Try(inner) => {
             collect_closures_and_refs_from_expr(inner, closures, func_refs);
         }
+        TypedExpressionKind::MethodCall { object, arguments, .. } |
+        TypedExpressionKind::TraitMethodCall { object, arguments, .. } => {
+            collect_closures_and_refs_from_expr(object, closures, func_refs);
+            for arg in arguments {
+                collect_closures_and_refs_from_expr(arg, closures, func_refs);
+            }
+        }
         TypedExpressionKind::String(_)
         | TypedExpressionKind::Number(_)
         | TypedExpressionKind::Identifier(_)
@@ -230,6 +242,7 @@ pub fn compile_to_native(program: TypedProgram, input_file: &str) -> Result<()> 
         generator.declare_all_closures_and_trampolines(&closures, &func_refs, &program)?;
         generator.compile_trampolines(&func_refs, &program)?;
         generator.compile_closures(&closures)?;
+        generator.compile_all_methods(&program)?;
         generator.compile_all_functions(&program)?;
     }
 
@@ -339,7 +352,7 @@ fn expression_is_borrowed(expr: &TypedExpression) -> bool {
 
 fn require_supported_type(ty: &Type, _location: &Location, _context: &str) -> Result<()> {
     match ty {
-        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result | Type::Enum(_) | Type::Function { .. } | Type::Generic { .. } => Ok(()),
+        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result | Type::Enum(_) | Type::Function { .. } | Type::Generic { .. } | Type::Trait(_) => Ok(()),
     }
 }
 
@@ -1910,7 +1923,8 @@ fn build_map_is_empty(module: &mut ObjectModule, ctx: &mut cranelift::codegen::C
 /// therefore know exactly which fields need recursively
 /// retaining/releasing and which don't, the same way a typed function
 /// parameter already does.
-const CLASS_HEADER_SIZE: i64 = 8;
+const CLASS_HEADER_SIZE: i64 = 16;
+const ENUM_HEADER_SIZE: i64 = 8;
 
 /// Retain is identical for every class regardless of field layout (just
 /// bump the refcount at offset 0) -- unlike `new` (a different
@@ -1943,6 +1957,51 @@ fn build_class_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::C
     Ok(func_id)
 }
 
+/// Dynamic release for trait objects: loads vtable from ptr + 8, loads release
+/// function pointer at vtable slot 0, and indirect-calls release(ptr).
+fn build_trait_release(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_trait_release", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        let release_block = builder.create_block();
+        let done_block = builder.create_block();
+
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ptr = builder.block_params(entry)[0];
+
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let is_null = builder.ins().icmp(IntCC::Equal, ptr, zero);
+        builder.ins().brif(is_null, done_block, &[], release_block, &[]);
+
+        builder.switch_to_block(release_block);
+        builder.seal_block(release_block);
+        let vtable_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 8);
+        let release_fn = builder.ins().load(VALUE_TYPE, MemFlags::new(), vtable_ptr, 0);
+
+        let mut rel_sig = module.make_signature();
+        rel_sig.params.push(AbiParam::new(VALUE_TYPE));
+        let sig_ref = builder.import_signature(rel_sig);
+        builder.ins().call_indirect(sig_ref, release_fn, &[ptr]);
+        builder.ins().jump(done_block, &[]);
+
+        builder.switch_to_block(done_block);
+        builder.seal_block(done_block);
+        builder.ins().return_(&[]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
 /// Everything needed to construct and destroy instances of one class.
 struct ClassInfo {
     /// Ordered exactly as declared -- this order is both the
@@ -1952,6 +2011,7 @@ struct ClassInfo {
     fields: Vec<(String, Type)>,
     new_id: FuncId,
     release_id: FuncId,
+    vtable_id: Option<DataId>,
 }
 
 /// A field's declared type decides how (or whether) its value needs to
@@ -1964,12 +2024,14 @@ fn arc_release_call_for_field_type(
     string_release_id: FuncId,
     list_release_id: FuncId,
     map_release_id: FuncId,
+    trait_release_id: FuncId,
     other_class_release_ids: &HashMap<String, FuncId>,
 ) -> Option<FuncId> {
     match ty {
         Type::String => Some(string_release_id),
         Type::List => Some(list_release_id),
         Type::Map => Some(map_release_id),
+        Type::Trait(_) => Some(trait_release_id),
         Type::Class(name) => other_class_release_ids.get(name).copied(),
         Type::Generic { base, type_args } => {
             if base == "List" || base == "list" {
@@ -1999,11 +2061,13 @@ fn build_class_runtime(
     fields: &[(String, Type)],
     new_id: FuncId,
     release_id: FuncId,
+    vtable_id: Option<DataId>,
     malloc_id: FuncId,
     free_id: FuncId,
     string_release_id: FuncId,
     list_release_id: FuncId,
     map_release_id: FuncId,
+    trait_release_id: FuncId,
     other_class_release_ids: &HashMap<String, FuncId>,
 ) -> Result<()> {
     // --- new(field0, field1, ...) -> ptr ---
@@ -2029,6 +2093,15 @@ fn build_class_runtime(
 
         let one = builder.ins().iconst(VALUE_TYPE, 1);
         builder.ins().store(MemFlags::new(), one, ptr, 0);
+
+        if let Some(vid) = vtable_id {
+            let local_data = module.declare_data_in_func(vid, builder.func);
+            let vtable_ptr = builder.ins().global_value(VALUE_TYPE, local_data);
+            builder.ins().store(MemFlags::new(), vtable_ptr, ptr, 8);
+        } else {
+            let zero = builder.ins().iconst(VALUE_TYPE, 0);
+            builder.ins().store(MemFlags::new(), zero, ptr, 8);
+        }
 
         for (i, _field) in fields.iter().enumerate() {
             let param = builder.block_params(entry)[i];
@@ -2069,7 +2142,7 @@ fn build_class_runtime(
         builder.seal_block(free_block);
         for (i, (_, field_type)) in fields.iter().enumerate() {
             if let Some(field_release_id) = arc_release_call_for_field_type(
-                field_type, string_release_id, list_release_id, map_release_id, other_class_release_ids,
+                field_type, string_release_id, list_release_id, map_release_id, trait_release_id, other_class_release_ids,
             ) {
                 let offset = (CLASS_HEADER_SIZE + (i as i64) * 8) as i32;
                 let field_val = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, offset);
@@ -2110,6 +2183,9 @@ struct NativeGenerator<'a> {
     maps: MapRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
+    trait_release_id: FuncId,
+    methods: HashMap<(String, String), FuncId>,
+    trait_methods: HashMap<String, usize>,
     literal_counter: usize,
 }
 
@@ -2173,6 +2249,8 @@ impl<'a> NativeGenerator<'a> {
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
+        let mut trait_ctx = module.make_context();
+        let trait_release_id = build_trait_release(module, &mut trait_ctx)?;
 
         Ok(Self {
             module,
@@ -2192,6 +2270,9 @@ impl<'a> NativeGenerator<'a> {
             maps,
             classes: HashMap::new(),
             class_retain_id,
+            trait_release_id,
+            methods: HashMap::new(),
+            trait_methods: HashMap::new(),
             literal_counter: 0,
         })
     }
@@ -2216,6 +2297,43 @@ impl<'a> NativeGenerator<'a> {
     /// regardless of source order.
     fn declare_all_classes(&mut self, program: &TypedProgram) -> Result<()> {
         for stmt in &program.statements {
+            if let TypedStatement::TraitDecl { methods, .. } = stmt {
+                for m in methods {
+                    if !self.trait_methods.contains_key(&m.name) {
+                        let slot = self.trait_methods.len() + 1; // 1-based (slot 0 reserved for release)
+                        self.trait_methods.insert(m.name.clone(), slot);
+                    }
+                }
+            }
+        }
+
+        for stmt in &program.statements {
+            if let TypedStatement::ImplDecl { class_name, methods, .. } = stmt {
+                for m in methods {
+                    if let TypedStatement::Function { name, params, return_type, location, .. } = m {
+                        for param in params {
+                            require_supported_type(&param.type_, location, &format!("parameter '{}' of method '{}' of class '{}'", param.name, name, class_name))?;
+                        }
+                        require_supported_type(return_type, location, &format!("the return type of method '{}' of class '{}'", name, class_name))?;
+
+                        let mut sig = self.module.make_signature();
+                        sig.params.push(AbiParam::new(VALUE_TYPE)); // 'this'
+                        for param in params {
+                            sig.params.push(AbiParam::new(cranelift_type_for(&param.type_)));
+                        }
+                        if !matches!(return_type, Type::Void) {
+                            sig.returns.push(AbiParam::new(cranelift_type_for(return_type)));
+                        }
+                        let fn_name = format!("__roze_method_{}_{}", class_name, name);
+                        let func_id = self.module.declare_function(&fn_name, Linkage::Local, &sig)
+                            .map_err(|e| anyhow!(e.to_string()))?;
+                        self.methods.insert((class_name.clone(), name.clone()), func_id);
+                    }
+                }
+            }
+        }
+
+        for stmt in &program.statements {
             if let TypedStatement::ClassDecl { name, fields, location } = stmt {
                 for (field_name, field_type) in fields {
                     require_supported_type(field_type, location, &format!("field '{}' of class '{}'", field_name, name))?;
@@ -2234,8 +2352,43 @@ impl<'a> NativeGenerator<'a> {
                 let release_id = self.module.declare_function(&format!("__roze_class_{}_release", name), Linkage::Local, &release_sig)
                     .map_err(|e| anyhow!(e.to_string()))?;
 
-                self.classes.insert(name.clone(), ClassInfo { fields: fields.clone(), new_id, release_id });
+                self.classes.insert(name.clone(), ClassInfo { fields: fields.clone(), new_id, release_id, vtable_id: None });
             }
+        }
+
+        let max_slot = self.trait_methods.values().copied().max().unwrap_or(0);
+        let vtable_slot_count = (max_slot + 1).max(1);
+
+        for (class_name, info) in self.classes.iter_mut() {
+            let mut data_ctx = DataDescription::new();
+            data_ctx.set_align(8);
+            data_ctx.define(vec![0u8; vtable_slot_count * 8].into_boxed_slice());
+
+            let rel_ref = self.module.declare_func_in_data(info.release_id, &mut data_ctx);
+            data_ctx.write_function_addr(0, rel_ref);
+
+            for stmt in &program.statements {
+                if let TypedStatement::ImplDecl { trait_name: Some(_), class_name: c_name, methods, .. } = stmt {
+                    if c_name == class_name {
+                        for m in methods {
+                            if let TypedStatement::Function { name: m_name, .. } = m {
+                                if let Some(&slot) = self.trait_methods.get(m_name) {
+                                    if let Some(&func_id) = self.methods.get(&(class_name.clone(), m_name.clone())) {
+                                        let func_ref = self.module.declare_func_in_data(func_id, &mut data_ctx);
+                                        data_ctx.write_function_addr((slot * 8) as u32, func_ref);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let vtable_name = format!("__roze_vtable_{}", class_name);
+            let vtable_id = self.module.declare_data(&vtable_name, Linkage::Local, false, false)
+                .map_err(|e| anyhow!(e.to_string()))?;
+            self.module.define_data(vtable_id, &data_ctx).map_err(|e| anyhow!(e.to_string()))?;
+            info.vtable_id = Some(vtable_id);
         }
 
         let other_class_release_ids: HashMap<String, FuncId> = self.classes.iter()
@@ -2256,11 +2409,13 @@ impl<'a> NativeGenerator<'a> {
                 &info.fields,
                 info.new_id,
                 info.release_id,
+                info.vtable_id,
                 malloc_id,
                 free_id,
                 self.strings.release_id,
                 self.lists.release_id,
                 self.maps.release_id,
+                self.trait_release_id,
                 &other_class_release_ids,
             )?;
         }
@@ -2434,6 +2589,8 @@ impl<'a> NativeGenerator<'a> {
                     map_is_empty_id: self.maps.is_empty_id,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
+                    trait_release_id: self.trait_release_id,
+                    methods: &self.methods,
                     literal_counter: &mut self.literal_counter,
                     scopes: vec![HashMap::new()],
                     next_var_index: 0,
@@ -2481,6 +2638,106 @@ impl<'a> NativeGenerator<'a> {
             }
             self.module.define_function(func_id, &mut ctx).map_err(|e| anyhow!(e.to_string()))?;
             self.module.clear_context(&mut ctx);
+        }
+        Ok(())
+    }
+
+    fn compile_all_methods(&mut self, program: &TypedProgram) -> Result<()> {
+        let mut ctx = self.module.make_context();
+
+        for stmt in &program.statements {
+            if let TypedStatement::ImplDecl { class_name, methods, .. } = stmt {
+                for m in methods {
+                    if let TypedStatement::Function { name, params, return_type, body, .. } = m {
+                        let func_id = *self.methods.get(&(class_name.clone(), name.clone()))
+                            .expect("method declared in declare_all_classes");
+
+                        ctx.func.signature = self.module.declarations().get_function_decl(func_id).signature.clone();
+
+                        {
+                            let mut func_ctx = FunctionBuilderContext::new();
+                            let builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+
+                            let mut fc = FunctionCompiler {
+                                module: self.module,
+                                builder,
+                                functions: &self.functions,
+                                function_param_types: &self.function_param_types,
+                                closure_funcs: &self.closure_funcs,
+                                trampoline_funcs: &self.trampoline_funcs,
+                                methods: &self.methods,
+                                trait_release_id: self.trait_release_id,
+                                printf_id: self.printf_id,
+                                gcvt_id: self.gcvt_id,
+                                malloc_id: self.malloc_id,
+                                fmt_int: self.fmt_int,
+                                fmt_str: self.fmt_str,
+                                true_str: self.true_str,
+                                false_str: self.false_str,
+                                string_retain_id: self.strings.retain_id,
+                                string_release_id: self.strings.release_id,
+                                string_concat_id: self.strings.concat_id,
+                                string_eq_id: self.strings.eq_id,
+                                list_new_id: self.lists.new_id,
+                                list_retain_id: self.lists.retain_id,
+                                list_release_id: self.lists.release_id,
+                                list_push_id: self.lists.push_id,
+                                list_get_id: self.lists.get_id,
+                                list_set_id: self.lists.set_id,
+                                list_remove_id: self.lists.remove_id,
+                                list_length_id: self.lists.length_id,
+                                list_is_empty_id: self.lists.is_empty_id,
+                                map_new_id: self.maps.new_id,
+                                map_retain_id: self.maps.retain_id,
+                                map_release_id: self.maps.release_id,
+                                map_put_id: self.maps.put_id,
+                                map_get_id: self.maps.get_id,
+                                map_has_id: self.maps.has_id,
+                                map_remove_id: self.maps.remove_id,
+                                map_size_id: self.maps.size_id,
+                                map_is_empty_id: self.maps.is_empty_id,
+                                classes: &self.classes,
+                                class_retain_id: self.class_retain_id,
+                                literal_counter: &mut self.literal_counter,
+                                scopes: vec![HashMap::new()],
+                                next_var_index: 0,
+                                current_return_type: return_type.clone(),
+                            };
+
+                            let entry = fc.builder.create_block();
+                            fc.builder.append_block_params_for_function_params(entry);
+                            fc.builder.switch_to_block(entry);
+                            fc.builder.seal_block(entry);
+
+                            let this_val = fc.builder.block_params(entry)[0];
+                            let this_var = fc.declare_local("this", Type::Class(class_name.clone()));
+                            fc.builder.def_var(this_var, this_val);
+
+                            for (i, p) in params.iter().enumerate() {
+                                let param_val = fc.builder.block_params(entry)[i + 1];
+                                let var = fc.declare_local(&p.name, p.type_.clone());
+                                fc.builder.def_var(var, param_val);
+                            }
+
+                            let terminated = fc.compile_statement(body)?;
+                            if !terminated {
+                                fc.release_frame(0)?;
+                                if matches!(return_type, Type::Void) {
+                                    fc.builder.ins().return_(&[]);
+                                } else {
+                                    let zero = fc.builder.ins().iconst(cranelift_type_for(return_type), 0);
+                                    fc.builder.ins().return_(&[zero]);
+                                }
+                            }
+
+                            fc.builder.finalize();
+                        }
+
+                        self.module.define_function(func_id, &mut ctx).map_err(|e| anyhow!(e.to_string()))?;
+                        self.module.clear_context(&mut ctx);
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -2537,6 +2794,8 @@ impl<'a> NativeGenerator<'a> {
                         map_is_empty_id: self.maps.is_empty_id,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
+                        trait_release_id: self.trait_release_id,
+                        methods: &self.methods,
                         literal_counter: &mut self.literal_counter,
                         scopes: vec![HashMap::new()],
                         next_var_index: 0,
@@ -2671,6 +2930,8 @@ struct FunctionCompiler<'a, 'b> {
     map_is_empty_id: FuncId,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
+    trait_release_id: FuncId,
+    methods: &'a HashMap<(String, String), FuncId>,
     /// Shared across every function being compiled (not reset per
     /// function), so two string literals never collide on the same
     /// generated data symbol name.
@@ -2782,7 +3043,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             Type::String => self.emit_string_retain(val),
             Type::List => self.emit_list_retain(val),
             Type::Map => self.emit_map_retain(val),
-            Type::Class(_) => self.emit_class_retain(val),
+            Type::Class(_) | Type::Trait(_) => self.emit_class_retain(val),
             Type::Function { .. } => self.emit_class_retain(val),
             Type::Generic { base, .. } if base == "List" || base == "list" => self.emit_list_retain(val),
             Type::Generic { base, .. } if base == "Map" || base == "map" => self.emit_map_retain(val),
@@ -2847,6 +3108,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             Type::String => self.emit_string_release(val),
             Type::List => self.emit_list_release(val),
             Type::Map => self.emit_map_release(val),
+            Type::Trait(_) => {
+                let release_ref = self.module.declare_func_in_func(self.trait_release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
             Type::Class(name) => {
                 let release_id = self.classes.get(name)
                     .map(|info| info.release_id)
@@ -3213,20 +3479,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 // Nested functions aren't supported; handled at the top level.
                 Ok(false)
             }
-            TypedStatement::ClassDecl { .. } => {
-                // Like a nested Function, a top-level-only construct;
-                // handled (or in this backend's case, rejected -- see
-                // require_supported_type) elsewhere. Class support on
-                // native doesn't exist yet at all.
-                Ok(false)
-            }
-            TypedStatement::EnumDecl { .. } => {
-                // Top-level construct, handled elsewhere.
+            TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } | TypedStatement::TraitDecl { .. } | TypedStatement::ImplDecl { .. } => {
+                // Top-level constructs, handled elsewhere.
                 Ok(false)
             }
             TypedStatement::Match { expr, arms, .. } => {
                 let target_val = self.compile_expression(expr)?;
-                let tag_val = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), target_val, CLASS_HEADER_SIZE as i32);
+                let tag_val = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), target_val, ENUM_HEADER_SIZE as i32);
 
                 let exit_block = self.builder.create_block();
                 let mut all_terminated = !arms.is_empty();
@@ -3247,7 +3506,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
                             for (i, (b_name, b_type)) in bindings.iter().enumerate() {
                                 if b_name != "_" {
-                                    let offset = (CLASS_HEADER_SIZE + 8 + (i as i64) * 8) as i32;
+                                    let offset = (ENUM_HEADER_SIZE + 8 + (i as i64) * 8) as i32;
                                     let cranelift_ty = cranelift_type_for(b_type);
                                     let val = self.builder.ins().load(cranelift_ty, MemFlags::new(), target_val, offset);
                                     let var = self.declare_local(b_name, b_type.clone());
@@ -3469,7 +3728,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             TypedExpressionKind::EnumConstruct { tag, arguments, .. } => {
                 let malloc_ref = self.module.declare_func_in_func(self.malloc_id, self.builder.func);
-                let total_size = CLASS_HEADER_SIZE + 8 + (arguments.len() as i64) * 8;
+                let total_size = ENUM_HEADER_SIZE + 8 + (arguments.len() as i64) * 8;
                 let size_val = self.builder.ins().iconst(VALUE_TYPE, total_size);
                 let call = self.builder.ins().call(malloc_ref, &[size_val]);
                 let ptr = self.builder.inst_results(call)[0];
@@ -3478,11 +3737,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().store(MemFlags::new(), one, ptr, 0);
 
                 let tag_val = self.builder.ins().iconst(VALUE_TYPE, *tag as i64);
-                self.builder.ins().store(MemFlags::new(), tag_val, ptr, CLASS_HEADER_SIZE as i32);
+                self.builder.ins().store(MemFlags::new(), tag_val, ptr, ENUM_HEADER_SIZE as i32);
 
                 for (i, arg) in arguments.iter().enumerate() {
                     let arg_val = self.compile_expression(arg)?;
-                    let offset = (CLASS_HEADER_SIZE + 8 + (i as i64) * 8) as i32;
+                    let offset = (ENUM_HEADER_SIZE + 8 + (i as i64) * 8) as i32;
                     self.builder.ins().store(MemFlags::new(), arg_val, ptr, offset);
                 }
 
@@ -3549,6 +3808,60 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
                 let mut call_args = Vec::with_capacity(arguments.len() + 1);
                 call_args.push(closure_ptr);
+                for arg in arguments {
+                    let arg_val = self.compile_expression(arg)?;
+                    self.retain_if_aliasing(arg, arg_val)?;
+                    call_args.push(arg_val);
+                }
+
+                let call = self.builder.ins().call_indirect(sig_ref, fn_ptr, &call_args);
+                let results = self.builder.inst_results(call);
+                if results.is_empty() {
+                    Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
+                } else {
+                    Ok(results[0])
+                }
+            }
+            TypedExpressionKind::MethodCall { object, class_name, method, arguments } => {
+                let obj_val = self.compile_expression(object)?;
+                self.retain_if_aliasing(object, obj_val)?;
+                let mut call_args = Vec::with_capacity(arguments.len() + 1);
+                call_args.push(obj_val);
+                for arg in arguments {
+                    let arg_val = self.compile_expression(arg)?;
+                    self.retain_if_aliasing(arg, arg_val)?;
+                    call_args.push(arg_val);
+                }
+
+                let func_id = *self.methods.get(&(class_name.clone(), method.clone()))
+                    .expect("method registered in declare_all_classes");
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &call_args);
+                let results = self.builder.inst_results(call);
+                if results.is_empty() {
+                    Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
+                } else {
+                    Ok(results[0])
+                }
+            }
+            TypedExpressionKind::TraitMethodCall { object, slot, arguments, .. } => {
+                let obj_val = self.compile_expression(object)?;
+                self.retain_if_aliasing(object, obj_val)?;
+                let vtable_ptr = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), obj_val, 8);
+                let fn_ptr = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), vtable_ptr, (*slot * 8) as i32);
+
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE)); // 'this'
+                for arg in arguments {
+                    sig.params.push(AbiParam::new(cranelift_type_for(&arg.type_)));
+                }
+                if !matches!(expr.type_, Type::Void) {
+                    sig.returns.push(AbiParam::new(cranelift_type_for(&expr.type_)));
+                }
+                let sig_ref = self.builder.import_signature(sig);
+
+                let mut call_args = Vec::with_capacity(arguments.len() + 1);
+                call_args.push(obj_val);
                 for arg in arguments {
                     let arg_val = self.compile_expression(arg)?;
                     self.retain_if_aliasing(arg, arg_val)?;

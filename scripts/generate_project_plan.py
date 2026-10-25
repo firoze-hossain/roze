@@ -202,7 +202,7 @@ s1_rows = [
         ("CORE-05", 8), ("Core / Basic", 3), ("Step 5", 8), "Frontend & Semantic Checker", "Traits / Interfaces & Dynamic Dispatch",
         "Define behavioral contracts without inheritance. Foundation of Spring-Boot-style Dependency Injection (IoC) and pluggable modular architecture.",
         "Syntax 'trait Greeter { func greet() -> string; }' and 'impl Greeter for User { ... }'; JVM interface generation; Native vtable pointer in class headers.",
-        "Enterprise Architecture, Games, Plugins", "1 Week", ("Ready to Start", 7)
+        "Enterprise Architecture, Games, Plugins", "Completed", ("Completed", 6)
     ],
 
     # MEDIUM STAGE
@@ -210,7 +210,7 @@ s1_rows = [
         ("MED-01", 8), ("Medium", 4), ("Step 6", 8), "Native Codegen (Cranelift)", "Foreign Function Interface (C-ABI FFI)",
         "The Universal Key: Call ANY existing C/C++ library directly. Instantly unlocks Desktop (GTK/Qt/Win32), Games (Raylib/SDL3/Vulkan), AI/ML (BLAS/CUDA/PyTorch), and Security (libpcap/OpenSSL) without rewriting them.",
         "Syntax 'extern \"C\" func printf(fmt: string) -> int;'; Cranelift SystemV / Win64 calling convention integration; link external shared/static libraries via 'roze build --link <lib>'.",
-        "Desktop GUI, Games, AI/ML, Security/Hacking, Systems", "4 - 6 Days", ("Planned", 8)
+        "Desktop GUI, Games, AI/ML, Security/Hacking, Systems", "4 - 6 Days", ("Ready to Start", 7)
     ],
     [
         ("MED-02", 8), ("Medium", 4), ("Step 7", 8), "Native Runtime & Codegen", "Thread-Safe Atomic ARC",
@@ -301,9 +301,9 @@ s2_rows = [
         "Spring-Boot-level servers, REST/gRPC APIs, Cloud services, banking & enterprise backends",
         "JVM HTTP accept loop, JSON, JDBC SQL, Result<T,E> & Option<T> Safe I/O",
         "Multi-threaded concurrency, closures/routing, generics, connection pooling",
-        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), MED-02, MED-04, ADV-03",
+        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), CORE-05 (Done), MED-02, MED-04, ADV-03",
         "Java (Spring Boot), Go (Gin/Fiber), C# (.NET)",
-        ("50% - Generics & Closures Ready", 6)
+        ("55% - Traits & Generics Ready", 6)
     ],
     [
         "Operating Systems & Kernels",
@@ -355,9 +355,9 @@ s2_rows = [
         "The Roze compiler written entirely in Roze with zero external dependencies",
         "Clean AST/IR, Result/Option safe error handling with '?' try operator",
         "Generics, Enums/Pattern Matching, file I/O on native backend",
-        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), ADV-06",
+        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), CORE-05 (Done), ADV-06",
         "Rust (rustc), Go (gc), Swift",
-        ("60% - Generics & Enums Completed", 6)
+        ("65% - Traits & Generics Completed", 6)
     ]
 ]
 
@@ -372,10 +372,10 @@ s3_rows = [
     [
         ("Phase 1", 3),
         "Core Language Maturity & Safety",
-        "Result/Option error types (Done), Enums with Pattern Matching (Done), Closures/Lambdas, Generics, Traits/Interfaces",
+        "Result/Option error types (Done), Enums with Pattern Matching (Done), Closures/Lambdas (Done), Generics (Done), Traits/Interfaces (Done)",
         "Existing 1.99.1 Compiler",
         "v0.2.0-alpha",
-        ("IN PROGRESS (CORE-01, CORE-02 Completed)", 6)
+        ("COMPLETED (Phase 1 100% Complete)", 6)
     ],
     [
         ("Phase 2", 4),
@@ -383,7 +383,7 @@ s3_rows = [
         "C-ABI FFI (extern 'C'), Thread-safe Atomic ARC, Native OS Threads & Channels, Concurrent Async HTTP Server",
         "Phase 1 Core Types",
         "v0.5.0-beta",
-        ("Planned", 8)
+        ("Ready to Start", 7)
     ],
     [
         ("Phase 3", 4),

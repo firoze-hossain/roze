@@ -974,6 +974,20 @@ impl JavaSourceGenerator {
                     source.push_str("    }\n");
                 }
             }
+            if let TypedStatement::ExternFunction { name, params, return_type, .. } = stmt {
+                let params_sig: Vec<String> = params.iter()
+                    .map(|p| format!("{} {}", java_type_name(&p.type_), escape_java_identifier(&p.name)))
+                    .collect();
+                source.push_str(&format!(
+                    "    public static {} {}({}) {{\n",
+                    java_type_name(return_type), escape_java_identifier(name), params_sig.join(", ")
+                ));
+                source.push_str(&format!(
+                    "        throw new UnsupportedOperationException(\"extern C function '{}' is native-only; run with --target native\");\n",
+                    name
+                ));
+                source.push_str("    }\n");
+            }
         }
 
         if !main_found {
@@ -1540,7 +1554,7 @@ impl JavaSourceGenerator {
                 self.generate_statement(source, body, indent + 1, return_type, is_closure)?;
                 source.push_str(&format!("{}}}\n", indent_str));
             }
-            TypedStatement::TraitDecl { .. } | TypedStatement::ImplDecl { .. } => {}
+            TypedStatement::TraitDecl { .. } | TypedStatement::ImplDecl { .. } | TypedStatement::ExternFunction { .. } => {}
         }
 
         Ok(())

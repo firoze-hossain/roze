@@ -138,7 +138,7 @@ fn collect_closures_and_refs_from_stmt(
                 collect_closures_and_refs_from_stmt(m, closures, func_refs);
             }
         }
-        TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } | TypedStatement::TraitDecl { .. } => {}
+        TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } | TypedStatement::TraitDecl { .. } | TypedStatement::ExternFunction { .. } => {}
     }
 }
 
@@ -215,7 +215,7 @@ fn collect_closures_and_refs_from_expr(
 /// system's C compiler -- present on essentially every dev machine
 /// already, and already the same kind of reliance the JVM backend has
 /// on an external tool (`javac`).
-pub fn compile_to_native(program: TypedProgram, input_file: &str) -> Result<()> {
+pub fn compile_to_native(program: TypedProgram, input_file: &str, extra_libs: &[String]) -> Result<()> {
     let output_name = crate::codegen::class_name_from_path(input_file);
 
     let mut flag_builder = settings::builder();
@@ -252,7 +252,7 @@ pub fn compile_to_native(program: TypedProgram, input_file: &str) -> Result<()> 
     fs::write(&obj_path, &bytes)?;
     println!("📝 Generated native object file: {}", obj_path);
 
-    link_object_file(&obj_path, &output_name)?;
+    link_object_file(&obj_path, &output_name, extra_libs)?;
 
     Ok(())
 }
@@ -268,11 +268,20 @@ pub fn compile_to_native(program: TypedProgram, input_file: &str) -> Result<()> 
 /// getting it right without a Windows machine to verify against felt
 /// riskier than pointing at a well-trodden, already-documented
 /// alternative (MSYS2) in the error message below.
-fn link_object_file(obj_path: &str, output_name: &str) -> Result<()> {
+fn link_object_file(obj_path: &str, output_name: &str, extra_libs: &[String]) -> Result<()> {
     const CANDIDATES: [&str; 3] = ["cc", "gcc", "clang"];
 
     for candidate in CANDIDATES {
-        match Command::new(candidate).arg(obj_path).arg("-o").arg(output_name).status() {
+        let mut cmd = Command::new(candidate);
+        cmd.arg(obj_path).arg("-o").arg(output_name);
+        for lib in extra_libs {
+            if lib.starts_with("-") || lib.ends_with(".a") || lib.ends_with(".so") || lib.ends_with(".dylib") || lib.ends_with(".lib") {
+                cmd.arg(lib);
+            } else {
+                cmd.arg(format!("-l{}", lib));
+            }
+        }
+        match cmd.status() {
             Ok(status) if status.success() => {
                 println!("✅ Linked native executable: {}", output_name);
                 return Ok(());
@@ -390,6 +399,7 @@ struct StringRuntime {
     release_id: FuncId,
     concat_id: FuncId,
     eq_id: FuncId,
+    from_c_str_id: FuncId,
 }
 
 fn declare_string_runtime(module: &mut ObjectModule) -> Result<StringRuntime> {
@@ -416,13 +426,19 @@ fn declare_string_runtime(module: &mut ObjectModule) -> Result<StringRuntime> {
     memcmp_sig.returns.push(AbiParam::new(types::I32));
     let memcmp_id = module.declare_function("memcmp", Linkage::Import, &memcmp_sig).map_err(|e| anyhow!(e.to_string()))?;
 
+    let mut strlen_sig = module.make_signature();
+    strlen_sig.params.push(AbiParam::new(VALUE_TYPE));
+    strlen_sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let strlen_id = module.declare_function("strlen", Linkage::Import, &strlen_sig).map_err(|e| anyhow!(e.to_string()))?;
+
     let mut ctx = module.make_context();
     let retain_id = build_string_retain(module, &mut ctx)?;
     let release_id = build_string_release(module, &mut ctx, free_id)?;
     let concat_id = build_string_concat(module, &mut ctx, malloc_id, memcpy_id)?;
     let eq_id = build_string_eq(module, &mut ctx, memcmp_id)?;
+    let from_c_str_id = build_string_from_c_str(module, &mut ctx, malloc_id, memcpy_id, strlen_id)?;
 
-    Ok(StringRuntime { retain_id, release_id, concat_id, eq_id })
+    Ok(StringRuntime { retain_id, release_id, concat_id, eq_id, from_c_str_id })
 }
 
 /// `__roze_string_retain(ptr: i64) -> void`: increments the refcount,
@@ -632,6 +648,87 @@ fn build_string_eq(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Cont
         builder.seal_block(merge_block);
         let result = builder.block_params(merge_block)[0];
         builder.ins().return_(&[result]);
+        builder.finalize();
+    }
+    module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
+    module.clear_context(ctx);
+    Ok(func_id)
+}
+
+/// `__roze_string_from_c_str(c_str: i64) -> i64`: converts a raw NUL-terminated
+/// C string pointer into an ARC-managed Roze string pointer (with header at -16).
+fn build_string_from_c_str(
+    module: &mut ObjectModule,
+    ctx: &mut cranelift::codegen::Context,
+    malloc_id: FuncId,
+    memcpy_id: FuncId,
+    strlen_id: FuncId,
+) -> Result<FuncId> {
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(VALUE_TYPE));
+    sig.returns.push(AbiParam::new(VALUE_TYPE));
+    let func_id = module.declare_function("__roze_string_from_c_str", Linkage::Local, &sig).map_err(|e| anyhow!(e.to_string()))?;
+
+    ctx.func.signature = sig;
+    {
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let c_str = builder.block_params(entry)[0];
+
+        let one = builder.ins().iconst(VALUE_TYPE, 1);
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let zero_byte = builder.ins().iconst(types::I8, 0);
+        let header_and_nul = builder.ins().iconst(VALUE_TYPE, STRING_HEADER_SIZE + 1);
+
+        let null_block = builder.create_block();
+        let non_null_block = builder.create_block();
+        let merge_block = builder.create_block();
+        builder.append_block_param(merge_block, VALUE_TYPE);
+
+        let is_null = builder.ins().icmp(IntCC::Equal, c_str, zero);
+        builder.ins().brif(is_null, null_block, &[], non_null_block, &[]);
+
+        let malloc_ref = module.declare_func_in_func(malloc_id, builder.func);
+        let memcpy_ref = module.declare_func_in_func(memcpy_id, builder.func);
+        let strlen_ref = module.declare_func_in_func(strlen_id, builder.func);
+
+        // NULL block: allocate empty string (16-byte header + 1 nul byte)
+        builder.switch_to_block(null_block);
+        builder.seal_block(null_block);
+        let call_null = builder.ins().call(malloc_ref, &[header_and_nul]);
+        let base_null = builder.inst_results(call_null)[0];
+        builder.ins().store(MemFlags::new(), one, base_null, 0);
+        builder.ins().store(MemFlags::new(), zero, base_null, 8);
+        let ret_null = builder.ins().iadd_imm(base_null, STRING_HEADER_SIZE);
+        builder.ins().store(MemFlags::new(), zero_byte, ret_null, 0);
+        builder.ins().jump(merge_block, &[ret_null]);
+
+        // Non-NULL block: compute strlen and copy
+        builder.switch_to_block(non_null_block);
+        builder.seal_block(non_null_block);
+        let call_len = builder.ins().call(strlen_ref, &[c_str]);
+        let len = builder.inst_results(call_len)[0];
+
+        let total_size = builder.ins().iadd(len, header_and_nul);
+        let call_alloc = builder.ins().call(malloc_ref, &[total_size]);
+        let base_alloc = builder.inst_results(call_alloc)[0];
+        builder.ins().store(MemFlags::new(), one, base_alloc, 0);
+        builder.ins().store(MemFlags::new(), len, base_alloc, 8);
+        let data_ptr = builder.ins().iadd_imm(base_alloc, STRING_HEADER_SIZE);
+
+        let len_plus_1 = builder.ins().iadd(len, one);
+        builder.ins().call(memcpy_ref, &[data_ptr, c_str, len_plus_1]);
+        builder.ins().jump(merge_block, &[data_ptr]);
+
+        // Merge block
+        builder.switch_to_block(merge_block);
+        builder.seal_block(merge_block);
+        let res = builder.block_params(merge_block)[0];
+        builder.ins().return_(&[res]);
         builder.finalize();
     }
     module.define_function(func_id, ctx).map_err(|e| anyhow!(e.to_string()))?;
@@ -2186,6 +2283,7 @@ struct NativeGenerator<'a> {
     trait_release_id: FuncId,
     methods: HashMap<(String, String), FuncId>,
     trait_methods: HashMap<String, usize>,
+    extern_functions: HashSet<String>,
     literal_counter: usize,
 }
 
@@ -2273,6 +2371,7 @@ impl<'a> NativeGenerator<'a> {
             trait_release_id,
             methods: HashMap::new(),
             trait_methods: HashMap::new(),
+            extern_functions: HashSet::new(),
             literal_counter: 0,
         })
     }
@@ -2451,6 +2550,27 @@ impl<'a> NativeGenerator<'a> {
                 self.functions.insert(name.clone(), func_id);
                 self.function_param_types.insert(name.clone(), params.iter().map(|p| p.type_.clone()).collect());
             }
+            if let TypedStatement::ExternFunction { name, params, return_type, location, .. } = stmt {
+                for param in params {
+                    require_supported_type(&param.type_, location, &format!("parameter '{}' of extern function '{}'", param.name, name))?;
+                }
+                require_supported_type(return_type, location, &format!("the return type of extern function '{}'", name))?;
+
+                let mut sig = self.module.make_signature();
+                sig.call_conv = self.module.target_config().default_call_conv;
+                for param in params {
+                    sig.params.push(AbiParam::new(cranelift_type_for(&param.type_)));
+                }
+                if !matches!(return_type, Type::Void) {
+                    sig.returns.push(AbiParam::new(cranelift_type_for(return_type)));
+                }
+
+                let func_id = self.module.declare_function(name, Linkage::Import, &sig)
+                    .map_err(|e| anyhow!(e.to_string()))?;
+                self.functions.insert(name.clone(), func_id);
+                self.function_param_types.insert(name.clone(), params.iter().map(|p| p.type_.clone()).collect());
+                self.extern_functions.insert(name.clone());
+            }
         }
         Ok(())
     }
@@ -2569,6 +2689,7 @@ impl<'a> NativeGenerator<'a> {
                     string_release_id: self.strings.release_id,
                     string_concat_id: self.strings.concat_id,
                     string_eq_id: self.strings.eq_id,
+                    string_from_c_str_id: self.strings.from_c_str_id,
                     list_new_id: self.lists.new_id,
                     list_retain_id: self.lists.retain_id,
                     list_release_id: self.lists.release_id,
@@ -2591,6 +2712,7 @@ impl<'a> NativeGenerator<'a> {
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
                     methods: &self.methods,
+                    extern_functions: &self.extern_functions,
                     literal_counter: &mut self.literal_counter,
                     scopes: vec![HashMap::new()],
                     next_var_index: 0,
@@ -2666,6 +2788,7 @@ impl<'a> NativeGenerator<'a> {
                                 closure_funcs: &self.closure_funcs,
                                 trampoline_funcs: &self.trampoline_funcs,
                                 methods: &self.methods,
+                                extern_functions: &self.extern_functions,
                                 trait_release_id: self.trait_release_id,
                                 printf_id: self.printf_id,
                                 gcvt_id: self.gcvt_id,
@@ -2678,6 +2801,7 @@ impl<'a> NativeGenerator<'a> {
                                 string_release_id: self.strings.release_id,
                                 string_concat_id: self.strings.concat_id,
                                 string_eq_id: self.strings.eq_id,
+                                string_from_c_str_id: self.strings.from_c_str_id,
                                 list_new_id: self.lists.new_id,
                                 list_retain_id: self.lists.retain_id,
                                 list_release_id: self.lists.release_id,
@@ -2774,6 +2898,7 @@ impl<'a> NativeGenerator<'a> {
                         string_release_id: self.strings.release_id,
                         string_concat_id: self.strings.concat_id,
                         string_eq_id: self.strings.eq_id,
+                        string_from_c_str_id: self.strings.from_c_str_id,
                         list_new_id: self.lists.new_id,
                         list_retain_id: self.lists.retain_id,
                         list_release_id: self.lists.release_id,
@@ -2796,6 +2921,7 @@ impl<'a> NativeGenerator<'a> {
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
                         methods: &self.methods,
+                        extern_functions: &self.extern_functions,
                         literal_counter: &mut self.literal_counter,
                         scopes: vec![HashMap::new()],
                         next_var_index: 0,
@@ -2910,6 +3036,7 @@ struct FunctionCompiler<'a, 'b> {
     string_release_id: FuncId,
     string_concat_id: FuncId,
     string_eq_id: FuncId,
+    string_from_c_str_id: FuncId,
     list_new_id: FuncId,
     list_retain_id: FuncId,
     list_release_id: FuncId,
@@ -2932,6 +3059,7 @@ struct FunctionCompiler<'a, 'b> {
     class_retain_id: FuncId,
     trait_release_id: FuncId,
     methods: &'a HashMap<(String, String), FuncId>,
+    extern_functions: &'a HashSet<String>,
     /// Shared across every function being compiled (not reset per
     /// function), so two string literals never collide on the same
     /// generated data symbol name.
@@ -3479,7 +3607,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 // Nested functions aren't supported; handled at the top level.
                 Ok(false)
             }
-            TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } | TypedStatement::TraitDecl { .. } | TypedStatement::ImplDecl { .. } => {
+            TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } | TypedStatement::TraitDecl { .. } | TypedStatement::ImplDecl { .. } | TypedStatement::ExternFunction { .. } => {
                 // Top-level constructs, handled elsewhere.
                 Ok(false)
             }
@@ -3652,7 +3780,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 }
             }
             TypedExpressionKind::Binary { left, operator, right } => self.compile_binary(left, operator, right),
-            TypedExpressionKind::Call { function, arguments } => self.compile_call(function, arguments, &expr.location),
+            TypedExpressionKind::Call { function, arguments } => self.compile_call(function, arguments, &expr.type_, &expr.location),
             TypedExpressionKind::New { class_name, arguments } => {
                 // Each argument follows the same ownership handoff as a
                 // function call argument (see compile_call): compile it
@@ -4006,7 +4134,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         Ok(self.builder.block_params(merge_block)[0])
     }
 
-    fn compile_call(&mut self, name: &str, arguments: &[TypedExpression], location: &Location) -> Result<Value> {
+    fn compile_call(&mut self, name: &str, arguments: &[TypedExpression], return_type: &Type, location: &Location) -> Result<Value> {
         if name == "println" {
             return self.compile_println(arguments);
         }
@@ -4106,7 +4234,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             _ => {}
         }
 
-        if super::jvm::is_intrinsic(name) {
+        if super::jvm::is_intrinsic(name) && !self.extern_functions.contains(name) {
             return Err(anyhow!(
                 "line {}, column {}: '{}' is a Core/Collections/IO/Web/Database intrinsic, which is only available on the JVM backend today (see docs/MEMORY_MODEL_DECISION.md for why the native backend doesn't have these yet)",
                 location.line, location.column, name
@@ -4121,15 +4249,23 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         })?;
         let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
 
+        let is_extern = self.extern_functions.contains(name);
         let mut arg_values = Vec::with_capacity(arguments.len());
+        let mut temporaries_to_release = Vec::new();
         let param_types = self.function_param_types.get(name).cloned().unwrap_or_default();
         for (i, arg) in arguments.iter().enumerate() {
             let val = self.compile_expression(arg)?;
-            // The callee will release this reference at its own scope
-            // exit (parameters are tracked exactly like locals -- see
-            // `compile_all_functions`), so it needs to receive a
-            // reference it's safe to consume that way.
-            self.retain_if_aliasing(arg, val)?;
+            if is_extern {
+                if !expression_is_borrowed(arg) {
+                    temporaries_to_release.push((arg.type_.clone(), val));
+                }
+            } else {
+                // The callee will release this reference at its own scope
+                // exit (parameters are tracked exactly like locals -- see
+                // `compile_all_functions`), so it needs to receive a
+                // reference it's safe to consume that way.
+                self.retain_if_aliasing(arg, val)?;
+            }
             let val = match param_types.get(i) {
                 Some(param_type) => self.coerce_for_target_type(val, &arg.type_, param_type),
                 None => val,
@@ -4138,6 +4274,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
 
         let call = self.builder.ins().call(func_ref, &arg_values);
+        for (ty, val) in temporaries_to_release {
+            self.emit_release_for_type(&ty, val)?;
+        }
         let results = self.builder.inst_results(call);
         if results.is_empty() {
             // A void-returning function used where a value is
@@ -4147,7 +4286,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             // unused placeholder so callers don't need special-casing.
             Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
         } else {
-            Ok(results[0])
+            let raw_res = results[0];
+            if is_extern && *return_type == Type::String {
+                let str_from_c_ref = self.module.declare_func_in_func(self.string_from_c_str_id, self.builder.func);
+                let call = self.builder.ins().call(str_from_c_ref, &[raw_res]);
+                Ok(self.builder.inst_results(call)[0])
+            } else {
+                Ok(raw_res)
+            }
         }
     }
 

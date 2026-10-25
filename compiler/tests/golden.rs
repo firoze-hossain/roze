@@ -691,3 +691,14 @@ Beep boop, I am R2D2.
 30";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn c_ffi_throws_unsupported_on_jvm() {
+    let (_stdout, stderr, ok) = run_fixture("ffi.roze");
+    assert!(!ok, "JVM run should fail with UnsupportedOperationException");
+    assert!(
+        stderr.contains("UnsupportedOperationException") && stderr.contains("native-only"),
+        "stderr should mention UnsupportedOperationException and native-only, got:\n{}",
+        stderr
+    );
+}

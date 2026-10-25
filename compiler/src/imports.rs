@@ -45,7 +45,7 @@ const CORE_DISPLAY_NAME: &str = "core (built-in)";
 pub fn resolve_imports(program: Program, base_dir: &Path) -> Result<Program> {
     let mut defined_names: HashSet<String> = program.statements.iter()
         .filter_map(|stmt| match stmt {
-            Statement::Function { name, .. } => Some(name.clone()),
+            Statement::Function { name, .. } | Statement::ExternFunction { name, .. } => Some(name.clone()),
             _ => None,
         })
         .collect();
@@ -75,7 +75,7 @@ pub fn resolve_imports(program: Program, base_dir: &Path) -> Result<Program> {
                 };
 
                 for module_stmt in module_program.statements {
-                    if let Statement::Function { ref name, .. } = module_stmt {
+                    if let Statement::Function { ref name, .. } | Statement::ExternFunction { ref name, .. } = module_stmt {
                         if defined_names.contains(name) {
                             // Either the importing file itself, or an
                             // earlier import, already provided this name

@@ -130,6 +130,13 @@ pub enum TypedStatement {
         methods: Vec<TypedStatement>,
         location: Location,
     },
+    ExternFunction {
+        abi: String,
+        name: String,
+        params: Vec<TypedFunctionParam>,
+        return_type: Type,
+        location: Location,
+    },
     // Deliberately no `Import` variant: imports are resolved into real
     // functions before type-checking ever runs (see
     // imports::resolve_imports), so by the time this IR exists, no

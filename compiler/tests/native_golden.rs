@@ -21,16 +21,23 @@ fn scratch_dir(test_name: &str) -> PathBuf {
 /// Writes `source` as `<name>.roze` in a fresh scratch dir, builds and
 /// runs it with `--target native`, and returns (stdout, stderr, success).
 fn run_native_source(name: &str, source: &str) -> (String, String, bool) {
+    run_native_source_with_links(name, source, &[])
+}
+
+fn run_native_source_with_links(name: &str, source: &str, links: &[&str]) -> (String, String, bool) {
     let dir = scratch_dir(name);
     let file_name = format!("{}.roze", name);
     std::fs::write(dir.join(&file_name), source).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_roze"))
-        .arg("run")
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_roze"));
+    cmd.arg("run")
         .arg(&file_name)
         .arg("--target")
-        .arg("native")
-        .current_dir(&dir)
+        .arg("native");
+    for link in links {
+        cmd.arg("--link").arg(link);
+    }
+    let output = cmd.current_dir(&dir)
         .output()
         .expect("failed to invoke the roze binary");
 
@@ -1795,5 +1802,19 @@ Beep boop, I am R2D2.
 30
 50
 30";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
+fn c_ffi_native() {
+    let source = std::fs::read_to_string("tests/fixtures/ffi.roze")
+        .expect("ffi.roze fixture should exist");
+    let (stdout, stderr, ok) = run_native_source_with_links("ffi_native", &source, &["m"]);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+Hello from C FFI!
+42
+4
+lang-c-ffi";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }

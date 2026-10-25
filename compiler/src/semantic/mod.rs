@@ -648,6 +648,13 @@ fn substitute_statement(stmt: &Statement, map: &HashMap<String, String>) -> Stat
             methods: methods.iter().map(|s| substitute_statement(s, map)).collect(),
             location: location.clone(),
         },
+        Statement::ExternFunction { abi, name, params, return_type, location } => Statement::ExternFunction {
+            abi: abi.clone(),
+            name: name.clone(),
+            params: params.clone(),
+            return_type: return_type.clone(),
+            location: location.clone(),
+        },
     }
 }
 
@@ -1282,6 +1289,24 @@ impl TypeChecker {
             }
         }
 
+        for stmt in &program.statements {
+            if let Statement::ExternFunction { abi, name, params, return_type, location } = stmt {
+                if abi != "C" {
+                    return Err(RozeError::type_error(
+                        format!("Unsupported ABI '{}'; only \"C\" is supported", abi),
+                        location.line,
+                        location.column,
+                    ).into());
+                }
+                let mut param_types = Vec::with_capacity(params.len());
+                for p in params {
+                    param_types.push(p.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown));
+                }
+                let ret = return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
+                self.functions.insert(name.clone(), FunctionSig { params: param_types, return_type: ret });
+            }
+        }
+
         let mut user_statements = Vec::with_capacity(program.statements.len());
         for stmt in &program.statements {
             if let Some(typed) = self.check_statement(stmt)? {
@@ -1770,6 +1795,24 @@ impl TypeChecker {
                     trait_name: trait_name.clone(),
                     class_name: class_name.clone(),
                     methods: typed_methods,
+                    location: location.clone(),
+                }))
+            }
+            Statement::ExternFunction { abi, name, params, return_type, location } => {
+                let mut typed_params = Vec::with_capacity(params.len());
+                for p in params {
+                    let ty = p.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown);
+                    typed_params.push(TypedFunctionParam {
+                        name: p.name.clone(),
+                        type_: ty,
+                    });
+                }
+                let ret = return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
+                Ok(Some(TypedStatement::ExternFunction {
+                    abi: abi.clone(),
+                    name: name.clone(),
+                    params: typed_params,
+                    return_type: ret,
                     location: location.clone(),
                 }))
             }

@@ -268,6 +268,7 @@ impl<'a> Lexer<'a> {
                             "trait" => Token::Trait,
                             "impl" => Token::Impl,
                             "this" => Token::This,
+                            "extern" => Token::Extern,
                             "true" => Token::True,
                             "false" => Token::False,
                             "null" => Token::Null,

@@ -125,6 +125,14 @@ pub enum Statement {
         methods: Vec<Statement>,
         location: Location,
     },
+    /// `extern "C" func name(...) -> Type;`
+    ExternFunction {
+        abi: String,
+        name: String,
+        params: Vec<FunctionParam>,
+        return_type: Option<String>,
+        location: Location,
+    },
 }
 
 #[derive(Debug, Clone)]

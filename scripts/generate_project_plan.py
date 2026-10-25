@@ -210,13 +210,13 @@ s1_rows = [
         ("MED-01", 8), ("Medium", 4), ("Step 6", 8), "Native Codegen (Cranelift)", "Foreign Function Interface (C-ABI FFI)",
         "The Universal Key: Call ANY existing C/C++ library directly. Instantly unlocks Desktop (GTK/Qt/Win32), Games (Raylib/SDL3/Vulkan), AI/ML (BLAS/CUDA/PyTorch), and Security (libpcap/OpenSSL) without rewriting them.",
         "Syntax 'extern \"C\" func printf(fmt: string) -> int;'; Cranelift SystemV / Win64 calling convention integration; link external shared/static libraries via 'roze build --link <lib>'.",
-        "Desktop GUI, Games, AI/ML, Security/Hacking, Systems", "4 - 6 Days", ("Ready to Start", 7)
+        "Desktop GUI, Games, AI/ML, Security/Hacking, Systems", "Completed", ("Completed", 6)
     ],
     [
         ("MED-02", 8), ("Medium", 4), ("Step 7", 8), "Native Runtime & Codegen", "Thread-Safe Atomic ARC",
         "Make memory management thread-safe. Prevents race conditions and use-after-free corruption when data is accessed across concurrent threads.",
         "Upgrade ARC retain and release helper functions in Cranelift from plain increment/decrement to atomic operations (lock xadd / Cranelift atomic load/store/rmw).",
-        "Web Servers, Multi-threaded Games, Systems", "2 - 3 Days", ("Planned", 8)
+        "Web Servers, Multi-threaded Games, Systems", "2 - 3 Days", ("Ready to Start", 7)
     ],
     [
         ("MED-03", 8), ("Medium", 4), ("Step 8", 8), "Runtime & Standard Library", "Native Concurrency: Threads & Channels",
@@ -319,36 +319,36 @@ s2_rows = [
         "Custom network sniffers, exploit payloads, binary reverse-engineering tools, memory analyzers",
         "Native standalone executables, TCP sockets, float/math, safe Result error handling",
         "Raw byte buffers, unsafe memory pointers, FFI bindings to libpcap, OpenSSL, and raw packet sockets",
-        "MED-01, MED-05",
+        "MED-01 (Done), MED-05",
         "Python (Scapy), Go, C, Rust",
-        ("25% - Feasible via FFI", 4)
+        ("40% - FFI Enabled", 4)
     ],
     [
         "Games & Interactive Platforms",
         "2D & 3D game engines, indie games, physics simulation, cross-platform game runtime",
         "ARC-managed classes and lists, IEEE-754 f64 math, fast native execution",
         "FFI to Raylib/SDL3/Vulkan, atomic multi-threaded rendering/audio threads, generics for ECS engines",
-        "CORE-04 (Done), MED-01, MED-02, ADV-04",
+        "CORE-04 (Done), MED-01 (Done), MED-02, ADV-04",
         "C++, C# (Unity), Rust (Bevy), C",
-        ("35% - Generics Monomorphized", 4)
+        ("45% - FFI & Generics Monomorphized", 4)
     ],
     [
         "AI / Machine Learning",
         "Local LLM inference (Llama), computer vision, neural net inference, data pipelines",
         "Fast f64 double precision numbers, basic arrays/lists, Result safety",
         "C-FFI to bind ONNX Runtime, libtorch, or GGML tensor libraries",
-        "CORE-04 (Done), MED-01, ADV-05",
+        "CORE-04 (Done), MED-01 (Done), ADV-05",
         "Python (PyTorch wrapper), C++",
-        ("30% - Generics Monomorphized", 4)
+        ("45% - FFI Enabled", 4)
     ],
     [
         "Desktop GUI Applications",
         "Cross-platform desktop tools, productivity software, native UI apps",
         "Fast standalone executables on Windows, Linux, and macOS",
         "FFI to native UI toolkits (GTK4, Qt, Win32, Cocoa), closure event handlers",
-        "CORE-03 (Done), MED-01",
+        "CORE-03 (Done), MED-01 (Done)",
         "C# (WPF), Rust (Tauri), C++ (Qt)",
-        ("35% - Closures Completed", 4)
+        ("50% - Closures & FFI Completed", 6)
     ],
     [
         "Self-Hosting Compiler",
@@ -383,7 +383,7 @@ s3_rows = [
         "C-ABI FFI (extern 'C'), Thread-safe Atomic ARC, Native OS Threads & Channels, Concurrent Async HTTP Server",
         "Phase 1 Core Types",
         "v0.5.0-beta",
-        ("Ready to Start", 7)
+        ("In Progress", 4)
     ],
     [
         ("Phase 3", 4),

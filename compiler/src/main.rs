@@ -62,6 +62,9 @@ enum Commands {
         /// Which backend to compile with
         #[arg(long, value_enum, default_value_t = Target::Jvm)]
         target: Target,
+        /// Extra shared/static libraries to link against (for --target native)
+        #[arg(long = "link", value_name = "LIB", action = clap::ArgAction::Append)]
+        link: Vec<String>,
     },
     /// Run a Roze file
     Run {
@@ -74,6 +77,9 @@ enum Commands {
         /// Which backend to compile and run with
         #[arg(long, value_enum, default_value_t = Target::Jvm)]
         target: Target,
+        /// Extra shared/static libraries to link against (for --target native)
+        #[arg(long = "link", value_name = "LIB", action = clap::ArgAction::Append)]
+        link: Vec<String>,
     },
 }
 
@@ -81,8 +87,8 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Build { file, output: _, classpath, target } => build_file(&file, cli.debug, classpath.as_deref(), target),
-        Commands::Run { file, classpath, target } => build_file(&file, cli.debug, classpath.as_deref(), target)
+        Commands::Build { file, output: _, classpath, target, link } => build_file(&file, cli.debug, classpath.as_deref(), target, &link),
+        Commands::Run { file, classpath, target, link } => build_file(&file, cli.debug, classpath.as_deref(), target, &link)
             .and_then(|_| run_file(&file, classpath.as_deref(), target)),
     };
 
@@ -97,7 +103,7 @@ fn main() {
     }
 }
 
-fn build_file(filename: &str, debug: bool, classpath: Option<&str>, target: Target) -> Result<(), ()> {
+fn build_file(filename: &str, debug: bool, classpath: Option<&str>, target: Target, link_libs: &[String]) -> Result<(), ()> {
     println!("{}", "🌹 Roze Compiler v0.1".bright_magenta());
     println!("{} {}", "📁 Compiling:".cyan(), filename);
 
@@ -159,7 +165,7 @@ fn build_file(filename: &str, debug: bool, classpath: Option<&str>, target: Targ
     // Generate code with the selected backend
     let codegen_result = match target {
         Target::Jvm => codegen::compile_to_java(typed_program, filename, classpath),
-        Target::Native => codegen::native::compile_to_native(typed_program, filename),
+        Target::Native => codegen::native::compile_to_native(typed_program, filename, link_libs),
     };
     if let Err(e) = codegen_result {
         report_error(&e, filename, &source);

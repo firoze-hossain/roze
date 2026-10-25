@@ -1,0 +1,12 @@
+extern "C" func puts(s: string) -> int;
+extern "C" func abs(n: int) -> int;
+extern "C" func sqrt(x: float) -> float;
+extern "C" func strstr(haystack: string, needle: string) -> string;
+
+func main() {
+    puts("Hello from C FFI!");
+    println(abs(-42));
+    println(sqrt(16.0));
+    let sub = strstr("roze-lang-c-ffi", "lang");
+    println(sub);
+}

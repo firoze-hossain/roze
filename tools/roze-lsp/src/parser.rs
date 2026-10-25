@@ -147,6 +147,15 @@ fn collect_statement(stmt: &Statement, ast: &mut Ast) {
         // = value` doesn't introduce a new symbol either way, the same
         // as a plain `Assign`.
         Statement::ClassDecl { .. } | Statement::FieldAssign { .. } | Statement::EnumDecl { .. } | Statement::TraitDecl { .. } => {}
+        Statement::ExternFunction { name, params, return_type, location, .. } => {
+            ast.functions.push(Function {
+                name: name.clone(),
+                params: params.iter().map(|p| p.name.clone()).collect(),
+                return_type: return_type.clone(),
+                line: location.line,
+                column: location.column,
+            });
+        }
         Statement::ImplDecl { methods, .. } => {
             collect_statements(methods, ast);
         }

@@ -115,6 +115,7 @@ impl Parser {
             Token::Match => self.parse_match(),
             Token::Trait => self.parse_trait(),
             Token::Impl => self.parse_impl(),
+            Token::Extern => self.parse_extern_function(),
             _ => {
                 // Parse a full expression first, then decide: if `=`
                 // follows, this is an assignment (either to a bare name
@@ -991,6 +992,130 @@ impl Parser {
             trait_name,
             class_name,
             methods,
+            location,
+        })
+    }
+
+    fn parse_extern_function(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // Skip 'extern'
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        // Optional ABI string: extern "C"
+        let abi = if let Token::String(s) = &self.current().token {
+            let s = s.clone();
+            self.advance();
+            s
+        } else {
+            "C".to_string()
+        };
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        if self.check(&Token::Func) {
+            self.advance();
+        } else {
+            return Err(self.error("Expected 'func' keyword after 'extern'"));
+        }
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        if !self.check(&Token::Identifier(String::new())) {
+            return Err(self.error(format!("Expected an extern function name, found {}", self.current().token)));
+        }
+
+        let name = match &self.current().token {
+            Token::Identifier(n) => n.clone(),
+            _ => return Err(self.error("Invalid extern function name")),
+        };
+        self.advance();
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        if !self.check(&Token::LeftParen) {
+            return Err(self.error("Expected '(' after function name"));
+        }
+        self.advance();
+
+        let mut params = Vec::new();
+        while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&Token::RightParen) {
+                break;
+            }
+            if !self.check(&Token::Identifier(String::new())) {
+                return Err(self.error("Expected a parameter name"));
+            }
+            let param_name = match &self.current().token {
+                Token::Identifier(n) => n.clone(),
+                _ => return Err(self.error("Invalid parameter name")),
+            };
+            self.advance();
+
+            let param_type = if self.check(&Token::Colon) {
+                self.advance();
+                Some(self.parse_type_name()?)
+            } else {
+                None
+            };
+
+            params.push(FunctionParam {
+                name: param_name,
+                type_name: param_type,
+            });
+
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if !self.check(&Token::Comma) {
+                break;
+            }
+            self.advance();
+        }
+
+        if !self.check(&Token::RightParen) {
+            return Err(self.error("Expected ')' after parameters"));
+        }
+        self.advance();
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let return_type = if self.check(&Token::Arrow) {
+            self.advance();
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            Some(self.parse_type_name()?)
+        } else {
+            None
+        };
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        if self.check(&Token::Semicolon) {
+            self.advance();
+        }
+
+        Ok(Statement::ExternFunction {
+            abi,
+            name,
+            params,
+            return_type,
             location,
         })
     }

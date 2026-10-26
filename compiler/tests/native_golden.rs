@@ -2849,4 +2849,53 @@ fn raylib_game_engine_demo_native() {
     assert!(stdout.contains("Game Engine 2D/3D Platform Verified!"));
 }
 
+#[test]
+fn ai_ml_inference_demo_native() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+    let ai_dir = root.join("demos").join("ai_ml");
+    let main_roze = ai_dir.join("src").join("main.roze");
+    let ai_c = ai_dir.join("src").join("roze_ai.c");
+
+    let scratch = scratch_dir("ai_ml_inference_demo");
+
+    let mut build_cmd = Command::new(env!("CARGO_BIN_EXE_roze"));
+    build_cmd.arg("build")
+        .arg(&main_roze)
+        .arg("--target")
+        .arg("native")
+        .arg("-o")
+        .arg(&scratch)
+        .arg("--link").arg(ai_c.to_str().unwrap())
+        .arg("--link").arg("m");
+
+    let build_output = build_cmd.current_dir(&scratch)
+        .output()
+        .expect("failed to invoke roze build for ai demo");
+
+    assert!(
+        build_output.status.success(),
+        "ai demo build failed: {}\nstdout:\n{}",
+        String::from_utf8_lossy(&build_output.stderr),
+        String::from_utf8_lossy(&build_output.stdout)
+    );
+
+    let ai_bin = scratch.join("main");
+    assert!(ai_bin.exists(), "ai binary main not found in scratch dir");
+
+    let mut run_cmd = Command::new(&ai_bin);
+    let run_output = run_cmd.current_dir(&scratch).output().expect("failed to execute ai demo");
+
+    assert!(run_output.status.success(), "ai demo execution failed: {}", String::from_utf8_lossy(&run_output.stderr));
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    assert!(stdout.contains("Roze AI / ML Inference Engine"));
+    assert!(stdout.contains("Tensor Mathematical Engine & Activations"));
+    assert!(stdout.contains("Tensor computational operations verified!"));
+    assert!(stdout.contains("Generative AI: LLaMA-Style Decoder Transformer"));
+    assert!(stdout.contains("Autoregressive generation completed with KV-cache acceleration!"));
+    assert!(stdout.contains("Predictive Classification: Deep Neural Network"));
+    assert!(stdout.contains("Neural classifier prediction completed!"));
+    assert!(stdout.contains("Tensor Engine Performance & GFLOPS Benchmark"));
+    assert!(stdout.contains("Roze AI / ML Inference Wrapper Verified Successfully! (ADV-05)"));
+}
+
 

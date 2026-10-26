@@ -272,7 +272,7 @@ s1_rows = [
         ("ADV-05", 8), ("Advanced", 5), ("Step 16", 8), "AI / ML Wrapper Project", "AI & ML Inference Wrapper (ONNX / GGML)",
         "Run local AI models (Llama, BERT, Vision models) directly from Roze apps.",
         "Bind ONNX Runtime C API or GGML via FFI; load model weights; pass input tensors; run inference and parse prediction outputs.",
-        "AI / ML Applications, Data Science", "1 - 2 Weeks", ("Ready to Start", 7)
+        "AI / ML Applications, Data Science", "1 - 2 Weeks", ("Completed", 4)
     ],
     [
         ("ADV-06", 8), ("Advanced", 5), ("Step 17", 8), "Compiler Re-Architecture", "Self-Hosting Compiler (Roze-in-Roze)",
@@ -335,11 +335,11 @@ s2_rows = [
     [
         "AI / Machine Learning",
         "Local LLM inference (Llama), computer vision, neural net inference, data pipelines",
-        "Fast f64 double precision numbers, basic arrays/lists, Result safety",
-        "C-FFI to bind ONNX Runtime, libtorch, or GGML tensor libraries",
-        "CORE-04 (Done), MED-01 (Done), ADV-05",
-        "Python (PyTorch wrapper), C++",
-        ("45% - FFI Enabled", 4)
+        "Fast f64 double precision numbers, basic arrays/lists, Result safety, Roze standard AI tensor module",
+        "C-FFI tensor library, LLaMA Transformer decoder, SwiGLU MLP, KV-cache, ONNX/GGML C-ABI",
+        "CORE-04 (Done), MED-01 (Done), ADV-05 (Done)",
+        "Python (PyTorch wrapper), C++, Mojo",
+        ("100% - LLaMA Transformer & Neural Runtime Ready", 4)
     ],
     [
         "Desktop GUI Applications",

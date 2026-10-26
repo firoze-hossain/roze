@@ -1,0 +1,114 @@
+// ==============================================================================
+// 🌹 Roze Standard Library: AI / ML Inference Module (ADV-05)
+// ==============================================================================
+// Enables running local AI models (LLaMA Transformers, BERT, Vision & Classifiers)
+// directly from Roze apps via high-performance C-FFI tensor runtime.
+// ==============================================================================
+
+// ------------------------------------------------------------------------------
+// 1. Raw C-FFI Tensor Operations
+// ------------------------------------------------------------------------------
+
+extern "C" func rz_tensor_create_1d(d0: int) -> int;
+extern "C" func rz_tensor_create_2d(rows: int, cols: int) -> int;
+extern "C" func rz_tensor_create_3d(d0: int, d1: int, d2: int) -> int;
+extern "C" func rz_tensor_free(t: int) -> void;
+
+extern "C" func rz_tensor_zero(t: int) -> void;
+extern "C" func rz_tensor_fill(t: int, val: float) -> void;
+extern "C" func rz_tensor_set_1d(t: int, idx: int, val: float) -> void;
+extern "C" func rz_tensor_get_1d(t: int, idx: int) -> float;
+extern "C" func rz_tensor_set_2d(t: int, r: int, c: int, val: float) -> void;
+extern "C" func rz_tensor_get_2d(t: int, r: int, c: int) -> float;
+extern "C" func rz_tensor_rows(t: int) -> int;
+extern "C" func rz_tensor_cols(t: int) -> int;
+extern "C" func rz_tensor_size(t: int) -> int;
+
+extern "C" func rz_tensor_matmul(A: int, B: int, C: int) -> void;
+extern "C" func rz_tensor_add(A: int, B: int, C: int) -> void;
+extern "C" func rz_tensor_mul(A: int, B: int, C: int) -> void;
+extern "C" func rz_tensor_scale(t: int, scale: float) -> void;
+extern "C" func rz_tensor_add_bias(t: int, bias: int) -> void;
+
+extern "C" func rz_tensor_relu(t: int) -> void;
+extern "C" func rz_tensor_gelu(t: int) -> void;
+extern "C" func rz_tensor_silu(t: int) -> void;
+extern "C" func rz_tensor_softmax(t: int) -> void;
+extern "C" func rz_tensor_rms_norm(x: int, weight: int, out: int, eps: float) -> void;
+extern "C" func rz_tensor_layer_norm(x: int, weight: int, bias: int, out: int, eps: float) -> void;
+extern "C" func rz_tensor_rope(q_or_k: int, pos: int, head_dim: int) -> void;
+
+extern "C" func rz_tensor_argmax(t: int) -> int;
+extern "C" func rz_tensor_sample(logits: int, temperature: float) -> int;
+extern "C" func rz_tensor_print(t: int, name: string) -> void;
+
+// ------------------------------------------------------------------------------
+// 2. Raw C-FFI Generative LLaMA Transformer & Tokenizer
+// ------------------------------------------------------------------------------
+
+extern "C" func rz_llama_create(vocab_size: int, dim: int, hidden_dim: int, n_layers: int, n_heads: int, max_seq_len: int) -> int;
+extern "C" func rz_llama_init_weights(model: int, seed: int) -> void;
+extern "C" func rz_llama_save(model: int, filepath: string) -> int;
+extern "C" func rz_llama_load(filepath: string) -> int;
+extern "C" func rz_llama_free(model: int) -> void;
+
+extern "C" func rz_llama_forward(model: int, token: int, pos: int) -> int;
+extern "C" func rz_llama_get_logit(model: int, token_id: int) -> float;
+extern "C" func rz_llama_sample_next(model: int, temperature: float) -> int;
+
+extern "C" func rz_tokenizer_init() -> void;
+extern "C" func rz_tokenizer_add_token(word: string, id: int) -> void;
+extern "C" func rz_tokenizer_decode(token_id: int) -> string;
+extern "C" func rz_tokenizer_print_token(token_id: int) -> void;
+
+// ------------------------------------------------------------------------------
+// 3. Raw C-FFI Predictive Neural Classifier (MLP / Vision / Tabular)
+// ------------------------------------------------------------------------------
+
+extern "C" func rz_classifier_create(in_dim: int, hidden1: int, hidden2: int, out_dim: int) -> int;
+extern "C" func rz_classifier_init_weights(model: int, seed: int) -> void;
+extern "C" func rz_classifier_predict_tensor(model: int, input_tensor: int) -> int;
+extern "C" func rz_classifier_get_prob(model: int, class_idx: int) -> float;
+extern "C" func rz_classifier_free(model: int) -> void;
+
+// ------------------------------------------------------------------------------
+// 4. Benchmarking & System Inspection
+// ------------------------------------------------------------------------------
+
+extern "C" func rz_ai_print_system_info() -> void;
+extern "C" func rz_print_stat_int(label: string, val: int, suffix: string) -> void;
+extern "C" func rz_print_stat_float(label: string, val: float, suffix: string) -> void;
+extern "C" func rz_print_str_no_newline(s: string) -> void;
+extern "C" func rz_benchmark_matmul(size: int, iterations: int) -> float;
+
+// ------------------------------------------------------------------------------
+// 5. Roze High-Level AI Classes
+// ------------------------------------------------------------------------------
+
+class Tensor {
+    handle: int,
+    rows: int,
+    cols: int
+}
+
+func tensor_new_1d(size: int) -> Tensor {
+    let h = rz_tensor_create_1d(size);
+    return new Tensor(h, 1, size);
+}
+
+func tensor_new_2d(rows: int, cols: int) -> Tensor {
+    let h = rz_tensor_create_2d(rows, cols);
+    return new Tensor(h, rows, cols);
+}
+
+class LlamaModel {
+    handle: int,
+    vocab_size: int,
+    dim: int,
+    n_layers: int
+}
+
+func llama_model_new(vocab: int, dim: int, hidden: int, layers: int, heads: int, max_seq: int) -> LlamaModel {
+    let h = rz_llama_create(vocab, dim, hidden, layers, heads, max_seq);
+    return new LlamaModel(h, vocab, dim, layers);
+}

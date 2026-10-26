@@ -54,6 +54,9 @@ const ROZEBOOT_DISPLAY_NAME: &str = "rozeboot (built-in)";
 const RAYLIB_SOURCE: &str = include_str!("../../stdlib/src/raylib.roze");
 const RAYLIB_DISPLAY_NAME: &str = "raylib (built-in)";
 
+const AI_SOURCE: &str = include_str!("../../stdlib/src/ai.roze");
+const AI_DISPLAY_NAME: &str = "ai (built-in)";
+
 /// Walks `program`'s top-level statements, replacing every `Import` with
 /// the functions it pulls in. `base_dir` is the directory of the file
 /// being compiled, used to resolve relative import paths.
@@ -161,6 +164,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "raylib" {
         return Ok((RAYLIB_SOURCE.to_string(), RAYLIB_DISPLAY_NAME.to_string()));
     }
+    if path == "ai" {
+        return Ok((AI_SOURCE.to_string(), AI_DISPLAY_NAME.to_string()));
+    }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {
         base_dir.join(path)
@@ -204,7 +210,7 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         location.line,
         location.column,
     )
-    .with_hint("built-in modules: \"core\", \"concurrency\", \"web\", \"vga\", \"rozeboot\", \"raylib\" -- packages in \"libs/<pkg>/lib.roze\" or a relative .roze file")
+    .with_hint("built-in modules: \"core\", \"concurrency\", \"web\", \"vga\", \"rozeboot\", \"raylib\", \"ai\" -- packages in \"libs/<pkg>/lib.roze\" or a relative .roze file")
     .into())
 }
 

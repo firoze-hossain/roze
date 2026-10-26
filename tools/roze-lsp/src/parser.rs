@@ -159,6 +159,9 @@ fn collect_statement(stmt: &Statement, ast: &mut Ast) {
         Statement::ImplDecl { methods, .. } => {
             collect_statements(methods, ast);
         }
+        Statement::UnsafeBlock { body, .. } => {
+            collect_statement(body, ast);
+        }
         Statement::Match { arms, .. } => {
             for arm in arms {
                 collect_statement(&arm.body, ast);

@@ -737,3 +737,22 @@ assets/styles/main.css
 5";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn unsafe_raw_pointers_and_direct_memory() {
+    let (stdout, stderr, ok) = run_fixture("unsafe_memory.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+false
+65
+66
+1
+7
+7
+7
+123456789
+987654321
+65
+true";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}

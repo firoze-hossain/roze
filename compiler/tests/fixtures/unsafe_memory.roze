@@ -1,0 +1,50 @@
+func main() {
+    unsafe {
+        // 1. Allocate 16 bytes
+        let p: *raw u8 = alloc(16);
+        println(ptr_is_null(p));
+
+        // 2. Write and read bytes
+        ptr_write_u8(p, 65);
+        let b0: int = ptr_read_u8(p);
+        println(b0);
+
+        // 3. Offset and pointer arithmetic
+        let p1: *raw u8 = ptr_add(p, 1);
+        ptr_write_u8(p1, 66);
+        println(ptr_read_u8_at(p, 1));
+        println(ptr_diff(p1, p));
+
+        // 4. Memory set
+        let p_block: *raw u8 = alloc(8);
+        mem_set(p_block, 7, 8);
+        println(ptr_read_u8_at(p_block, 0));
+        println(ptr_read_u8_at(p_block, 7));
+
+        // 5. Memory copy
+        let p_dest: *raw u8 = alloc(8);
+        mem_copy(p_dest, p_block, 8);
+        println(ptr_read_u8_at(p_dest, 3));
+
+        // 6. 64-bit integer read/write
+        let p_int: *raw int = alloc(16);
+        ptr_write(p_int, 123456789);
+        println(ptr_read(p_int));
+        ptr_write_at(p_int, 8, 987654321);
+        println(ptr_read_at(p_int, 8));
+
+        // 7. Realloc
+        let p_realloc: *raw u8 = realloc(p, 32);
+        println(ptr_read_u8(p_realloc));
+
+        // 8. Free all
+        free(p_realloc);
+        free(p_block);
+        free(p_dest);
+        free(p_int);
+
+        // 9. Null check
+        let null_ptr: *raw u8 = int_to_ptr(0);
+        println(ptr_is_null(null_ptr));
+    }
+}

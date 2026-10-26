@@ -133,6 +133,11 @@ pub enum Statement {
         return_type: Option<String>,
         location: Location,
     },
+    /// `unsafe { ... }` block statement
+    UnsafeBlock {
+        body: Box<Statement>,
+        location: Location,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -274,6 +279,11 @@ pub enum Expression {
         object: Box<Expression>,
         method: String,
         arguments: Vec<Expression>,
+        location: Location,
+    },
+    /// `unsafe { expr }` or `unsafe expr`
+    Unsafe {
+        expr: Box<Expression>,
         location: Location,
     },
 }

@@ -58,6 +58,10 @@ pub enum Type {
         params: Vec<Type>,
         return_type: Box<Type>,
     },
+    /// An unsigned 8-bit integer type (`u8`).
+    U8,
+    /// An unsafe raw pointer type (`*raw T`).
+    RawPointer(Box<Type>),
 }
 
 pub fn split_type_args(s: &str) -> Vec<String> {
@@ -106,6 +110,8 @@ fn type_mangle_name(ty: &Type) -> String {
         Type::Trait(t) => t.clone(),
         Type::Generic { base, type_args } => specialized_name(base, type_args),
         Type::Function { .. } => "fn".to_string(),
+        Type::U8 => "u8".to_string(),
+        Type::RawPointer(inner) => format!("ptr_{}", type_mangle_name(inner)),
     }
 }
 
@@ -116,6 +122,15 @@ impl Type {
     /// doesn't have user-defined types yet.
     pub fn from_name(name: &str) -> Type {
         let trimmed = name.trim();
+        if trimmed.starts_with("*raw") {
+            let inner = trimmed["*raw".len()..].trim();
+            let pointee = if inner.is_empty() {
+                Type::U8
+            } else {
+                Type::from_name(inner)
+            };
+            return Type::RawPointer(Box::new(pointee));
+        }
         if let Some(open) = trimmed.find('<') {
             if trimmed.ends_with('>') {
                 let base = trimmed[..open].trim();
@@ -136,6 +151,7 @@ impl Type {
             "string" => Type::String,
             "bool" => Type::Bool,
             "void" => Type::Void,
+            "u8" => Type::U8,
             "list" | "List" => Type::List,
             "map" | "Map" => Type::Map,
             "option" | "Option" => Type::Option,
@@ -154,6 +170,8 @@ impl Type {
             Type::Bool => "boolean".to_string(),
             Type::Void => "void".to_string(),
             Type::Unknown => "Object".to_string(),
+            Type::U8 => "int".to_string(),
+            Type::RawPointer(_) => "long".to_string(),
             Type::List => "java.util.List".to_string(),
             Type::Map => "java.util.Map".to_string(),
             Type::Option => "RozeOption".to_string(),
@@ -192,6 +210,8 @@ impl std::fmt::Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::Void => write!(f, "void"),
             Type::Unknown => write!(f, "<unknown>"),
+            Type::U8 => write!(f, "u8"),
+            Type::RawPointer(inner) => write!(f, "*raw {}", inner),
             Type::List => write!(f, "list"),
             Type::Map => write!(f, "map"),
             Type::Option => write!(f, "Option"),
@@ -225,6 +245,8 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
     match (expected, actual) {
         (Type::Unknown, _) | (_, Type::Unknown) => true,
         (Type::Float, Type::Int) => true,
+        (Type::RawPointer(_), Type::RawPointer(_)) => true,
+        (Type::U8, Type::Int) | (Type::Int, Type::U8) => true,
         // List <-> List<T>
         (Type::List, Type::Generic { base, .. }) if base == "List" || base == "list" => true,
         (Type::Generic { base, .. }, Type::List) if base == "List" || base == "list" => true,
@@ -503,6 +525,30 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("channel_close", vec![Type::Unknown], Type::Void),
         ("channel_is_closed", vec![Type::Unknown], Type::Bool),
         ("channel_len", vec![Type::Unknown], Type::Int),
+
+        // ---- Unsafe Raw Pointers & Direct Memory (MED-05) ----
+        ("alloc", vec![Type::Int], Type::RawPointer(Box::new(Type::U8))),
+        ("alloc_zeroed", vec![Type::Int], Type::RawPointer(Box::new(Type::U8))),
+        ("realloc", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::RawPointer(Box::new(Type::U8))),
+        ("free", vec![Type::RawPointer(Box::new(Type::U8))], Type::Void),
+        ("ptr_read_u8", vec![Type::RawPointer(Box::new(Type::U8))], Type::Int),
+        ("ptr_read", vec![Type::RawPointer(Box::new(Type::Int))], Type::Int),
+        ("ptr_read_i64", vec![Type::RawPointer(Box::new(Type::Int))], Type::Int),
+        ("ptr_read_at", vec![Type::RawPointer(Box::new(Type::Int)), Type::Int], Type::Int),
+        ("ptr_read_u8_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Int),
+        ("ptr_write_u8", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Void),
+        ("ptr_write", vec![Type::RawPointer(Box::new(Type::Int)), Type::Int], Type::Void),
+        ("ptr_write_i64", vec![Type::RawPointer(Box::new(Type::Int)), Type::Int], Type::Void),
+        ("ptr_write_at", vec![Type::RawPointer(Box::new(Type::Int)), Type::Int, Type::Int], Type::Void),
+        ("ptr_write_u8_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int, Type::Int], Type::Void),
+        ("ptr_add", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::RawPointer(Box::new(Type::U8))),
+        ("ptr_offset", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::RawPointer(Box::new(Type::U8))),
+        ("ptr_diff", vec![Type::RawPointer(Box::new(Type::U8)), Type::RawPointer(Box::new(Type::U8))], Type::Int),
+        ("ptr_to_int", vec![Type::RawPointer(Box::new(Type::U8))], Type::Int),
+        ("int_to_ptr", vec![Type::Int], Type::RawPointer(Box::new(Type::U8))),
+        ("ptr_is_null", vec![Type::RawPointer(Box::new(Type::U8))], Type::Bool),
+        ("mem_copy", vec![Type::RawPointer(Box::new(Type::U8)), Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Void),
+        ("mem_set", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int, Type::Int], Type::Void),
     ]
 }
 
@@ -687,6 +733,10 @@ fn substitute_statement(stmt: &Statement, map: &HashMap<String, String>) -> Stat
             return_type: return_type.clone(),
             location: location.clone(),
         },
+        Statement::UnsafeBlock { body, location } => Statement::UnsafeBlock {
+            body: Box::new(substitute_statement(body, map)),
+            location: location.clone(),
+        },
     }
 }
 
@@ -753,6 +803,10 @@ fn substitute_expression(expr: &Expression, map: &HashMap<String, String>) -> Ex
             object: Box::new(substitute_expression(object, map)),
             method: method.clone(),
             arguments: arguments.iter().map(|a| substitute_expression(a, map)).collect(),
+            location: location.clone(),
+        },
+        Expression::Unsafe { expr, location } => Expression::Unsafe {
+            expr: Box::new(substitute_expression(expr, map)),
             location: location.clone(),
         },
     }
@@ -824,6 +878,7 @@ pub struct TypeChecker {
     /// Roze level too instead of letting a mismatch surface later as a
     /// confusing javac error.
     pub in_main: bool,
+    pub in_unsafe: bool,
     pub closure_counter: usize,
     pub errors: Vec<String>,
 }
@@ -878,6 +933,7 @@ impl TypeChecker {
             current_function: None,
             current_return_type: Type::Void,
             in_main: false,
+            in_unsafe: false,
             closure_counter: 0,
             errors: Vec::new(),
         }
@@ -1075,6 +1131,15 @@ impl TypeChecker {
     /// and a class named `Point` resolves to `Type::Class("Point")`).
     fn resolve_type_name(&mut self, name: &str) -> Type {
         let trimmed = name.trim();
+        if trimmed.starts_with("*raw") {
+            let inner = trimmed["*raw".len()..].trim();
+            let pointee = if inner.is_empty() {
+                Type::U8
+            } else {
+                self.resolve_type_name(inner)
+            };
+            return Type::RawPointer(Box::new(pointee));
+        }
         if trimmed.starts_with("func(") || trimmed.starts_with("fn(") {
             let without_prefix = if trimmed.starts_with("func(") {
                 &trimmed[5..]
@@ -1854,7 +1919,31 @@ impl TypeChecker {
                     location: location.clone(),
                 }))
             }
+            Statement::UnsafeBlock { body, location } => {
+                let prev_unsafe = self.in_unsafe;
+                self.in_unsafe = true;
+                let typed_body = self.check_statement(body)?;
+                self.in_unsafe = prev_unsafe;
+                let typed_b = match typed_body {
+                    Some(b) => b,
+                    None => TypedStatement::Block { statements: vec![], location: location.clone() },
+                };
+                Ok(Some(TypedStatement::UnsafeBlock {
+                    body: Box::new(typed_b),
+                    location: location.clone(),
+                }))
+            }
         }
+    }
+
+    pub fn is_unsafe_intrinsic(name: &str) -> bool {
+        matches!(name,
+            "alloc" | "alloc_zeroed" | "realloc" | "free" |
+            "ptr_read_u8" | "ptr_read" | "ptr_read_i64" | "ptr_read_at" | "ptr_read_u8_at" |
+            "ptr_write_u8" | "ptr_write" | "ptr_write_i64" | "ptr_write_at" | "ptr_write_u8_at" |
+            "ptr_add" | "ptr_offset" | "ptr_diff" | "ptr_to_int" | "int_to_ptr" |
+            "ptr_is_null" | "mem_copy" | "mem_set"
+        )
     }
 
     pub fn check_expression(&mut self, expr: &Expression) -> Result<TypedExpression> {
@@ -1997,6 +2086,14 @@ impl TypeChecker {
                 }
 
                 if let Expression::Identifier { name, .. } = function.as_ref() {
+                    if Self::is_unsafe_intrinsic(name) && !self.in_unsafe {
+                        return Err(RozeError::type_error(
+                            format!("Call to unsafe intrinsic '{}' requires an 'unsafe {{ ... }}' block", name),
+                            location.line,
+                            location.column,
+                        ).with_hint("wrap this low-level direct memory operation inside an 'unsafe { ... }' block").into());
+                    }
+
                     if let Some(symbol) = self.symbol_table.lookup(name) {
                         let sym_type = symbol.type_.clone();
                         match &sym_type {
@@ -2233,6 +2330,22 @@ impl TypeChecker {
                             }
                             _ => Type::Unknown,
                         }
+                    } else if (name == "ptr_add" || name == "ptr_offset") && typed_arguments.len() == 2 {
+                        if !matches!(typed_arguments[0].type_, Type::RawPointer(_)) {
+                            return Err(RozeError::type_error(
+                                format!("'{}' expects first argument to be a raw pointer, got {}", name, typed_arguments[0].type_),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                        if !self.is_compatible(&Type::Int, &typed_arguments[1].type_) {
+                            return Err(RozeError::type_error(
+                                format!("'{}' expects second argument (offset) to be int, got {}", name, typed_arguments[1].type_),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                        typed_arguments[0].type_.clone()
                     } else if let Some(sig) = self.functions.get(name) {
                         // Validate argument count and each argument's
                         // type against the declared signature -- the
@@ -2791,6 +2904,13 @@ impl TypeChecker {
                         ).into());
                     }
                 }
+            }
+            Expression::Unsafe { expr, location: _ } => {
+                let prev_unsafe = self.in_unsafe;
+                self.in_unsafe = true;
+                let res = self.check_expression(expr);
+                self.in_unsafe = prev_unsafe;
+                res
             }
         }
     }

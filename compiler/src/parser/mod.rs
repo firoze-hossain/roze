@@ -116,6 +116,7 @@ impl Parser {
             Token::Trait => self.parse_trait(),
             Token::Impl => self.parse_impl(),
             Token::Extern => self.parse_extern_function(),
+            Token::Unsafe => self.parse_unsafe_block(),
             _ => {
                 // Parse a full expression first, then decide: if `=`
                 // follows, this is an assignment (either to a bare name
@@ -1120,6 +1121,19 @@ impl Parser {
         })
     }
 
+    fn parse_unsafe_block(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // Skip 'unsafe'
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        let body = self.parse_block()?;
+        Ok(Statement::UnsafeBlock {
+            body: Box::new(body),
+            location,
+        })
+    }
+
     fn parse_pattern(&mut self) -> Result<Pattern> {
         let location = Location::new(self.current().line, self.current().column);
         match &self.current().token {
@@ -1469,6 +1483,22 @@ impl Parser {
     }
 
     fn parse_type_name(&mut self) -> Result<String> {
+        if self.check(&Token::Star) {
+            self.advance(); // Skip '*'
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if !self.check(&Token::Raw) {
+                return Err(self.error("Expected 'raw' after '*' in pointer type (e.g. '*raw u8')"));
+            }
+            self.advance(); // Skip 'raw'
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            let pointee_type = self.parse_type_name()?;
+            return Ok(format!("*raw {}", pointee_type));
+        }
+
         if self.check(&Token::Func) {
             self.advance(); // Skip 'func'
             if !self.check(&Token::LeftParen) {
@@ -1971,6 +2001,36 @@ impl Parser {
             }
             Token::Or | Token::Pipe => {
                 self.parse_closure(location)
+            }
+            Token::Unsafe => {
+                self.advance(); // Skip 'unsafe'
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::LeftBrace) {
+                    self.advance(); // Skip '{'
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    let expr = self.parse_expression()?;
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    if !self.check(&Token::RightBrace) {
+                        return Err(self.error("Expected '}' after unsafe expression"));
+                    }
+                    self.advance(); // Skip '}'
+                    Ok(Expression::Unsafe {
+                        expr: Box::new(expr),
+                        location,
+                    })
+                } else {
+                    let expr = self.parse_expression()?;
+                    Ok(Expression::Unsafe {
+                        expr: Box::new(expr),
+                        location,
+                    })
+                }
             }
             Token::Error => {
                 Err(RozeError::lexer("Unrecognized character", current_token.line, current_token.column).into())

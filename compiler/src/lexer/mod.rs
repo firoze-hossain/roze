@@ -269,6 +269,8 @@ impl<'a> Lexer<'a> {
                             "impl" => Token::Impl,
                             "this" => Token::This,
                             "extern" => Token::Extern,
+                            "unsafe" => Token::Unsafe,
+                            "raw" => Token::Raw,
                             "true" => Token::True,
                             "false" => Token::False,
                             "null" => Token::Null,

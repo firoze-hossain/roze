@@ -1184,6 +1184,145 @@ const CONCURRENCY_HELPER_METHODS: &str = r#"
     }
 "#;
 
+const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
+    private static final Object __ROZE_UNSAFE;
+    private static final java.lang.reflect.Method __ROZE_ALLOC;
+    private static final java.lang.reflect.Method __ROZE_REALLOC;
+    private static final java.lang.reflect.Method __ROZE_FREE;
+    private static final java.lang.reflect.Method __ROZE_GET_BYTE;
+    private static final java.lang.reflect.Method __ROZE_PUT_BYTE;
+    private static final java.lang.reflect.Method __ROZE_GET_LONG;
+    private static final java.lang.reflect.Method __ROZE_PUT_LONG;
+    private static final java.lang.reflect.Method __ROZE_SET_MEM;
+    private static final java.lang.reflect.Method __ROZE_COPY_MEM;
+
+    static {
+        Object u = null;
+        java.lang.reflect.Method alloc = null, realloc = null, free = null;
+        java.lang.reflect.Method gb = null, pb = null, gl = null, pl = null;
+        java.lang.reflect.Method sm = null, cm = null;
+        try {
+            Class<?> uc = Class.forName("sun.misc.Unsafe");
+            java.lang.reflect.Field f = uc.getDeclaredField("theUnsafe");
+            f.setAccessible(true);
+            u = f.get(null);
+            alloc = uc.getMethod("allocateMemory", long.class);
+            realloc = uc.getMethod("reallocateMemory", long.class, long.class);
+            free = uc.getMethod("freeMemory", long.class);
+            gb = uc.getMethod("getByte", long.class);
+            pb = uc.getMethod("putByte", long.class, byte.class);
+            gl = uc.getMethod("getLong", long.class);
+            pl = uc.getMethod("putLong", long.class, long.class);
+            sm = uc.getMethod("setMemory", long.class, long.class, byte.class);
+            cm = uc.getMethod("copyMemory", long.class, long.class, long.class);
+        } catch (Throwable t) {}
+        __ROZE_UNSAFE = u;
+        __ROZE_ALLOC = alloc;
+        __ROZE_REALLOC = realloc;
+        __ROZE_FREE = free;
+        __ROZE_GET_BYTE = gb;
+        __ROZE_PUT_BYTE = pb;
+        __ROZE_GET_LONG = gl;
+        __ROZE_PUT_LONG = pl;
+        __ROZE_SET_MEM = sm;
+        __ROZE_COPY_MEM = cm;
+    }
+
+    private static long __roze_alloc(long size) {
+        try {
+            return (Long) __ROZE_ALLOC.invoke(__ROZE_UNSAFE, size);
+        } catch (Exception e) {
+            throw new RuntimeException("alloc failed: " + e.getMessage());
+        }
+    }
+
+    private static long __roze_alloc_zeroed(long size) {
+        long ptr = __roze_alloc(size);
+        __roze_mem_set(ptr, 0, size);
+        return ptr;
+    }
+
+    private static long __roze_realloc(long ptr, long new_size) {
+        try {
+            return (Long) __ROZE_REALLOC.invoke(__ROZE_UNSAFE, ptr, new_size);
+        } catch (Exception e) {
+            throw new RuntimeException("realloc failed: " + e.getMessage());
+        }
+    }
+
+    private static void __roze_free(long ptr) {
+        try {
+            __ROZE_FREE.invoke(__ROZE_UNSAFE, ptr);
+        } catch (Exception e) {
+            throw new RuntimeException("free failed: " + e.getMessage());
+        }
+    }
+
+    private static int __roze_ptr_read_u8(long ptr) {
+        try {
+            return ((Byte) __ROZE_GET_BYTE.invoke(__ROZE_UNSAFE, ptr)) & 0xFF;
+        } catch (Exception e) {
+            throw new RuntimeException("ptr_read_u8 failed: " + e.getMessage());
+        }
+    }
+
+    private static int __roze_ptr_read(long ptr) {
+        try {
+            return (int) (long) (Long) __ROZE_GET_LONG.invoke(__ROZE_UNSAFE, ptr);
+        } catch (Exception e) {
+            throw new RuntimeException("ptr_read failed: " + e.getMessage());
+        }
+    }
+
+    private static int __roze_ptr_read_u8_at(long ptr, long offset) {
+        return __roze_ptr_read_u8(ptr + offset);
+    }
+
+    private static int __roze_ptr_read_at(long ptr, long offset) {
+        return __roze_ptr_read(ptr + offset);
+    }
+
+    private static void __roze_ptr_write_u8(long ptr, int val) {
+        try {
+            __ROZE_PUT_BYTE.invoke(__ROZE_UNSAFE, ptr, (byte) val);
+        } catch (Exception e) {
+            throw new RuntimeException("ptr_write_u8 failed: " + e.getMessage());
+        }
+    }
+
+    private static void __roze_ptr_write(long ptr, long val) {
+        try {
+            __ROZE_PUT_LONG.invoke(__ROZE_UNSAFE, ptr, val);
+        } catch (Exception e) {
+            throw new RuntimeException("ptr_write failed: " + e.getMessage());
+        }
+    }
+
+    private static void __roze_ptr_write_u8_at(long ptr, long offset, int val) {
+        __roze_ptr_write_u8(ptr + offset, val);
+    }
+
+    private static void __roze_ptr_write_at(long ptr, long offset, long val) {
+        __roze_ptr_write(ptr + offset, val);
+    }
+
+    private static void __roze_mem_copy(long dest, long src, long count) {
+        try {
+            __ROZE_COPY_MEM.invoke(__ROZE_UNSAFE, src, dest, count);
+        } catch (Exception e) {
+            throw new RuntimeException("mem_copy failed: " + e.getMessage());
+        }
+    }
+
+    private static void __roze_mem_set(long dest, int val, long count) {
+        try {
+            __ROZE_SET_MEM.invoke(__ROZE_UNSAFE, dest, count, (byte) val);
+        } catch (Exception e) {
+            throw new RuntimeException("mem_set failed: " + e.getMessage());
+        }
+    }
+"#;
+
 /// Returns the Java return type for a built-in Core (string/math)
 /// intrinsic, or None if `name` isn't one. Keep this in sync with
 /// `semantic::builtin_signatures`.
@@ -1286,6 +1425,17 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "channel_close" => Some("void"),
         "channel_is_closed" => Some("boolean"),
         "channel_len" => Some("int"),
+
+        // Unsafe Raw Pointers & Direct Memory (MED-05)
+        "alloc" | "alloc_zeroed" | "realloc" => Some("long"),
+        "free" => Some("void"),
+        "ptr_read_u8" | "ptr_read" | "ptr_read_i64" | "ptr_read_at" | "ptr_read_u8_at" => Some("int"),
+        "ptr_write_u8" | "ptr_write" | "ptr_write_i64" | "ptr_write_at" | "ptr_write_u8_at" => Some("void"),
+        "ptr_add" | "ptr_offset" => Some("long"),
+        "ptr_diff" | "ptr_to_int" => Some("int"),
+        "int_to_ptr" => Some("long"),
+        "ptr_is_null" => Some("boolean"),
+        "mem_copy" | "mem_set" => Some("void"),
 
         _ => None,
     }
@@ -1513,6 +1663,7 @@ impl JavaSourceGenerator {
         source.push_str(SQL_HELPER_METHODS);
         source.push_str(OPTION_RESULT_HELPER_METHODS);
         source.push_str(CONCURRENCY_HELPER_METHODS);
+        source.push_str(DIRECT_MEMORY_HELPER_METHODS);
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);
@@ -2079,6 +2230,9 @@ impl JavaSourceGenerator {
                 self.generate_statement(source, body, indent + 1, return_type, is_closure)?;
                 source.push_str(&format!("{}}}\n", indent_str));
             }
+            TypedStatement::UnsafeBlock { body, .. } => {
+                self.generate_statement(source, body, indent, return_type, is_closure)?;
+            }
             TypedStatement::TraitDecl { .. } | TypedStatement::ImplDecl { .. } | TypedStatement::ExternFunction { .. } => {}
         }
 
@@ -2196,7 +2350,11 @@ impl JavaSourceGenerator {
                 source.push_str(&format!("{}", value));
             }
             TypedExpressionKind::Null => {
-                source.push_str("null");
+                if matches!(expr.type_, Type::RawPointer(_)) {
+                    source.push_str("0L");
+                } else {
+                    source.push_str("null");
+                }
             }
             TypedExpressionKind::Call { function, arguments } => {
                 if (function == "list_get" || function == "map_get" || function == "channel_recv" || function == "recv" || function == "thread_join") && expr.type_ != Type::Unknown {
@@ -2892,6 +3050,133 @@ impl JavaSourceGenerator {
             "channel_len" if arguments.len() == 1 => {
                 source.push_str("__roze_channel_len(");
                 self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+
+            // Direct memory intrinsics (MED-05)
+            "alloc" if arguments.len() == 1 => {
+                source.push_str("__roze_alloc(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "alloc_zeroed" if arguments.len() == 1 => {
+                source.push_str("__roze_alloc_zeroed(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "realloc" if arguments.len() == 2 => {
+                source.push_str("__roze_realloc(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "free" if arguments.len() == 1 => {
+                source.push_str("__roze_free(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "ptr_read_u8" if arguments.len() == 1 => {
+                source.push_str("__roze_ptr_read_u8(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "ptr_read" | "ptr_read_i64" if arguments.len() == 1 => {
+                source.push_str("__roze_ptr_read(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "ptr_read_at" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_read_at(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_read_u8_at" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_read_u8_at(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_write_u8" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_write_u8(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_write" | "ptr_write_i64" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_write(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_write_at" if arguments.len() == 3 => {
+                source.push_str("__roze_ptr_write_at(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "ptr_write_u8_at" if arguments.len() == 3 => {
+                source.push_str("__roze_ptr_write_u8_at(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "ptr_add" | "ptr_offset" if arguments.len() == 2 => {
+                source.push('(');
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(" + ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_diff" if arguments.len() == 2 => {
+                source.push_str("((int) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(" - ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str("))");
+            }
+            "ptr_to_int" if arguments.len() == 1 => {
+                source.push_str("((int) ");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "int_to_ptr" if arguments.len() == 1 => {
+                source.push_str("((long) ");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "ptr_is_null" if arguments.len() == 1 => {
+                source.push('(');
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(" == 0L)");
+            }
+            "mem_copy" if arguments.len() == 3 => {
+                source.push_str("__roze_mem_copy(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "mem_set" if arguments.len() == 3 => {
+                source.push_str("__roze_mem_set(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
                 source.push(')');
             }
 

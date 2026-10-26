@@ -2156,3 +2156,104 @@ func main() {
     assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
     assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
 }
+
+#[test]
+fn native_unsafe_raw_pointers_and_direct_memory() {
+    let source = std::fs::read_to_string("tests/fixtures/unsafe_memory.roze")
+        .or_else(|_| std::fs::read_to_string("compiler/tests/fixtures/unsafe_memory.roze"))
+        .expect("read unsafe_memory fixture");
+    let (stdout, stderr, ok) = run_native_source("unsafe_mem", &source);
+    assert!(ok, "native build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+false
+65
+66
+1
+7
+7
+7
+123456789
+987654321
+65
+true";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
+fn unsafe_intrinsic_outside_unsafe_block_is_rejected() {
+    let dir = scratch_dir("unsafe_rejected");
+    let source = "func main() { let p = alloc(16); }\n";
+    std::fs::write(dir.join("bad.roze"), source).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("bad.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke roze");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Call to unsafe intrinsic 'alloc' requires an 'unsafe { ... }' block"),
+        "expected clear rejection of unsafe intrinsic outside unsafe block, got:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn no_leak_with_unsafe_raw_pointers_and_direct_memory() {
+    let dir = scratch_dir("valgrind_unsafe");
+    let source = r#"
+func main() {
+    unsafe {
+        for let i = 0; i < 50; i = i + 1 {
+            let p: *raw u8 = alloc(64);
+            ptr_write_u8(p, 42);
+            let v = ptr_read_u8(p);
+            let p2 = realloc(p, 128);
+            free(p2);
+        }
+    }
+}
+"#;
+    let file_name = "unsafe_leak.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    // Run directly
+    let run_output = Command::new("./unsafe_leak")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run unsafe_leak");
+    assert!(run_output.status.success());
+
+    // If valgrind is available, verify zero leaks
+    if let Ok(valgrind_output) = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=1")
+        .arg("./unsafe_leak")
+        .current_dir(&dir)
+        .output()
+    {
+        let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+        assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+        assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+    }
+}

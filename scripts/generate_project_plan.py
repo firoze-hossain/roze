@@ -234,13 +234,13 @@ s1_rows = [
         ("MED-05", 8), ("Medium", 4), ("Step 10", 8), "Frontend & Native Backend", "Unsafe Raw Pointers & Direct Memory",
         "Low-level direct memory access for security research, packet inspection, hardware I/O, binary reverse-engineering, and high-speed game buffers.",
         "'unsafe { ... }' block syntax; raw pointer types '*raw u8', '*raw int'; pointer read/write intrinsics; direct memory allocation without ARC header overhead.",
-        "Security/Hacking, OS Development, Game Engines", "3 - 5 Days", ("Ready to Start", 7)
+        "Security/Hacking, OS Development, Game Engines", "Completed", ("Completed", 6)
     ],
     [
         ("MED-06", 8), ("Medium", 4), ("Step 11", 8), "Tooling (roze-pkg)", "Package Registry & Dependency Resolver",
         "Allow developers to install, share, and manage third-party libraries seamlessly from a central registry or Git repos.",
         "Implement Git-based dependency fetching, semantic version resolution (semver), lockfile generation ('roze.lock'), and binary package caching.",
-        "Developer Experience, Ecosystem Growth", "1 - 2 Weeks", ("Planned", 8)
+        "Developer Experience, Ecosystem Growth", "1 - 2 Weeks", ("Ready to Start", 7)
     ],
 
     # ADVANCED STAGE
@@ -310,18 +310,18 @@ s2_rows = [
         "Monolithic/microkernel OS, custom bootloaders, hardware drivers, embedded firmware",
         "Cranelift native backend emits standalone ELF/PE binaries with libc ARC",
         "Bare-metal freestanding mode (no glibc, no malloc), raw unsafe pointers, inline assembly, linker scripts",
-        "MED-05, ADV-01, ADV-02",
+        "MED-05 (Done), ADV-01, ADV-02",
         "C, Rust (no_std), Zig",
-        ("15% - Spike Stage", 5)
+        ("25% - Unsafe Pointers Ready", 5)
     ],
     [
         "Security & Penetration Testing",
         "Custom network sniffers, exploit payloads, binary reverse-engineering tools, memory analyzers",
         "Native standalone executables, TCP sockets, float/math, safe Result error handling",
         "Raw byte buffers, unsafe memory pointers, FFI bindings to libpcap, OpenSSL, and raw packet sockets",
-        "MED-01 (Done), MED-05",
+        "MED-01 (Done), MED-05 (Done)",
         "Python (Scapy), Go, C, Rust",
-        ("40% - FFI Enabled", 4)
+        ("60% - Raw Memory & FFI Ready", 6)
     ],
     [
         "Games & Interactive Platforms",

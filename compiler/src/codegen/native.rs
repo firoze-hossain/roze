@@ -139,6 +139,9 @@ fn collect_closures_and_refs_from_stmt(
                 collect_closures_and_refs_from_stmt(m, closures, func_refs);
             }
         }
+        TypedStatement::UnsafeBlock { body, .. } => {
+            collect_closures_and_refs_from_stmt(body, closures, func_refs);
+        }
         TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } | TypedStatement::TraitDecl { .. } | TypedStatement::ExternFunction { .. } => {}
     }
 }
@@ -368,7 +371,7 @@ fn expression_is_borrowed(expr: &TypedExpression) -> bool {
 
 fn require_supported_type(ty: &Type, _location: &Location, _context: &str) -> Result<()> {
     match ty {
-        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result | Type::Enum(_) | Type::Function { .. } | Type::Generic { .. } | Type::Trait(_) => Ok(()),
+        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result | Type::Enum(_) | Type::Function { .. } | Type::Generic { .. } | Type::Trait(_) | Type::U8 | Type::RawPointer(_) => Ok(()),
     }
 }
 
@@ -2135,6 +2138,57 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
     })
 }
 
+struct RawMemoryRuntime {
+    malloc_id: FuncId,
+    calloc_id: FuncId,
+    realloc_id: FuncId,
+    free_id: FuncId,
+    memcpy_id: FuncId,
+    memset_id: FuncId,
+}
+
+fn declare_raw_memory_runtime(module: &mut ObjectModule) -> Result<RawMemoryRuntime> {
+    let mut i64_to_i64 = module.make_signature();
+    i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_i64_to_i64 = module.make_signature();
+    i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_to_void = module.make_signature();
+    i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_i64_i64_to_i64 = module.make_signature();
+    i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let malloc_id = module.declare_function("malloc", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let calloc_id = module.declare_function("calloc", Linkage::Import, &i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let realloc_id = module.declare_function("realloc", Linkage::Import, &i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let free_id = module.declare_function("free", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let memcpy_id = module.declare_function("memcpy", Linkage::Import, &i64_i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let memset_id = module.declare_function("memset", Linkage::Import, &i64_i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    Ok(RawMemoryRuntime {
+        malloc_id,
+        calloc_id,
+        realloc_id,
+        free_id,
+        memcpy_id,
+        memset_id,
+    })
+}
+
 /// A native class instance is a pointer to a heap block:
 ///
 ///   [0..8)          i64  refcount
@@ -2451,6 +2505,7 @@ struct NativeGenerator<'a> {
     lists: ListRuntime,
     maps: MapRuntime,
     concurrency: ConcurrencyRuntime,
+    raw_memory: RawMemoryRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -2520,6 +2575,7 @@ impl<'a> NativeGenerator<'a> {
         let lists = declare_list_runtime(module, printf_id)?;
         let maps = declare_map_runtime(module)?;
         let concurrency = declare_concurrency_runtime(module)?;
+        let raw_memory = declare_raw_memory_runtime(module)?;
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
@@ -2545,6 +2601,7 @@ impl<'a> NativeGenerator<'a> {
             lists,
             maps,
             concurrency,
+            raw_memory,
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
@@ -2893,6 +2950,7 @@ impl<'a> NativeGenerator<'a> {
                     map_size_id: self.maps.size_id,
                     map_is_empty_id: self.maps.is_empty_id,
                     concurrency: &self.concurrency,
+                    raw_memory: &self.raw_memory,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
@@ -3006,6 +3064,7 @@ impl<'a> NativeGenerator<'a> {
                                 map_size_id: self.maps.size_id,
                                 map_is_empty_id: self.maps.is_empty_id,
                                 concurrency: &self.concurrency,
+                                raw_memory: &self.raw_memory,
                                 classes: &self.classes,
                                 class_retain_id: self.class_retain_id,
                                 literal_counter: &mut self.literal_counter,
@@ -3104,6 +3163,7 @@ impl<'a> NativeGenerator<'a> {
                         map_size_id: self.maps.size_id,
                         map_is_empty_id: self.maps.is_empty_id,
                         concurrency: &self.concurrency,
+                        raw_memory: &self.raw_memory,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
@@ -3243,6 +3303,7 @@ struct FunctionCompiler<'a, 'b> {
     map_size_id: FuncId,
     map_is_empty_id: FuncId,
     concurrency: &'a ConcurrencyRuntime,
+    raw_memory: &'a RawMemoryRuntime,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -3953,6 +4014,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
                 Ok(false)
             }
+            TypedStatement::UnsafeBlock { body, .. } => {
+                self.compile_statement(body)
+            }
         }
     }
 
@@ -4519,6 +4583,124 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.release_if_fresh(&arguments[0], chan_val)?;
                 return Ok(result);
             }
+
+            // Direct memory intrinsics (MED-05)
+            "alloc" if arguments.len() == 1 => {
+                let size_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_memory.malloc_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[size_val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "alloc_zeroed" if arguments.len() == 1 => {
+                let size_val = self.compile_expression(&arguments[0])?;
+                let one_val = self.builder.ins().iconst(VALUE_TYPE, 1);
+                let func_ref = self.module.declare_func_in_func(self.raw_memory.calloc_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[one_val, size_val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "realloc" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let size_val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_memory.realloc_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ptr_val, size_val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "free" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_memory.free_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[ptr_val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_read_u8" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let byte_val = self.builder.ins().load(types::I8, MemFlags::trusted(), ptr_val, 0);
+                return Ok(self.builder.ins().uextend(VALUE_TYPE, byte_val));
+            }
+            "ptr_read" | "ptr_read_i64" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                return Ok(self.builder.ins().load(types::I64, MemFlags::trusted(), ptr_val, 0));
+            }
+            "ptr_read_at" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                return Ok(self.builder.ins().load(types::I64, MemFlags::trusted(), addr, 0));
+            }
+            "ptr_read_u8_at" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                let byte_val = self.builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+                return Ok(self.builder.ins().uextend(VALUE_TYPE, byte_val));
+            }
+            "ptr_write_u8" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let byte_val = self.builder.ins().ireduce(types::I8, val);
+                self.builder.ins().store(MemFlags::trusted(), byte_val, ptr_val, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_write" | "ptr_write_i64" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                self.builder.ins().store(MemFlags::trusted(), val, ptr_val, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_write_at" if arguments.len() == 3 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let val = self.compile_expression(&arguments[2])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                self.builder.ins().store(MemFlags::trusted(), val, addr, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_write_u8_at" if arguments.len() == 3 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let val = self.compile_expression(&arguments[2])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                let byte_val = self.builder.ins().ireduce(types::I8, val);
+                self.builder.ins().store(MemFlags::trusted(), byte_val, addr, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_add" | "ptr_offset" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                return Ok(self.builder.ins().iadd(ptr_val, offset_val));
+            }
+            "ptr_diff" if arguments.len() == 2 => {
+                let p1_val = self.compile_expression(&arguments[0])?;
+                let p2_val = self.compile_expression(&arguments[1])?;
+                return Ok(self.builder.ins().isub(p1_val, p2_val));
+            }
+            "ptr_to_int" if arguments.len() == 1 => {
+                return self.compile_expression(&arguments[0]);
+            }
+            "int_to_ptr" if arguments.len() == 1 => {
+                return self.compile_expression(&arguments[0]);
+            }
+            "ptr_is_null" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let zero = self.builder.ins().iconst(VALUE_TYPE, 0);
+                let cmp = self.builder.ins().icmp(IntCC::Equal, ptr_val, zero);
+                return Ok(self.builder.ins().uextend(VALUE_TYPE, cmp));
+            }
+            "mem_copy" if arguments.len() == 3 => {
+                let dest_val = self.compile_expression(&arguments[0])?;
+                let src_val = self.compile_expression(&arguments[1])?;
+                let count_val = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_memory.memcpy_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[dest_val, src_val, count_val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "mem_set" if arguments.len() == 3 => {
+                let dest_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let count_val = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_memory.memset_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[dest_val, val, count_val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
             _ => {}
         }
 
@@ -4609,7 +4791,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let selected_ptr = self.builder.ins().select(val, true_ptr, false_ptr);
                 self.emit_printf(self.fmt_str, selected_ptr)
             }
-            Type::Int | Type::Unknown => {
+            Type::Int | Type::U8 | Type::RawPointer(_) | Type::Unknown => {
                 let val = self.compile_expression(arg)?;
                 self.emit_printf(self.fmt_int, val)
             }

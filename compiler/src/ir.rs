@@ -138,6 +138,10 @@ pub enum TypedStatement {
         return_type: Type,
         location: Location,
     },
+    UnsafeBlock {
+        body: Box<TypedStatement>,
+        location: Location,
+    },
     // Deliberately no `Import` variant: imports are resolved into real
     // functions before type-checking ever runs (see
     // imports::resolve_imports), so by the time this IR exists, no

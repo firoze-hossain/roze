@@ -1,0 +1,30 @@
+// stdlib/src/vga.roze
+//
+// Roze Bare-Metal VGA Text Mode Driver (x86_64)
+// Directly interfaces with video memory at 0xb8000 for kernel & freestanding development.
+
+// VGA Color Constants
+// Black = 0, Blue = 1, Green = 2, Cyan = 3, Red = 4, Magenta = 5, Brown = 6, LightGray = 7
+// DarkGray = 8, LightBlue = 9, LightGreen = 10, LightCyan = 11, LightRed = 12, Pink = 13, Yellow = 14, White = 15
+
+func vga_color_entry(fg: int, bg: int) -> int {
+    return (bg * 16) + fg;
+}
+
+// Clears the 80x25 VGA buffer with blank spaces (attribute 0x0F: White on Black).
+extern "C" func vga_clear();
+
+// Prints a null-terminated string to the VGA buffer at current cursor position.
+extern "C" func vga_print(s: string);
+
+// Writes a character and color attribute at the specified row and column (0..24, 0..79).
+extern "C" func vga_write_char(row: int, col: int, ch: int, color: int);
+
+// Writes a raw byte to the VGA memory buffer at physical address (0xb8000 + offset).
+extern "C" func vga_write_byte(offset: int, byte_val: int);
+
+// Sets the current text cursor position (row 0..24, col 0..79).
+extern "C" func vga_set_cursor(row: int, col: int);
+
+// Sets the default foreground and background text colors.
+extern "C" func vga_set_color(fg: int, bg: int);

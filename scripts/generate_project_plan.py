@@ -248,13 +248,13 @@ s1_rows = [
         ("ADV-01", 8), ("Advanced", 5), ("Step 12", 8), "Native Codegen & Linker", "Freestanding / no_std Kernel Target",
         "Compile code that runs directly on bare metal CPU with zero OS, zero glibc, and zero mandatory runtime underneath.",
         "'--target freestanding' compiler flag; custom '_start' entry point; disable libc malloc/printf; raw VGA buffer text driver; linker script integration.",
-        "Operating System Kernel, Embedded Firmware", "1 - 2 Weeks", ("Ready to Start", 7)
+        "Operating System Kernel, Embedded Firmware", "Completed", ("Completed", 6)
     ],
     [
         ("ADV-02", 8), ("Advanced", 5), ("Step 13", 8), "Systems & OS Demo", "Bootable x86_64 OS Kernel Demo",
         "Provide indisputable proof that Roze can build an operating system from scratch.",
         "Write a minimal 64-bit multiboot2 kernel in Roze; boot via GRUB/QEMU; print hardware info and manage basic physical memory frames.",
-        "Operating System Proof-of-Concept", "1 - 2 Weeks", ("Planned", 8)
+        "Operating System Proof-of-Concept", "1 - 2 Weeks", ("Ready to Start", 7)
     ],
     [
         ("ADV-03", 8), ("Advanced", 5), ("Step 14", 8), "Web Framework Project", "Spring-Boot-Style Framework ('RozeBoot')",
@@ -310,9 +310,9 @@ s2_rows = [
         "Monolithic/microkernel OS, custom bootloaders, hardware drivers, embedded firmware",
         "Cranelift native backend emits standalone ELF/PE binaries with libc ARC",
         "Bare-metal freestanding mode (no glibc, no malloc), raw unsafe pointers, inline assembly, linker scripts",
-        "MED-05 (Done), ADV-01, ADV-02",
+        "MED-05 (Done), ADV-01 (Done), ADV-02",
         "C, Rust (no_std), Zig",
-        ("25% - Unsafe Pointers Ready", 5)
+        ("75% - Freestanding Kernel Target Ready", 6)
     ],
     [
         "Security & Penetration Testing",

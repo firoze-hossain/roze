@@ -267,6 +267,481 @@ pub fn compile_to_native(program: TypedProgram, input_file: &str, extra_libs: &[
     Ok(())
 }
 
+pub const DEFAULT_FREESTANDING_LINKER_SCRIPT: &str = r#"ENTRY(_start)
+
+SECTIONS
+{
+    . = 1M;
+
+    .boot : ALIGN(4K)
+    {
+        *(.boot)
+    }
+
+    .text : ALIGN(4K)
+    {
+        *(.text*)
+    }
+
+    .rodata : ALIGN(4K)
+    {
+        *(.rodata*)
+    }
+
+    .data : ALIGN(4K)
+    {
+        *(.data*)
+    }
+
+    .bss : ALIGN(4K)
+    {
+        *(COMMON)
+        *(.bss*)
+    }
+}
+"#;
+
+pub const FREESTANDING_RUNTIME_C: &str = r#"
+// Roze Bare-Metal Freestanding Runtime (Zero libc, Zero glibc, Zero OS)
+
+// 1. Multiboot 1 Header (.boot section)
+__attribute__((section(".boot"), used))
+const unsigned int multiboot_header[3] = {
+    0x1BADB002,
+    0x00000003,
+    -(0x1BADB002 + 0x00000003)
+};
+
+// 2. Multiboot 2 Header (.boot section)
+__attribute__((section(".boot"), used, aligned(8)))
+const unsigned int multiboot2_header[6] = {
+    0xE85250D6,
+    0,
+    24,
+    -(0xE85250D6 + 0 + 24),
+    0,
+    8
+};
+
+// 3. VGA Text Mode Buffer Driver (0xb8000)
+#define VGA_BUFFER ((volatile unsigned short *)0xb8000)
+#define VGA_WIDTH 80
+#define VGA_HEIGHT 25
+
+static int vga_cursor_row = 0;
+static int vga_cursor_col = 0;
+static unsigned char vga_active_color = 0x0F; // White on Black
+
+void vga_clear(void) {
+    for (int i = 0; i < VGA_WIDTH * VGA_HEIGHT; i++) {
+        VGA_BUFFER[i] = (unsigned short)' ' | ((unsigned short)vga_active_color << 8);
+    }
+    vga_cursor_row = 0;
+    vga_cursor_col = 0;
+}
+
+void vga_set_color(long fg, long bg) {
+    vga_active_color = (unsigned char)((bg << 4) | (fg & 0x0F));
+}
+
+void vga_set_cursor(long row, long col) {
+    if (row >= 0 && row < VGA_HEIGHT) vga_cursor_row = (int)row;
+    if (col >= 0 && col < VGA_WIDTH) vga_cursor_col = (int)col;
+}
+
+void vga_write_char(long row, long col, long ch, long color) {
+    if (row >= 0 && row < VGA_HEIGHT && col >= 0 && col < VGA_WIDTH) {
+        VGA_BUFFER[row * VGA_WIDTH + col] = (unsigned short)(ch & 0xFF) | ((unsigned short)(color & 0xFF) << 8);
+    }
+}
+
+void vga_write_byte(long offset, long byte_val) {
+    volatile unsigned char *vga_bytes = (volatile unsigned char *)0xb8000;
+    if (offset >= 0 && offset < VGA_WIDTH * VGA_HEIGHT * 2) {
+        vga_bytes[offset] = (unsigned char)(byte_val & 0xFF);
+    }
+}
+
+static void vga_scroll(void) {
+    for (int r = 0; r < VGA_HEIGHT - 1; r++) {
+        for (int c = 0; c < VGA_WIDTH; c++) {
+            VGA_BUFFER[r * VGA_WIDTH + c] = VGA_BUFFER[(r + 1) * VGA_WIDTH + c];
+        }
+    }
+    for (int c = 0; c < VGA_WIDTH; c++) {
+        VGA_BUFFER[(VGA_HEIGHT - 1) * VGA_WIDTH + c] = (unsigned short)' ' | ((unsigned short)vga_active_color << 8);
+    }
+    vga_cursor_row = VGA_HEIGHT - 1;
+}
+
+void vga_putchar(char c) {
+    if (c == '\n') {
+        vga_cursor_col = 0;
+        vga_cursor_row++;
+    } else if (c == '\r') {
+        vga_cursor_col = 0;
+    } else if (c == '\t') {
+        vga_cursor_col = (vga_cursor_col + 4) & ~3;
+    } else {
+        VGA_BUFFER[vga_cursor_row * VGA_WIDTH + vga_cursor_col] = 
+            (unsigned short)(unsigned char)c | ((unsigned short)vga_active_color << 8);
+        vga_cursor_col++;
+    }
+    if (vga_cursor_col >= VGA_WIDTH) {
+        vga_cursor_col = 0;
+        vga_cursor_row++;
+    }
+    if (vga_cursor_row >= VGA_HEIGHT) {
+        vga_scroll();
+    }
+}
+
+void vga_print(const char *s) {
+    if (!s) return;
+    while (*s) {
+        vga_putchar(*s++);
+    }
+}
+
+void __roze_vga_print_str(const char *s) {
+    vga_print(s);
+    vga_putchar('\n');
+}
+
+void __roze_vga_print_int(long val) {
+    if (val == 0) {
+        vga_putchar('0');
+        vga_putchar('\n');
+        return;
+    }
+    if (val < 0) {
+        vga_putchar('-');
+        val = -val;
+    }
+    char buf[32];
+    int i = 0;
+    while (val > 0) {
+        buf[i++] = (char)('0' + (val % 10));
+        val /= 10;
+    }
+    while (i > 0) {
+        vga_putchar(buf[--i]);
+    }
+    vga_putchar('\n');
+}
+
+void __roze_vga_print_bool(long val) {
+    if (val) {
+        vga_print("true\n");
+    } else {
+        vga_print("false\n");
+    }
+}
+
+int __roze_freestanding_printf(const char *fmt, long val) {
+    (void)val;
+    vga_print(fmt);
+    return 0;
+}
+
+char *__roze_freestanding_gcvt(double number, int ndigit, char *buf) {
+    (void)number; (void)ndigit;
+    if (buf) { buf[0] = '0'; buf[1] = '\0'; }
+    return buf;
+}
+
+// 4. Freestanding Memory Bump Allocator (Zero libc malloc/free)
+static unsigned char __roze_freestanding_heap_pool[1048576]; // 1MB BSS Kernel Heap
+static unsigned long __roze_freestanding_heap_offset = 0;
+
+void *__roze_freestanding_alloc(long size) {
+    if (size <= 0) return (void *)0;
+    unsigned long aligned = (__roze_freestanding_heap_offset + 7) & ~7;
+    if (aligned + size > sizeof(__roze_freestanding_heap_pool)) {
+        return (void *)0;
+    }
+    __roze_freestanding_heap_offset = aligned + size;
+    return (void *)&__roze_freestanding_heap_pool[aligned];
+}
+
+void *__roze_freestanding_alloc_zeroed(long size) {
+    void *ptr = __roze_freestanding_alloc(size);
+    if (ptr) {
+        unsigned char *p = (unsigned char *)ptr;
+        for (long i = 0; i < size; i++) p[i] = 0;
+    }
+    return ptr;
+}
+
+void __roze_freestanding_free(void *ptr) {
+    (void)ptr;
+}
+
+void *__roze_freestanding_realloc(void *ptr, long size) {
+    void *new_ptr = __roze_freestanding_alloc(size);
+    if (ptr && new_ptr) {
+        unsigned char *d = (unsigned char *)new_ptr;
+        unsigned char *s = (unsigned char *)ptr;
+        for (long i = 0; i < size; i++) d[i] = s[i];
+    }
+    return new_ptr;
+}
+
+void *alloc(long size) { return __roze_freestanding_alloc(size); }
+void *alloc_zeroed(long size) { return __roze_freestanding_alloc_zeroed(size); }
+void free(void *ptr) { __roze_freestanding_free(ptr); }
+void *realloc(void *ptr, long size) { return __roze_freestanding_realloc(ptr, size); }
+
+void *memcpy(void *dest, const void *src, unsigned long n) {
+    unsigned char *d = (unsigned char *)dest;
+    const unsigned char *s = (const unsigned char *)src;
+    for (unsigned long i = 0; i < n; i++) d[i] = s[i];
+    return dest;
+}
+
+void *memset(void *s, int c, unsigned long n) {
+    unsigned char *p = (unsigned char *)s;
+    for (unsigned long i = 0; i < n; i++) p[i] = (unsigned char)c;
+    return s;
+}
+
+int memcmp(const void *s1, const void *s2, unsigned long n) {
+    const unsigned char *p1 = (const unsigned char *)s1;
+    const unsigned char *p2 = (const unsigned char *)s2;
+    for (unsigned long i = 0; i < n; i++) {
+        if (p1[i] != p2[i]) return (int)p1[i] - (int)p2[i];
+    }
+    return 0;
+}
+
+unsigned long strlen(const char *s) {
+    unsigned long len = 0;
+    while (s && *s++) len++;
+    return len;
+}
+
+void *__roze_freestanding_memcpy(void *dest, const void *src, unsigned long n) {
+    return memcpy(dest, src, n);
+}
+
+void *__roze_freestanding_memset(void *s, int c, unsigned long n) {
+    return memset(s, c, n);
+}
+
+int __roze_freestanding_memcmp(const void *s1, const void *s2, unsigned long n) {
+    return memcmp(s1, s2, n);
+}
+
+unsigned long __roze_freestanding_strlen(const char *s) {
+    return strlen(s);
+}
+
+void __stack_chk_fail(void) {
+    for (;;) {
+        #if defined(__x86_64__) || defined(__i386__)
+        __asm__ volatile("hlt");
+        #endif
+    }
+}
+
+void __roze_freestanding_exit(int code) {
+    (void)code;
+    for (;;) {
+        #if defined(__x86_64__) || defined(__i386__)
+        __asm__ volatile("hlt");
+        #endif
+    }
+}
+
+// Concurrency Stubs (Zero pthreads)
+long __roze_thread_spawn(long f) { (void)f; return 0; }
+long __roze_thread_join(long t) { (void)t; return 0; }
+void __roze_thread_sleep(long ms) { (void)ms; }
+long __roze_thread_current_id(void) { return 0; }
+void __roze_thread_retain(long t) { (void)t; }
+void __roze_thread_release(long t) { (void)t; }
+long __roze_channel_new(long cap) { (void)cap; return 0; }
+long __roze_channel_send(long ch, long val) { (void)ch; (void)val; return 0; }
+long __roze_channel_recv(long ch) { (void)ch; return 0; }
+void __roze_channel_close(long ch) { (void)ch; }
+long __roze_channel_is_closed(long ch) { (void)ch; return 1; }
+long __roze_channel_len(long ch) { (void)ch; return 0; }
+void __roze_channel_retain(long ch) { (void)ch; }
+void __roze_channel_release(long ch) { (void)ch; }
+
+// 5. Default _start hook
+__attribute__((weak))
+void __roze_main(void);
+
+__attribute__((weak))
+void _start(void) {
+    if (__roze_main) {
+        __roze_main();
+    }
+    for (;;) {
+        #if defined(__x86_64__) || defined(__i386__)
+        __asm__ volatile("hlt");
+        #endif
+    }
+}
+"#;
+
+pub fn compile_to_freestanding(
+    program: TypedProgram,
+    input_file: &str,
+    linker_script: Option<&str>,
+    _entry: Option<&str>,
+) -> Result<()> {
+    let output_name = crate::codegen::class_name_from_path(input_file);
+
+    let mut flag_builder = settings::builder();
+    flag_builder.set("use_colocated_libcalls", "false").map_err(|e| anyhow!(e.to_string()))?;
+    flag_builder.set("is_pic", "false").map_err(|e| anyhow!(e.to_string()))?;
+    let isa_builder = cranelift_native::builder()
+        .map_err(|e| anyhow!("unsupported host platform for the native backend: {}", e))?;
+    let isa = isa_builder.finish(settings::Flags::new(flag_builder))?;
+
+    let obj_builder = ObjectBuilder::new(isa, output_name.clone(), cranelift_module::default_libcall_names())
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mut module = ObjectModule::new(obj_builder);
+
+    {
+        let mut closures = Vec::new();
+        let mut func_refs = HashSet::new();
+        for stmt in &program.statements {
+            collect_closures_and_refs_from_stmt(stmt, &mut closures, &mut func_refs);
+        }
+
+        let mut generator = NativeGenerator::new_freestanding(&mut module)?;
+        generator.declare_all_classes(&program)?;
+        generator.declare_all_functions(&program)?;
+        generator.declare_all_closures_and_trampolines(&closures, &func_refs, &program)?;
+        generator.compile_trampolines(&func_refs, &program)?;
+        generator.compile_closures(&closures)?;
+        generator.compile_all_methods(&program)?;
+        generator.compile_all_functions(&program)?;
+    }
+
+    let product = module.finish();
+    let bytes = product.emit().map_err(|e| anyhow!(e.to_string()))?;
+    let obj_path = format!("{}.o", output_name);
+    fs::write(&obj_path, &bytes)?;
+    println!("📝 Generated freestanding object file: {}", obj_path);
+
+    let pid = std::process::id();
+    let temp_freestanding_c = std::env::temp_dir().join(format!("roze_freestanding_{}_{}.c", pid, output_name));
+    let temp_freestanding_o = std::env::temp_dir().join(format!("roze_freestanding_{}_{}.o", pid, output_name));
+    fs::write(&temp_freestanding_c, FREESTANDING_RUNTIME_C)?;
+
+    let status = Command::new("gcc")
+        .args(["-m64", "-ffreestanding", "-nostdlib", "-fno-builtin", "-fno-stack-protector", "-c"])
+        .arg(&temp_freestanding_c)
+        .arg("-o")
+        .arg(&temp_freestanding_o)
+        .status()
+        .map_err(|e| anyhow!("Failed to compile freestanding runtime via gcc: {}", e))?;
+
+    if !status.success() {
+        return Err(anyhow!("Failed to compile freestanding runtime helper"));
+    }
+
+    let ld_script_path = match linker_script {
+        Some(path) => path.to_string(),
+        None => {
+            let default_ld = std::env::temp_dir().join(format!("roze_freestanding_{}_{}.ld", pid, output_name));
+            fs::write(&default_ld, DEFAULT_FREESTANDING_LINKER_SCRIPT)?;
+            default_ld.to_string_lossy().to_string()
+        }
+    };
+
+    link_freestanding_binary(
+        &obj_path,
+        &temp_freestanding_o.to_string_lossy(),
+        &output_name,
+        &ld_script_path,
+        _entry,
+    )?;
+
+    Ok(())
+}
+
+fn link_freestanding_binary(
+    roze_obj: &str,
+    runtime_obj: &str,
+    output_name: &str,
+    linker_script: &str,
+    entry: Option<&str>,
+) -> Result<()> {
+    let mut ld_cmd = Command::new("ld");
+    ld_cmd
+        .arg("-m").arg("elf_x86_64")
+        .arg("-nostdlib")
+        .arg("-static")
+        .arg("-T").arg(linker_script);
+    if let Some(entry_sym) = entry {
+        ld_cmd.arg("-e").arg(entry_sym);
+    }
+    ld_cmd
+        .arg(roze_obj)
+        .arg(runtime_obj)
+        .arg("-o").arg(output_name);
+
+    if let Ok(status) = ld_cmd.status() {
+        if status.success() {
+            println!("✅ Linked freestanding kernel binary: {}", output_name);
+            return Ok(());
+        }
+    }
+
+    let mut gcc_cmd = Command::new("gcc");
+    gcc_cmd
+        .arg("-m64")
+        .arg("-nostdlib")
+        .arg("-static")
+        .arg("-no-pie")
+        .arg(format!("-Wl,-T,{}", linker_script));
+    if let Some(entry_sym) = entry {
+        gcc_cmd.arg(format!("-Wl,-e,{}", entry_sym));
+    }
+    gcc_cmd
+        .arg(roze_obj)
+        .arg(runtime_obj)
+        .arg("-o").arg(output_name);
+
+    let status = gcc_cmd.status().map_err(|e| anyhow!("Failed to link freestanding binary: {}", e))?;
+    if status.success() {
+        println!("✅ Linked freestanding kernel binary: {}", output_name);
+        return Ok(());
+    }
+
+    Err(anyhow!("Failed to link freestanding kernel binary"))
+}
+
+pub fn run_freestanding(name: &str) -> Result<()> {
+    let exe_path = if name.starts_with('.') || name.contains('/') || name.contains('\\') {
+        name.to_string()
+    } else {
+        format!("./{}", name)
+    };
+
+    println!("🖥️ Freestanding kernel binary ready: {}", exe_path);
+    if let Ok(output) = Command::new("which").arg("qemu-system-x86_64").output() {
+        if output.status.success() {
+            println!("Booting in QEMU (press Ctrl-C to exit)...");
+            let mut cmd = Command::new("qemu-system-x86_64");
+            cmd.arg("-kernel").arg(&exe_path)
+               .arg("-vga").arg("std")
+               .arg("-serial").arg("stdio");
+            let _ = cmd.status();
+            return Ok(());
+        }
+    }
+
+    println!("To boot this kernel on bare-metal or QEMU:");
+    println!("  qemu-system-x86_64 -kernel {} -vga std", exe_path);
+    Ok(())
+}
+
 /// Links `obj_path` into an executable at `output_name`, trying each of
 /// the standard C compiler/linker driver names in turn. This covers
 /// Linux/Mac (where `cc` is virtually always present) and Windows with
@@ -414,34 +889,40 @@ struct StringRuntime {
     refcount_id: FuncId,
 }
 
-fn declare_string_runtime(module: &mut ObjectModule) -> Result<StringRuntime> {
+fn declare_string_runtime(module: &mut ObjectModule, is_freestanding: bool) -> Result<StringRuntime> {
+    let malloc_name = if is_freestanding { "__roze_freestanding_alloc" } else { "malloc" };
+    let free_name = if is_freestanding { "__roze_freestanding_free" } else { "free" };
+    let memcpy_name = if is_freestanding { "__roze_freestanding_memcpy" } else { "memcpy" };
+    let memcmp_name = if is_freestanding { "__roze_freestanding_memcmp" } else { "memcmp" };
+    let strlen_name = if is_freestanding { "__roze_freestanding_strlen" } else { "strlen" };
+
     let mut malloc_sig = module.make_signature();
     malloc_sig.params.push(AbiParam::new(VALUE_TYPE));
     malloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
-    let malloc_id = module.declare_function("malloc", Linkage::Import, &malloc_sig).map_err(|e| anyhow!(e.to_string()))?;
+    let malloc_id = module.declare_function(malloc_name, Linkage::Import, &malloc_sig).map_err(|e| anyhow!(e.to_string()))?;
 
     let mut free_sig = module.make_signature();
     free_sig.params.push(AbiParam::new(VALUE_TYPE));
-    let free_id = module.declare_function("free", Linkage::Import, &free_sig).map_err(|e| anyhow!(e.to_string()))?;
+    let free_id = module.declare_function(free_name, Linkage::Import, &free_sig).map_err(|e| anyhow!(e.to_string()))?;
 
     let mut memcpy_sig = module.make_signature();
     memcpy_sig.params.push(AbiParam::new(VALUE_TYPE));
     memcpy_sig.params.push(AbiParam::new(VALUE_TYPE));
     memcpy_sig.params.push(AbiParam::new(VALUE_TYPE));
     memcpy_sig.returns.push(AbiParam::new(VALUE_TYPE));
-    let memcpy_id = module.declare_function("memcpy", Linkage::Import, &memcpy_sig).map_err(|e| anyhow!(e.to_string()))?;
+    let memcpy_id = module.declare_function(memcpy_name, Linkage::Import, &memcpy_sig).map_err(|e| anyhow!(e.to_string()))?;
 
     let mut memcmp_sig = module.make_signature();
     memcmp_sig.params.push(AbiParam::new(VALUE_TYPE));
     memcmp_sig.params.push(AbiParam::new(VALUE_TYPE));
     memcmp_sig.params.push(AbiParam::new(VALUE_TYPE));
     memcmp_sig.returns.push(AbiParam::new(types::I32));
-    let memcmp_id = module.declare_function("memcmp", Linkage::Import, &memcmp_sig).map_err(|e| anyhow!(e.to_string()))?;
+    let memcmp_id = module.declare_function(memcmp_name, Linkage::Import, &memcmp_sig).map_err(|e| anyhow!(e.to_string()))?;
 
     let mut strlen_sig = module.make_signature();
     strlen_sig.params.push(AbiParam::new(VALUE_TYPE));
     strlen_sig.returns.push(AbiParam::new(VALUE_TYPE));
-    let strlen_id = module.declare_function("strlen", Linkage::Import, &strlen_sig).map_err(|e| anyhow!(e.to_string()))?;
+    let strlen_id = module.declare_function(strlen_name, Linkage::Import, &strlen_sig).map_err(|e| anyhow!(e.to_string()))?;
 
     let mut ctx = module.make_context();
     let retain_id = build_string_retain(module, &mut ctx)?;
@@ -834,30 +1315,36 @@ struct ListRuntime {
     is_empty_id: FuncId,
 }
 
-fn declare_list_runtime(module: &mut ObjectModule, printf_id: FuncId) -> Result<ListRuntime> {
+fn declare_list_runtime(module: &mut ObjectModule, printf_id: FuncId, is_freestanding: bool) -> Result<ListRuntime> {
+    let malloc_name = if is_freestanding { "__roze_freestanding_alloc" } else { "malloc" };
+    let free_name = if is_freestanding { "__roze_freestanding_free" } else { "free" };
+    let realloc_name = if is_freestanding { "__roze_freestanding_realloc" } else { "realloc" };
+    let memmove_name = if is_freestanding { "__roze_freestanding_memcpy" } else { "memmove" };
+    let exit_name = if is_freestanding { "__roze_freestanding_exit" } else { "exit" };
+
     let mut malloc_sig = module.make_signature();
     malloc_sig.params.push(AbiParam::new(VALUE_TYPE));
     malloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
-    let malloc_id = module.declare_function("malloc", Linkage::Import, &malloc_sig).map_err(|e| anyhow!(e.to_string()))?;
+    let malloc_id = module.declare_function(malloc_name, Linkage::Import, &malloc_sig).map_err(|e| anyhow!(e.to_string()))?;
 
     let mut free_sig = module.make_signature();
     free_sig.params.push(AbiParam::new(VALUE_TYPE));
-    let free_id = module.declare_function("free", Linkage::Import, &free_sig).map_err(|e| anyhow!(e.to_string()))?;
+    let free_id = module.declare_function(free_name, Linkage::Import, &free_sig).map_err(|e| anyhow!(e.to_string()))?;
 
     let mut realloc_sig = module.make_signature();
     realloc_sig.params.push(AbiParam::new(VALUE_TYPE));
     realloc_sig.params.push(AbiParam::new(VALUE_TYPE));
     realloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
-    let realloc_id = module.declare_function("realloc", Linkage::Import, &realloc_sig).map_err(|e| anyhow!(e.to_string()))?;
+    let realloc_id = module.declare_function(realloc_name, Linkage::Import, &realloc_sig).map_err(|e| anyhow!(e.to_string()))?;
 
     let mut memmove_sig = module.make_signature();
     memmove_sig.params.push(AbiParam::new(VALUE_TYPE));
     memmove_sig.params.push(AbiParam::new(VALUE_TYPE));
     memmove_sig.params.push(AbiParam::new(VALUE_TYPE));
     memmove_sig.returns.push(AbiParam::new(VALUE_TYPE));
-    let memmove_id = module.declare_function("memmove", Linkage::Import, &memmove_sig).map_err(|e| anyhow!(e.to_string()))?;
+    let memmove_id = module.declare_function(memmove_name, Linkage::Import, &memmove_sig).map_err(|e| anyhow!(e.to_string()))?;
 
-    module.declare_function("exit", Linkage::Import, &{
+    let exit_id = module.declare_function(exit_name, Linkage::Import, &{
         let mut sig = module.make_signature();
         sig.params.push(AbiParam::new(types::I32));
         sig
@@ -870,9 +1357,9 @@ fn declare_list_runtime(module: &mut ObjectModule, printf_id: FuncId) -> Result<
     let retain_id = build_list_retain(module, &mut ctx)?;
     let release_id = build_list_release(module, &mut ctx, free_id)?;
     let push_id = build_list_push(module, &mut ctx, realloc_id)?;
-    let get_id = build_list_bounds_checked_access(module, &mut ctx, printf_id, oob_message, AccessKind::Get)?;
-    let set_id = build_list_bounds_checked_access(module, &mut ctx, printf_id, oob_message, AccessKind::Set)?;
-    let remove_id = build_list_remove(module, &mut ctx, printf_id, oob_message, memmove_id)?;
+    let get_id = build_list_bounds_checked_access(module, &mut ctx, printf_id, exit_id, oob_message, AccessKind::Get)?;
+    let set_id = build_list_bounds_checked_access(module, &mut ctx, printf_id, exit_id, oob_message, AccessKind::Set)?;
+    let remove_id = build_list_remove(module, &mut ctx, printf_id, exit_id, oob_message, memmove_id)?;
     let length_id = build_list_length(module, &mut ctx)?;
     let is_empty_id = build_list_is_empty(module, &mut ctx)?;
 
@@ -886,6 +1373,7 @@ fn emit_bounds_check(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     printf_id: FuncId,
+    exit_id: FuncId,
     oob_message: DataId,
     index: Value,
     length: Value,
@@ -907,11 +1395,6 @@ fn emit_bounds_check(
     let dummy = builder.ins().iconst(VALUE_TYPE, 0);
     builder.ins().call(printf_ref, &[msg_ptr, dummy]);
 
-    let exit_id = module.declare_function("exit", Linkage::Import, &{
-        let mut sig = module.make_signature();
-        sig.params.push(AbiParam::new(types::I32));
-        sig
-    }).expect("exit was already declared once in declare_list_runtime with an identical signature");
     let exit_ref = module.declare_func_in_func(exit_id, builder.func);
     let one_i32 = builder.ins().iconst(types::I32, 1);
     builder.ins().call(exit_ref, &[one_i32]);
@@ -1109,6 +1592,7 @@ fn build_list_bounds_checked_access(
     module: &mut ObjectModule,
     ctx: &mut cranelift::codegen::Context,
     printf_id: FuncId,
+    exit_id: FuncId,
     oob_message: DataId,
     kind: AccessKind,
 ) -> Result<FuncId> {
@@ -1138,7 +1622,7 @@ fn build_list_bounds_checked_access(
         let maybe_value = if matches!(kind, AccessKind::Set) { Some(builder.block_params(entry)[2]) } else { None };
 
         let length = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 8);
-        emit_bounds_check(&mut builder, module, printf_id, oob_message, index, length);
+        emit_bounds_check(&mut builder, module, printf_id, exit_id, oob_message, index, length);
 
         let data_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
         let offset = builder.ins().imul_imm(index, 8);
@@ -1167,7 +1651,7 @@ fn build_list_bounds_checked_access(
 /// single `memmove` call (correct even when the shifted region is
 /// empty -- removing the last element -- since a zero-length memmove is
 /// a defined no-op).
-fn build_list_remove(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, printf_id: FuncId, oob_message: DataId, memmove_id: FuncId) -> Result<FuncId> {
+fn build_list_remove(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Context, printf_id: FuncId, exit_id: FuncId, oob_message: DataId, memmove_id: FuncId) -> Result<FuncId> {
     let mut sig = module.make_signature();
     sig.params.push(AbiParam::new(VALUE_TYPE));
     sig.params.push(AbiParam::new(VALUE_TYPE));
@@ -1186,7 +1670,7 @@ fn build_list_remove(module: &mut ObjectModule, ctx: &mut cranelift::codegen::Co
         let index = builder.block_params(entry)[1];
 
         let length = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 8);
-        emit_bounds_check(&mut builder, module, printf_id, oob_message, index, length);
+        emit_bounds_check(&mut builder, module, printf_id, exit_id, oob_message, index, length);
 
         let data_ptr = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, 24);
         let offset = builder.ins().imul_imm(index, 8);
@@ -1324,21 +1808,25 @@ struct MapRuntime {
     is_empty_id: FuncId,
 }
 
-fn declare_map_runtime(module: &mut ObjectModule) -> Result<MapRuntime> {
+fn declare_map_runtime(module: &mut ObjectModule, is_freestanding: bool) -> Result<MapRuntime> {
+    let malloc_name = if is_freestanding { "__roze_freestanding_alloc" } else { "malloc" };
+    let free_name = if is_freestanding { "__roze_freestanding_free" } else { "free" };
+    let calloc_name = if is_freestanding { "__roze_freestanding_alloc_zeroed" } else { "calloc" };
+
     let mut malloc_sig = module.make_signature();
     malloc_sig.params.push(AbiParam::new(VALUE_TYPE));
     malloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
-    let malloc_id = module.declare_function("malloc", Linkage::Import, &malloc_sig).map_err(|e| anyhow!(e.to_string()))?;
+    let malloc_id = module.declare_function(malloc_name, Linkage::Import, &malloc_sig).map_err(|e| anyhow!(e.to_string()))?;
 
     let mut free_sig = module.make_signature();
     free_sig.params.push(AbiParam::new(VALUE_TYPE));
-    let free_id = module.declare_function("free", Linkage::Import, &free_sig).map_err(|e| anyhow!(e.to_string()))?;
+    let free_id = module.declare_function(free_name, Linkage::Import, &free_sig).map_err(|e| anyhow!(e.to_string()))?;
 
     let mut calloc_sig = module.make_signature();
     calloc_sig.params.push(AbiParam::new(VALUE_TYPE));
     calloc_sig.params.push(AbiParam::new(VALUE_TYPE));
     calloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
-    let calloc_id = module.declare_function("calloc", Linkage::Import, &calloc_sig).map_err(|e| anyhow!(e.to_string()))?;
+    let calloc_id = module.declare_function(calloc_name, Linkage::Import, &calloc_sig).map_err(|e| anyhow!(e.to_string()))?;
 
     let mut ctx = module.make_context();
 
@@ -2147,7 +2635,7 @@ struct RawMemoryRuntime {
     memset_id: FuncId,
 }
 
-fn declare_raw_memory_runtime(module: &mut ObjectModule) -> Result<RawMemoryRuntime> {
+fn declare_raw_memory_runtime(module: &mut ObjectModule, is_freestanding: bool) -> Result<RawMemoryRuntime> {
     let mut i64_to_i64 = module.make_signature();
     i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
     i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
@@ -2166,17 +2654,23 @@ fn declare_raw_memory_runtime(module: &mut ObjectModule) -> Result<RawMemoryRunt
     i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
     i64_i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
 
-    let malloc_id = module.declare_function("malloc", Linkage::Import, &i64_to_i64)
+    let (malloc_name, calloc_name, realloc_name, free_name, memcpy_name, memset_name) = if is_freestanding {
+        ("__roze_freestanding_alloc", "__roze_freestanding_alloc_zeroed", "__roze_freestanding_realloc", "__roze_freestanding_free", "__roze_freestanding_memcpy", "__roze_freestanding_memset")
+    } else {
+        ("malloc", "calloc", "realloc", "free", "memcpy", "memset")
+    };
+
+    let malloc_id = module.declare_function(malloc_name, Linkage::Import, &i64_to_i64)
         .map_err(|e| anyhow!(e.to_string()))?;
-    let calloc_id = module.declare_function("calloc", Linkage::Import, &i64_i64_to_i64)
+    let calloc_id = module.declare_function(calloc_name, Linkage::Import, &i64_i64_to_i64)
         .map_err(|e| anyhow!(e.to_string()))?;
-    let realloc_id = module.declare_function("realloc", Linkage::Import, &i64_i64_to_i64)
+    let realloc_id = module.declare_function(realloc_name, Linkage::Import, &i64_i64_to_i64)
         .map_err(|e| anyhow!(e.to_string()))?;
-    let free_id = module.declare_function("free", Linkage::Import, &i64_to_void)
+    let free_id = module.declare_function(free_name, Linkage::Import, &i64_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
-    let memcpy_id = module.declare_function("memcpy", Linkage::Import, &i64_i64_i64_to_i64)
+    let memcpy_id = module.declare_function(memcpy_name, Linkage::Import, &i64_i64_i64_to_i64)
         .map_err(|e| anyhow!(e.to_string()))?;
-    let memset_id = module.declare_function("memset", Linkage::Import, &i64_i64_i64_to_i64)
+    let memset_id = module.declare_function(memset_name, Linkage::Import, &i64_i64_i64_to_i64)
         .map_err(|e| anyhow!(e.to_string()))?;
 
     Ok(RawMemoryRuntime {
@@ -2186,6 +2680,68 @@ fn declare_raw_memory_runtime(module: &mut ObjectModule) -> Result<RawMemoryRunt
         free_id,
         memcpy_id,
         memset_id,
+    })
+}
+
+#[derive(Clone, Copy)]
+pub struct VgaRuntime {
+    pub clear_id: FuncId,
+    pub print_id: FuncId,
+    pub write_char_id: FuncId,
+    pub write_byte_id: FuncId,
+    pub set_cursor_id: FuncId,
+    pub set_color_id: FuncId,
+    pub print_str_id: FuncId,
+    pub print_int_id: FuncId,
+    pub print_bool_id: FuncId,
+}
+
+fn declare_vga_runtime(module: &mut ObjectModule) -> Result<VgaRuntime> {
+    let void_to_void = module.make_signature();
+
+    let mut i64_to_void = module.make_signature();
+    i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_i64_to_void = module.make_signature();
+    i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_4_to_void = module.make_signature();
+    i64_4_to_void.params.push(AbiParam::new(VALUE_TYPE));
+    i64_4_to_void.params.push(AbiParam::new(VALUE_TYPE));
+    i64_4_to_void.params.push(AbiParam::new(VALUE_TYPE));
+    i64_4_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let clear_id = module.declare_function("vga_clear", Linkage::Import, &void_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let print_id = module.declare_function("vga_print", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let write_char_id = module.declare_function("vga_write_char", Linkage::Import, &i64_4_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let write_byte_id = module.declare_function("vga_write_byte", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let set_cursor_id = module.declare_function("vga_set_cursor", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let set_color_id = module.declare_function("vga_set_color", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    let print_str_id = module.declare_function("__roze_vga_print_str", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let print_int_id = module.declare_function("__roze_vga_print_int", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let print_bool_id = module.declare_function("__roze_vga_print_bool", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    Ok(VgaRuntime {
+        clear_id,
+        print_id,
+        write_char_id,
+        write_byte_id,
+        set_cursor_id,
+        set_color_id,
+        print_str_id,
+        print_int_id,
+        print_bool_id,
     })
 }
 
@@ -2490,6 +3046,7 @@ fn build_class_runtime(
 
 struct NativeGenerator<'a> {
     module: &'a mut ObjectModule,
+    is_freestanding: bool,
     functions: HashMap<String, FuncId>,
     function_param_types: HashMap<String, Vec<Type>>,
     closure_funcs: HashMap<usize, FuncId>,
@@ -2506,6 +3063,7 @@ struct NativeGenerator<'a> {
     maps: MapRuntime,
     concurrency: ConcurrencyRuntime,
     raw_memory: RawMemoryRuntime,
+    vga: VgaRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -2519,63 +3077,73 @@ struct NativeGenerator<'a> {
 
 impl<'a> NativeGenerator<'a> {
     fn new(module: &'a mut ObjectModule) -> Result<Self> {
-        // printf's Cranelift-side signature only needs to reflect what
-        // every call site here actually passes: a format-string pointer
-        // plus exactly one more 64-bit value (unused by the callee when
-        // the format string has no '%' specifier -- harmless, and it
-        // means every call site can share one signature instead of
-        // needing a distinct one per arg count for a variadic function).
-        let mut printf_sig = module.make_signature();
-        printf_sig.params.push(AbiParam::new(VALUE_TYPE));
-        printf_sig.params.push(AbiParam::new(VALUE_TYPE));
-        printf_sig.returns.push(AbiParam::new(types::I32));
-        let printf_id = module.declare_function("printf", Linkage::Import, &printf_sig)
-            .map_err(|e| anyhow!(e.to_string()))?;
+        Self::create(module, false)
+    }
 
-        // Printing a float can't reuse printf_id's signature above (a
-        // float argument needs a different register class than an
-        // int/pointer one at the C ABI level), but Cranelift's object
-        // module rejects declaring the same external symbol twice with
-        // two different signatures -- confirmed empirically. A second,
-        // *variadic* printf/snprintf declaration was also tried and
-        // rejected, for a different reason: the x86-64 SystemV ABI
-        // requires the caller of a variadic function to set %al to the
-        // number of vector (XMM) registers used for the variadic
-        // arguments, so the callee's own varargs machinery knows
-        // whether to bother saving them into its register-save area --
-        // and Cranelift 0.103 has no support at all for emitting that
-        // (confirmed by its own source: no mention of "variadic"
-        // anywhere in the crate). Without it, a float argument sometimes
-        // read correctly and sometimes read stale/garbage register
-        // contents depending on what a *preceding, unrelated* call
-        // happened to leave in %al. Sidestepped entirely by using
-        // gcvt(double, int, char*), a genuinely non-variadic (fixed
-        // 3-argument) glibc function for double-to-string conversion --
-        // no %al concern applies to an ordinary, non-variadic call.
-        let mut gcvt_sig = module.make_signature();
-        gcvt_sig.params.push(AbiParam::new(types::F64)); // value
-        gcvt_sig.params.push(AbiParam::new(types::I32)); // significant digits
-        gcvt_sig.params.push(AbiParam::new(VALUE_TYPE));  // output buffer
-        gcvt_sig.returns.push(AbiParam::new(VALUE_TYPE)); // same buffer pointer, back
-        let gcvt_id = module.declare_function("gcvt", Linkage::Import, &gcvt_sig)
-            .map_err(|e| anyhow!(e.to_string()))?;
+    fn new_freestanding(module: &'a mut ObjectModule) -> Result<Self> {
+        Self::create(module, true)
+    }
 
-        let mut malloc_sig = module.make_signature();
-        malloc_sig.params.push(AbiParam::new(VALUE_TYPE));
-        malloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
-        let malloc_id = module.declare_function("malloc", Linkage::Import, &malloc_sig)
-            .map_err(|e| anyhow!(e.to_string()))?;
+    fn create(module: &'a mut ObjectModule, is_freestanding: bool) -> Result<Self> {
+        let (printf_id, gcvt_id, malloc_id) = if is_freestanding {
+            let mut printf_sig = module.make_signature();
+            printf_sig.params.push(AbiParam::new(VALUE_TYPE));
+            printf_sig.params.push(AbiParam::new(VALUE_TYPE));
+            printf_sig.returns.push(AbiParam::new(types::I32));
+            let p_id = module.declare_function("__roze_freestanding_printf", Linkage::Import, &printf_sig)
+                .map_err(|e| anyhow!(e.to_string()))?;
+
+            let mut gcvt_sig = module.make_signature();
+            gcvt_sig.params.push(AbiParam::new(types::F64));
+            gcvt_sig.params.push(AbiParam::new(types::I32));
+            gcvt_sig.params.push(AbiParam::new(VALUE_TYPE));
+            gcvt_sig.returns.push(AbiParam::new(VALUE_TYPE));
+            let g_id = module.declare_function("__roze_freestanding_gcvt", Linkage::Import, &gcvt_sig)
+                .map_err(|e| anyhow!(e.to_string()))?;
+
+            let mut alloc_sig = module.make_signature();
+            alloc_sig.params.push(AbiParam::new(VALUE_TYPE));
+            alloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
+            let m_id = module.declare_function("__roze_freestanding_alloc", Linkage::Import, &alloc_sig)
+                .map_err(|e| anyhow!(e.to_string()))?;
+
+            (p_id, g_id, m_id)
+        } else {
+            let mut printf_sig = module.make_signature();
+            printf_sig.params.push(AbiParam::new(VALUE_TYPE));
+            printf_sig.params.push(AbiParam::new(VALUE_TYPE));
+            printf_sig.returns.push(AbiParam::new(types::I32));
+            let p_id = module.declare_function("printf", Linkage::Import, &printf_sig)
+                .map_err(|e| anyhow!(e.to_string()))?;
+
+            let mut gcvt_sig = module.make_signature();
+            gcvt_sig.params.push(AbiParam::new(types::F64));
+            gcvt_sig.params.push(AbiParam::new(types::I32));
+            gcvt_sig.params.push(AbiParam::new(VALUE_TYPE));
+            gcvt_sig.returns.push(AbiParam::new(VALUE_TYPE));
+            let g_id = module.declare_function("gcvt", Linkage::Import, &gcvt_sig)
+                .map_err(|e| anyhow!(e.to_string()))?;
+
+            let mut malloc_sig = module.make_signature();
+            malloc_sig.params.push(AbiParam::new(VALUE_TYPE));
+            malloc_sig.returns.push(AbiParam::new(VALUE_TYPE));
+            let m_id = module.declare_function("malloc", Linkage::Import, &malloc_sig)
+                .map_err(|e| anyhow!(e.to_string()))?;
+
+            (p_id, g_id, m_id)
+        };
 
         let fmt_int = Self::declare_c_string(module, "__roze_fmt_int", b"%lld\n")?;
         let fmt_str = Self::declare_c_string(module, "__roze_fmt_str", b"%s\n")?;
         let true_str = Self::declare_c_string(module, "__roze_true_str", b"true")?;
         let false_str = Self::declare_c_string(module, "__roze_false_str", b"false")?;
 
-        let strings = declare_string_runtime(module)?;
-        let lists = declare_list_runtime(module, printf_id)?;
-        let maps = declare_map_runtime(module)?;
+        let strings = declare_string_runtime(module, is_freestanding)?;
+        let lists = declare_list_runtime(module, printf_id, is_freestanding)?;
+        let maps = declare_map_runtime(module, is_freestanding)?;
         let concurrency = declare_concurrency_runtime(module)?;
-        let raw_memory = declare_raw_memory_runtime(module)?;
+        let raw_memory = declare_raw_memory_runtime(module, is_freestanding)?;
+        let vga = declare_vga_runtime(module)?;
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
@@ -2586,6 +3154,7 @@ impl<'a> NativeGenerator<'a> {
 
         Ok(Self {
             module,
+            is_freestanding,
             functions: HashMap::new(),
             function_param_types: HashMap::new(),
             closure_funcs: HashMap::new(),
@@ -2602,6 +3171,7 @@ impl<'a> NativeGenerator<'a> {
             maps,
             concurrency,
             raw_memory,
+            vga,
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
@@ -2735,7 +3305,8 @@ impl<'a> NativeGenerator<'a> {
 
         let mut free_sig = self.module.make_signature();
         free_sig.params.push(AbiParam::new(VALUE_TYPE));
-        let free_id = self.module.declare_function("free", Linkage::Import, &free_sig).map_err(|e| anyhow!(e.to_string()))?;
+        let free_name = if self.is_freestanding { "__roze_freestanding_free" } else { "free" };
+        let free_id = self.module.declare_function(free_name, Linkage::Import, &free_sig).map_err(|e| anyhow!(e.to_string()))?;
 
         let mut ctx = self.module.make_context();
         for info in self.classes.values() {
@@ -2781,8 +3352,14 @@ impl<'a> NativeGenerator<'a> {
                     sig.returns.push(AbiParam::new(cranelift_type_for(return_type)));
                 }
 
-                let func_name = if name == "main" { "__roze_main" } else { name.as_str() };
-                let func_id = self.module.declare_function(func_name, Linkage::Local, &sig)
+                let (func_name, linkage) = if name == "_start" && self.is_freestanding {
+                    ("_start", Linkage::Export)
+                } else if name == "main" {
+                    ("__roze_main", if self.is_freestanding { Linkage::Export } else { Linkage::Local })
+                } else {
+                    (name.as_str(), Linkage::Local)
+                };
+                let func_id = self.module.declare_function(func_name, linkage, &sig)
                     .map_err(|e| anyhow!(e.to_string()))?;
                 self.functions.insert(name.clone(), func_id);
                 self.function_param_types.insert(name.clone(), params.iter().map(|p| p.type_.clone()).collect());
@@ -2951,6 +3528,8 @@ impl<'a> NativeGenerator<'a> {
                     map_is_empty_id: self.maps.is_empty_id,
                     concurrency: &self.concurrency,
                     raw_memory: &self.raw_memory,
+                    is_freestanding: self.is_freestanding,
+                    vga: &self.vga,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
@@ -3065,6 +3644,8 @@ impl<'a> NativeGenerator<'a> {
                                 map_is_empty_id: self.maps.is_empty_id,
                                 concurrency: &self.concurrency,
                                 raw_memory: &self.raw_memory,
+                                is_freestanding: self.is_freestanding,
+                                vga: &self.vga,
                                 classes: &self.classes,
                                 class_retain_id: self.class_retain_id,
                                 literal_counter: &mut self.literal_counter,
@@ -3102,7 +3683,10 @@ impl<'a> NativeGenerator<'a> {
                             fc.builder.finalize();
                         }
 
-                        self.module.define_function(func_id, &mut ctx).map_err(|e| anyhow!(e.to_string()))?;
+                        self.module.define_function(func_id, &mut ctx).map_err(|e| {
+                    eprintln!("Function verification failed for {}: {:?}\nIR:\n{}", name, e, ctx.func.display());
+                    anyhow!(e.to_string())
+                })?;
                         self.module.clear_context(&mut ctx);
                     }
                 }
@@ -3164,6 +3748,8 @@ impl<'a> NativeGenerator<'a> {
                         map_is_empty_id: self.maps.is_empty_id,
                         concurrency: &self.concurrency,
                         raw_memory: &self.raw_memory,
+                        is_freestanding: self.is_freestanding,
+                        vga: &self.vga,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
@@ -3215,12 +3801,17 @@ impl<'a> NativeGenerator<'a> {
                     fc.builder.finalize();
                 }
 
-                self.module.define_function(func_id, &mut ctx).map_err(|e| anyhow!(e.to_string()))?;
+                self.module.define_function(func_id, &mut ctx).map_err(|e| {
+                    eprintln!("Function verification failed for {}: {:?}\nIR:\n{}", name, e, ctx.func.display());
+                    anyhow!(e.to_string())
+                })?;
                 self.module.clear_context(&mut ctx);
             }
         }
 
-        self.emit_c_main(&mut ctx)?;
+        if !self.is_freestanding {
+            self.emit_c_main(&mut ctx)?;
+        }
         Ok(())
     }
 
@@ -3304,6 +3895,8 @@ struct FunctionCompiler<'a, 'b> {
     map_is_empty_id: FuncId,
     concurrency: &'a ConcurrencyRuntime,
     raw_memory: &'a RawMemoryRuntime,
+    is_freestanding: bool,
+    vga: &'a VgaRuntime,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -4701,6 +5294,50 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[dest_val, val, count_val]);
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
+            "vga_clear" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.vga.clear_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "vga_print" if arguments.len() == 1 => {
+                let s_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.vga.print_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[s_val]);
+                if !matches!(arguments[0].kind, TypedExpressionKind::Identifier(_)) {
+                    self.emit_string_release(s_val)?;
+                }
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "vga_write_char" if arguments.len() == 4 => {
+                let row = self.compile_expression(&arguments[0])?;
+                let col = self.compile_expression(&arguments[1])?;
+                let ch = self.compile_expression(&arguments[2])?;
+                let color = self.compile_expression(&arguments[3])?;
+                let func_ref = self.module.declare_func_in_func(self.vga.write_char_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[row, col, ch, color]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "vga_write_byte" if arguments.len() == 2 => {
+                let offset = self.compile_expression(&arguments[0])?;
+                let byte_val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.vga.write_byte_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[offset, byte_val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "vga_set_cursor" if arguments.len() == 2 => {
+                let row = self.compile_expression(&arguments[0])?;
+                let col = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.vga.set_cursor_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[row, col]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "vga_set_color" if arguments.len() == 2 => {
+                let fg = self.compile_expression(&arguments[0])?;
+                let bg = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.vga.set_color_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[fg, bg]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
             _ => {}
         }
 
@@ -4772,6 +5409,49 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             return Err(anyhow!("the native backend's println only supports exactly one argument for now"));
         }
         let arg = &arguments[0];
+
+        if self.is_freestanding {
+            match &arg.type_ {
+                Type::String => {
+                    let val = self.compile_expression(arg)?;
+                    let func_ref = self.module.declare_func_in_func(self.vga.print_str_id, self.builder.func);
+                    self.builder.ins().call(func_ref, &[val]);
+                    if !matches!(arg.kind, TypedExpressionKind::Identifier(_)) {
+                        self.emit_string_release(val)?;
+                    }
+                    return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+                }
+                Type::Bool => {
+                    let val = self.compile_expression(arg)?;
+                    let val_i64 = self.builder.ins().uextend(VALUE_TYPE, val);
+                    let func_ref = self.module.declare_func_in_func(self.vga.print_bool_id, self.builder.func);
+                    self.builder.ins().call(func_ref, &[val_i64]);
+                    return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+                }
+                Type::Int | Type::U8 | Type::RawPointer(_) | Type::Unknown => {
+                    let val = self.compile_expression(arg)?;
+                    let func_ref = self.module.declare_func_in_func(self.vga.print_int_id, self.builder.func);
+                    self.builder.ins().call(func_ref, &[val]);
+                    return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+                }
+                Type::Float => {
+                    let val = self.compile_expression(arg)?;
+                    let int_val = self.builder.ins().fcvt_to_sint(VALUE_TYPE, val);
+                    let func_ref = self.module.declare_func_in_func(self.vga.print_int_id, self.builder.func);
+                    self.builder.ins().call(func_ref, &[int_val]);
+                    return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+                }
+                Type::Function { .. } => {
+                    let _val = self.compile_expression(arg)?;
+                    let fn_str = self.compile_string_literal("<function>")?;
+                    let func_ref = self.module.declare_func_in_func(self.vga.print_str_id, self.builder.func);
+                    self.builder.ins().call(func_ref, &[fn_str]);
+                    self.emit_string_release(fn_str)?;
+                    return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+                }
+                other => return Err(anyhow!("println of a {} isn't supported on freestanding yet", other)),
+            }
+        }
 
         match &arg.type_ {
             Type::String => {

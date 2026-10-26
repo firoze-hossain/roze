@@ -35,12 +35,10 @@ enum Target {
     /// full language, including Core/Collections/IO/Web/Database).
     Jvm,
     /// Compile to a native executable via Cranelift, with no JVM/JDK
-    /// involved. An intentionally minimal SPIKE (see
-    /// compiler/src/codegen/native.rs): int/bool functions, arithmetic,
-    /// if/while/for, and println of an int/bool/string-literal only --
-    /// no strings-as-values, no list/map, no intrinsics. See
-    /// docs/MEMORY_MODEL_DECISION.md for why.
+    /// involved.
     Native,
+    /// Compile bare-metal freestanding kernel executable with zero libc/glibc/OS.
+    Freestanding,
 }
 
 #[derive(Subcommand)]
@@ -65,6 +63,12 @@ enum Commands {
         /// Extra shared/static libraries to link against (for --target native)
         #[arg(long = "link", value_name = "LIB", action = clap::ArgAction::Append)]
         link: Vec<String>,
+        /// Custom linker script (for --target freestanding)
+        #[arg(short = 'T', long = "linker-script", value_name = "SCRIPT")]
+        linker_script: Option<String>,
+        /// Custom entry point symbol (for --target freestanding, defaults to _start)
+        #[arg(long = "entry", value_name = "ENTRY")]
+        entry: Option<String>,
     },
     /// Run a Roze file
     Run {
@@ -80,6 +84,12 @@ enum Commands {
         /// Extra shared/static libraries to link against (for --target native)
         #[arg(long = "link", value_name = "LIB", action = clap::ArgAction::Append)]
         link: Vec<String>,
+        /// Custom linker script (for --target freestanding)
+        #[arg(short = 'T', long = "linker-script", value_name = "SCRIPT")]
+        linker_script: Option<String>,
+        /// Custom entry point symbol (for --target freestanding, defaults to _start)
+        #[arg(long = "entry", value_name = "ENTRY")]
+        entry: Option<String>,
     },
 }
 
@@ -87,9 +97,13 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Build { file, output: _, classpath, target, link } => build_file(&file, cli.debug, classpath.as_deref(), target, &link),
-        Commands::Run { file, classpath, target, link } => build_file(&file, cli.debug, classpath.as_deref(), target, &link)
-            .and_then(|_| run_file(&file, classpath.as_deref(), target)),
+        Commands::Build { file, output: _, classpath, target, link, linker_script, entry } => {
+            build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref())
+        }
+        Commands::Run { file, classpath, target, link, linker_script, entry } => {
+            build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref())
+                .and_then(|_| run_file(&file, classpath.as_deref(), target))
+        }
     };
 
     // Every error is already reported (with a full source snippet, when
@@ -103,7 +117,15 @@ fn main() {
     }
 }
 
-fn build_file(filename: &str, debug: bool, classpath: Option<&str>, target: Target, link_libs: &[String]) -> Result<(), ()> {
+fn build_file(
+    filename: &str,
+    debug: bool,
+    classpath: Option<&str>,
+    target: Target,
+    link_libs: &[String],
+    linker_script: Option<&str>,
+    entry: Option<&str>,
+) -> Result<(), ()> {
     println!("{}", "🌹 Roze Compiler v0.1".bright_magenta());
     println!("{} {}", "📁 Compiling:".cyan(), filename);
 
@@ -166,6 +188,7 @@ fn build_file(filename: &str, debug: bool, classpath: Option<&str>, target: Targ
     let codegen_result = match target {
         Target::Jvm => codegen::compile_to_java(typed_program, filename, classpath),
         Target::Native => codegen::native::compile_to_native(typed_program, filename, link_libs),
+        Target::Freestanding => codegen::native::compile_to_freestanding(typed_program, filename, linker_script, entry),
     };
     if let Err(e) = codegen_result {
         report_error(&e, filename, &source);
@@ -185,6 +208,7 @@ fn run_file(filename: &str, classpath: Option<&str>, target: Target) -> Result<(
     let run_result = match target {
         Target::Jvm => codegen::run_java(&class_name, classpath),
         Target::Native => codegen::native::run_native(&class_name),
+        Target::Freestanding => codegen::native::run_freestanding(&class_name),
     };
     if let Err(e) = run_result {
         eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);

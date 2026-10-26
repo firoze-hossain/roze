@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -231,3 +232,15 @@ void __roze_channel_release(int64_t chan_val) {
         free(chan);
     }
 }
+
+// Freestanding VGA Text Driver Stubs for Hosted Native Target
+__attribute__((weak)) void vga_clear(void) {}
+__attribute__((weak)) void vga_print(const char* s) { if (s) fputs(s, stdout); }
+__attribute__((weak)) void vga_write_char(int64_t row, int64_t col, int64_t ch, int64_t color) { (void)row; (void)col; (void)ch; (void)color; }
+__attribute__((weak)) void vga_write_byte(int64_t offset, int64_t byte_val) { (void)offset; (void)byte_val; }
+__attribute__((weak)) void vga_set_cursor(int64_t row, int64_t col) { (void)row; (void)col; }
+__attribute__((weak)) void vga_set_color(int64_t fg, int64_t bg) { (void)fg; (void)bg; }
+__attribute__((weak)) void __roze_vga_print_str(const char* s) { if (s) { fputs(s, stdout); putchar('\n'); } }
+__attribute__((weak)) void __roze_vga_print_int(int64_t val) { printf("%lld\n", (long long)val); }
+__attribute__((weak)) void __roze_vga_print_bool(int64_t val) { puts(val ? "true" : "false"); }
+

@@ -2257,3 +2257,298 @@ func main() {
         assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
     }
 }
+
+#[test]
+fn test_freestanding_target_compilation_and_zero_libc() {
+    let dir = scratch_dir("freestanding_zero_libc");
+    let source = r#"
+func main() {
+    println("Roze Bare Metal Kernel");
+}
+"#;
+    let file_name = "kernel.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("kernel");
+    assert!(kernel_bin.exists(), "expected freestanding kernel binary to exist");
+
+    // Verify it is an ELF64 x86-64 binary
+    let readelf_h = Command::new("readelf")
+        .arg("-h")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run readelf -h");
+    assert!(readelf_h.status.success());
+    let h_out = String::from_utf8_lossy(&readelf_h.stdout);
+    assert!(h_out.contains("ELF64"), "expected ELF64 in readelf -h");
+    assert!(h_out.contains("Advanced Micro Devices X86-64") || h_out.contains("x86-64") || h_out.contains("X86-64"), "expected x86-64");
+
+    // Verify zero dynamic dependencies (no dynamic section)
+    let readelf_d = Command::new("readelf")
+        .arg("-d")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run readelf -d");
+    let d_out = format!("{}{}", String::from_utf8_lossy(&readelf_d.stdout), String::from_utf8_lossy(&readelf_d.stderr));
+    assert!(
+        d_out.contains("There is no dynamic section") || !readelf_d.status.success(),
+        "expected static freestanding binary with no dynamic section, got:\n{}",
+        d_out
+    );
+
+    // Verify zero undefined symbols
+    let nm_u = Command::new("nm")
+        .arg("-u")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run nm -u");
+    assert!(nm_u.status.success());
+    let u_out = String::from_utf8_lossy(&nm_u.stdout).trim().to_string();
+    assert!(
+        u_out.is_empty(),
+        "expected zero undefined symbols in freestanding binary, got:\n{}",
+        u_out
+    );
+}
+
+#[test]
+fn test_freestanding_custom_linker_script() {
+    let dir = scratch_dir("freestanding_linker_script");
+    let source = r#"
+func main() {
+    println("Testing custom linker script");
+}
+"#;
+    let file_name = "custom_kernel.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let custom_ld = r#"ENTRY(_start)
+
+SECTIONS
+{
+    . = 2M;
+
+    .boot : ALIGN(4K)
+    {
+        *(.boot)
+    }
+
+    .text : ALIGN(4K)
+    {
+        *(.text*)
+    }
+
+    .rodata : ALIGN(4K)
+    {
+        *(.rodata*)
+    }
+
+    .data : ALIGN(4K)
+    {
+        *(.data*)
+    }
+
+    .bss : ALIGN(4K)
+    {
+        *(COMMON)
+        *(.bss*)
+    }
+}
+"#;
+    let ld_file = "custom.ld";
+    std::fs::write(dir.join(ld_file), custom_ld).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .arg("-T")
+        .arg(ld_file)
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("custom_kernel");
+    assert!(kernel_bin.exists());
+
+    // Verify .boot is loaded at 2M (0x200000)
+    let readelf_s = Command::new("readelf")
+        .arg("-S")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run readelf -S");
+    assert!(readelf_s.status.success());
+    let s_out = String::from_utf8_lossy(&readelf_s.stdout);
+    assert!(
+        s_out.contains("00200000"),
+        "expected .boot section loaded at 0x200000 (2M), got:\n{}",
+        s_out
+    );
+}
+
+#[test]
+fn test_freestanding_custom_entry_point() {
+    let dir = scratch_dir("freestanding_custom_entry");
+    let source = r#"
+func _start() {
+    println("Custom _start entry point");
+}
+"#;
+    let file_name = "start_entry.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("start_entry");
+    assert!(kernel_bin.exists());
+
+    // Verify global _start symbol is present in symbol table
+    let nm_out = Command::new("nm")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run nm");
+    assert!(nm_out.status.success());
+    let symbols = String::from_utf8_lossy(&nm_out.stdout);
+    assert!(
+        symbols.lines().any(|l| l.contains(" T _start")),
+        "expected global text symbol _start in freestanding binary, got:\n{}",
+        symbols
+    );
+}
+
+#[test]
+fn test_freestanding_vga_and_raw_memory_operations() {
+    let dir = scratch_dir("freestanding_vga_raw");
+    let source = r#"
+func main() {
+    vga_clear();
+    vga_set_color(14, 0);
+    vga_print("Bare Metal VGA Driver Active\n");
+    vga_write_char(5, 10, 82, 15);
+    vga_write_byte(0, 88);
+
+    unsafe {
+        let ptr: *raw u8 = alloc(128);
+        ptr_write_u8(ptr, 99);
+        let val: int = ptr_read_u8(ptr);
+        println(val);
+        free(ptr);
+    }
+}
+"#;
+    let file_name = "vga_raw.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("vga_raw");
+    assert!(kernel_bin.exists());
+
+    // Verify VGA symbols are linked in the binary
+    let nm_out = Command::new("nm")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run nm");
+    assert!(nm_out.status.success());
+    let symbols = String::from_utf8_lossy(&nm_out.stdout);
+    assert!(symbols.contains("vga_clear"), "expected vga_clear symbol");
+    assert!(symbols.contains("vga_print"), "expected vga_print symbol");
+    assert!(symbols.contains("vga_write_char"), "expected vga_write_char symbol");
+    assert!(symbols.contains("vga_write_byte"), "expected vga_write_byte symbol");
+    assert!(symbols.contains("__roze_freestanding_alloc"), "expected bump allocator symbol");
+    assert!(symbols.contains("__roze_freestanding_free"), "expected freestanding free symbol");
+
+    // Zero undefined symbols
+    let nm_u = Command::new("nm")
+        .arg("-u")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run nm -u");
+    assert!(nm_u.status.success());
+    let u_out = String::from_utf8_lossy(&nm_u.stdout).trim().to_string();
+    assert!(u_out.is_empty(), "expected zero undefined symbols, got: {}", u_out);
+}
+
+#[test]
+fn test_freestanding_vga_module_import() {
+    let dir = scratch_dir("freestanding_vga_import");
+    let source = r#"
+import "vga";
+
+func main() {
+    vga_clear();
+    let color = vga_color_entry(14, 0);
+    vga_write_char(0, 0, 75, color); // 'K'
+    println("VGA Module Imported Successfully");
+}
+"#;
+    let file_name = "vga_mod.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("vga_mod");
+    assert!(kernel_bin.exists());
+}
+

@@ -1321,6 +1321,19 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
             throw new RuntimeException("mem_set failed: " + e.getMessage());
         }
     }
+
+    private static void __roze_vga_clear() {
+        System.out.print("\033[H\033[2J");
+    }
+    private static void __roze_vga_print(String s) {
+        System.out.print(s);
+    }
+    private static void __roze_vga_write_char(long row, long col, long ch, long color) {
+        System.out.print((char)ch);
+    }
+    private static void __roze_vga_write_byte(long offset, long byte_val) {}
+    private static void __roze_vga_set_cursor(long row, long col) {}
+    private static void __roze_vga_set_color(long fg, long bg) {}
 "#;
 
 /// Returns the Java return type for a built-in Core (string/math)
@@ -1436,6 +1449,9 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "int_to_ptr" => Some("long"),
         "ptr_is_null" => Some("boolean"),
         "mem_copy" | "mem_set" => Some("void"),
+
+        // Freestanding VGA Text Driver (ADV-01)
+        "vga_clear" | "vga_print" | "vga_write_char" | "vga_write_byte" | "vga_set_cursor" | "vga_set_color" => Some("void"),
 
         _ => None,
     }
@@ -3177,6 +3193,47 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[1])?;
                 source.push_str(", ");
                 self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+
+            "vga_clear" if arguments.is_empty() => {
+                source.push_str("__roze_vga_clear()");
+            }
+            "vga_print" if arguments.len() == 1 => {
+                source.push_str("__roze_vga_print(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "vga_write_char" if arguments.len() == 4 => {
+                source.push_str("__roze_vga_write_char(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[3])?;
+                source.push(')');
+            }
+            "vga_write_byte" if arguments.len() == 2 => {
+                source.push_str("__roze_vga_write_byte(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vga_set_cursor" if arguments.len() == 2 => {
+                source.push_str("__roze_vga_set_cursor(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vga_set_color" if arguments.len() == 2 => {
+                source.push_str("__roze_vga_set_color(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
 

@@ -45,6 +45,9 @@ const CONCURRENCY_DISPLAY_NAME: &str = "concurrency (built-in)";
 const WEB_SOURCE: &str = include_str!("../../stdlib/src/web.roze");
 const WEB_DISPLAY_NAME: &str = "web (built-in)";
 
+const VGA_SOURCE: &str = include_str!("../../stdlib/src/vga.roze");
+const VGA_DISPLAY_NAME: &str = "vga (built-in)";
+
 /// Walks `program`'s top-level statements, replacing every `Import` with
 /// the functions it pulls in. `base_dir` is the directory of the file
 /// being compiled, used to resolve relative import paths.
@@ -118,6 +121,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "web" {
         return Ok((WEB_SOURCE.to_string(), WEB_DISPLAY_NAME.to_string()));
     }
+    if path == "vga" {
+        return Ok((VGA_SOURCE.to_string(), VGA_DISPLAY_NAME.to_string()));
+    }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {
         base_dir.join(path)
@@ -161,7 +167,7 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         location.line,
         location.column,
     )
-    .with_hint("built-in modules: \"core\", \"concurrency\", \"web\" -- packages in \"libs/<pkg>/lib.roze\" or a relative .roze file")
+    .with_hint("built-in modules: \"core\", \"concurrency\", \"web\", \"vga\" -- packages in \"libs/<pkg>/lib.roze\" or a relative .roze file")
     .into())
 }
 
@@ -249,5 +255,13 @@ mod tests {
         assert!(names.contains(&"main".to_string()));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn importing_vga_pulls_in_vga_functions() {
+        let program = resolve("import \"vga\"; func main() { }").unwrap();
+        let names = function_names(&program);
+        assert!(names.contains(&"vga_color_entry".to_string()));
+        assert!(names.contains(&"main".to_string()));
     }
 }

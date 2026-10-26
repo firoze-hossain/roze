@@ -549,6 +549,14 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("ptr_is_null", vec![Type::RawPointer(Box::new(Type::U8))], Type::Bool),
         ("mem_copy", vec![Type::RawPointer(Box::new(Type::U8)), Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Void),
         ("mem_set", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int, Type::Int], Type::Void),
+
+        // ---- Freestanding VGA Text Driver (ADV-01) ----
+        ("vga_clear", vec![], Type::Void),
+        ("vga_print", vec![Type::String], Type::Void),
+        ("vga_write_char", vec![Type::Int, Type::Int, Type::Int, Type::Int], Type::Void),
+        ("vga_write_byte", vec![Type::Int, Type::Int], Type::Void),
+        ("vga_set_cursor", vec![Type::Int, Type::Int], Type::Void),
+        ("vga_set_color", vec![Type::Int, Type::Int], Type::Void),
     ]
 }
 

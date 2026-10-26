@@ -4186,7 +4186,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     /// this conversion, not just type-check as if it happened. A no-op
     /// (returns `val` unchanged) whenever the types already match.
     fn coerce_for_target_type(&mut self, val: Value, actual: &Type, target: &Type) -> Value {
-        if *target == Type::Float && *actual == Type::Int {
+        if *target == Type::Float && (*actual == Type::Int || *actual == Type::Unknown || self.builder.func.dfg.value_type(val) == VALUE_TYPE) {
             self.builder.ins().fcvt_from_sint(types::F64, val)
         } else {
             val
@@ -5201,6 +5201,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 BinaryOperator::Subtract => self.builder.ins().fsub(lf, rf),
                 BinaryOperator::Multiply => self.builder.ins().fmul(lf, rf),
                 BinaryOperator::Divide => self.builder.ins().fdiv(lf, rf),
+                BinaryOperator::Modulo => {
+                    return Err(anyhow!("Modulo on floating-point values is not currently supported in native backend"));
+                }
                 BinaryOperator::Equal => self.compile_fcmp(FloatCC::Equal, lf, rf),
                 BinaryOperator::NotEqual => self.compile_fcmp(FloatCC::NotEqual, lf, rf),
                 BinaryOperator::LessThan => self.compile_fcmp(FloatCC::LessThan, lf, rf),
@@ -5216,6 +5219,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             BinaryOperator::Subtract => self.builder.ins().isub(l, r),
             BinaryOperator::Multiply => self.builder.ins().imul(l, r),
             BinaryOperator::Divide => self.builder.ins().sdiv(l, r),
+            BinaryOperator::Modulo => self.builder.ins().srem(l, r),
             BinaryOperator::Equal => self.compile_cmp(IntCC::Equal, l, r),
             BinaryOperator::NotEqual => self.compile_cmp(IntCC::NotEqual, l, r),
             BinaryOperator::LessThan => self.compile_cmp(IntCC::SignedLessThan, l, r),

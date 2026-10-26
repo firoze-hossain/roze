@@ -1,0 +1,232 @@
+// ==============================================================================
+// 🌹 Roze Raylib Game Engine Standard Library Module (ADV-04)
+// ==============================================================================
+// High-performance 2D/3D Game Platform bindings via Roze C-FFI.
+// Features:
+// - 60 FPS Real-Time Windowing & GPU Render Loop
+// - 2D Vector Primitives, Shapes & Sprite Rendering
+// - 3D Perspective Camera, Grids & 3D Geometry
+// - Procedural Audio Waveform Synthesis (Laser, Explosion, Chime)
+// - Keyboard, Mouse & Gamepad Input Handling
+// - Particle System & Physics Collision Detection
+// ==============================================================================
+
+// ------------------------------------------------------------------------------
+// 1. C-FFI Native Raylib Bridge Declarations
+// ------------------------------------------------------------------------------
+
+extern "C" func RzSetLogLevel(level: int) -> void;
+extern "C" func RzInitWindow(width: int, height: int, title: string) -> void;
+extern "C" func RzCloseWindow() -> void;
+extern "C" func RzWindowShouldClose() -> int;
+extern "C" func RzIsWindowReady() -> int;
+extern "C" func RzSetTargetFPS(fps: int) -> void;
+extern "C" func RzGetFPS() -> int;
+extern "C" func RzGetFrameTime() -> float;
+extern "C" func RzGetTime() -> float;
+extern "C" func RzIsHeadless() -> int;
+
+extern "C" func RzBeginDrawing() -> void;
+extern "C" func RzEndDrawing() -> void;
+extern "C" func RzClear(color_hex: int) -> void;
+extern "C" func RzClearRGBA(r: int, g: int, b: int, a: int) -> void;
+
+extern "C" func RzDrawText(text: string, posX: int, posY: int, fontSize: int, color_hex: int) -> void;
+extern "C" func RzDrawFPS(posX: int, posY: int) -> void;
+extern "C" func RzDrawScore(score: int, posX: int, posY: int) -> void;
+extern "C" func RzDrawHealth(health: int, posX: int, posY: int) -> void;
+extern "C" func RzPrintStat(label: string, val: int, suffix: string) -> void;
+extern "C" func RzDrawRectangle(posX: float, posY: float, width: float, height: float, color_hex: int) -> void;
+extern "C" func RzDrawRectangleLines(posX: float, posY: float, width: float, height: float, color_hex: int) -> void;
+extern "C" func RzDrawCircle(centerX: float, centerY: float, radius: float, color_hex: int) -> void;
+extern "C" func RzDrawCircleLines(centerX: float, centerY: float, radius: float, color_hex: int) -> void;
+extern "C" func RzDrawLine(startX: float, startY: float, endX: float, endY: float, color_hex: int) -> void;
+extern "C" func RzDrawTriangle(v1x: float, v1y: float, v2x: float, v2y: float, v3x: float, v3y: float, color_hex: int) -> void;
+
+extern "C" func RzBeginMode3D(posX: float, posY: float, posZ: float, targetX: float, targetY: float, targetZ: float, upX: float, upY: float, upZ: float, fovy: float) -> void;
+extern "C" func RzEndMode3D() -> void;
+extern "C" func RzDrawCube(x: float, y: float, z: float, width: float, height: float, length: float, color_hex: int) -> void;
+extern "C" func RzDrawCubeWires(x: float, y: float, z: float, width: float, height: float, length: float, color_hex: int) -> void;
+extern "C" func RzDrawSphere(x: float, y: float, z: float, radius: float, color_hex: int) -> void;
+extern "C" func RzDrawGrid(slices: int, spacing: float) -> void;
+
+extern "C" func RzIsKeyDown(key: int) -> int;
+extern "C" func RzIsKeyPressed(key: int) -> int;
+extern "C" func RzIsKeyReleased(key: int) -> int;
+extern "C" func RzIsMouseButtonDown(button: int) -> int;
+extern "C" func RzIsMouseButtonPressed(button: int) -> int;
+extern "C" func RzGetMouseX() -> int;
+extern "C" func RzGetMouseY() -> int;
+
+extern "C" func RzInitAudio() -> void;
+extern "C" func RzCloseAudio() -> void;
+extern "C" func RzIsAudioReady() -> int;
+extern "C" func RzSetVolume(volume: float) -> void;
+extern "C" func RzPlayLaserSound() -> void;
+extern "C" func RzPlayExplosionSound() -> void;
+extern "C" func RzPlayPowerupSound() -> void;
+extern "C" func RzPlayTone(frequency: int, duration_ms: int) -> void;
+
+extern "C" func RzSpawnParticle(x: float, y: float, vx: float, vy: float, color: int, life: float, size: float) -> void;
+extern "C" func RzUpdateParticles(dt: float) -> void;
+extern "C" func RzDrawParticles() -> void;
+extern "C" func RzGetParticleCount() -> int;
+
+extern "C" func RzSpawnProjectile(x: float, y: float, vx: float, vy: float) -> void;
+extern "C" func RzUpdateProjectiles(dt: float) -> void;
+extern "C" func RzDrawProjectiles() -> void;
+extern "C" func RzGetProjectileCount() -> int;
+
+extern "C" func RzSpawnAsteroid(x: float, y: float, vx: float, vy: float, radius: float, health: int, color: int) -> void;
+extern "C" func RzUpdateAsteroids(dt: float, screen_w: int, screen_h: int) -> void;
+extern "C" func RzDrawAsteroids() -> void;
+extern "C" func RzGetAsteroidCount() -> int;
+
+extern "C" func RzCheckBulletAsteroidCollisions() -> int;
+extern "C" func RzCheckShipAsteroidCollision(ship_x: float, ship_y: float, ship_radius: float) -> int;
+extern "C" func RzResetFleet() -> void;
+
+// ------------------------------------------------------------------------------
+// 2. Color Palettes & Helpers
+// ------------------------------------------------------------------------------
+
+func color_rgba(r: int, g: int, b: int, a: int) -> int {
+    let r_part = (r % 256) * 16777216; // << 24
+    let g_part = (g % 256) * 65536;    // << 16
+    let b_part = (b % 256) * 256;      // << 8
+    let a_part = a % 256;
+    return r_part + g_part + b_part + a_part;
+}
+
+func color_rgb(r: int, g: int, b: int) -> int {
+    return color_rgba(r, g, b, 255);
+}
+
+// Built-in standard game palette
+func color_black() -> int { return 255; }                     // 0x000000FF
+func color_white() -> int { return -1; }                      // 0xFFFFFFFF
+func color_raywhite() -> int { return -179516161; }           // 0xF5F5F5FF
+func color_red() -> int { return -433502465; }                // 0xE62937FF
+func color_green() -> int { return 14954751; }                // 0x00E430FF
+func color_blue() -> int { return 7991807; }                  // 0x0079F1FF
+func color_gold() -> int { return -3460097; }                 // 0xFFCB00FF
+func color_orange() -> int { return -6225665; }               // 0xFFA100FF
+func color_magenta() -> int { return -953904641; }            // 0xC724B1FF
+func color_darkgray() -> int { return 1347440895; }           // 0x505050FF
+func color_lightgray() -> int { return -741094913; }          // 0xD3D3D3FF
+func color_skyblue() -> int { return 1723858943; }            // 0x66BFFFFF
+
+// ------------------------------------------------------------------------------
+// 3. Input Keycode Constants
+// ------------------------------------------------------------------------------
+
+func key_space() -> int { return 32; }
+func key_left() -> int { return 263; }
+func key_right() -> int { return 262; }
+func key_up() -> int { return 265; }
+func key_down() -> int { return 264; }
+func key_w() -> int { return 87; }
+func key_a() -> int { return 65; }
+func key_s() -> int { return 83; }
+func key_d() -> int { return 68; }
+func key_tab() -> int { return 258; }
+func key_enter() -> int { return 257; }
+func key_escape() -> int { return 256; }
+func key_p() -> int { return 80; }
+func key_r() -> int { return 82; }
+
+func mouse_left() -> int { return 0; }
+func mouse_right() -> int { return 1; }
+
+// ------------------------------------------------------------------------------
+// 4. Geometry, Vector & Physics Collision Math
+// ------------------------------------------------------------------------------
+
+class Vec2 {
+    x: float,
+    y: float
+}
+
+func vec2_new(x: float, y: float) -> Vec2 {
+    return new Vec2(x, y);
+}
+
+func distance_sq(x1: float, y1: float, x2: float, y2: float) -> float {
+    let dx = x1 - x2;
+    let dy = y1 - y2;
+    return (dx * dx) + (dy * dy);
+}
+
+func check_collision_circles(x1: float, y1: float, r1: float, x2: float, y2: float, r2: float) -> bool {
+    let r_sum = r1 + r2;
+    return distance_sq(x1, y1, x2, y2) <= (r_sum * r_sum);
+}
+
+func check_collision_box(x1: float, y1: float, w1: float, h1: float, x2: float, y2: float, w2: float, h2: float) -> bool {
+    if (x1 + w1 >= x2) && (x1 <= x2 + w2) && (y1 + h1 >= y2) && (y1 <= y2 + h2) {
+        return true;
+    }
+    return false;
+}
+
+// ------------------------------------------------------------------------------
+// 5. Game Entity Classes (Spaceship, Projectile, Particle, Asteroid)
+// ------------------------------------------------------------------------------
+
+class Spaceship {
+    x: float,
+    y: float,
+    vx: float,
+    vy: float,
+    angle: float,
+    radius: float,
+    health: int,
+    score: int
+}
+
+func spaceship_new(x: float, y: float) -> Spaceship {
+    return new Spaceship(x, y, 0.0, 0.0, 0.0, 16.0, 100, 0);
+}
+
+class Projectile {
+    x: float,
+    y: float,
+    vx: float,
+    vy: float,
+    lifetime: float,
+    active: bool
+}
+
+func projectile_new(x: float, y: float, vx: float, vy: float) -> Projectile {
+    return new Projectile(x, y, vx, vy, 1.5, true);
+}
+
+class Particle {
+    x: float,
+    y: float,
+    vx: float,
+    vy: float,
+    life: float,
+    max_life: float,
+    color: int,
+    size: float
+}
+
+func particle_new(x: float, y: float, vx: float, vy: float, max_life: float, color: int, size: float) -> Particle {
+    return new Particle(x, y, vx, vy, max_life, max_life, color, size);
+}
+
+class Asteroid {
+    x: float,
+    y: float,
+    vx: float,
+    vy: float,
+    radius: float,
+    health: int,
+    color: int,
+    active: bool
+}
+
+func asteroid_new(x: float, y: float, vx: float, vy: float, radius: float, health: int, color: int) -> Asteroid {
+    return new Asteroid(x, y, vx, vy, radius, health, color, true);
+}

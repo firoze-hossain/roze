@@ -294,6 +294,7 @@ pub enum BinaryOperator {
     Subtract,
     Multiply,
     Divide,
+    Modulo,
     Equal,
     NotEqual,
     LessThan,

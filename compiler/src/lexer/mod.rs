@@ -223,6 +223,7 @@ impl<'a> Lexer<'a> {
                 }
                 '*' => { self.advance(); Token::Star }
                 '/' => { self.advance(); Token::Slash }
+                '%' => { self.advance(); Token::Percent }
                 '&' => {
                     self.advance();
                     if self.current_char == Some('&') {

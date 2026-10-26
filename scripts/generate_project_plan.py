@@ -266,13 +266,13 @@ s1_rows = [
         ("ADV-04", 8), ("Advanced", 5), ("Step 15", 8), "Game Engine Demo", "2D/3D Game Demo via FFI (Raylib / SDL3)",
         "Demonstrate game platform capabilities with 60 FPS real-time rendering, audio, and physics.",
         "Bind Raylib / SDL3 via Roze C-FFI; build a working game loop with sprite rendering, keyboard/mouse input, particle effects, and sound playback.",
-        "Game Platform Proof-of-Concept", "1 Week", ("Ready to Start", 7)
+        "Game Platform Proof-of-Concept", "1 Week", ("Completed", 4)
     ],
     [
         ("ADV-05", 8), ("Advanced", 5), ("Step 16", 8), "AI / ML Wrapper Project", "AI & ML Inference Wrapper (ONNX / GGML)",
         "Run local AI models (Llama, BERT, Vision models) directly from Roze apps.",
         "Bind ONNX Runtime C API or GGML via FFI; load model weights; pass input tensors; run inference and parse prediction outputs.",
-        "AI / ML Applications, Data Science", "1 - 2 Weeks", ("Planned", 8)
+        "AI / ML Applications, Data Science", "1 - 2 Weeks", ("Ready to Start", 7)
     ],
     [
         ("ADV-06", 8), ("Advanced", 5), ("Step 17", 8), "Compiler Re-Architecture", "Self-Hosting Compiler (Roze-in-Roze)",
@@ -328,9 +328,9 @@ s2_rows = [
         "2D & 3D game engines, indie games, physics simulation, cross-platform game runtime",
         "ARC-managed classes and lists, IEEE-754 f64 math, fast native execution",
         "FFI to Raylib/SDL3/Vulkan, atomic multi-threaded rendering/audio threads, generics for ECS engines",
-        "CORE-04 (Done), MED-01 (Done), MED-02 (Done), ADV-04",
+        "CORE-04 (Done), MED-01 (Done), MED-02 (Done), ADV-04 (Done)",
         "C++, C# (Unity), Rust (Bevy), C",
-        ("50% - Atomic ARC & FFI Ready", 6)
+        ("100% - Raylib 2D/3D Engine Ready", 4)
     ],
     [
         "AI / Machine Learning",

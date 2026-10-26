@@ -2106,7 +2106,7 @@ impl TypeChecker {
                             ).into());
                         }
                     }
-                    BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Divide => {
+                    BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => {
                         if let Some(numeric_type) = numeric_binary_result_type(left_type, right_type) {
                             numeric_type
                         } else {

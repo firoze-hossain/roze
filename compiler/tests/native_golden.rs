@@ -2785,3 +2785,68 @@ menuentry "Roze OS" {
     assert_eq!(qemu_output.status.code(), Some(3));
 }
 
+#[test]
+fn modulo_operator_native() {
+    let source = r#"
+func main() {
+    println(17 % 5);
+    println(100 % 10);
+    println(23 % 7);
+}
+"#;
+    let (stdout, stderr, success) = run_native_source("modulo_operator", source);
+    assert!(success, "compiler/run failed: {}", stderr);
+    assert_eq!(program_output(&stdout), "2\n0\n2\n");
+}
+
+#[test]
+fn raylib_game_engine_demo_native() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+    let game_dir = root.join("demos").join("game");
+    let main_roze = game_dir.join("src").join("main.roze");
+    let bridge_c = game_dir.join("src").join("raylib_bridge.c");
+    let raylib_a = game_dir.join("raylib").join("lib").join("libraylib.a");
+
+    let scratch = scratch_dir("raylib_game_demo");
+
+    let mut build_cmd = Command::new(env!("CARGO_BIN_EXE_roze"));
+    build_cmd.arg("build")
+        .arg(&main_roze)
+        .arg("--target")
+        .arg("native")
+        .arg("-o")
+        .arg(&scratch)
+        .arg("--link").arg(bridge_c.to_str().unwrap())
+        .arg("--link").arg(raylib_a.to_str().unwrap())
+        .arg("--link").arg("m")
+        .arg("--link").arg("pthread")
+        .arg("--link").arg("dl");
+
+    let build_output = build_cmd.current_dir(&scratch)
+        .output()
+        .expect("failed to invoke roze build for game demo");
+
+    assert!(
+        build_output.status.success(),
+        "game demo build failed: {}\nstdout:\n{}",
+        String::from_utf8_lossy(&build_output.stderr),
+        String::from_utf8_lossy(&build_output.stdout)
+    );
+
+    // Run the compiled binary in headless benchmark mode
+    let game_bin = scratch.join("main");
+    assert!(game_bin.exists(), "game binary main not found in scratch dir");
+
+    let mut run_cmd = Command::new(&game_bin);
+    run_cmd.env("ROZE_GAME_BENCHMARK", "1");
+    let run_output = run_cmd.output().expect("failed to execute cosmic_roze");
+
+    assert!(run_output.status.success(), "game execution failed: {}", String::from_utf8_lossy(&run_output.stderr));
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    assert!(stdout.contains("Running Cosmic Roze in Headless Engine Verification Mode"));
+    assert!(stdout.contains("180 Frames Simulated Successfully at 60 FPS target!"));
+    assert!(stdout.contains("Frames Elapsed:  180"));
+    assert!(stdout.contains("Game Engine 2D/3D Platform Verified!"));
+}
+
+

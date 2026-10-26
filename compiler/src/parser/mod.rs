@@ -1442,6 +1442,7 @@ impl Parser {
             let operator = match &self.current().token {
                 Token::Star => { self.advance(); Some(BinaryOperator::Multiply) }
                 Token::Slash => { self.advance(); Some(BinaryOperator::Divide) }
+                Token::Percent => { self.advance(); Some(BinaryOperator::Modulo) }
                 _ => None,
             };
 

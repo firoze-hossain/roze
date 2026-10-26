@@ -2552,3 +2552,236 @@ func main() {
     assert!(kernel_bin.exists());
 }
 
+#[test]
+fn test_bootable_x86_64_os_kernel_multiboot_in_qemu() {
+    let has_qemu = Command::new("which")
+        .arg("qemu-system-x86_64")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !has_qemu {
+        eprintln!("Skipping test_bootable_x86_64_os_kernel_multiboot_in_qemu: qemu-system-x86_64 not found");
+        return;
+    }
+
+    let dir = scratch_dir("kernel_qemu_boot");
+    let source = r#"
+func check_4kb_alignment(addr: int) -> bool {
+    let aligned = (addr / 4096) * 4096;
+    if aligned == addr {
+        return true;
+    }
+    return false;
+}
+
+func main() {
+    serial_print("ROZE OS KERNEL BOOTING IN QEMU\r\n");
+    let magic = multiboot2_get_magic();
+    serial_print("MULTIBOOT_MAGIC: ");
+    println(magic);
+
+    let table_base = 2097152;
+    let data_base = 2101248;
+    unsafe {
+        let table = int_to_ptr(table_base);
+        let i = 0;
+        while i < 16 {
+            ptr_write_u8_at(table, i, 0);
+            i = i + 1;
+        }
+
+        let f0 = data_base;
+        let f1 = data_base + 4096;
+        let f2 = data_base + 8192;
+        ptr_write_u8_at(table, 0, 1);
+        ptr_write_u8_at(table, 1, 1);
+        ptr_write_u8_at(table, 2, 1);
+
+        if check_4kb_alignment(f0) {
+            serial_print("ALIGN_OK_FRAME_0\r\n");
+        }
+        if check_4kb_alignment(f1) {
+            serial_print("ALIGN_OK_FRAME_1\r\n");
+        }
+
+        let p0 = int_to_ptr(f0);
+        ptr_write_u8_at(p0, 0, 82);
+        ptr_write_u8_at(p0, 1, 79);
+        ptr_write_u8_at(p0, 2, 90);
+        ptr_write_u8_at(p0, 3, 69);
+
+        let c0 = ptr_read_u8_at(p0, 0);
+        let c1 = ptr_read_u8_at(p0, 1);
+        let c2 = ptr_read_u8_at(p0, 2);
+        let c3 = ptr_read_u8_at(p0, 3);
+
+        if c0 == 82 {
+            if c1 == 79 {
+                if c2 == 90 {
+                    if c3 == 69 {
+                        serial_print("DIRECT_MEM_READBACK_OK\r\n");
+                    }
+                }
+            }
+        }
+
+        ptr_write_u8_at(table, 1, 0);
+        serial_print("FRAME_1_FREED\r\n");
+
+        let mut_found = 0;
+        let j = 0;
+        while j < 16 {
+            if mut_found == 0 {
+                let st = ptr_read_u8_at(table, j);
+                if st == 0 {
+                    ptr_write_u8_at(table, j, 1);
+                    if j == 1 {
+                        serial_print("FRAME_REUSE_OK\r\n");
+                    }
+                    mut_found = 1;
+                }
+            }
+            j = j + 1;
+        }
+    }
+
+    serial_print("ROZE_KERNEL_VERIFICATION_COMPLETE\r\n");
+    qemu_exit(1);
+}
+"#;
+    let file_name = "test_kernel.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let qemu_bin = dir.join("test_kernel.qemu");
+    assert!(qemu_bin.exists(), "expected test_kernel.qemu to exist for QEMU direct boot");
+
+    let qemu_output = Command::new("qemu-system-x86_64")
+        .arg("-kernel")
+        .arg(&qemu_bin)
+        .arg("-display")
+        .arg("none")
+        .arg("-serial")
+        .arg("stdio")
+        .arg("-device")
+        .arg("isa-debug-exit,iobase=0xf4,iosize=0x04")
+        .output()
+        .expect("failed to run qemu-system-x86_64");
+
+    let stdout = String::from_utf8_lossy(&qemu_output.stdout);
+    assert!(stdout.contains("ROZE OS KERNEL BOOTING IN QEMU"), "missing boot banner in QEMU stdout:\n{}", stdout);
+    assert!(stdout.contains("MULTIBOOT_MAGIC: 732803074"), "expected Multiboot1 magic (0x2BADB002), got:\n{}", stdout);
+    assert!(stdout.contains("ALIGN_OK_FRAME_0"), "expected frame 0 alignment check, got:\n{}", stdout);
+    assert!(stdout.contains("ALIGN_OK_FRAME_1"), "expected frame 1 alignment check, got:\n{}", stdout);
+    assert!(stdout.contains("DIRECT_MEM_READBACK_OK"), "expected direct memory readback success, got:\n{}", stdout);
+    assert!(stdout.contains("FRAME_1_FREED"), "expected frame 1 freed, got:\n{}", stdout);
+    assert!(stdout.contains("FRAME_REUSE_OK"), "expected frame reuse, got:\n{}", stdout);
+    assert!(stdout.contains("ROZE_KERNEL_VERIFICATION_COMPLETE"), "expected verification complete, got:\n{}", stdout);
+
+    assert_eq!(qemu_output.status.code(), Some(3), "expected QEMU exit code 3 from isa-debug-exit");
+}
+
+#[test]
+fn test_bootable_multiboot2_grub_iso_in_qemu() {
+    let has_qemu = Command::new("which")
+        .arg("qemu-system-x86_64")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let has_grub = Command::new("which")
+        .arg("grub-mkrescue")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !has_qemu || !has_grub {
+        eprintln!("Skipping test_bootable_multiboot2_grub_iso_in_qemu: qemu or grub-mkrescue missing");
+        return;
+    }
+
+    let dir = scratch_dir("kernel_grub_iso_boot");
+    let source = r#"
+func main() {
+    serial_print("ROZE MULTIBOOT2 GRUB KERNEL RUNNING\r\n");
+    let magic = multiboot2_get_magic();
+    serial_print("MULTIBOOT2_MAGIC: ");
+    println(magic);
+    if magic == 920085129 {
+        serial_print("MULTIBOOT2_MAGIC_VERIFIED\r\n");
+    }
+    qemu_exit(1);
+}
+"#;
+    let file_name = "mb2_kernel.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(build_output.status.success());
+
+    let kernel_64 = dir.join("mb2_kernel");
+    assert!(kernel_64.exists());
+
+    let iso_dir = dir.join("iso_root");
+    let boot_grub = iso_dir.join("boot").join("grub");
+    std::fs::create_dir_all(&boot_grub).unwrap();
+    std::fs::copy(&kernel_64, iso_dir.join("boot").join("kernel.bin")).unwrap();
+
+    let grub_cfg = r#"
+set timeout=0
+set default=0
+menuentry "Roze OS" {
+    multiboot2 /boot/kernel.bin
+    boot
+}
+"#;
+    std::fs::write(boot_grub.join("grub.cfg"), grub_cfg).unwrap();
+
+    let iso_file = dir.join("roze_test.iso");
+    let mkrescue_output = Command::new("grub-mkrescue")
+        .arg("-o")
+        .arg(&iso_file)
+        .arg(&iso_dir)
+        .output()
+        .expect("failed to run grub-mkrescue");
+    assert!(mkrescue_output.status.success(), "grub-mkrescue failed: {}", String::from_utf8_lossy(&mkrescue_output.stderr));
+
+    let qemu_output = Command::new("qemu-system-x86_64")
+        .arg("-cdrom")
+        .arg(&iso_file)
+        .arg("-display")
+        .arg("none")
+        .arg("-serial")
+        .arg("stdio")
+        .arg("-device")
+        .arg("isa-debug-exit,iobase=0xf4,iosize=0x04")
+        .output()
+        .expect("failed to run qemu-system-x86_64");
+
+    let stdout = String::from_utf8_lossy(&qemu_output.stdout);
+    assert!(stdout.contains("ROZE MULTIBOOT2 GRUB KERNEL RUNNING"), "missing boot message in:\n{}", stdout);
+    assert!(stdout.contains("MULTIBOOT2_MAGIC_VERIFIED"), "multiboot2 magic 0x36D76289 not verified in:\n{}", stdout);
+    assert_eq!(qemu_output.status.code(), Some(3));
+}
+

@@ -254,13 +254,13 @@ s1_rows = [
         ("ADV-02", 8), ("Advanced", 5), ("Step 13", 8), "Systems & OS Demo", "Bootable x86_64 OS Kernel Demo",
         "Provide indisputable proof that Roze can build an operating system from scratch.",
         "Write a minimal 64-bit multiboot2 kernel in Roze; boot via GRUB/QEMU; print hardware info and manage basic physical memory frames.",
-        "Operating System Proof-of-Concept", "1 - 2 Weeks", ("Ready to Start", 7)
+        "Operating System Proof-of-Concept", "Completed", ("Completed", 6)
     ],
     [
         ("ADV-03", 8), ("Advanced", 5), ("Step 14", 8), "Web Framework Project", "Spring-Boot-Style Framework ('RozeBoot')",
         "Enable building large-scale enterprise services with declarative controllers, middleware, connection pooling, and ORM query builders.",
         "Build 'RozeBoot' framework on top of Roze: REST controller annotations/routing, HikariCP JDBC connection pooling, JWT security, SQL query builder.",
-        "Enterprise Cloud Applications", "2 - 3 Weeks", ("Planned", 8)
+        "Enterprise Cloud Applications", "2 - 3 Weeks", ("Ready to Start", 7)
     ],
     [
         ("ADV-04", 8), ("Advanced", 5), ("Step 15", 8), "Game Engine Demo", "2D/3D Game Demo via FFI (Raylib / SDL3)",
@@ -310,9 +310,9 @@ s2_rows = [
         "Monolithic/microkernel OS, custom bootloaders, hardware drivers, embedded firmware",
         "Cranelift native backend emits standalone ELF/PE binaries with libc ARC",
         "Bare-metal freestanding mode (no glibc, no malloc), raw unsafe pointers, inline assembly, linker scripts",
-        "MED-05 (Done), ADV-01 (Done), ADV-02",
+        "MED-05 (Done), ADV-01 (Done), ADV-02 (Done)",
         "C, Rust (no_std), Zig",
-        ("75% - Freestanding Kernel Target Ready", 6)
+        ("100% - Fully Verified OS Kernel Demo Bootable in QEMU/GRUB", 6)
     ],
     [
         "Security & Penetration Testing",

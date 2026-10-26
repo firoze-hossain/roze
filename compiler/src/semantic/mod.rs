@@ -557,6 +557,15 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("vga_write_byte", vec![Type::Int, Type::Int], Type::Void),
         ("vga_set_cursor", vec![Type::Int, Type::Int], Type::Void),
         ("vga_set_color", vec![Type::Int, Type::Int], Type::Void),
+
+        // ---- Freestanding Kernel & Multiboot2 (ADV-02) ----
+        ("multiboot2_get_magic", vec![], Type::Int),
+        ("multiboot2_get_info_ptr", vec![], Type::RawPointer(Box::new(Type::U8))),
+        ("outb", vec![Type::Int, Type::Int], Type::Void),
+        ("inb", vec![Type::Int], Type::Int),
+        ("qemu_exit", vec![Type::Int], Type::Void),
+        ("serial_print", vec![Type::String], Type::Void),
+        ("serial_putchar", vec![Type::Int], Type::Void),
     ]
 }
 

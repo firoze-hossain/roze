@@ -1334,6 +1334,15 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     private static void __roze_vga_write_byte(long offset, long byte_val) {}
     private static void __roze_vga_set_cursor(long row, long col) {}
     private static void __roze_vga_set_color(long fg, long bg) {}
+
+    // Kernel & Multiboot2 (ADV-02)
+    private static long __roze_multiboot2_get_magic() { return 0x36D76289L; }
+    private static long __roze_multiboot2_get_info_ptr() { return 0L; }
+    private static void __roze_outb(long port, long val) {}
+    private static long __roze_inb(long port) { return 0L; }
+    private static void __roze_qemu_exit(long code) {}
+    private static void __roze_serial_print(String s) { System.out.print(s); }
+    private static void __roze_serial_putchar(long ch) { System.out.print((char)ch); }
 "#;
 
 /// Returns the Java return type for a built-in Core (string/math)
@@ -1452,6 +1461,11 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
 
         // Freestanding VGA Text Driver (ADV-01)
         "vga_clear" | "vga_print" | "vga_write_char" | "vga_write_byte" | "vga_set_cursor" | "vga_set_color" => Some("void"),
+
+        // Freestanding Kernel & Multiboot2 (ADV-02)
+        "multiboot2_get_magic" | "inb" => Some("int"),
+        "multiboot2_get_info_ptr" => Some("long"),
+        "outb" | "qemu_exit" | "serial_print" | "serial_putchar" => Some("void"),
 
         _ => None,
     }
@@ -3234,6 +3248,41 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str(", ");
                 self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+
+            // Kernel & Multiboot2 (ADV-02)
+            "multiboot2_get_magic" if arguments.is_empty() => {
+                source.push_str("__roze_multiboot2_get_magic()");
+            }
+            "multiboot2_get_info_ptr" if arguments.is_empty() => {
+                source.push_str("__roze_multiboot2_get_info_ptr()");
+            }
+            "outb" if arguments.len() == 2 => {
+                source.push_str("__roze_outb(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "inb" if arguments.len() == 1 => {
+                source.push_str("__roze_inb(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "qemu_exit" if arguments.len() == 1 => {
+                source.push_str("__roze_qemu_exit(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "serial_print" if arguments.len() == 1 => {
+                source.push_str("__roze_serial_print(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "serial_putchar" if arguments.len() == 1 => {
+                source.push_str("__roze_serial_putchar(");
+                self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
 

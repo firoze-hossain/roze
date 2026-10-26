@@ -304,26 +304,200 @@ SECTIONS
 pub const FREESTANDING_RUNTIME_C: &str = r#"
 // Roze Bare-Metal Freestanding Runtime (Zero libc, Zero glibc, Zero OS)
 
-// 1. Multiboot 1 Header (.boot section)
-__attribute__((section(".boot"), used))
-const unsigned int multiboot_header[3] = {
-    0x1BADB002,
-    0x00000003,
-    -(0x1BADB002 + 0x00000003)
-};
+// 1. Multiboot 1 & Multiboot 2 Boot Trampoline (32-bit Protected Mode -> 64-bit Long Mode)
+__asm__(
+".section .boot, \"ax\"\n"
+".align 4\n"
+"    /* Multiboot 1 Header */\n"
+"    .long 0x1BADB002\n"
+"    .long 0x00000003\n"
+"    .long -(0x1BADB002 + 0x00000003)\n"
+"\n"
+".align 8\n"
+"mb2_start:\n"
+"    /* Multiboot 2 Header */\n"
+"    .long 0xE85250D6\n"
+"    .long 0\n"
+"    .long mb2_end - mb2_start\n"
+"    .long -(0xE85250D6 + 0 + (mb2_end - mb2_start))\n"
+"    .word 0\n"
+"    .word 0\n"
+"    .long 8\n"
+"mb2_end:\n"
+"\n"
+".weak _start\n"
+".globl _start\n"
+"_start:\n"
+".code32\n"
+"    cli\n"
+"    cld\n"
+"    movl %eax, (mboot_magic)\n"
+"    movl %ebx, (mboot_info)\n"
+"    movl $stack_top, %esp\n"
+"\n"
+"    /* Setup 1GB identity paging with 2MB huge pages */\n"
+"    movl $boot_pdpt, %eax\n"
+"    orl $0x3, %eax\n"
+"    movl %eax, (boot_pml4)\n"
+"\n"
+"    movl $boot_pd, %eax\n"
+"    orl $0x3, %eax\n"
+"    movl %eax, (boot_pdpt)\n"
+"\n"
+"    xorl %ecx, %ecx\n"
+"1:\n"
+"    movl $0x200000, %eax\n"
+"    mull %ecx\n"
+"    orl $0x83, %eax\n"
+"    movl %eax, boot_pd(,%ecx,8)\n"
+"    movl $0, boot_pd+4(,%ecx,8)\n"
+"    incl %ecx\n"
+"    cmpl $512, %ecx\n"
+"    jne 1b\n"
+"\n"
+"    /* Enable PAE in CR4 */\n"
+"    movl %cr4, %eax\n"
+"    orl $(1 << 5), %eax\n"
+"    movl %eax, %cr4\n"
+"\n"
+"    /* Load CR3 with PML4 */\n"
+"    movl $boot_pml4, %eax\n"
+"    movl %eax, %cr3\n"
+"\n"
+"    /* Enable Long Mode in EFER MSR */\n"
+"    movl $0xC0000080, %ecx\n"
+"    rdmsr\n"
+"    orl $(1 << 8), %eax\n"
+"    wrmsr\n"
+"\n"
+"    /* Enable Paging and Protected Mode in CR0 */\n"
+"    movl %cr0, %eax\n"
+"    orl $((1 << 31) | 1), %eax\n"
+"    movl %eax, %cr0\n"
+"\n"
+"    /* Load 64-bit GDT */\n"
+"    lgdt (gdt64_ptr)\n"
+"\n"
+"    /* Far jump into 64-bit Long Mode */\n"
+"    ljmp $0x08, $entry64\n"
+"\n"
+".code64\n"
+"entry64:\n"
+"    xorw %ax, %ax\n"
+"    movw %ax, %ds\n"
+"    movw %ax, %es\n"
+"    movw %ax, %fs\n"
+"    movw %ax, %gs\n"
+"    movw %ax, %ss\n"
+"    movq $stack_top, %rsp\n"
+"\n"
+"    call __roze_bootstrap_main\n"
+"\n"
+".Lhalt:\n"
+"    cli\n"
+"    hlt\n"
+"    jmp .Lhalt\n"
+"\n"
+".section .data\n"
+".align 8\n"
+"gdt64:\n"
+"    .quad 0\n"
+"    .quad 0x00209A0000000000\n"
+"    .quad 0x0000920000000000\n"
+"gdt64_ptr:\n"
+"    .word . - gdt64 - 1\n"
+"    .quad gdt64\n"
+"\n"
+".globl mboot_magic\n"
+"mboot_magic:\n"
+"    .long 0\n"
+".globl mboot_info\n"
+"mboot_info:\n"
+"    .long 0\n"
+"\n"
+".section .bss\n"
+".align 4096\n"
+"boot_pml4:\n"
+"    .skip 4096\n"
+"boot_pdpt:\n"
+"    .skip 4096\n"
+"boot_pd:\n"
+"    .skip 4096\n"
+"kernel_stack:\n"
+"    .skip 65536\n"
+"stack_top:\n"
+"\n"
+".section .text\n"
+);
 
-// 2. Multiboot 2 Header (.boot section)
-__attribute__((section(".boot"), used, aligned(8)))
-const unsigned int multiboot2_header[6] = {
-    0xE85250D6,
-    0,
-    24,
-    -(0xE85250D6 + 0 + 24),
-    0,
-    8
-};
+extern unsigned int mboot_magic;
+extern unsigned int mboot_info;
 
-// 3. VGA Text Mode Buffer Driver (0xb8000)
+long multiboot2_get_magic(void) {
+    return (long)(unsigned long)mboot_magic;
+}
+
+void *multiboot2_get_info_ptr(void) {
+    return (void *)(unsigned long)mboot_info;
+}
+
+// 2. Hardware I/O Ports
+static inline void outb_internal(unsigned short port, unsigned char val) {
+    __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline unsigned char inb_internal(unsigned short port) {
+    unsigned char ret;
+    __asm__ volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
+void outb(long port, long val) {
+    outb_internal((unsigned short)port, (unsigned char)val);
+}
+
+long inb(long port) {
+    return (long)inb_internal((unsigned short)port);
+}
+
+void qemu_exit(long code) {
+    outb_internal(0xf4, (unsigned char)code);
+}
+
+// 3. Serial COM1 UART Driver (115200 8N1)
+#define COM1 0x3F8
+
+static int serial_initialized = 0;
+
+void serial_init(void) {
+    outb_internal(COM1 + 1, 0x00);
+    outb_internal(COM1 + 3, 0x80);
+    outb_internal(COM1 + 0, 0x01); // 115200 baud
+    outb_internal(COM1 + 1, 0x00);
+    outb_internal(COM1 + 3, 0x03); // 8N1
+    outb_internal(COM1 + 2, 0xC7); // Enable FIFO
+    outb_internal(COM1 + 4, 0x0B); // IRQs enabled, RTS/DSR set
+    serial_initialized = 1;
+}
+
+void serial_putchar(long ch) {
+    if (!serial_initialized) serial_init();
+    if ((char)ch == '\n') {
+        while ((inb_internal(COM1 + 5) & 0x20) == 0);
+        outb_internal(COM1, '\r');
+    }
+    while ((inb_internal(COM1 + 5) & 0x20) == 0);
+    outb_internal(COM1, (unsigned char)(ch & 0xFF));
+}
+
+void serial_print(const char *s) {
+    if (!s) return;
+    while (*s) {
+        serial_putchar((long)(unsigned char)*s++);
+    }
+}
+
+// 4. VGA Text Mode Buffer Driver (0xb8000)
 #define VGA_BUFFER ((volatile unsigned short *)0xb8000)
 #define VGA_WIDTH 80
 #define VGA_HEIGHT 25
@@ -375,6 +549,7 @@ static void vga_scroll(void) {
 }
 
 void vga_putchar(char c) {
+    serial_putchar((long)(unsigned char)c);
     if (c == '\n') {
         vga_cursor_col = 0;
         vga_cursor_row++;
@@ -545,7 +720,7 @@ void __stack_chk_fail(void) {
 }
 
 void __roze_freestanding_exit(int code) {
-    (void)code;
+    qemu_exit(code);
     for (;;) {
         #if defined(__x86_64__) || defined(__i386__)
         __asm__ volatile("hlt");
@@ -569,12 +744,13 @@ long __roze_channel_len(long ch) { (void)ch; return 0; }
 void __roze_channel_retain(long ch) { (void)ch; }
 void __roze_channel_release(long ch) { (void)ch; }
 
-// 5. Default _start hook
+// 6. Bootstrap entry point called by entry64
 __attribute__((weak))
 void __roze_main(void);
 
-__attribute__((weak))
-void _start(void) {
+void __roze_bootstrap_main(void) {
+    serial_init();
+    vga_clear();
     if (__roze_main) {
         __roze_main();
     }
@@ -662,6 +838,19 @@ pub fn compile_to_freestanding(
         _entry,
     )?;
 
+    // Also produce 32-bit ELF version for direct QEMU -kernel loading
+    let qemu_name = format!("{}.qemu", output_name);
+    let objcopy_status = Command::new("objcopy")
+        .args(["-I", "elf64-x86-64", "-O", "elf32-i386"])
+        .arg(&output_name)
+        .arg(&qemu_name)
+        .status();
+    if let Ok(st) = objcopy_status {
+        if st.success() {
+            println!("✅ Generated QEMU-compatible multiboot image: {}", qemu_name);
+        }
+    }
+
     Ok(())
 }
 
@@ -718,27 +907,35 @@ fn link_freestanding_binary(
 }
 
 pub fn run_freestanding(name: &str) -> Result<()> {
-    let exe_path = if name.starts_with('.') || name.contains('/') || name.contains('\\') {
+    let raw_path = if name.starts_with('.') || name.contains('/') || name.contains('\\') {
         name.to_string()
     } else {
         format!("./{}", name)
     };
 
-    println!("🖥️ Freestanding kernel binary ready: {}", exe_path);
+    let qemu_candidate = format!("{}.qemu", raw_path);
+    let boot_file = if std::path::Path::new(&qemu_candidate).exists() {
+        qemu_candidate
+    } else {
+        raw_path.clone()
+    };
+
+    println!("🖥️ Freestanding kernel binary ready: {}", raw_path);
     if let Ok(output) = Command::new("which").arg("qemu-system-x86_64").output() {
         if output.status.success() {
             println!("Booting in QEMU (press Ctrl-C to exit)...");
             let mut cmd = Command::new("qemu-system-x86_64");
-            cmd.arg("-kernel").arg(&exe_path)
+            cmd.arg("-kernel").arg(&boot_file)
                .arg("-vga").arg("std")
-               .arg("-serial").arg("stdio");
+               .arg("-serial").arg("stdio")
+               .arg("-device").arg("isa-debug-exit,iobase=0xf4,iosize=0x04");
             let _ = cmd.status();
             return Ok(());
         }
     }
 
     println!("To boot this kernel on bare-metal or QEMU:");
-    println!("  qemu-system-x86_64 -kernel {} -vga std", exe_path);
+    println!("  qemu-system-x86_64 -kernel {} -vga std -serial stdio", boot_file);
     Ok(())
 }
 
@@ -2745,6 +2942,58 @@ fn declare_vga_runtime(module: &mut ObjectModule) -> Result<VgaRuntime> {
     })
 }
 
+#[derive(Clone, Copy)]
+pub struct KernelRuntime {
+    pub multiboot2_get_magic_id: FuncId,
+    pub multiboot2_get_info_ptr_id: FuncId,
+    pub outb_id: FuncId,
+    pub inb_id: FuncId,
+    pub qemu_exit_id: FuncId,
+    pub serial_print_id: FuncId,
+    pub serial_putchar_id: FuncId,
+}
+
+fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
+    let mut void_to_i64 = module.make_signature();
+    void_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_to_void = module.make_signature();
+    i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_to_i64 = module.make_signature();
+    i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_i64_to_void = module.make_signature();
+    i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let multiboot2_get_magic_id = module.declare_function("multiboot2_get_magic", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let multiboot2_get_info_ptr_id = module.declare_function("multiboot2_get_info_ptr", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let outb_id = module.declare_function("outb", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let inb_id = module.declare_function("inb", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let qemu_exit_id = module.declare_function("qemu_exit", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let serial_print_id = module.declare_function("serial_print", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let serial_putchar_id = module.declare_function("serial_putchar", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    Ok(KernelRuntime {
+        multiboot2_get_magic_id,
+        multiboot2_get_info_ptr_id,
+        outb_id,
+        inb_id,
+        qemu_exit_id,
+        serial_print_id,
+        serial_putchar_id,
+    })
+}
+
 /// A native class instance is a pointer to a heap block:
 ///
 ///   [0..8)          i64  refcount
@@ -3064,6 +3313,7 @@ struct NativeGenerator<'a> {
     concurrency: ConcurrencyRuntime,
     raw_memory: RawMemoryRuntime,
     vga: VgaRuntime,
+    kernel: KernelRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -3144,6 +3394,7 @@ impl<'a> NativeGenerator<'a> {
         let concurrency = declare_concurrency_runtime(module)?;
         let raw_memory = declare_raw_memory_runtime(module, is_freestanding)?;
         let vga = declare_vga_runtime(module)?;
+        let kernel = declare_kernel_runtime(module)?;
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
@@ -3172,6 +3423,7 @@ impl<'a> NativeGenerator<'a> {
             concurrency,
             raw_memory,
             vga,
+            kernel,
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
@@ -3530,6 +3782,7 @@ impl<'a> NativeGenerator<'a> {
                     raw_memory: &self.raw_memory,
                     is_freestanding: self.is_freestanding,
                     vga: &self.vga,
+                    kernel: &self.kernel,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
@@ -3646,6 +3899,7 @@ impl<'a> NativeGenerator<'a> {
                                 raw_memory: &self.raw_memory,
                                 is_freestanding: self.is_freestanding,
                                 vga: &self.vga,
+                                kernel: &self.kernel,
                                 classes: &self.classes,
                                 class_retain_id: self.class_retain_id,
                                 literal_counter: &mut self.literal_counter,
@@ -3750,6 +4004,7 @@ impl<'a> NativeGenerator<'a> {
                         raw_memory: &self.raw_memory,
                         is_freestanding: self.is_freestanding,
                         vga: &self.vga,
+                        kernel: &self.kernel,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
@@ -3897,6 +4152,7 @@ struct FunctionCompiler<'a, 'b> {
     raw_memory: &'a RawMemoryRuntime,
     is_freestanding: bool,
     vga: &'a VgaRuntime,
+    kernel: &'a KernelRuntime,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -5336,6 +5592,52 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let bg = self.compile_expression(&arguments[1])?;
                 let func_ref = self.module.declare_func_in_func(self.vga.set_color_id, self.builder.func);
                 self.builder.ins().call(func_ref, &[fg, bg]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+
+            // Freestanding Kernel & Multiboot2 (ADV-02)
+            "multiboot2_get_magic" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.multiboot2_get_magic_id, self.builder.func);
+                let call_inst = self.builder.ins().call(func_ref, &[]);
+                let results = self.builder.inst_results(call_inst);
+                return Ok(results[0]);
+            }
+            "multiboot2_get_info_ptr" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.multiboot2_get_info_ptr_id, self.builder.func);
+                let call_inst = self.builder.ins().call(func_ref, &[]);
+                let results = self.builder.inst_results(call_inst);
+                return Ok(results[0]);
+            }
+            "outb" if arguments.len() == 2 => {
+                let port = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.outb_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[port, val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "inb" if arguments.len() == 1 => {
+                let port = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.inb_id, self.builder.func);
+                let call_inst = self.builder.ins().call(func_ref, &[port]);
+                let results = self.builder.inst_results(call_inst);
+                return Ok(results[0]);
+            }
+            "qemu_exit" if arguments.len() == 1 => {
+                let code = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.qemu_exit_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[code]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "serial_print" if arguments.len() == 1 => {
+                let arg = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.serial_print_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[arg]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "serial_putchar" if arguments.len() == 1 => {
+                let arg = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.serial_putchar_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[arg]);
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
             _ => {}

@@ -244,3 +244,13 @@ __attribute__((weak)) void __roze_vga_print_str(const char* s) { if (s) { fputs(
 __attribute__((weak)) void __roze_vga_print_int(int64_t val) { printf("%lld\n", (long long)val); }
 __attribute__((weak)) void __roze_vga_print_bool(int64_t val) { puts(val ? "true" : "false"); }
 
+// Freestanding Kernel & Multiboot2 Stubs for Hosted Native Target
+__attribute__((weak)) int64_t multiboot2_get_magic(void) { return 0x36D76289LL; }
+__attribute__((weak)) void* multiboot2_get_info_ptr(void) { return NULL; }
+__attribute__((weak)) void outb(int64_t port, int64_t val) { (void)port; (void)val; }
+__attribute__((weak)) int64_t inb(int64_t port) { (void)port; return 0; }
+__attribute__((weak)) void qemu_exit(int64_t code) { (void)code; }
+__attribute__((weak)) void serial_print(const char* s) { if (s) fputs(s, stdout); }
+__attribute__((weak)) void serial_putchar(int64_t ch) { putchar((int)ch); }
+
+

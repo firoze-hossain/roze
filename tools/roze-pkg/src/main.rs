@@ -1,22 +1,31 @@
-// src/main.rs
-mod project;
-mod template;
+// tools/roze-pkg/src/main.rs
+mod cache;
+mod crypto;
 mod dependency;
+mod git;
+mod lockfile;
+mod project;
+mod registry;
+mod resolver;
+mod semver;
+mod template;
 
 use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
 use std::process::Command;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 
-use project::ProjectConfig;
-use template::Template;
+use cache::PackageCache;
 use dependency::DependencyManager;
+use lockfile::LockFile;
+use project::{DependencyValue, DetailedDependency, ProjectConfig};
+use template::Template;
 
 #[derive(Parser)]
 #[command(name = "roze-pkg")]
-#[command(version = "0.1.0")]
-#[command(about = "🌹 Roze Package Manager")]
+#[command(version = "0.2.0")]
+#[command(about = "🌹 Roze Package Manager & Dependency Resolver")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -49,25 +58,63 @@ enum Commands {
         /// Arguments to pass to the program
         args: Vec<String>,
     },
-    /// Add a dependency
+    /// Add a dependency to roze.toml
     Add {
-        /// Package name (e.g., std::web)
+        /// Package name (e.g., std::web, json)
         name: String,
-        /// Version (e.g., 0.1.0)
-        #[arg(short, long, default_value = "0.1.0")]
-        version: String,
+        /// Version requirement (e.g., ^1.0.0, ~0.2.0)
+        #[arg(short, long)]
+        version: Option<String>,
+        /// Git repository URL
+        #[arg(long)]
+        git: Option<String>,
+        /// Git tag
+        #[arg(long)]
+        tag: Option<String>,
+        /// Git branch
+        #[arg(long)]
+        branch: Option<String>,
+        /// Local filesystem path
+        #[arg(long)]
+        path: Option<String>,
     },
-    /// Remove a dependency
+    /// Remove a dependency from roze.toml
     Remove {
         /// Package name
         name: String,
     },
-    /// Install dependencies
-    Install,
+    /// Install dependencies recorded in manifest and lockfile
+    Install {
+        /// Require lockfile to be strictly up-to-date
+        #[arg(long)]
+        frozen: bool,
+    },
+    /// Update dependencies to their latest compatible versions
+    Update {
+        /// Optional specific package to update
+        package: Option<String>,
+    },
+    /// Generate or inspect roze.lock
+    Lock {
+        /// Check whether roze.lock is strictly up to date
+        #[arg(long)]
+        check: bool,
+    },
+    /// Manage global package cache
+    Cache {
+        #[command(subcommand)]
+        action: CacheCommands,
+    },
     /// Run tests
     Test,
-    /// Update dependencies
-    Update,
+}
+
+#[derive(Subcommand)]
+enum CacheCommands {
+    /// List all packages in global cache
+    List,
+    /// Clear all downloaded packages and checkouts
+    Clean,
 }
 
 fn main() {
@@ -77,11 +124,15 @@ fn main() {
         Commands::New { name, template, author, path } => cmd_new(&name, &template, &author, path),
         Commands::Build { release } => cmd_build(release),
         Commands::Run { args } => cmd_run(args),
-        Commands::Add { name, version } => cmd_add(&name, &version),
+        Commands::Add { name, version, git, tag, branch, path } => {
+            cmd_add(&name, version, git, tag, branch, path)
+        }
         Commands::Remove { name } => cmd_remove(&name),
-        Commands::Install => cmd_install(),
+        Commands::Install { frozen } => cmd_install(frozen),
+        Commands::Update { package } => cmd_update(package.as_deref()),
+        Commands::Lock { check } => cmd_lock(check),
+        Commands::Cache { action } => cmd_cache(action),
         Commands::Test => cmd_test(),
-        Commands::Update => cmd_update(),
     };
 
     if let Err(e) = result {
@@ -99,7 +150,7 @@ fn cmd_new(name: &str, template_name: &str, author: &str, path: Option<PathBuf>)
     let project_path = path.unwrap_or_else(|| PathBuf::from(name));
 
     if project_path.exists() {
-        return Err(anyhow::anyhow!("Project directory already exists: {}", project_path.display()));
+        return Err(anyhow!("Project directory already exists: {}", project_path.display()));
     }
 
     let template = match template_name {
@@ -135,7 +186,7 @@ fn cmd_build(_release: bool) -> Result<()> {
         println!("✅ {}", "Build successful!".bright_green());
         Ok(())
     } else {
-        Err(anyhow::anyhow!("Build failed"))
+        Err(anyhow!("Build failed"))
     }
 }
 
@@ -156,19 +207,40 @@ fn cmd_run(args: Vec<String>) -> Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(anyhow::anyhow!("Run failed"))
+        Err(anyhow!("Run failed"))
     }
 }
 
-fn cmd_add(name: &str, version: &str) -> Result<()> {
-    println!("📦 {}", format!("Adding dependency: {}@{}", name, version).green());
-
+fn cmd_add(
+    name: &str,
+    version: Option<String>,
+    git: Option<String>,
+    tag: Option<String>,
+    branch: Option<String>,
+    path: Option<String>,
+) -> Result<()> {
     let project_dir = std::env::current_dir()?;
     let mut dep_manager = DependencyManager::new(project_dir);
-    dep_manager.add_dependency(name, version)?;
+
+    let dep_value = if git.is_some() || tag.is_some() || branch.is_some() || path.is_some() {
+        DependencyValue::Detailed(DetailedDependency {
+            version,
+            path,
+            git,
+            tag,
+            branch,
+            rev: None,
+        })
+    } else {
+        let v = version.unwrap_or_else(|| "^0.1.0".to_string());
+        DependencyValue::Simple(v)
+    };
+
+    println!("📦 Adding dependency: {}", name.bright_cyan().bold());
+    dep_manager.add_dependency_spec(name, dep_value)?;
     dep_manager.install_all()?;
 
-    println!("✅ {}", format!("Added {}@{}", name, version).bright_green());
+    println!("✅ {}", format!("Added dependency '{}'", name).bright_green());
     Ok(())
 }
 
@@ -183,11 +255,78 @@ fn cmd_remove(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_install() -> Result<()> {
+fn cmd_install(frozen: bool) -> Result<()> {
     let project_dir = std::env::current_dir()?;
-    let dep_manager = DependencyManager::new(project_dir);
-    dep_manager.install_all()?;
+    let mut dep_manager = DependencyManager::new(project_dir);
 
+    if frozen {
+        let lock_path = dep_manager.lockfile_path();
+        if !lock_path.exists() {
+            return Err(anyhow!("--frozen specified but roze.lock does not exist"));
+        }
+    }
+
+    dep_manager.install_all()?;
+    Ok(())
+}
+
+fn cmd_update(_package: Option<&str>) -> Result<()> {
+    let project_dir = std::env::current_dir()?;
+    let mut dep_manager = DependencyManager::new(project_dir);
+    dep_manager.update()
+}
+
+fn cmd_lock(check: bool) -> Result<()> {
+    let project_dir = std::env::current_dir()?;
+    let mut dep_manager = DependencyManager::new(project_dir);
+
+    if check {
+        let lock_path = dep_manager.lockfile_path();
+        if !lock_path.exists() {
+            return Err(anyhow!("roze.lock does not exist"));
+        }
+        let lock = LockFile::load(&lock_path)?;
+        for dep_name in dep_manager.dependencies.keys() {
+            if lock.find_package(dep_name).is_none() {
+                return Err(anyhow!("roze.lock is out of date: missing '{}'", dep_name));
+            }
+        }
+        println!("✅ {}", "roze.lock is up to date".bright_green());
+    } else {
+        println!("🔒 {}", "Generating roze.lock...".bright_cyan());
+        dep_manager.resolve_and_lock(false)?;
+        println!("✅ {}", "roze.lock updated successfully".bright_green());
+    }
+    Ok(())
+}
+
+fn cmd_cache(action: CacheCommands) -> Result<()> {
+    let cache = PackageCache::new();
+    match action {
+        CacheCommands::List => {
+            let list = cache.list_cached_packages()?;
+            if list.is_empty() {
+                println!("Global package cache is empty ({})", cache.root_dir.display());
+            } else {
+                println!("📦 Global package cache ({}) :", cache.root_dir.display());
+                for pkg in list {
+                    let kb = pkg.size_bytes as f64 / 1024.0;
+                    println!(
+                        "  {} v{} ({:.1} KB) [{}]",
+                        pkg.name.bold(),
+                        pkg.version.bright_cyan(),
+                        kb,
+                        &pkg.checksum[..12.min(pkg.checksum.len())]
+                    );
+                }
+            }
+        }
+        CacheCommands::Clean => {
+            let freed = cache.clean_cache()?;
+            let kb = freed as f64 / 1024.0;
+            println!("🧹 {}", format!("Cleaned global package cache ({:.1} KB freed)", kb).bright_green());
+        }
+    }
     Ok(())
 }
 
@@ -207,13 +346,8 @@ fn cmd_test() -> Result<()> {
         println!("✅ {}", "All tests passed!".bright_green());
         Ok(())
     } else {
-        Err(anyhow::anyhow!("Tests failed"))
+        Err(anyhow!("Tests failed"))
     }
-}
-
-fn cmd_update() -> Result<()> {
-    println!("🔄 {}", "Updating dependencies...".yellow());
-    cmd_install()
 }
 
 fn load_project_config() -> Result<ProjectConfig> {
@@ -221,15 +355,10 @@ fn load_project_config() -> Result<ProjectConfig> {
     if config_path.exists() {
         ProjectConfig::load(&config_path)
     } else {
-        Err(anyhow::anyhow!("No roze.toml found. Are you in a Roze project?"))
+        Err(anyhow!("No roze.toml found. Are you in a Roze project?"))
     }
 }
 
 fn find_compiler() -> Result<PathBuf> {
-    // Shared with roze-build -- see compiler::toolchain for why (this
-    // used to be implemented separately here, and independently buggily:
-    // it walked up a hardcoded 3 directories from its own executable's
-    // location, which lands one level too high for a normal
-    // `cargo build --release` layout).
     roze_compiler::toolchain::find_roze_binary()
 }

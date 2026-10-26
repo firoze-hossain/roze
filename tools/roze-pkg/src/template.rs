@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 pub struct Template {
+    #[allow(dead_code)]
     pub name: String,
+    #[allow(dead_code)]
     pub description: String,
     pub files: Vec<TemplateFile>,
 }

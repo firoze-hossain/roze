@@ -240,7 +240,7 @@ s1_rows = [
         ("MED-06", 8), ("Medium", 4), ("Step 11", 8), "Tooling (roze-pkg)", "Package Registry & Dependency Resolver",
         "Allow developers to install, share, and manage third-party libraries seamlessly from a central registry or Git repos.",
         "Implement Git-based dependency fetching, semantic version resolution (semver), lockfile generation ('roze.lock'), and binary package caching.",
-        "Developer Experience, Ecosystem Growth", "1 - 2 Weeks", ("Ready to Start", 7)
+        "Developer Experience, Ecosystem Growth", "Completed", ("Completed", 6)
     ],
 
     # ADVANCED STAGE
@@ -248,7 +248,7 @@ s1_rows = [
         ("ADV-01", 8), ("Advanced", 5), ("Step 12", 8), "Native Codegen & Linker", "Freestanding / no_std Kernel Target",
         "Compile code that runs directly on bare metal CPU with zero OS, zero glibc, and zero mandatory runtime underneath.",
         "'--target freestanding' compiler flag; custom '_start' entry point; disable libc malloc/printf; raw VGA buffer text driver; linker script integration.",
-        "Operating System Kernel, Embedded Firmware", "1 - 2 Weeks", ("Planned", 8)
+        "Operating System Kernel, Embedded Firmware", "1 - 2 Weeks", ("Ready to Start", 7)
     ],
     [
         ("ADV-02", 8), ("Advanced", 5), ("Step 13", 8), "Systems & OS Demo", "Bootable x86_64 OS Kernel Demo",
@@ -380,10 +380,10 @@ s3_rows = [
     [
         ("Phase 2", 4),
         "Universal Interop & Concurrency",
-        "C-ABI FFI (extern 'C'), Thread-safe Atomic ARC, Native OS Threads & Channels, Concurrent Async HTTP Server",
+        "C-ABI FFI (extern 'C'), Thread-safe Atomic ARC, Native OS Threads & Channels, Concurrent Async HTTP Server, Package Registry & Dependency Resolver (roze-pkg)",
         "Phase 1 Core Types",
         "v0.5.0-beta",
-        ("In Progress", 4)
+        ("COMPLETED (Phase 2 100% Complete)", 6)
     ],
     [
         ("Phase 3", 4),
@@ -391,7 +391,7 @@ s3_rows = [
         "Unsafe raw pointers, Direct memory operations, --target freestanding (no_std), Bootable OS x86_64 kernel demo",
         "Phase 2 C-ABI & ARC",
         "v0.7.0-systems",
-        ("Planned", 8)
+        ("Ready to Start", 7)
     ],
     [
         ("Phase 4", 5),

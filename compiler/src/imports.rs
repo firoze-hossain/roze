@@ -119,22 +119,50 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         return Ok((WEB_SOURCE.to_string(), WEB_DISPLAY_NAME.to_string()));
     }
 
-    let file_path: PathBuf = if path.ends_with(".roze") {
+    let primary_path: PathBuf = if path.ends_with(".roze") {
         base_dir.join(path)
     } else {
         base_dir.join(format!("{}.roze", path))
     };
 
-    match std::fs::read_to_string(&file_path) {
-        Ok(source) => Ok((source, file_path.display().to_string())),
-        Err(_) => Err(RozeError::module(
-            format!("Could not find module '{}' (looked for {})", path, file_path.display()),
-            location.line,
-            location.column,
-        )
-        .with_hint("built-in modules: \"core\", \"concurrency\" -- anything else is a path to a .roze file, relative to the importing file")
-        .into()),
+    let candidates = {
+        let mut list = Vec::new();
+        // 1. Direct path relative to base_dir
+        list.push(primary_path.clone());
+
+        // 2. Search in `libs/` relative to base_dir and its parent directories (project root)
+        let mut curr = Some(base_dir);
+        let mut depth = 0;
+        while let Some(dir) = curr {
+            if depth > 4 {
+                break;
+            }
+            list.push(dir.join("libs").join(path).join("lib.roze"));
+            list.push(dir.join("libs").join(format!("{}.roze", path)));
+            let sanitized = path.replace("::", "_");
+            if sanitized != path {
+                list.push(dir.join("libs").join(&sanitized).join("lib.roze"));
+                list.push(dir.join("libs").join(format!("{}.roze", sanitized)));
+            }
+            curr = dir.parent();
+            depth += 1;
+        }
+        list
+    };
+
+    for candidate in &candidates {
+        if let Ok(source) = std::fs::read_to_string(candidate) {
+            return Ok((source, candidate.display().to_string()));
+        }
     }
+
+    Err(RozeError::module(
+        format!("Could not find module '{}' (looked for {})", path, primary_path.display()),
+        location.line,
+        location.column,
+    )
+    .with_hint("built-in modules: \"core\", \"concurrency\", \"web\" -- packages in \"libs/<pkg>/lib.roze\" or a relative .roze file")
+    .into())
 }
 
 #[cfg(test)]
@@ -196,5 +224,30 @@ mod tests {
             !program.statements.iter().any(|s| matches!(s, Statement::Import { .. })),
             "no Import statements should remain after resolution"
         );
+    }
+
+    #[test]
+    fn importing_from_libs_directory_pulls_in_functions() {
+        let temp_dir = std::env::temp_dir().join(format!("roze_test_import_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let libs_pkg = temp_dir.join("libs").join("my_math");
+        std::fs::create_dir_all(&libs_pkg).unwrap();
+        std::fs::write(
+            libs_pkg.join("lib.roze"),
+            "func custom_add(a: int, b: int) -> int { return a + b; }\n",
+        ).unwrap();
+
+        let src_dir = temp_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        let code = "import \"my_math\"; func main() -> int { return custom_add(10, 20); }";
+        let program = parse(tokenize(code)).unwrap();
+        let resolved = resolve_imports(program, &src_dir).unwrap();
+
+        let names = function_names(&resolved);
+        assert!(names.contains(&"custom_add".to_string()));
+        assert!(names.contains(&"main".to_string()));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

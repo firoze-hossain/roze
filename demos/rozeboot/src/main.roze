@@ -1,0 +1,155 @@
+// ==============================================================================
+// 🌹 RozeBoot Enterprise Showcase Demo (ADV-03)
+// ==============================================================================
+// A Spring-Boot-style Enterprise Microservice built with Roze.
+// Features:
+// - Declarative REST Controllers with Dynamic URL Routing (:id parameter)
+// - HikariCP / JDBC Connection Pooling with in-memory H2 / SQLite fallback
+// - HMAC-SHA256 JWT Authentication & Security Guard Middleware
+// - Fluent Type-Safe SQL ORM Query Builder (SELECT, INSERT, UPDATE, DELETE)
+// - Structured JSON responses & error handling
+// ==============================================================================
+
+import "rozeboot";
+import "concurrency";
+
+func main() {
+    let app = rozeboot_new("RozeCommerce Enterprise API", 8080);
+    let jwt_secret = "roze-enterprise-jwt-super-secret-key-2026";
+
+    // 1. Setup Database Connection Pool
+    // Uses shared in-memory H2 database with connection pooling
+    rozeboot_with_datasource(app, "jdbc:h2:mem:rozedb;DB_CLOSE_DELAY=-1", 5);
+
+    // Bootstrap DB schema and sample catalog
+    datasource_execute(app.datasource, "CREATE TABLE IF NOT EXISTS products (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), category VARCHAR(50), price INT);");
+    datasource_execute(app.datasource, "INSERT INTO products (name, category, price) VALUES ('Roze Mechanical Keyboard', 'Hardware', 149);");
+    datasource_execute(app.datasource, "INSERT INTO products (name, category, price) VALUES ('Roze Compiler Internals Book', 'Education', 49);");
+    datasource_execute(app.datasource, "INSERT INTO products (name, category, price) VALUES ('UltraWide 4K Developer Monitor', 'Hardware', 599);");
+
+    // 2. Configure Security & Excluded Public Paths
+    let public_paths = list_new();
+    list_push(public_paths, "/");
+    list_push(public_paths, "/health");
+    list_push(public_paths, "/api/auth/login");
+    rozeboot_with_jwt(app, jwt_secret, public_paths);
+
+    // 3. System / Health Controller (Public)
+    let sys_ctrl = controller_new("SystemController", "");
+    controller_get(sys_ctrl, "/", |req: map| {
+        let res = map_new();
+        map_set(res, "service", "RozeCommerce API");
+        map_set(res, "version", "1.0.0");
+        map_set(res, "status", "RUNNING");
+        map_set(res, "framework", "RozeBoot Enterprise");
+        resp_ok(req, res);
+    });
+
+    controller_get(sys_ctrl, "/health", |req: map| {
+        let stats = datasource_stats(app.datasource);
+        let res = map_new();
+        map_set(res, "status", "HEALTHY");
+        map_set(res, "timestamp", time_now());
+        map_set(res, "db_active_conns", map_get(stats, "active"));
+        map_set(res, "db_max_pool", map_get(stats, "max_pool_size"));
+        resp_ok(req, res);
+    });
+    rozeboot_register(app, sys_ctrl);
+
+    // 4. Auth Controller (Public Login -> Issues JWT)
+    let auth_ctrl = controller_new("AuthController", "/api/auth");
+    controller_post(auth_ctrl, "/login", |req: map| {
+        let body = req_body_json(req);
+        let username = to_string(map_get(body, "username"));
+        let password = to_string(map_get(body, "password"));
+
+        // Demo credential verification
+        if username == "admin" && password == "roze2026" {
+            let token = jwt_generate(username, "ROLE_ADMIN", 3600, jwt_secret);
+            let res = map_new();
+            map_set(res, "access_token", token);
+            map_set(res, "token_type", "Bearer");
+            map_set(res, "expires_in", 3600);
+            resp_ok(req, res);
+            return;
+        }
+
+        resp_unauthorized(req, "Invalid username or password");
+    });
+    rozeboot_register(app, auth_ctrl);
+
+    // 5. Products Controller (Protected by JWT Guard)
+    let prod_ctrl = controller_new("ProductsController", "/api/products");
+
+    // GET /api/products - List all products using ORM QueryBuilder
+    controller_get(prod_ctrl, "", |req: map| {
+        let qb = query_table("products");
+        let cols = list_new();
+        list_push(cols, "id");
+        list_push(cols, "name");
+        list_push(cols, "category");
+        list_push(cols, "price");
+        query_select(qb, cols);
+        query_order_by(qb, "id", "ASC");
+
+        let items = query_get(qb, app.datasource);
+        let res = map_new();
+        map_set(res, "count", list_length(items));
+        map_set(res, "products", items);
+        resp_ok(req, res);
+    });
+
+    // POST /api/products - Create a new product
+    controller_post(prod_ctrl, "", |req: map| {
+        let body = req_body_json(req);
+        let name = to_string(map_get(body, "name"));
+        let category = to_string(map_get(body, "category"));
+        let price = to_string(map_get(body, "price"));
+
+        if name == "" || price == "" {
+            resp_bad_request(req, "Product 'name' and 'price' are required");
+            return;
+        }
+
+        let new_item = map_new();
+        map_set(new_item, "name", name);
+        map_set(new_item, "category", category);
+        map_set(new_item, "price", price);
+
+        let qb = query_insert_into("products", new_item);
+        query_execute(qb, app.datasource);
+
+        let res = map_new();
+        map_set(res, "status", "created");
+        map_set(res, "message", "Product added successfully");
+        resp_created(req, res);
+    });
+
+    // GET /api/products/:id - Fetch single product by path variable
+    controller_get(prod_ctrl, "/:id", |req: map| {
+        let id_str = req_param(req, "id");
+        let qb = query_table("products");
+        query_where(qb, "id", "=", id_str);
+
+        let item = query_first(qb, app.datasource);
+        if map_size(item) == 0 {
+            resp_not_found(req, "Product not found with id: " + id_str);
+            return;
+        }
+
+        resp_ok(req, item);
+    });
+
+    rozeboot_register(app, prod_ctrl);
+
+    // 6. Launch Microservice
+    let server = rozeboot_start(app);
+
+    println("🚀 RozeBoot Server listening on port 8080...");
+    println("Press Ctrl+C to stop.");
+
+    // Keep server thread alive
+    while true {
+        sleep(1000);
+    }
+}

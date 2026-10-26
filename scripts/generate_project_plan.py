@@ -260,13 +260,13 @@ s1_rows = [
         ("ADV-03", 8), ("Advanced", 5), ("Step 14", 8), "Web Framework Project", "Spring-Boot-Style Framework ('RozeBoot')",
         "Enable building large-scale enterprise services with declarative controllers, middleware, connection pooling, and ORM query builders.",
         "Build 'RozeBoot' framework on top of Roze: REST controller annotations/routing, HikariCP JDBC connection pooling, JWT security, SQL query builder.",
-        "Enterprise Cloud Applications", "2 - 3 Weeks", ("Ready to Start", 7)
+        "Enterprise Cloud Applications", "Completed", ("Completed", 6)
     ],
     [
         ("ADV-04", 8), ("Advanced", 5), ("Step 15", 8), "Game Engine Demo", "2D/3D Game Demo via FFI (Raylib / SDL3)",
         "Demonstrate game platform capabilities with 60 FPS real-time rendering, audio, and physics.",
         "Bind Raylib / SDL3 via Roze C-FFI; build a working game loop with sprite rendering, keyboard/mouse input, particle effects, and sound playback.",
-        "Game Platform Proof-of-Concept", "1 Week", ("Planned", 8)
+        "Game Platform Proof-of-Concept", "1 Week", ("Ready to Start", 7)
     ],
     [
         ("ADV-05", 8), ("Advanced", 5), ("Step 16", 8), "AI / ML Wrapper Project", "AI & ML Inference Wrapper (ONNX / GGML)",
@@ -301,9 +301,9 @@ s2_rows = [
         "Spring-Boot-level servers, REST/gRPC APIs, Cloud services, banking & enterprise backends",
         "JVM HTTP accept loop, JSON, JDBC SQL, Result<T,E> & Option<T> Safe I/O",
         "Multi-threaded concurrency, closures/routing, generics, connection pooling",
-        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), CORE-05 (Done), MED-02 (Done), MED-04 (Done), ADV-03",
+        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), CORE-05 (Done), MED-02 (Done), MED-04 (Done), ADV-03 (Done)",
         "Java (Spring Boot), Go (Gin/Fiber), C# (.NET)",
-        ("75% - Concurrent Server & Router Ready", 6)
+        ("100% - RozeBoot Enterprise Framework Production-Ready", 6)
     ],
     [
         "Operating Systems & Kernels",

@@ -78,6 +78,38 @@ const IO_HELPER_METHODS: &str = r#"
         }
     }
 
+    private static java.util.Map __roze_http_request(String method, String url, java.util.Map headers, String body) {
+        try {
+            java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+            java.net.http.HttpRequest.Builder builder = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(url));
+            if (headers != null) {
+                for (Object k : headers.keySet()) {
+                    Object v = headers.get(k);
+                    if (k != null && v != null) {
+                        builder.header(k.toString(), v.toString());
+                    }
+                }
+            }
+            java.net.http.HttpRequest.BodyPublisher pub = (body != null && !body.isEmpty())
+                ? java.net.http.HttpRequest.BodyPublishers.ofString(body)
+                : java.net.http.HttpRequest.BodyPublishers.noBody();
+            builder.method(method.toUpperCase(), pub);
+            java.net.http.HttpResponse<String> response = client.send(builder.build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+            java.util.Map<Object, Object> resMap = new java.util.HashMap<Object, Object>();
+            resMap.put("status", (long) response.statusCode());
+            resMap.put("body", response.body());
+            java.util.Map<Object, Object> hMap = new java.util.HashMap<Object, Object>();
+            response.headers().map().forEach((k, v) -> {
+                if (!v.isEmpty()) hMap.put(k.toLowerCase(), v.get(0));
+            });
+            resMap.put("headers", hMap);
+            return resMap;
+        } catch (Exception e) {
+            throw new RuntimeException("http_request failed: " + e.getMessage(), e);
+        }
+    }
+
     private static String __roze_http_post(String url, String body) {
         try {
             java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
@@ -745,7 +777,10 @@ const SQL_HELPER_METHODS: &str = r#"
             while (rs.next()) {
                 java.util.Map<Object, Object> row = new java.util.HashMap<Object, Object>();
                 for (int i = 1; i <= columnCount; i++) {
-                    row.put(meta.getColumnLabel(i), rs.getObject(i));
+                    String label = meta.getColumnLabel(i);
+                    Object val = rs.getObject(i);
+                    row.put(label, val);
+                    row.put(label.toLowerCase(), val);
                 }
                 rows.add(row);
             }
@@ -776,6 +811,309 @@ const SQL_HELPER_METHODS: &str = r#"
         }
     }
 "#;
+
+const ROZEBOOT_HELPER_METHODS: &str = r#"
+    // ==============================================================================
+    // RozeBoot Enterprise Helpers: Connection Pooling & JWT Security (ADV-03)
+    // ==============================================================================
+
+    public static class RozeConnectionPool {
+        private final String url;
+        private final int maxPoolSize;
+        private final java.util.concurrent.BlockingQueue<java.sql.Connection> available;
+        private final java.util.Set<java.sql.Connection> inUse;
+        private final java.util.concurrent.atomic.AtomicInteger createdCount;
+        private volatile boolean closed = false;
+        private Object hikariDs = null;
+
+        public RozeConnectionPool(String url, int maxPoolSize) {
+            this.url = url;
+            this.maxPoolSize = maxPoolSize > 0 ? maxPoolSize : 10;
+            this.available = new java.util.concurrent.LinkedBlockingQueue<java.sql.Connection>();
+            this.inUse = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<java.sql.Connection, Boolean>());
+            this.createdCount = new java.util.concurrent.atomic.AtomicInteger(0);
+
+            try {
+                if (url.startsWith("jdbc:sqlite:")) Class.forName("org.sqlite.JDBC");
+                else if (url.startsWith("jdbc:h2:")) Class.forName("org.h2.Driver");
+                else if (url.startsWith("jdbc:postgresql:")) Class.forName("org.postgresql.Driver");
+                else if (url.startsWith("jdbc:mysql:")) Class.forName("com.mysql.cj.jdbc.Driver");
+            } catch (Throwable ignored) {}
+
+            // Dynamically detect and initialize HikariCP if present on classpath
+            try {
+                Class<?> cfgCls = Class.forName("com.zaxxer.hikari.HikariConfig");
+                Class<?> dsCls = Class.forName("com.zaxxer.hikari.HikariDataSource");
+                Object cfg = cfgCls.getConstructor().newInstance();
+                cfgCls.getMethod("setJdbcUrl", String.class).invoke(cfg, url);
+                cfgCls.getMethod("setMaximumPoolSize", int.class).invoke(cfg, this.maxPoolSize);
+                this.hikariDs = dsCls.getConstructor(cfgCls).newInstance();
+            } catch (Throwable t) {
+                this.hikariDs = null;
+            }
+        }
+
+        public java.sql.Connection getConnection() {
+            if (closed) throw new RuntimeException("RozeConnectionPool is closed");
+            if (hikariDs != null) {
+                try {
+                    return (java.sql.Connection) hikariDs.getClass().getMethod("getConnection").invoke(hikariDs);
+                } catch (Exception e) {
+                    throw new RuntimeException("HikariCP getConnection failed: " + e.getMessage(), e);
+                }
+            }
+
+            java.sql.Connection conn = available.poll();
+            if (conn != null) {
+                try {
+                    if (!conn.isClosed()) {
+                        inUse.add(conn);
+                        return conn;
+                    }
+                } catch (Exception ignored) {}
+                try { conn.close(); } catch (Exception ignored) {}
+                createdCount.decrementAndGet();
+            }
+
+            if (createdCount.get() < maxPoolSize) {
+                try {
+                    conn = java.sql.DriverManager.getConnection(url);
+                    createdCount.incrementAndGet();
+                    inUse.add(conn);
+                    return conn;
+                } catch (java.sql.SQLException e) {
+                    throw new RuntimeException("Failed to open pooled connection: " + e.getMessage(), e);
+                }
+            }
+
+            try {
+                conn = available.poll(5, java.util.concurrent.TimeUnit.SECONDS);
+                if (conn == null) throw new RuntimeException("Connection pool exhausted (timed out after 5s)");
+                inUse.add(conn);
+                return conn;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted waiting for pooled connection", e);
+            }
+        }
+
+        public void releaseConnection(java.sql.Connection conn) {
+            if (conn == null) return;
+            if (hikariDs != null) {
+                try { conn.close(); } catch (Exception ignored) {}
+                return;
+            }
+            inUse.remove(conn);
+            if (!closed) {
+                try {
+                    if (!conn.isClosed()) {
+                        available.offer(conn);
+                        return;
+                    }
+                } catch (Exception ignored) {}
+            }
+            try { conn.close(); } catch (Exception ignored) {}
+            createdCount.decrementAndGet();
+        }
+
+        public void close() {
+            closed = true;
+            if (hikariDs != null) {
+                try {
+                    hikariDs.getClass().getMethod("close").invoke(hikariDs);
+                } catch (Exception ignored) {}
+                return;
+            }
+            java.sql.Connection conn;
+            while ((conn = available.poll()) != null) {
+                try { conn.close(); } catch (Exception ignored) {}
+            }
+            for (java.sql.Connection c : inUse) {
+                try { c.close(); } catch (Exception ignored) {}
+            }
+            inUse.clear();
+        }
+
+        public java.util.Map<Object, Object> getStats() {
+            java.util.Map<Object, Object> s = new java.util.HashMap<Object, Object>();
+            s.put("max_pool_size", (long) maxPoolSize);
+            s.put("active_connections", (long) inUse.size());
+            s.put("active", (long) inUse.size());
+            s.put("idle_connections", (long) available.size());
+            s.put("idle", (long) available.size());
+            s.put("total_connections", (long) createdCount.get());
+            s.put("total", (long) createdCount.get());
+            s.put("is_hikari", hikariDs != null);
+            s.put("is_closed", closed);
+            s.put("closed", closed);
+            return s;
+        }
+    }
+
+    private static Object __roze_db_pool_create(String url, long maxPoolSize) {
+        return new RozeConnectionPool(url, (int) maxPoolSize);
+    }
+
+    private static Object __roze_db_pool_get(Object poolObj) {
+        if (poolObj instanceof RozeConnectionPool) {
+            return ((RozeConnectionPool) poolObj).getConnection();
+        }
+        throw new RuntimeException("Expected RozeConnectionPool");
+    }
+
+    private static void __roze_db_pool_release(Object poolObj, Object connObj) {
+        if (poolObj instanceof RozeConnectionPool && connObj instanceof java.sql.Connection) {
+            ((RozeConnectionPool) poolObj).releaseConnection((java.sql.Connection) connObj);
+        }
+    }
+
+    private static void __roze_db_pool_close(Object poolObj) {
+        if (poolObj instanceof RozeConnectionPool) {
+            ((RozeConnectionPool) poolObj).close();
+        }
+    }
+
+    private static java.util.Map __roze_db_pool_stats(Object poolObj) {
+        if (poolObj instanceof RozeConnectionPool) {
+            return ((RozeConnectionPool) poolObj).getStats();
+        }
+        return new java.util.HashMap();
+    }
+
+    private static java.util.List __roze_db_pool_query(Object poolObj, String sql) {
+        if (!(poolObj instanceof RozeConnectionPool)) throw new RuntimeException("Expected RozeConnectionPool");
+        RozeConnectionPool pool = (RozeConnectionPool) poolObj;
+        java.sql.Connection conn = pool.getConnection();
+        try {
+            return __roze_sql_query(conn, sql);
+        } finally {
+            pool.releaseConnection(conn);
+        }
+    }
+
+    private static int __roze_db_pool_execute(Object poolObj, String sql) {
+        if (!(poolObj instanceof RozeConnectionPool)) throw new RuntimeException("Expected RozeConnectionPool");
+        RozeConnectionPool pool = (RozeConnectionPool) poolObj;
+        java.sql.Connection conn = pool.getConnection();
+        try {
+            return __roze_sql_execute(conn, sql);
+        } finally {
+            pool.releaseConnection(conn);
+        }
+    }
+
+    // --- JWT Security ---
+    private static String __roze_base64_url_encode(byte[] data) {
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(data);
+    }
+
+    private static byte[] __roze_base64_url_decode(String str) {
+        return java.util.Base64.getUrlDecoder().decode(str);
+    }
+
+    private static String __roze_hmac_sha256(String data, String secret) {
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            javax.crypto.spec.SecretKeySpec k = new javax.crypto.spec.SecretKeySpec(secret.getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256");
+            mac.init(k);
+            byte[] h = mac.doFinal(data.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return __roze_base64_url_encode(h);
+        } catch (Exception e) {
+            throw new RuntimeException("HMAC-SHA256 failed: " + e.getMessage(), e);
+        }
+    }
+
+    private static String __roze_jwt_sign(java.util.Map claims, String secret) {
+        java.util.Map<String, String> header = new java.util.HashMap<String, String>();
+        header.put("alg", "HS256");
+        header.put("typ", "JWT");
+
+        String hJson = __roze_json_encode(header);
+        String pJson = __roze_json_encode(claims);
+
+        String part0 = __roze_base64_url_encode(hJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String part1 = __roze_base64_url_encode(pJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String signingInput = part0 + "." + part1;
+        String sig = __roze_hmac_sha256(signingInput, secret);
+        return signingInput + "." + sig;
+    }
+
+    private static boolean __roze_jwt_verify(String token, String secret) {
+        if (token == null || secret == null) return false;
+        String[] parts = token.split("\\.");
+        if (parts.length != 3) return false;
+
+        String signingInput = parts[0] + "." + parts[1];
+        String expectedSig = __roze_hmac_sha256(signingInput, secret);
+        if (!java.security.MessageDigest.isEqual(expectedSig.getBytes(java.nio.charset.StandardCharsets.UTF_8), parts[2].getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
+            return false;
+        }
+
+        try {
+            byte[] pBytes = __roze_base64_url_decode(parts[1]);
+            String pJson = new String(pBytes, java.nio.charset.StandardCharsets.UTF_8);
+            Object decoded = __roze_json_decode(pJson);
+            if (decoded instanceof java.util.Map) {
+                java.util.Map m = (java.util.Map) decoded;
+                if (m.containsKey("exp")) {
+                    Object expVal = m.get("exp");
+                    long exp = 0;
+                    if (expVal instanceof Number) {
+                        exp = ((Number) expVal).longValue();
+                    }
+                    long now = System.currentTimeMillis() / 1000L;
+                    if (exp > 0 && now >= exp) {
+                        return false;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static java.util.Map __roze_jwt_decode(String token) {
+        if (token == null) return new java.util.HashMap();
+        String[] parts = token.split("\\.");
+        if (parts.length != 3) return new java.util.HashMap();
+        try {
+            byte[] pBytes = __roze_base64_url_decode(parts[1]);
+            String pJson = new String(pBytes, java.nio.charset.StandardCharsets.UTF_8);
+            Object decoded = __roze_json_decode(pJson);
+            if (decoded instanceof java.util.Map) {
+                return (java.util.Map) decoded;
+            }
+        } catch (Exception ignored) {}
+        return new java.util.HashMap();
+    }
+
+    private static java.util.Map __roze_jwt_decode_header(String token) {
+        if (token == null) return new java.util.HashMap();
+        String[] parts = token.split("\\.");
+        if (parts.length != 3) return new java.util.HashMap();
+        try {
+            byte[] hBytes = __roze_base64_url_decode(parts[0]);
+            String hJson = new String(hBytes, java.nio.charset.StandardCharsets.UTF_8);
+            Object decoded = __roze_json_decode(hJson);
+            if (decoded instanceof java.util.Map) {
+                return (java.util.Map) decoded;
+            }
+        } catch (Exception ignored) {}
+        return new java.util.HashMap();
+    }
+
+    // --- Time ---
+    private static int __roze_time_now() {
+        return (int) (System.currentTimeMillis() / 1000L);
+    }
+
+    private static int __roze_time_now_millis() {
+        return (int) (System.currentTimeMillis() % 2000000000L);
+    }
+"#;
+
 
 const OPTION_RESULT_HELPER_CLASSES: &str = r#"
 class RozeOption {
@@ -1354,6 +1692,8 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "string_concat" => Some("String"),
         "string_to_upper" => Some("String"),
         "string_to_lower" => Some("String"),
+        "substring" | "string_substring" => Some("String"),
+        "string_contains" | "string_starts_with" | "string_ends_with" => Some("boolean"),
         "abs" => Some("int"),
         "max" => Some("int"),
         "min" => Some("int"),
@@ -1377,6 +1717,7 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "map_remove" => Some(OBJECT_TYPE),
         "map_size" => Some("int"),
         "map_is_empty" => Some("boolean"),
+        "map_keys" => Some("java.util.List"),
 
         "read_file" => Some("String"),
         "write_file" => Some("void"),
@@ -1387,6 +1728,7 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
 
         "http_get" => Some("String"),
         "http_post" => Some("String"),
+        "http_request" => Some("java.util.Map"),
 
         "json_encode" => Some("String"),
         "json_decode" => Some(OBJECT_TYPE),
@@ -1404,6 +1746,21 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "sql_query" => Some("java.util.List"),
         "sql_execute" => Some("int"),
         "sql_close" => Some("void"),
+
+        // Database Connection Pooling (ADV-03)
+        "db_pool_create" | "db_pool_get" => Some(OBJECT_TYPE),
+        "db_pool_release" | "db_pool_close" => Some("void"),
+        "db_pool_stats" => Some("java.util.Map"),
+        "db_pool_query" => Some("java.util.List"),
+        "db_pool_execute" => Some("int"),
+
+        // JWT Security (ADV-03)
+        "jwt_sign" => Some("String"),
+        "jwt_verify" => Some("boolean"),
+        "jwt_decode" | "jwt_decode_header" => Some("java.util.Map"),
+
+        // Time (ADV-03)
+        "time_now" | "time_now_millis" => Some("int"),
 
         // Option
         "option_some" | "Some" => Some("RozeOption"),
@@ -1691,6 +2048,7 @@ impl JavaSourceGenerator {
         source.push_str(JSON_HELPER_METHODS);
         source.push_str(HTTP_SERVER_HELPER_METHODS);
         source.push_str(SQL_HELPER_METHODS);
+        source.push_str(ROZEBOOT_HELPER_METHODS);
         source.push_str(OPTION_RESULT_HELPER_METHODS);
         source.push_str(CONCURRENCY_HELPER_METHODS);
         source.push_str(DIRECT_MEMORY_HELPER_METHODS);
@@ -2111,7 +2469,13 @@ impl JavaSourceGenerator {
                     source.push_str(&hoisted);
 
                     source.push_str(&format!("{}return ", indent_str));
-                    self.generate_expression(source, &expr)?;
+                    if return_type != &Type::Unknown && return_type != &Type::Void && expr.type_ == Type::Unknown {
+                        let mut val_str = String::new();
+                        self.generate_expression(&mut val_str, &expr)?;
+                        source.push_str(&java_unbox(return_type, &val_str));
+                    } else {
+                        self.generate_expression(source, &expr)?;
+                    }
                     source.push_str(";\n");
                 } else if !is_closure && return_type == &Type::Void {
                     source.push_str(&format!("{}return;\n", indent_str));
@@ -2371,7 +2735,12 @@ impl JavaSourceGenerator {
                 source.push_str(&format!("\"{}\"", escape_for_java_string_literal(value)));
             }
             TypedExpressionKind::Number(value) => {
-                source.push_str(value);
+                if !value.contains('.') && (value.parse::<i64>().is_ok() && value.parse::<i32>().is_err()) {
+                    source.push_str(value);
+                    source.push('L');
+                } else {
+                    source.push_str(value);
+                }
             }
             TypedExpressionKind::Identifier(name) => {
                 source.push_str(&escape_java_identifier(name));
@@ -2612,6 +2981,36 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
+            "substring" | "string_substring" if arguments.len() == 3 => {
+                source.push_str("((String)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")).substring(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "string_contains" if arguments.len() == 2 => {
+                source.push_str("((String)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")).contains((CharSequence)(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str("))");
+            }
+            "string_starts_with" if arguments.len() == 2 => {
+                source.push_str("((String)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")).startsWith((String)(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str("))");
+            }
+            "string_ends_with" if arguments.len() == 2 => {
+                source.push_str("((String)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")).endsWith((String)(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str("))");
+            }
             "abs" if arguments.len() == 1 => {
                 source.push_str("Math.abs(");
                 self.generate_numeric_arg(source, &arguments[0])?;
@@ -2739,6 +3138,11 @@ impl JavaSourceGenerator {
                 self.generate_map_receiver(source, &arguments[0])?;
                 source.push_str(".isEmpty()");
             }
+            "map_keys" if arguments.len() == 1 => {
+                source.push_str("new java.util.ArrayList(");
+                self.generate_map_receiver(source, &arguments[0])?;
+                source.push_str(".keySet())");
+            }
 
             // ---- IO: file ----
             // Each delegates to a fixed helper method (see
@@ -2791,6 +3195,17 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str(", ");
                 self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "http_request" if arguments.len() == 4 => {
+                source.push_str("__roze_http_request(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[3])?;
                 source.push(')');
             }
 
@@ -2890,6 +3305,85 @@ impl JavaSourceGenerator {
                 source.push_str("__roze_sql_close((java.sql.Connection)(");
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str("))");
+            }
+
+            // ---- Database Connection Pooling (ADV-03) ----
+            "db_pool_create" if arguments.len() == 2 => {
+                source.push_str("__roze_db_pool_create(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "db_pool_get" if arguments.len() == 1 => {
+                source.push_str("__roze_db_pool_get(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "db_pool_release" if arguments.len() == 2 => {
+                source.push_str("__roze_db_pool_release(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "db_pool_close" if arguments.len() == 1 => {
+                source.push_str("__roze_db_pool_close(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "db_pool_stats" if arguments.len() == 1 => {
+                source.push_str("__roze_db_pool_stats(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "db_pool_query" if arguments.len() == 2 => {
+                source.push_str("__roze_db_pool_query(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "db_pool_execute" if arguments.len() == 2 => {
+                source.push_str("__roze_db_pool_execute(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+
+            // ---- JWT Security (ADV-03) ----
+            "jwt_sign" if arguments.len() == 2 => {
+                source.push_str("__roze_jwt_sign(((java.util.Map)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")), ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "jwt_verify" if arguments.len() == 2 => {
+                source.push_str("__roze_jwt_verify(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "jwt_decode" if arguments.len() == 1 => {
+                source.push_str("__roze_jwt_decode(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "jwt_decode_header" if arguments.len() == 1 => {
+                source.push_str("__roze_jwt_decode_header(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+
+            // ---- Time (ADV-03) ----
+            "time_now" if arguments.is_empty() => {
+                source.push_str("__roze_time_now()");
+            }
+            "time_now_millis" if arguments.is_empty() => {
+                source.push_str("__roze_time_now_millis()");
             }
 
             // ---- Option ----

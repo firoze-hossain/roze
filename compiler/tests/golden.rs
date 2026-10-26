@@ -756,3 +756,69 @@ false
 true";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn rozeboot_enterprise_framework_core() {
+    let (stdout, stderr, ok) = run_fixture("rozeboot_core.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+time_sec_ok
+time_ms_ok
+true
+false
+admin_user_42
+SUPER_ADMIN
+false
+SELECT id, username, email FROM users WHERE role = 'admin' AND status = 1 ORDER BY created_at DESC LIMIT 25 OFFSET 50
+DELETE FROM sessions WHERE user_id = '42'
+INSERT INTO users (name) VALUES ('Charlie')
+UPDATE users SET status = 'suspended' WHERE id = '10'
+UserController
+/api/v1
+3
+RozeBootShowcaseApp
+8080
+1
+3";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
+fn rozeboot_enterprise_web_server_with_jwt_auth() {
+    let (stdout, stderr, ok) = run_fixture("rozeboot_server.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    assert!(out.contains("RozeBoot Enterprise Framework"), "stdout missing banner:\n{}", out);
+    assert!(out.contains("UP"), "missing /info UP:\n{}", out);
+    assert!(out.contains("Unauthorized"), "missing 401 unauthorized:\n{}", out);
+    assert!(out.contains("1001"), "missing order id 1001:\n{}", out);
+    assert!(out.contains("ADMIN"), "missing authorized ADMIN role:\n{}", out);
+}
+
+#[test]
+fn rozeboot_connection_pool_and_orm_database() {
+    let jar = match std::env::var("ROZE_TEST_JDBC_JAR") {
+        Ok(j) => j,
+        Err(_) => {
+            let default_h2 = "/home/firoze/.m2/repository/com/h2database/h2/2.2.224/h2-2.2.224.jar";
+            if std::path::Path::new(default_h2).exists() {
+                default_h2.to_string()
+            } else {
+                eprintln!("skipping rozeboot_connection_pool_and_orm_database: set ROZE_TEST_JDBC_JAR to run");
+                return;
+            }
+        }
+    };
+
+    let (stdout, stderr, ok) = run_fixture_with_classpath("rozeboot_db.roze", &jar);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+0
+2
+Roze Book
+49
+Roze Keyboard
+129
+true";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}

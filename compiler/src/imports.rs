@@ -29,7 +29,7 @@ use crate::parser::ast::*;
 use crate::parser::parse;
 use anyhow::Result;
 use colored::*;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 /// Roze's bundled Core module (see stdlib/src/core.roze), embedded
@@ -48,6 +48,9 @@ const WEB_DISPLAY_NAME: &str = "web (built-in)";
 const VGA_SOURCE: &str = include_str!("../../stdlib/src/vga.roze");
 const VGA_DISPLAY_NAME: &str = "vga (built-in)";
 
+const ROZEBOOT_SOURCE: &str = include_str!("../../stdlib/src/rozeboot.roze");
+const ROZEBOOT_DISPLAY_NAME: &str = "rozeboot (built-in)";
+
 /// Walks `program`'s top-level statements, replacing every `Import` with
 /// the functions it pulls in. `base_dir` is the directory of the file
 /// being compiled, used to resolve relative import paths.
@@ -59,32 +62,55 @@ pub fn resolve_imports(program: Program, base_dir: &Path) -> Result<Program> {
         })
         .collect();
 
+    let mut visited_paths: HashSet<String> = HashSet::new();
     let mut imported_functions: Vec<Statement> = Vec::new();
     let mut rest: Vec<Statement> = Vec::new();
 
+    let mut queue: VecDeque<(Statement, PathBuf)> = VecDeque::new();
     for stmt in program.statements {
         match stmt {
-            Statement::Import { path, location } => {
-                let (source, display_name) = load_module_source(&path, base_dir, &location)?;
+            Statement::Import { .. } => queue.push_back((stmt, base_dir.to_path_buf())),
+            other => rest.push(other),
+        }
+    }
 
-                let tokens = tokenize(&source);
-                let module_program = match parse(tokens) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        // Report this against the *module's* own file and
-                        // source, not the file that imported it -- the
-                        // line numbers only make sense there.
-                        if let Some(roze_err) = e.downcast_ref::<RozeError>() {
-                            eprintln!("{}", roze_err.report(&display_name, &source));
-                        } else {
-                            eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);
-                        }
-                        return Err(AlreadyReported.into());
+    while let Some((stmt, current_base_dir)) = queue.pop_front() {
+        if let Statement::Import { path, location } = stmt {
+            if visited_paths.contains(&path) {
+                continue;
+            }
+            visited_paths.insert(path.clone());
+
+            let (source, display_name) = load_module_source(&path, &current_base_dir, &location)?;
+
+            let tokens = tokenize(&source);
+            let module_program = match parse(tokens) {
+                Ok(p) => p,
+                Err(e) => {
+                    // Report this against the *module's* own file and
+                    // source, not the file that imported it -- the
+                    // line numbers only make sense there.
+                    if let Some(roze_err) = e.downcast_ref::<RozeError>() {
+                        eprintln!("{}", roze_err.report(&display_name, &source));
+                    } else {
+                        eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);
                     }
-                };
+                    return Err(AlreadyReported.into());
+                }
+            };
 
-                for module_stmt in module_program.statements {
-                    if let Statement::Function { ref name, .. } | Statement::ExternFunction { ref name, .. } | Statement::ClassDecl { ref name, .. } = module_stmt {
+            let next_base_dir = if display_name.contains("(built-in)") {
+                current_base_dir.clone()
+            } else {
+                Path::new(&display_name).parent().unwrap_or(&current_base_dir).to_path_buf()
+            };
+
+            for module_stmt in module_program.statements {
+                match module_stmt {
+                    Statement::Import { .. } => {
+                        queue.push_back((module_stmt, next_base_dir.clone()));
+                    }
+                    Statement::Function { ref name, .. } | Statement::ExternFunction { ref name, .. } | Statement::ClassDecl { ref name, .. } => {
                         if defined_names.contains(name) {
                             // Either the importing file itself, or an
                             // earlier import, already provided this name
@@ -93,11 +119,13 @@ pub fn resolve_imports(program: Program, base_dir: &Path) -> Result<Program> {
                             continue;
                         }
                         defined_names.insert(name.clone());
+                        imported_functions.push(module_stmt);
                     }
-                    imported_functions.push(module_stmt);
+                    other => {
+                        imported_functions.push(other);
+                    }
                 }
             }
-            other => rest.push(other),
         }
     }
 
@@ -123,6 +151,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "vga" {
         return Ok((VGA_SOURCE.to_string(), VGA_DISPLAY_NAME.to_string()));
+    }
+    if path == "rozeboot" {
+        return Ok((ROZEBOOT_SOURCE.to_string(), ROZEBOOT_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {
@@ -167,7 +198,7 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         location.line,
         location.column,
     )
-    .with_hint("built-in modules: \"core\", \"concurrency\", \"web\", \"vga\" -- packages in \"libs/<pkg>/lib.roze\" or a relative .roze file")
+    .with_hint("built-in modules: \"core\", \"concurrency\", \"web\", \"vga\", \"rozeboot\" -- packages in \"libs/<pkg>/lib.roze\" or a relative .roze file")
     .into())
 }
 

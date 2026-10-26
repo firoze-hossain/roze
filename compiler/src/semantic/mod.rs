@@ -391,6 +391,11 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("string_concat", vec![Type::String, Type::String], Type::String),
         ("string_to_upper", vec![Type::String], Type::String),
         ("string_to_lower", vec![Type::String], Type::String),
+        ("substring", vec![Type::String, Type::Int, Type::Int], Type::String),
+        ("string_substring", vec![Type::String, Type::Int, Type::Int], Type::String),
+        ("string_contains", vec![Type::String, Type::String], Type::Bool),
+        ("string_starts_with", vec![Type::String, Type::String], Type::Bool),
+        ("string_ends_with", vec![Type::String, Type::String], Type::Bool),
         ("abs", vec![Type::Unknown], Type::Int),
         ("max", vec![Type::Unknown, Type::Unknown], Type::Int),
         ("min", vec![Type::Unknown, Type::Unknown], Type::Int),
@@ -419,6 +424,7 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("map_remove", vec![Type::Map, Type::Unknown], Type::Unknown),
         ("map_size", vec![Type::Map], Type::Int),
         ("map_is_empty", vec![Type::Map], Type::Bool),
+        ("map_keys", vec![Type::Map], Type::List),
 
         // ---- IO: file ----
         // Errors (file not found, permission denied, network failure)
@@ -436,6 +442,7 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         // ---- IO: network ----
         ("http_get", vec![Type::String], Type::String),
         ("http_post", vec![Type::String, Type::String], Type::String),
+        ("http_request", vec![Type::String, Type::String, Type::Map, Type::String], Type::Map),
 
         // ---- Web: JSON ----
         // encode accepts anything (int/string/bool/list/map, nested);
@@ -468,6 +475,26 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("sql_query", vec![Type::Unknown, Type::String], Type::List),
         ("sql_execute", vec![Type::Unknown, Type::String], Type::Int),
         ("sql_close", vec![Type::Unknown], Type::Void),
+
+        // ---- RozeBoot Enterprise Framework (ADV-03) ----
+        // Database Connection Pooling (HikariCP / Pooled DataSource)
+        ("db_pool_create", vec![Type::String, Type::Int], Type::Unknown),
+        ("db_pool_get", vec![Type::Unknown], Type::Unknown),
+        ("db_pool_release", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("db_pool_close", vec![Type::Unknown], Type::Void),
+        ("db_pool_stats", vec![Type::Unknown], Type::Map),
+        ("db_pool_query", vec![Type::Unknown, Type::String], Type::List),
+        ("db_pool_execute", vec![Type::Unknown, Type::String], Type::Int),
+
+        // JWT Security & Cryptography
+        ("jwt_sign", vec![Type::Map, Type::String], Type::String),
+        ("jwt_verify", vec![Type::String, Type::String], Type::Bool),
+        ("jwt_decode", vec![Type::String], Type::Map),
+        ("jwt_decode_header", vec![Type::String], Type::Map),
+
+        // Time
+        ("time_now", vec![], Type::Int),
+        ("time_now_millis", vec![], Type::Int),
 
         // ---- Option ----
         ("option_some", vec![Type::Unknown], Type::Option),
@@ -1273,6 +1300,16 @@ impl TypeChecker {
                         resolved_variants.push((v.name.clone(), tys));
                     }
                     self.enums.insert(name.clone(), resolved_variants);
+                }
+            }
+        }
+
+        // Pre-register all class names so mutually-referential or forward-referencing
+        // class field types resolve to Type::Class instead of Type::Unknown.
+        for stmt in &program.statements {
+            if let Statement::ClassDecl { name, type_params, .. } = stmt {
+                if type_params.is_empty() {
+                    self.classes.insert(name.clone(), Vec::new());
                 }
             }
         }

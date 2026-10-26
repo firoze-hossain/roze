@@ -1,0 +1,548 @@
+// ==============================================================================
+// 🌹 RozeBoot - Spring-Boot-Style Enterprise Web Framework for Roze (ADV-03)
+// ==============================================================================
+// Features:
+// - Declarative REST Controllers & Dynamic Routing (GET, POST, PUT, DELETE, PATCH)
+// - HikariCP / JDBC Connection Pooling with Leak Protection & Stats
+// - HMAC-SHA256 JWT Security, Token Generation, and Authentication Guard Filter
+// - Fluent Type-Safe SQL ORM & Query Builder (SELECT, INSERT, UPDATE, DELETE)
+// - Enterprise Middleware Pipeline (CORS, Logger, Error Recovery)
+// ==============================================================================
+
+import "web";
+
+// ==============================================================================
+// 1. Database Connection Pooling (HikariCP / Pooled DataSource)
+// ==============================================================================
+
+class DataSource {
+    url: string,
+    max_conns: int,
+    pool: Unknown
+}
+
+func datasource_new(url: string, max_conns: int) -> DataSource {
+    let pool_handle = db_pool_create(url, max_conns);
+    return new DataSource(url, max_conns, pool_handle);
+}
+
+func datasource_query(ds: DataSource, sql: string) -> list {
+    return db_pool_query(ds.pool, sql);
+}
+
+func datasource_execute(ds: DataSource, sql: string) -> int {
+    return db_pool_execute(ds.pool, sql);
+}
+
+func datasource_stats(ds: DataSource) -> map {
+    return db_pool_stats(ds.pool);
+}
+
+func datasource_close(ds: DataSource) {
+    db_pool_close(ds.pool);
+}
+
+// ==============================================================================
+// 2. Fluent SQL ORM & Query Builder
+// ==============================================================================
+
+class QueryBuilder {
+    table: string,
+    operation: string, // "SELECT", "INSERT", "UPDATE", "DELETE"
+    columns: list,
+    where_clauses: list,
+    order_col: string,
+    order_dir: string,
+    limit_val: int,
+    offset_val: int,
+    data_values: map
+}
+
+func query_table(table: string) -> QueryBuilder {
+    let cols = list_new();
+    let wheres = list_new();
+    let data = map_new();
+    return new QueryBuilder(table, "SELECT", cols, wheres, "", "", 0, 0, data);
+}
+
+func query_select(qb: QueryBuilder, cols: list) -> QueryBuilder {
+    qb.columns = cols;
+    return qb;
+}
+
+func query_where(qb: QueryBuilder, col: string, op: string, val: string) -> QueryBuilder {
+    let clause = col + " " + op + " '" + val + "'";
+    list_push(qb.where_clauses, clause);
+    return qb;
+}
+
+func query_where_int(qb: QueryBuilder, col: string, op: string, val: int) -> QueryBuilder {
+    let clause = col + " " + op + " " + to_string(val);
+    list_push(qb.where_clauses, clause);
+    return qb;
+}
+
+func query_where_bool(qb: QueryBuilder, col: string, val: bool) -> QueryBuilder {
+    let clause = col + " = " + to_string(val);
+    list_push(qb.where_clauses, clause);
+    return qb;
+}
+
+func query_order_by(qb: QueryBuilder, col: string, dir: string) -> QueryBuilder {
+    qb.order_col = col;
+    qb.order_dir = dir;
+    return qb;
+}
+
+func query_limit(qb: QueryBuilder, lim: int) -> QueryBuilder {
+    qb.limit_val = lim;
+    return qb;
+}
+
+func query_offset(qb: QueryBuilder, off: int) -> QueryBuilder {
+    qb.offset_val = off;
+    return qb;
+}
+
+func query_insert_into(table: string, data: map) -> QueryBuilder {
+    let cols = list_new();
+    let wheres = list_new();
+    return new QueryBuilder(table, "INSERT", cols, wheres, "", "", 0, 0, data);
+}
+
+func query_update_table(table: string, data: map) -> QueryBuilder {
+    let cols = list_new();
+    let wheres = list_new();
+    return new QueryBuilder(table, "UPDATE", cols, wheres, "", "", 0, 0, data);
+}
+
+func query_delete_from(table: string) -> QueryBuilder {
+    let cols = list_new();
+    let wheres = list_new();
+    let data = map_new();
+    return new QueryBuilder(table, "DELETE", cols, wheres, "", "", 0, 0, data);
+}
+
+func query_to_sql(qb: QueryBuilder) -> string {
+    if qb.operation == "SELECT" {
+        let sql = "SELECT ";
+        let col_count = list_length(qb.columns);
+        if col_count == 0 {
+            sql = sql + "*";
+        } else {
+            let i = 0;
+            while i < col_count {
+                if i > 0 {
+                    sql = sql + ", ";
+                }
+                sql = sql + list_get(qb.columns, i);
+                i = i + 1;
+            }
+        }
+        sql = sql + " FROM " + qb.table;
+
+        let w_count = list_length(qb.where_clauses);
+        if w_count > 0 {
+            sql = sql + " WHERE ";
+            let wi = 0;
+            while wi < w_count {
+                if wi > 0 {
+                    sql = sql + " AND ";
+                }
+                sql = sql + list_get(qb.where_clauses, wi);
+                wi = wi + 1;
+            }
+        }
+
+        if qb.order_col != "" {
+            sql = sql + " ORDER BY " + qb.order_col;
+            if qb.order_dir != "" {
+                sql = sql + " " + qb.order_dir;
+            }
+        }
+
+        if qb.limit_val > 0 {
+            sql = sql + " LIMIT " + to_string(qb.limit_val);
+        }
+
+        if qb.offset_val > 0 {
+            sql = sql + " OFFSET " + to_string(qb.offset_val);
+        }
+
+        return sql;
+    }
+
+    if qb.operation == "INSERT" {
+        let sql = "INSERT INTO " + qb.table + " ";
+        let keys = map_keys(qb.data_values);
+        let k_count = list_length(keys);
+        let cols_part = "(";
+        let vals_part = "VALUES (";
+
+        let ki = 0;
+        while ki < k_count {
+            let k = list_get(keys, ki);
+            let v = map_get(qb.data_values, k);
+            if ki > 0 {
+                cols_part = cols_part + ", ";
+                vals_part = vals_part + ", ";
+            }
+            cols_part = cols_part + to_string(k);
+            vals_part = vals_part + "'" + to_string(v) + "'";
+            ki = ki + 1;
+        }
+        cols_part = cols_part + ")";
+        vals_part = vals_part + ")";
+        return sql + cols_part + " " + vals_part;
+    }
+
+    if qb.operation == "UPDATE" {
+        let sql = "UPDATE " + qb.table + " SET ";
+        let keys = map_keys(qb.data_values);
+        let k_count = list_length(keys);
+
+        let ki = 0;
+        while ki < k_count {
+            let k = list_get(keys, ki);
+            let v = map_get(qb.data_values, k);
+            if ki > 0 {
+                sql = sql + ", ";
+            }
+            sql = sql + to_string(k) + " = '" + to_string(v) + "'";
+            ki = ki + 1;
+        }
+
+        let w_count = list_length(qb.where_clauses);
+        if w_count > 0 {
+            sql = sql + " WHERE ";
+            let wi = 0;
+            while wi < w_count {
+                if wi > 0 {
+                    sql = sql + " AND ";
+                }
+                sql = sql + list_get(qb.where_clauses, wi);
+                wi = wi + 1;
+            }
+        }
+        return sql;
+    }
+
+    if qb.operation == "DELETE" {
+        let sql = "DELETE FROM " + qb.table;
+        let w_count = list_length(qb.where_clauses);
+        if w_count > 0 {
+            sql = sql + " WHERE ";
+            let wi = 0;
+            while wi < w_count {
+                if wi > 0 {
+                    sql = sql + " AND ";
+                }
+                sql = sql + list_get(qb.where_clauses, wi);
+                wi = wi + 1;
+            }
+        }
+        return sql;
+    }
+
+    return "";
+}
+
+func query_get(qb: QueryBuilder, ds: DataSource) -> list {
+    let sql = query_to_sql(qb);
+    return datasource_query(ds, sql);
+}
+
+func query_first(qb: QueryBuilder, ds: DataSource) -> map {
+    qb.limit_val = 1;
+    let rows = query_get(qb, ds);
+    if list_length(rows) > 0 {
+        return list_get(rows, 0);
+    }
+    return map_new();
+}
+
+func query_execute(qb: QueryBuilder, ds: DataSource) -> int {
+    let sql = query_to_sql(qb);
+    return datasource_execute(ds, sql);
+}
+
+// ==============================================================================
+// 3. JWT Security & Auth Guard
+// ==============================================================================
+
+func jwt_generate(subject: string, role: string, expire_seconds: int, secret: string) -> string {
+    let claims = map_new();
+    map_set(claims, "sub", subject);
+    map_set(claims, "role", role);
+    let now = time_now();
+    map_set(claims, "iat", now);
+    map_set(claims, "exp", now + expire_seconds);
+    return jwt_sign(claims, secret);
+}
+
+func jwt_validate(token: string, secret: string) -> bool {
+    return jwt_verify(token, secret);
+}
+
+func jwt_claims(token: string) -> map {
+    return jwt_decode(token);
+}
+
+func jwt_auth_guard(secret: string, excluded_paths: list) -> func(map) -> void {
+    return |req: map| {
+        let path = map_get(req, "path");
+
+        // Check if path is excluded from authentication
+        let excluded_count = list_length(excluded_paths);
+        let i = 0;
+        let is_excluded = false;
+        while i < excluded_count {
+            let ex = list_get(excluded_paths, i);
+            if path == ex {
+                is_excluded = true;
+            }
+            i = i + 1;
+        }
+
+        if is_excluded == true {
+            return;
+        }
+
+        let headers = map_get(req, "headers");
+        let auth_header = "";
+        if map_has(headers, "authorization") {
+            auth_header = map_get(headers, "authorization");
+        }
+
+        let prefix = "Bearer ";
+        let p_len = string_length(prefix);
+        let h_len = string_length(auth_header);
+
+        if h_len <= p_len {
+            let err = map_new();
+            map_set(err, "error", "Unauthorized");
+            map_set(err, "message", "Missing or invalid Authorization header");
+            resp_unauthorized(req, "Missing or invalid Authorization header");
+            map_set(req, "__handled", true);
+            return;
+        }
+
+        let token = substring(auth_header, p_len, h_len);
+        if jwt_validate(token, secret) == false {
+            resp_unauthorized(req, "Invalid or expired JWT token");
+            map_set(req, "__handled", true);
+            return;
+        }
+
+        // Attach user claims to request
+        let user = jwt_claims(token);
+        map_set(req, "user", user);
+    };
+}
+
+// ==============================================================================
+// 4. REST Controller Declarative Routing
+// ==============================================================================
+
+class Controller {
+    name: string,
+    prefix: string,
+    routes: list
+}
+
+func controller_new(name: string, prefix: string) -> Controller {
+    let rts = list_new();
+    return new Controller(name, prefix, rts);
+}
+
+func controller_route(c: Controller, method: string, path: string, handler: func(map) -> void) {
+    let full_pattern = c.prefix + path;
+    let r = new Route(method, full_pattern, handler);
+    list_push(c.routes, r);
+}
+
+func controller_get(c: Controller, path: string, handler: func(map) -> void) {
+    controller_route(c, "GET", path, handler);
+}
+
+func controller_post(c: Controller, path: string, handler: func(map) -> void) {
+    controller_route(c, "POST", path, handler);
+}
+
+func controller_put(c: Controller, path: string, handler: func(map) -> void) {
+    controller_route(c, "PUT", path, handler);
+}
+
+func controller_delete(c: Controller, path: string, handler: func(map) -> void) {
+    controller_route(c, "DELETE", path, handler);
+}
+
+func controller_patch(c: Controller, path: string, handler: func(map) -> void) {
+    controller_route(c, "PATCH", path, handler);
+}
+
+// ==============================================================================
+// 5. Request & Response Helpers
+// ==============================================================================
+
+func req_param(req: map, name: string) -> string {
+    if map_has(req, "params") {
+        let p = map_get(req, "params");
+        if map_has(p, name) {
+            return to_string(map_get(p, name));
+        }
+    }
+    return "";
+}
+
+func req_header(req: map, name: string) -> string {
+    if map_has(req, "headers") {
+        let h = map_get(req, "headers");
+        if map_has(h, name) {
+            return to_string(map_get(h, name));
+        }
+    }
+    return "";
+}
+
+func req_body_json(req: map) -> map {
+    if map_has(req, "body") {
+        let b = map_get(req, "body");
+        let decoded = json_decode(to_string(b));
+        return decoded;
+    }
+    return map_new();
+}
+
+func req_user(req: map) -> map {
+    if map_has(req, "user") {
+        return map_get(req, "user");
+    }
+    return map_new();
+}
+
+func resp_json(req: map, status: int, data) {
+    http_server_respond_json(req, status, data);
+}
+
+func resp_ok(req: map, data) {
+    resp_json(req, 200, data);
+}
+
+func resp_created(req: map, data) {
+    resp_json(req, 201, data);
+}
+
+func resp_bad_request(req: map, message: string) {
+    let err = map_new();
+    map_set(err, "error", "Bad Request");
+    map_set(err, "message", message);
+    resp_json(req, 400, err);
+}
+
+func resp_unauthorized(req: map, message: string) {
+    let err = map_new();
+    map_set(err, "error", "Unauthorized");
+    map_set(err, "message", message);
+    resp_json(req, 401, err);
+}
+
+func resp_forbidden(req: map, message: string) {
+    let err = map_new();
+    map_set(err, "error", "Forbidden");
+    map_set(err, "message", message);
+    resp_json(req, 403, err);
+}
+
+func resp_not_found(req: map, message: string) {
+    let err = map_new();
+    map_set(err, "error", "Not Found");
+    map_set(err, "message", message);
+    resp_json(req, 404, err);
+}
+
+func resp_error(req: map, status: int, message: string) {
+    let err = map_new();
+    map_set(err, "error", "Error");
+    map_set(err, "message", message);
+    resp_json(req, status, err);
+}
+
+// ==============================================================================
+// 6. RozeBoot Application Bootstrapper
+// ==============================================================================
+
+class RozeBootApp {
+    name: string,
+    port: int,
+    datasource: DataSource,
+    router: Router,
+    controllers: list,
+    jwt_secret: string
+}
+
+func rozeboot_new(name: string, port: int) -> RozeBootApp {
+    let r = router_new();
+    // Default enterprise middlewares
+    router_use(r, cors_middleware());
+    router_use(r, logger_middleware());
+
+    let ctrls = list_new();
+    let empty_ds = new DataSource("", 0, null);
+    return new RozeBootApp(name, port, empty_ds, r, ctrls, "");
+}
+
+func rozeboot_with_datasource(app: RozeBootApp, jdbc_url: string, max_conns: int) {
+    let ds = datasource_new(jdbc_url, max_conns);
+    app.datasource = ds;
+}
+
+func rozeboot_with_jwt(app: RozeBootApp, secret: string, excluded_paths: list) {
+    app.jwt_secret = secret;
+    router_use(app.router, jwt_auth_guard(secret, excluded_paths));
+}
+
+func rozeboot_register(app: RozeBootApp, c: Controller) {
+    list_push(app.controllers, c);
+    let r_count = list_length(c.routes);
+    let i = 0;
+    while i < r_count {
+        let route: Route = list_get(c.routes, i);
+        router_route(app.router, route.method, route.pattern, route.handler);
+        i = i + 1;
+    }
+}
+
+func rozeboot_use(app: RozeBootApp, middleware) {
+    router_use(app.router, middleware);
+}
+
+func rozeboot_banner(app: RozeBootApp) {
+    println("");
+    println("  ____                 ____              _   ");
+    println(" |  _ \\ ___  _______  | __ )  ___   ___ | |_ ");
+    println(" | |_) / _ \\|_  / _ \\ |  _ \\ / _ \\ / _ \\| __|");
+    println(" |  _ < (_) |/ /  __/ | |_) | (_) | (_) | |_ ");
+    println(" |_| \\_\\___//___\\___| |____/ \\___/ \\___/ \\__|");
+    println("  :: RozeBoot Enterprise Framework :: (v1.0.0)");
+    println("");
+    println("  Application: " + app.name);
+    println("  Port:        " + to_string(app.port));
+    if app.datasource.url != "" {
+        println("  Database:    " + app.datasource.url + " (Pool Size: " + to_string(app.datasource.max_conns) + ")");
+    }
+    if app.jwt_secret != "" {
+        println("  Security:    JWT Bearer Authentication Active");
+    }
+    println("  Controllers: " + to_string(list_length(app.controllers)) + " Registered");
+    println("");
+}
+
+func rozeboot_start(app: RozeBootApp) -> Unknown {
+    rozeboot_banner(app);
+    return router_listen(app.router, app.port);
+}
+
+func rozeboot_stop(server) {
+    router_stop(server);
+}

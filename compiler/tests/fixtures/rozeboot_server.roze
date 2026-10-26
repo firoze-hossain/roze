@@ -1,0 +1,76 @@
+import "rozeboot";
+import "concurrency";
+
+func main() {
+    let app = rozeboot_new("OrderService", 18092);
+    let secret = "rozeboot-jwt-secret-key-2026";
+
+    // Exclude public endpoints from JWT guard
+    let excluded = list_new();
+    list_push(excluded, "/info");
+    list_push(excluded, "/api/auth/login");
+    rozeboot_with_jwt(app, secret, excluded);
+
+    // Auth Controller
+    let auth_ctrl = controller_new("AuthController", "/api/auth");
+    controller_post(auth_ctrl, "/login", |req: map| {
+        let body = req_body_json(req);
+        let user = map_get(body, "user");
+        let token = jwt_generate(to_string(user), "ADMIN", 3600, secret);
+        let res = map_new();
+        map_set(res, "token", token);
+        resp_ok(req, res);
+    });
+    rozeboot_register(app, auth_ctrl);
+
+    // Public Info Controller
+    let info_ctrl = controller_new("InfoController", "");
+    controller_get(info_ctrl, "/info", |req: map| {
+        let res = map_new();
+        map_set(res, "status", "UP");
+        resp_ok(req, res);
+    });
+    rozeboot_register(app, info_ctrl);
+
+    // Protected Orders Controller
+    let orders_ctrl = controller_new("OrdersController", "/api");
+    controller_get(orders_ctrl, "/orders", |req: map| {
+        let user_claims = req_user(req);
+        let role = map_get(user_claims, "role");
+        let res = map_new();
+        map_set(res, "order_id", 1001);
+        map_set(res, "authorized_role", role);
+        resp_ok(req, res);
+    });
+    rozeboot_register(app, orders_ctrl);
+
+    let server = rozeboot_start(app);
+    sleep(150);
+
+    // 1. Call public /info without auth header
+    let info_res = http_get("http://localhost:18092/info");
+    let info_data = json_decode(info_res);
+    println(map_get(info_data, "status"));
+
+    // 2. Call protected /api/orders without auth header -> gets 401
+    let unauth_res = http_get("http://localhost:18092/api/orders");
+    let unauth_data = json_decode(unauth_res);
+    println(map_get(unauth_data, "error"));
+
+    // 3. Login to get JWT
+    let login_res = http_post("http://localhost:18092/api/auth/login", "{\"user\":\"firoze\"}");
+    let login_data = json_decode(login_res);
+    let token = to_string(map_get(login_data, "token"));
+    println(jwt_validate(token, secret));
+
+    // 4. Request with Bearer token using headers map
+    // Note: http_request with custom headers
+    let hdrs = map_new();
+    map_set(hdrs, "Authorization", "Bearer " + token);
+    let auth_res = http_request("GET", "http://localhost:18092/api/orders", hdrs, "");
+    let orders_data = json_decode(to_string(map_get(auth_res, "body")));
+    println(map_get(orders_data, "order_id"));
+    println(map_get(orders_data, "authorized_role"));
+
+    rozeboot_stop(server);
+}

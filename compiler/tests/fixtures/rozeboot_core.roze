@@ -1,0 +1,99 @@
+import "rozeboot";
+
+func main() {
+    // 1. Time intrinsics
+    let now_sec = time_now();
+    let now_ms = time_now_millis();
+    if now_sec > 1700000000 {
+        println("time_sec_ok");
+    }
+    if now_ms > 0 {
+        println("time_ms_ok");
+    }
+
+    // 2. JWT Signing and Verification
+    let secret = "super-secret-enterprise-key-2026";
+    let claims = map_new();
+    map_set(claims, "sub", "admin_user_42");
+    map_set(claims, "role", "SUPER_ADMIN");
+    let token = jwt_sign(claims, secret);
+
+    // Verify with right secret
+    let valid = jwt_verify(token, secret);
+    println(valid);
+
+    // Verify with wrong secret
+    let invalid = jwt_verify(token, "wrong-secret-key");
+    println(invalid);
+
+    // Decode claims
+    let decoded = jwt_decode(token);
+    println(map_get(decoded, "sub"));
+    println(map_get(decoded, "role"));
+
+    // Check expiration logic
+    let exp_claims = map_new();
+    map_set(exp_claims, "sub", "expired_user");
+    map_set(exp_claims, "exp", now_sec - 100); // in the past
+    let expired_token = jwt_sign(exp_claims, secret);
+    let expired_valid = jwt_verify(expired_token, secret);
+    println(expired_valid);
+
+    // 3. Fluent SQL QueryBuilder
+    // A. SELECT query
+    let cols = list_new();
+    list_push(cols, "id");
+    list_push(cols, "username");
+    list_push(cols, "email");
+    let qb_select = query_table("users");
+    query_select(qb_select, cols);
+    query_where(qb_select, "role", "=", "admin");
+    query_where_int(qb_select, "status", "=", 1);
+    query_order_by(qb_select, "created_at", "DESC");
+    query_limit(qb_select, 25);
+    query_offset(qb_select, 50);
+    println(query_to_sql(qb_select));
+
+    // B. DELETE query
+    let qb_delete = query_delete_from("sessions");
+    query_where(qb_delete, "user_id", "=", "42");
+    println(query_to_sql(qb_delete));
+
+    // C. INSERT query
+    let new_user = map_new();
+    map_set(new_user, "name", "Charlie");
+    let qb_insert = query_insert_into("users", new_user);
+    println(query_to_sql(qb_insert));
+
+    // D. UPDATE query
+    let update_data = map_new();
+    map_set(update_data, "status", "suspended");
+    let qb_update = query_update_table("users", update_data);
+    query_where(qb_update, "id", "=", "10");
+    println(query_to_sql(qb_update));
+
+    // 4. REST Controller & RozeBootApp
+    let c = controller_new("UserController", "/api/v1");
+    controller_get(c, "/users", |req: map| {
+        resp_ok(req, "list_users");
+    });
+    controller_post(c, "/users", |req: map| {
+        resp_created(req, "user_created");
+    });
+    controller_delete(c, "/users/:id", |req: map| {
+        resp_ok(req, "user_deleted");
+    });
+
+    println(c.name);
+    println(c.prefix);
+    println(list_length(c.routes));
+
+    // Application setup
+    let app = rozeboot_new("RozeBootShowcaseApp", 8080);
+    rozeboot_register(app, c);
+
+    println(app.name);
+    println(app.port);
+    println(list_length(app.controllers));
+    println(list_length(app.router.routes));
+}

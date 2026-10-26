@@ -253,4 +253,30 @@ __attribute__((weak)) void qemu_exit(int64_t code) { (void)code; }
 __attribute__((weak)) void serial_print(const char* s) { if (s) fputs(s, stdout); }
 __attribute__((weak)) void serial_putchar(int64_t ch) { putchar((int)ch); }
 
+// RozeBoot Enterprise Framework Stubs for Hosted Native Target
+#include <time.h>
+__attribute__((weak)) void* db_pool_create(const char* url, int64_t max_conns) { (void)url; (void)max_conns; return NULL; }
+__attribute__((weak)) void* db_pool_get(void* pool) { (void)pool; return NULL; }
+__attribute__((weak)) void db_pool_release(void* pool, void* conn) { (void)pool; (void)conn; }
+__attribute__((weak)) void db_pool_close(void* pool) { (void)pool; }
+__attribute__((weak)) void* db_pool_stats(void* pool) { (void)pool; return NULL; }
+__attribute__((weak)) void* db_pool_query(void* pool, const char* sql) { (void)pool; (void)sql; return NULL; }
+__attribute__((weak)) int64_t db_pool_execute(void* pool, const char* sql) { (void)pool; (void)sql; return 0; }
+
+__attribute__((weak)) const char* jwt_sign(void* claims, const char* secret) { (void)claims; (void)secret; return ""; }
+__attribute__((weak)) int64_t jwt_verify(const char* token, const char* secret) { (void)token; (void)secret; return 0; }
+__attribute__((weak)) void* jwt_decode(const char* token) { (void)token; return NULL; }
+__attribute__((weak)) void* jwt_decode_header(const char* token) { (void)token; return NULL; }
+
+__attribute__((weak)) int64_t time_now(void) { return (int64_t)time(NULL); }
+__attribute__((weak)) int64_t time_now_millis(void) { return (int64_t)time(NULL) * 1000LL; }
+__attribute__((weak)) void* map_keys(void* m) { (void)m; return NULL; }
+__attribute__((weak)) const char* substring(const char* s, int64_t start, int64_t end) { (void)start; (void)end; return s ? s : ""; }
+__attribute__((weak)) const char* string_substring(const char* s, int64_t start, int64_t end) { (void)start; (void)end; return s ? s : ""; }
+__attribute__((weak)) int64_t string_contains(const char* s, const char* sub) { (void)s; (void)sub; return 0; }
+__attribute__((weak)) int64_t string_starts_with(const char* s, const char* p) { (void)s; (void)p; return 0; }
+__attribute__((weak)) int64_t string_ends_with(const char* s, const char* suffx) { (void)s; (void)suffx; return 0; }
+__attribute__((weak)) void* http_request(const char* m, const char* u, void* h, const char* b) { (void)m; (void)u; (void)h; (void)b; return NULL; }
+
+
 

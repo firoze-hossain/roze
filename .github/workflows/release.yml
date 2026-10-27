@@ -3,13 +3,14 @@ name: Release
 # ==============================================================================
 # Automated Multi-Platform Release Workflow for Roze
 # 
-# Triggered ONLY when a version tag like 'v0.1.0' or '0.1.0' is pushed to the repository.
-# Standard code pushes to master/branches do NOT trigger this workflow.
+# Triggered when a version tag like 'v1.0.0' or '1.0.0' is pushed to the repository,
+# or manually via GitHub Actions workflow_dispatch.
 #
-# Builds compiler, runtime, stdlib, and developer tools across 3 parallel runner environments:
-#   - Linux:   Ubuntu/Debian .deb package + .tar.gz archive
-#   - Windows: Inno Setup .exe installer wizard (with PATH configuration) + .zip archive
-#   - macOS:   Apple .pkg installer package + .tar.gz archive
+# Builds compiler, runtime, stdlib, developer tools, and extensions across platforms:
+#   - Linux:   Ubuntu/Debian .deb + RedHat/Fedora .rpm + .tar.gz + install.sh
+#   - Windows: Inno Setup .exe + WiX .msi + .zip archive + install.ps1
+#   - macOS:   Apple .pkg installer + .dmg disk image + .tar.gz archive
+#   - VS Code: Official VS Code Extension package (.vsix)
 #
 # Collects all artifacts, generates SHA-256 checksums, and publishes a GitHub Release.
 # ==============================================================================
@@ -17,6 +18,7 @@ name: Release
 on:
   push:
     tags:
+      - 'v*'
       - '[0-9]+.[0-9]+.[0-9]+*'
   workflow_dispatch:
 
@@ -41,12 +43,13 @@ jobs:
       - name: Set up Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Inno Setup
+      - name: Install Inno Setup & WiX
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          choco install innosetup -y
+          choco install innosetup wixtoolset -y
           echo "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Derive version from Git tag
         shell: bash
@@ -55,16 +58,16 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=0.1.0" >> "$GITHUB_OUTPUT"
+            echo "version=1.0.0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build Roze Workspace with Cargo
         run: cargo build --release
 
       # ------------------------------------------------------------------------
-      # Linux: Debian .deb package and .tar.gz archive
+      # Linux: Debian .deb, RPM .rpm, and .tar.gz archive
       # ------------------------------------------------------------------------
-      - name: Package for Linux (.deb & .tar.gz)
+      - name: Package for Linux (.deb, .rpm & .tar.gz)
         if: matrix.platform == 'linux'
         shell: bash
         run: |
@@ -75,16 +78,16 @@ jobs:
                    dist/deb-pkg/usr/share/icons/hicolor/512x512/apps
 
           cat << EOF > dist/deb-pkg/DEBIAN/control
-          Package: roze
-          Version: ${VERSION}
-          Section: devel
-          Priority: optional
-          Architecture: amd64
-          Maintainer: Roze Ecosystem <maintainer@rozehub.dev>
-          Description: Roze - Modern High-Performance Programming Language and Toolchain
-           Roze is a modern systems and application programming language compiler,
-           runtime, and standard library featuring multi-target compilation and tooling.
-          EOF
+Package: roze
+Version: ${VERSION}
+Section: devel
+Priority: optional
+Architecture: amd64
+Maintainer: Roze Ecosystem <maintainer@roze-lang.org>
+Description: Roze - Modern High-Performance Programming Language and Toolchain
+ Roze is a modern systems and application programming language compiler,
+ runtime, and standard library featuring multi-target compilation and tooling.
+EOF
 
           # Copy binaries
           cp target/release/roze dist/deb-pkg/usr/local/bin/
@@ -101,19 +104,27 @@ jobs:
           # Build Debian package
           dpkg-deb --build dist/deb-pkg "dist/roze_${VERSION}_amd64.deb"
 
+          # Build RPM package via alien
+          sudo apt-get update && sudo apt-get install -y alien rpm
+          alien -r --fixperms "dist/roze_${VERSION}_amd64.deb"
+          find . -maxdepth 1 -name "*.rpm" -exec mv {} "dist/roze-${VERSION}-1.x86_64.rpm" \;
+
           # Create tar.gz archive
           mkdir -p "dist/roze-${VERSION}-linux-x64/bin" "dist/roze-${VERSION}-linux-x64/stdlib"
           cp target/release/roze target/release/roze-build target/release/roze-pkg target/release/roze-lsp "dist/roze-${VERSION}-linux-x64/bin/"
           cp -r stdlib/src/* "dist/roze-${VERSION}-linux-x64/stdlib/"
           tar -czf "dist/roze-${VERSION}-linux-x64.tar.gz" -C dist "roze-${VERSION}-linux-x64"
 
+          # Copy install script
+          cp packaging/install.sh dist/install.sh
+
           # Clean intermediate directories
           rm -rf dist/deb-pkg dist/roze-${VERSION}-linux-x64
 
       # ------------------------------------------------------------------------
-      # Windows: Inno Setup .exe installer wizard & .zip archive
+      # Windows: Inno Setup .exe, WiX .msi & .zip archive
       # ------------------------------------------------------------------------
-      - name: Package for Windows (.exe & .zip)
+      - name: Package for Windows (.exe, .msi & .zip)
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
@@ -133,16 +144,28 @@ jobs:
             Move-Item -Path "packaging\windows\dist\*.exe" -Destination "dist\" -Force
           }
 
+          # WiX Toolset .msi compilation
+          $wixCandle = "C:\Program Files (x86)\WiX Toolset v3.11\bin\candle.exe"
+          $wixLight = "C:\Program Files (x86)\WiX Toolset v3.11\bin\light.exe"
+          if (Test-Path $wixCandle) {
+            & $wixCandle -arch x64 -out "dist\roze.wixobj" "packaging\windows\roze.wxs"
+            & $wixLight -out "dist\roze-$ver-windows-x64.msi" "dist\roze.wixobj"
+            Remove-Item "dist\roze.wixobj", "dist\roze.wixpdb" -ErrorAction SilentlyContinue
+          }
+
           # Zip archive
           Compress-Archive -Path "dist\roze-win-bin\*" -DestinationPath "dist\roze-$ver-windows-x64.zip" -Force
+
+          # Copy install script
+          Copy-Item "packaging\install.ps1" "dist\install.ps1"
 
           # Clean intermediate directory
           Remove-Item -Path "dist\roze-win-bin" -Recurse -Force
 
       # ------------------------------------------------------------------------
-      # macOS: .pkg installer package & .tar.gz archive
+      # macOS: .pkg installer, .dmg disk image & .tar.gz archive
       # ------------------------------------------------------------------------
-      - name: Package for macOS (.pkg & .tar.gz)
+      - name: Package for macOS (.pkg, .dmg & .tar.gz)
         if: matrix.platform == 'macos'
         shell: bash
         run: |
@@ -163,6 +186,13 @@ jobs:
             --install-location /usr/local \
             "dist/Roze-${VERSION}-macos.pkg"
 
+          # Build .dmg disk image
+          mkdir -p dist/dmg-root
+          cp "dist/Roze-${VERSION}-macos.pkg" dist/dmg-root/
+          cp README.md dist/dmg-root/ || true
+          hdiutil create -volname "Roze ${VERSION}" -srcfolder dist/dmg-root -ov -format UDZO "dist/Roze-${VERSION}-macos.dmg"
+          rm -rf dist/dmg-root
+
           # Build .tar.gz archive
           mkdir -p "dist/roze-${VERSION}-macos-x64/bin" "dist/roze-${VERSION}-macos-x64/stdlib"
           cp target/release/roze target/release/roze-build target/release/roze-pkg target/release/roze-lsp "dist/roze-${VERSION}-macos-x64/bin/"
@@ -179,10 +209,47 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  vscode:
+    name: Build VS Code Extension (.vsix)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Derive version from Git tag
+        shell: bash
+        id: version
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=1.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies & package VSIX
+        working-directory: ide/vscode
+        run: |
+          npm install
+          npm run compile
+          mkdir -p ../../dist
+          npx @vscode/vsce package --out "../../dist/roze-language-${{ steps.version.outputs.version }}.vsix"
+
+      - name: Upload VS Code Extension Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: roze-vscode
+          path: dist/*.vsix
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
-    needs: build
-    if: github.ref_type == 'tag'
+    needs: [build, vscode]
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -206,4 +273,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          name: 🌹 Roze v${{ github.ref_name || '1.0.0' }} Production Release
+          draft: false
+          prerelease: false
           generate_release_notes: true

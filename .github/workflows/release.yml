@@ -77,17 +77,8 @@ jobs:
                    dist/deb-pkg/usr/local/lib/roze/stdlib \
                    dist/deb-pkg/usr/share/icons/hicolor/512x512/apps
 
-          cat << EOF > dist/deb-pkg/DEBIAN/control
-Package: roze
-Version: ${VERSION}
-Section: devel
-Priority: optional
-Architecture: amd64
-Maintainer: Roze Ecosystem <maintainer@roze-lang.org>
-Description: Roze - Modern High-Performance Programming Language and Toolchain
- Roze is a modern systems and application programming language compiler,
- runtime, and standard library featuring multi-target compilation and tooling.
-EOF
+          cp packaging/linux/debian/control dist/deb-pkg/DEBIAN/control
+          sed -i "s/^Version:.*/Version: ${VERSION}/" dist/deb-pkg/DEBIAN/control
 
           # Copy binaries
           cp target/release/roze dist/deb-pkg/usr/local/bin/

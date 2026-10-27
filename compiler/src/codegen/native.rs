@@ -1192,12 +1192,20 @@ fn build_string_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::
         builder.seal_block(entry);
         let ptr = builder.block_params(entry)[0];
 
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let is_null = builder.ins().icmp(IntCC::Equal, ptr, zero);
+        let non_null_block = builder.create_block();
+        let done_block = builder.create_block();
+        builder.ins().brif(is_null, done_block, &[], non_null_block, &[]);
+
+        builder.switch_to_block(non_null_block);
+        builder.seal_block(non_null_block);
+
         let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, -(STRING_HEADER_SIZE as i32));
         let sentinel = builder.ins().iconst(VALUE_TYPE, IMMORTAL_SENTINEL);
         let is_immortal = builder.ins().icmp(IntCC::Equal, refcount, sentinel);
 
         let retain_block = builder.create_block();
-        let done_block = builder.create_block();
         builder.ins().brif(is_immortal, done_block, &[], retain_block, &[]);
 
         builder.switch_to_block(retain_block);
@@ -1235,12 +1243,20 @@ fn build_string_release(module: &mut ObjectModule, ctx: &mut cranelift::codegen:
         builder.seal_block(entry);
         let ptr = builder.block_params(entry)[0];
 
+        let done_block = builder.create_block();
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let is_null = builder.ins().icmp(IntCC::Equal, ptr, zero);
+        let non_null_block = builder.create_block();
+        builder.ins().brif(is_null, done_block, &[], non_null_block, &[]);
+
+        builder.switch_to_block(non_null_block);
+        builder.seal_block(non_null_block);
+
         let refcount = builder.ins().load(VALUE_TYPE, MemFlags::new(), ptr, -(STRING_HEADER_SIZE as i32));
         let sentinel = builder.ins().iconst(VALUE_TYPE, IMMORTAL_SENTINEL);
         let is_immortal = builder.ins().icmp(IntCC::Equal, refcount, sentinel);
 
         let mutate_block = builder.create_block();
-        let done_block = builder.create_block();
         builder.ins().brif(is_immortal, done_block, &[], mutate_block, &[]);
 
         builder.switch_to_block(mutate_block);
@@ -3030,13 +3046,26 @@ fn build_class_retain(module: &mut ObjectModule, ctx: &mut cranelift::codegen::C
         let mut func_ctx = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
         let entry = builder.create_block();
+        let retain_block = builder.create_block();
+        let done_block = builder.create_block();
+
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         builder.seal_block(entry);
         let ptr = builder.block_params(entry)[0];
 
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let is_null = builder.ins().icmp(IntCC::Equal, ptr, zero);
+        builder.ins().brif(is_null, done_block, &[], retain_block, &[]);
+
+        builder.switch_to_block(retain_block);
+        builder.seal_block(retain_block);
         let one = builder.ins().iconst(VALUE_TYPE, 1);
         builder.ins().atomic_rmw(VALUE_TYPE, MemFlags::new(), AtomicRmwOp::Add, ptr, one);
+        builder.ins().jump(done_block, &[]);
+
+        builder.switch_to_block(done_block);
+        builder.seal_block(done_block);
         builder.ins().return_(&[]);
         builder.finalize();
     }
@@ -3253,17 +3282,25 @@ fn build_class_runtime(
         let mut func_ctx = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
         let entry = builder.create_block();
+        let sub_block = builder.create_block();
+        let done_block = builder.create_block();
+
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         builder.seal_block(entry);
         let ptr = builder.block_params(entry)[0];
 
+        let zero = builder.ins().iconst(VALUE_TYPE, 0);
+        let is_null = builder.ins().icmp(IntCC::Equal, ptr, zero);
+        builder.ins().brif(is_null, done_block, &[], sub_block, &[]);
+
+        builder.switch_to_block(sub_block);
+        builder.seal_block(sub_block);
         let one = builder.ins().iconst(VALUE_TYPE, 1);
         let old_count = builder.ins().atomic_rmw(VALUE_TYPE, MemFlags::new(), AtomicRmwOp::Sub, ptr, one);
 
         let should_free = builder.ins().icmp(IntCC::Equal, old_count, one);
         let free_block = builder.create_block();
-        let done_block = builder.create_block();
         builder.ins().brif(should_free, free_block, &[], done_block, &[]);
 
         builder.switch_to_block(free_block);
@@ -4615,7 +4652,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             TypedStatement::Expression { expr, .. } => {
                 let val = self.compile_expression(expr)?;
-                if !matches!(expr.kind, TypedExpressionKind::Identifier(_)) {
+                if !expression_is_borrowed(expr) {
                     self.emit_release_for_type(&expr.type_, val)?;
                 }
                 Ok(false)
@@ -5178,10 +5215,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             // else that will ever release it, so it must happen here,
             // or it leaks. Releasing a literal is always safe too:
             // it's immortal, so this is a no-op for it specifically.
-            if !matches!(left.kind, TypedExpressionKind::Identifier(_)) {
+            if !expression_is_borrowed(left) {
                 self.emit_string_release(l)?;
             }
-            if !matches!(right.kind, TypedExpressionKind::Identifier(_)) {
+            if !expression_is_borrowed(right) {
                 self.emit_string_release(r)?;
             }
             return Ok(result);
@@ -5563,7 +5600,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let s_val = self.compile_expression(&arguments[0])?;
                 let func_ref = self.module.declare_func_in_func(self.vga.print_id, self.builder.func);
                 self.builder.ins().call(func_ref, &[s_val]);
-                if !matches!(arguments[0].kind, TypedExpressionKind::Identifier(_)) {
+                if !expression_is_borrowed(&arguments[0]) {
                     self.emit_string_release(s_val)?;
                 }
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
@@ -5722,7 +5759,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     let val = self.compile_expression(arg)?;
                     let func_ref = self.module.declare_func_in_func(self.vga.print_str_id, self.builder.func);
                     self.builder.ins().call(func_ref, &[val]);
-                    if !matches!(arg.kind, TypedExpressionKind::Identifier(_)) {
+                    if !expression_is_borrowed(arg) {
                         self.emit_string_release(val)?;
                     }
                     return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
@@ -5763,7 +5800,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             Type::String => {
                 let val = self.compile_expression(arg)?;
                 let result = self.emit_printf(self.fmt_str, val)?;
-                if !matches!(arg.kind, TypedExpressionKind::Identifier(_)) {
+                if !expression_is_borrowed(arg) {
                     self.emit_string_release(val)?;
                 }
                 Ok(result)

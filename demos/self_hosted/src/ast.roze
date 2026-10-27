@@ -1,0 +1,147 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - AST & Token Definitions (ADV-06)
+// ==============================================================================
+
+// --- C-FFI Runtime Interface ---
+extern "C" func rz_create_string(s: string, len: int) -> string;
+extern "C" func rz_str_concat(a: string, b: string) -> string;
+extern "C" func rz_str_len(s: string) -> int;
+extern "C" func rz_char_at(s: string, index: int) -> int;
+extern "C" func rz_substring(s: string, start: int, len: int) -> string;
+extern "C" func rz_char_to_str(ch: int) -> string;
+extern "C" func rz_int_to_str(val: int) -> string;
+extern "C" func rz_str_eq(a: string, b: string) -> int;
+
+extern "C" func rz_read_file(path: string) -> string;
+extern "C" func rz_write_file(path: string, content: string) -> int;
+extern "C" func rz_file_exists(path: string) -> int;
+extern "C" func rz_exec(cmd: string) -> int;
+
+extern "C" func rz_get_arg_count() -> int;
+extern "C" func rz_get_arg(index: int) -> string;
+extern "C" func rz_get_env(name: string) -> string;
+
+extern "C" func rz_print_str(s: string) -> void;
+extern "C" func rz_print_int(val: int) -> void;
+extern "C" func rz_compiler_banner() -> void;
+
+// --- Token Kinds (Constants) ---
+func TOK_EOF() -> int { return 0; }
+func TOK_IDENT() -> int { return 1; }
+func TOK_INT() -> int { return 2; }
+func TOK_STRING() -> int { return 3; }
+func TOK_BOOL() -> int { return 4; }
+
+// Keywords
+func TOK_FUNC() -> int { return 10; }
+func TOK_LET() -> int { return 11; }
+func TOK_VAR() -> int { return 12; }
+func TOK_IF() -> int { return 13; }
+func TOK_ELSE() -> int { return 14; }
+func TOK_WHILE() -> int { return 15; }
+func TOK_FOR() -> int { return 16; }
+func TOK_RETURN() -> int { return 17; }
+func TOK_CLASS() -> int { return 18; }
+func TOK_NEW() -> int { return 19; }
+func TOK_EXTERN() -> int { return 20; }
+func TOK_IMPORT() -> int { return 21; }
+func TOK_NULL() -> int { return 22; }
+
+// Operators & Delimiters
+func TOK_PLUS() -> int { return 30; }      // +
+func TOK_MINUS() -> int { return 31; }     // -
+func TOK_STAR() -> int { return 32; }      // *
+func TOK_SLASH() -> int { return 33; }     // /
+func TOK_PERCENT() -> int { return 34; }   // %
+func TOK_ASSIGN() -> int { return 35; }    // =
+func TOK_EQ() -> int { return 36; }        // ==
+func TOK_NE() -> int { return 37; }        // !=
+func TOK_LT() -> int { return 38; }        // <
+func TOK_LE() -> int { return 39; }        // <=
+func TOK_GT() -> int { return 40; }        // >
+func TOK_GE() -> int { return 41; }        // >=
+func TOK_AND() -> int { return 42; }       // &&
+func TOK_OR() -> int { return 43; }        // ||
+func TOK_NOT() -> int { return 44; }       // !
+
+func TOK_LPAREN() -> int { return 50; }    // (
+func TOK_RPAREN() -> int { return 51; }    // )
+func TOK_LBRACE() -> int { return 52; }    // {
+func TOK_RBRACE() -> int { return 53; }    // }
+func TOK_LBRACKET() -> int { return 54; }  // [
+func TOK_RBRACKET() -> int { return 55; }  // ]
+func TOK_SEMI() -> int { return 56; }      // ;
+func TOK_COMMA() -> int { return 57; }     // ,
+func TOK_COLON() -> int { return 58; }     // :
+func TOK_DOT() -> int { return 59; }       // .
+func TOK_ARROW() -> int { return 60; }     // ->
+
+// --- AST Node Kinds (Constants) ---
+func NODE_PROGRAM() -> int { return 100; }
+func NODE_FUNC_DECL() -> int { return 101; }
+func NODE_EXTERN_DECL() -> int { return 102; }
+func NODE_CLASS_DECL() -> int { return 103; }
+func NODE_VAR_DECL() -> int { return 104; }
+func NODE_PARAM() -> int { return 105; }
+func NODE_FIELD() -> int { return 106; }
+
+func NODE_BLOCK() -> int { return 110; }
+func NODE_IF() -> int { return 111; }
+func NODE_WHILE() -> int { return 112; }
+func NODE_FOR() -> int { return 113; }
+func NODE_RETURN() -> int { return 114; }
+func NODE_ASSIGN() -> int { return 115; }
+func NODE_EXPR_STMT() -> int { return 116; }
+
+func NODE_BIN_OP() -> int { return 120; }
+func NODE_UNARY_OP() -> int { return 121; }
+func NODE_CALL() -> int { return 122; }
+func NODE_MEMBER() -> int { return 123; }
+func NODE_NEW() -> int { return 124; }
+func NODE_LITERAL_INT() -> int { return 125; }
+func NODE_LITERAL_STR() -> int { return 126; }
+func NODE_LITERAL_BOOL() -> int { return 127; }
+func NODE_LITERAL_NULL() -> int { return 128; }
+func NODE_IDENT() -> int { return 129; }
+
+// --- Data Classes ---
+class Token {
+    kind: int,
+    text: string,
+    int_val: int,
+    line: int,
+    col: int,
+    next: Token
+}
+
+class AstNode {
+    kind: int,
+    name: string,
+    type_name: string,
+    op: string,
+    int_val: int,
+    str_val: string,
+    child1: AstNode,
+    child2: AstNode,
+    child3: AstNode,
+    child4: AstNode,
+    next: AstNode,
+    line: int,
+    col: int
+}
+
+class Symbol {
+    name: string,
+    type_name: string,
+    kind: int,
+    scope_level: int,
+    next: Symbol
+}
+
+func make_token(kind: int, text: string, int_val: int, line: int, col: int) -> Token {
+    return new Token(kind, text, int_val, line, col, null);
+}
+
+func make_ast_node(kind: int, name: string, type_name: string, line: int, col: int) -> AstNode {
+    return new AstNode(kind, name, type_name, "", 0, "", null, null, null, null, null, line, col);
+}

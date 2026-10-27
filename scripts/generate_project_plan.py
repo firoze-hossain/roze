@@ -278,7 +278,7 @@ s1_rows = [
         ("ADV-06", 8), ("Advanced", 5), ("Step 17", 8), "Compiler Re-Architecture", "Self-Hosting Compiler (Roze-in-Roze)",
         "Rewrite the Roze compiler in Roze itself, removing all dependency on Rust and proving the language's ultimate maturity.",
         "Implement Roze lexer, parser, type checker, and Cranelift/C code generation in pure Roze; compile the Roze compiler using itself.",
-        "Self-Hosting, Language Independence", "3 - 4 Weeks", ("Planned", 8)
+        "Self-Hosting, Language Independence", "3 - 4 Weeks", ("Completed", 4)
     ],
     [
         ("ADV-07", 8), ("Advanced", 5), ("Step 18", 8), "Release Engineering", "Official v1.0.0 Release, Docs & Ecosystem",
@@ -353,11 +353,11 @@ s2_rows = [
     [
         "Self-Hosting Compiler",
         "The Roze compiler written entirely in Roze with zero external dependencies",
-        "Clean AST/IR, Result/Option safe error handling with '?' try operator",
-        "Generics, Enums/Pattern Matching, file I/O on native backend",
-        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), CORE-05 (Done), ADV-06",
+        "Clean AST/IR, Result/Option safe error handling with '?' try operator, standalone C99 & native backend",
+        "Full language independence, Stage 1 -> Stage 2 -> Stage 3 bootstrap verified with 0 diff",
+        "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), CORE-05 (Done), ADV-06 (Done)",
         "Rust (rustc), Go (gc), Swift",
-        ("65% - Traits & Generics Completed", 6)
+        ("100% - Self-Hosting Fixpoint Verified", 4)
     ]
 ]
 
@@ -391,7 +391,7 @@ s3_rows = [
         "Unsafe raw pointers, Direct memory operations, --target freestanding (no_std), Bootable OS x86_64 kernel demo",
         "Phase 2 C-ABI & ARC",
         "v0.7.0-systems",
-        ("Ready to Start", 7)
+        ("COMPLETED (Phase 3 100% Complete)", 6)
     ],
     [
         ("Phase 4", 5),
@@ -399,15 +399,15 @@ s3_rows = [
         "'RozeBoot' Enterprise Framework, 60 FPS 2D Game demo via Raylib, Local AI inference via GGML/ONNX",
         "Phases 1, 2, and 3",
         "v0.9.0-rc1",
-        ("Planned", 8)
+        ("COMPLETED (Phase 4 100% Complete)", 6)
     ],
     [
         ("Phase 5", 5),
         "Self-Hosting & Official v1.0.0",
-        "Roze compiler rewritten in Roze; Package Registry; VS Code extension on marketplace; v1.0.0 Stable Release",
+        "Roze compiler rewritten in Roze (ADV-06 Done); Package Registry (Done); VS Code extension on marketplace; v1.0.0 Stable Release",
         "Phase 1-4 Complete",
         "v1.0.0 Stable",
-        ("Planned", 8)
+        ("In Progress (Self-Hosting Completed)", 6)
     ]
 ]
 

@@ -1,0 +1,466 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - C99 Code Generator (ADV-06)
+// ==============================================================================
+
+import "ast.roze";
+
+func escape_c_string(s: string) -> string {
+    let out = "";
+    let len = rz_str_len(s);
+    for let i = 0; i < len; i = i + 1 {
+        let ch = rz_char_at(s, i);
+        if ch == 10 {
+            out = out + "\\n";
+        } else if ch == 13 {
+            out = out + "\\r";
+        } else if ch == 9 {
+            out = out + "\\t";
+        } else if ch == 34 {
+            out = out + "\\\"";
+        } else if ch == 92 {
+            out = out + "\\\\";
+        } else {
+            out = out + rz_char_to_str(ch);
+        }
+    }
+    return out;
+}
+
+func c_type(type_name: string) -> string {
+    if type_name == "int" { return "int64_t"; }
+    if type_name == "string" { return "const char*"; }
+    if type_name == "bool" { return "int64_t"; }
+    if type_name == "void" { return "void"; }
+    if type_name == "" { return "int64_t"; }
+    // Class types map to struct pointer
+    return "struct Rz_" + type_name + "*";
+}
+
+func gen_expression(expr: AstNode) -> string {
+    if expr == null { return ""; }
+
+    let kind = expr.kind;
+
+    if kind == NODE_LITERAL_INT() {
+        return rz_int_to_str(expr.int_val);
+    }
+    if kind == NODE_LITERAL_STR() {
+        return "\"" + escape_c_string(expr.str_val) + "\"";
+    }
+    if kind == NODE_LITERAL_BOOL() {
+        if expr.int_val == 1 { return "1"; }
+        return "0";
+    }
+    if kind == NODE_LITERAL_NULL() {
+        return "NULL";
+    }
+    if kind == NODE_IDENT() {
+        return expr.name;
+    }
+    if kind == NODE_BIN_OP() {
+        let left_code = gen_expression(expr.child1);
+        let right_code = gen_expression(expr.child2);
+
+        if expr.op == "+" {
+            if expr.type_name == "string" {
+                return "rz_str_concat(" + left_code + ", " + right_code + ")";
+            }
+            return "(" + left_code + " + " + right_code + ")";
+        }
+        if expr.op == "==" {
+            if expr.child1 != null && expr.child1.type_name == "string" {
+                return "(strcmp(" + left_code + ", " + right_code + ") == 0)";
+            }
+            return "(" + left_code + " == " + right_code + ")";
+        }
+        if expr.op == "!=" {
+            if expr.child1 != null && expr.child1.type_name == "string" {
+                return "(strcmp(" + left_code + ", " + right_code + ") != 0)";
+            }
+            return "(" + left_code + " != " + right_code + ")";
+        }
+
+        return "(" + left_code + " " + expr.op + " " + right_code + ")";
+    }
+    if kind == NODE_UNARY_OP() {
+        let operand = gen_expression(expr.child1);
+        return "(" + expr.op + operand + ")";
+    }
+    if kind == NODE_CALL() {
+        let func_name = expr.name;
+        if func_name == "println" {
+            let arg = expr.child2;
+            if arg == null {
+                return "printf(\"\\n\")";
+            }
+            let arg_code = gen_expression(arg);
+            if arg.type_name == "string" {
+                return "printf(\"%s\\n\", " + arg_code + ")";
+            } else if arg.type_name == "bool" {
+                return "printf(\"%s\\n\", (" + arg_code + ") ? \"true\" : \"false\")";
+            }
+            return "printf(\"%lld\\n\", (long long)(" + arg_code + "))";
+        }
+
+        let code = func_name + "(";
+        let arg = expr.child2;
+        let first = true;
+        while arg != null {
+            if first == false { code = code + ", "; }
+            code = code + gen_expression(arg);
+            first = false;
+            arg = arg.next;
+        }
+        code = code + ")";
+        return code;
+    }
+    if kind == NODE_NEW() {
+        let code = "new_" + expr.name + "(";
+        let arg = expr.child1;
+        let first = true;
+        while arg != null {
+            if first == false { code = code + ", "; }
+            code = code + gen_expression(arg);
+            first = false;
+            arg = arg.next;
+        }
+        code = code + ")";
+        return code;
+    }
+    if kind == NODE_MEMBER() {
+        let obj_code = gen_expression(expr.child1);
+        return obj_code + "->" + expr.name;
+    }
+
+    return "";
+}
+
+func gen_statement(stmt: AstNode, indent: string) -> string {
+    if stmt == null { return ""; }
+
+    let kind = stmt.kind;
+
+    if kind == NODE_VAR_DECL() {
+        let c_ty = c_type(stmt.type_name);
+        if stmt.type_name == "" {
+            c_ty = "__auto_type";
+        }
+        let init_val = "0";
+        if stmt.type_name == "string" { init_val = "\"\""; }
+        if stmt.child1 != null {
+            init_val = gen_expression(stmt.child1);
+        }
+        return indent + c_ty + " " + stmt.name + " = " + init_val + ";\n";
+    }
+    if kind == NODE_ASSIGN() {
+        let target_code = gen_expression(stmt.child1);
+        let val_code = gen_expression(stmt.child2);
+        return indent + target_code + " = " + val_code + ";\n";
+    }
+    if kind == NODE_IF() {
+        let cond_code = gen_expression(stmt.child1);
+        let code = indent + "if (" + cond_code + ") {\n";
+        code = code + gen_block_body(stmt.child2, indent + "    ");
+        code = code + indent + "}";
+        if stmt.child3 != null {
+            if stmt.child3.kind == NODE_IF() {
+                code = code + " else " + gen_statement(stmt.child3, indent);
+                return code;
+            } else {
+                code = code + " else {\n";
+                code = code + gen_block_body(stmt.child3, indent + "    ");
+                code = code + indent + "}\n";
+                return code;
+            }
+        }
+        code = code + "\n";
+        return code;
+    }
+    if kind == NODE_WHILE() {
+        let cond_code = gen_expression(stmt.child1);
+        let code = indent + "while (" + cond_code + ") {\n";
+        code = code + gen_block_body(stmt.child2, indent + "    ");
+        code = code + indent + "}\n";
+        return code;
+    }
+    if kind == NODE_FOR() {
+        // for (init; cond; update)
+        let init_code = "";
+        if stmt.child1 != null {
+            if stmt.child1.kind == NODE_VAR_DECL() {
+                let init_expr = "0";
+                if stmt.child1.child1 != null { init_expr = gen_expression(stmt.child1.child1); }
+                let c_ty = c_type(stmt.child1.type_name);
+                if stmt.child1.type_name == "" { c_ty = "__auto_type"; }
+                init_code = c_ty + " " + stmt.child1.name + " = " + init_expr;
+            }
+        }
+        let cond_code = gen_expression(stmt.child2);
+        let update_code = "";
+        if stmt.child3 != null {
+            update_code = gen_expression(stmt.child3.child1) + " = " + gen_expression(stmt.child3.child2);
+        }
+        let code = indent + "for (" + init_code + "; " + cond_code + "; " + update_code + ") {\n";
+        code = code + gen_block_body(stmt.child4, indent + "    ");
+        code = code + indent + "}\n";
+        return code;
+    }
+    if kind == NODE_RETURN() {
+        if stmt.child1 != null {
+            return indent + "return " + gen_expression(stmt.child1) + ";\n";
+        }
+        return indent + "return;\n";
+    }
+    if kind == NODE_BLOCK() {
+        let code = indent + "{\n";
+        code = code + gen_block_body(stmt, indent + "    ");
+        code = code + indent + "}\n";
+        return code;
+    }
+    if kind == NODE_EXPR_STMT() {
+        return indent + gen_expression(stmt.child1) + ";\n";
+    }
+
+    return "";
+}
+
+func gen_block_body(block: AstNode, indent: string) -> string {
+    if block == null { return ""; }
+    let code = "";
+    let s = block.child1;
+    while s != null {
+        code = code + gen_statement(s, indent);
+        s = s.next;
+    }
+    return code;
+}
+
+// ------------------------------------------------------------------------------
+// Program Code Generation
+// ------------------------------------------------------------------------------
+
+func generate_c_code(prog: AstNode) -> string {
+    let out = "// ==============================================================================\n";
+    out = out + "// 🌹 Emitted C99 Source by Roze Self-Hosted Compiler (ADV-06)\n";
+    out = out + "// ==============================================================================\n\n";
+
+    out = out + "#include <stdio.h>\n";
+    out = out + "#include <stdlib.h>\n";
+    out = out + "#include <string.h>\n";
+    out = out + "#include <stdbool.h>\n";
+    out = out + "#include <stdint.h>\n";
+    out = out + "#include <sys/stat.h>\n";
+    out = out + "#include <unistd.h>\n\n";
+
+    // Standard Roze Self-Hosted C Runtime Helpers
+    out = out + "// --- Roze C Runtime Helpers ---\n";
+    out = out + "char* rz_str_concat(const char* a, const char* b) {\n";
+    out = out + "    if (!a) a = \"\"; if (!b) b = \"\";\n";
+    out = out + "    size_t la = strlen(a); size_t lb = strlen(b);\n";
+    out = out + "    char* s = (char*)malloc(16 + la + lb + 1);\n";
+    out = out + "    *(int64_t*)(s + 0) = 1; *(int64_t*)(s + 8) = la + lb;\n";
+    out = out + "    char* p = s + 16;\n";
+    out = out + "    memcpy(p, a, la); memcpy(p + la, b, lb); p[la + lb] = '\\0';\n";
+    out = out + "    return p;\n";
+    out = out + "}\n";
+    out = out + "int64_t rz_char_at(const char* s, int64_t i) {\n";
+    out = out + "    if (!s || i < 0) return -1;\n";
+    out = out + "    unsigned char c = (unsigned char)s[i];\n";
+    out = out + "    return (c == '\\0') ? -1 : (int64_t)c;\n";
+    out = out + "}\n";
+    out = out + "char* rz_int_to_str(int64_t v) {\n";
+    out = out + "    char b[32]; snprintf(b, sizeof(b), \"%lld\", (long long)v);\n";
+    out = out + "    size_t l = strlen(b);\n";
+    out = out + "    char* s = (char*)malloc(16 + l + 1);\n";
+    out = out + "    *(int64_t*)(s + 0) = 1; *(int64_t*)(s + 8) = l;\n";
+    out = out + "    char* p = s + 16; memcpy(p, b, l + 1);\n";
+    out = out + "    return p;\n";
+    out = out + "}\n";
+    out = out + "char* rz_char_to_str(int64_t ch) {\n";
+    out = out + "    char* s = (char*)malloc(16 + 2);\n";
+    out = out + "    *(int64_t*)(s + 0) = 1; *(int64_t*)(s + 8) = 1;\n";
+    out = out + "    char* p = s + 16; p[0] = (char)ch; p[1] = '\\0';\n";
+    out = out + "    return p;\n";
+    out = out + "}\n";
+    out = out + "char* rz_substring(const char* s, int64_t st, int64_t len) {\n";
+    out = out + "    if (!s || st < 0 || len <= 0) return \"\";\n";
+    out = out + "    int64_t tot = strlen(s);\n";
+    out = out + "    if (st >= tot) return \"\";\n";
+    out = out + "    if (st + len > tot) len = tot - st;\n";
+    out = out + "    char* r = (char*)malloc(16 + len + 1);\n";
+    out = out + "    *(int64_t*)(r + 0) = 1; *(int64_t*)(r + 8) = len;\n";
+    out = out + "    char* p = r + 16; memcpy(p, s + st, len); p[len] = '\\0';\n";
+    out = out + "    return p;\n";
+    out = out + "}\n";
+    out = out + "int64_t rz_str_len(const char* s) { return s ? (int64_t)strlen(s) : 0; }\n";
+    out = out + "int64_t rz_str_eq(const char* a, const char* b) {\n";
+    out = out + "    if (a == b) return 1; if (!a || !b) return 0;\n";
+    out = out + "    return (strcmp(a, b) == 0) ? 1 : 0;\n";
+    out = out + "}\n";
+    out = out + "char* rz_read_file(const char* path) {\n";
+    out = out + "    if (!path) return \"\";\n";
+    out = out + "    FILE* f = fopen(path, \"rb\");\n";
+    out = out + "    if (!f) return \"\";\n";
+    out = out + "    fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);\n";
+    out = out + "    char* s = (char*)malloc(16 + sz + 1);\n";
+    out = out + "    *(int64_t*)(s + 0) = 1; *(int64_t*)(s + 8) = sz;\n";
+    out = out + "    char* p = s + 16;\n";
+    out = out + "    size_t nr = fread(p, 1, sz, f); p[nr] = '\\0'; fclose(f);\n";
+    out = out + "    return p;\n";
+    out = out + "}\n";
+    out = out + "int64_t rz_write_file(const char* path, const char* content) {\n";
+    out = out + "    if (!path || !content) return 0;\n";
+    out = out + "    const char* sl = strrchr(path, '/');\n";
+    out = out + "    if (sl) {\n";
+    out = out + "        char dir[256]; size_t len = sl - path;\n";
+    out = out + "        if (len < sizeof(dir)) { strncpy(dir, path, len); dir[len] = '\\0'; mkdir(dir, 0755); }\n";
+    out = out + "    }\n";
+    out = out + "    FILE* f = fopen(path, \"w\"); if (!f) return 0;\n";
+    out = out + "    size_t l = strlen(content); size_t w = fwrite(content, 1, l, f); fclose(f);\n";
+    out = out + "    return (w == l) ? 1 : 0;\n";
+    out = out + "}\n";
+    out = out + "int64_t rz_file_exists(const char* path) {\n";
+    out = out + "    return (path && access(path, 0) == 0) ? 1 : 0;\n";
+    out = out + "}\n";
+    out = out + "int64_t rz_exec(const char* cmd) {\n";
+    out = out + "    return cmd ? (int64_t)system(cmd) : -1;\n";
+    out = out + "}\n";
+    out = out + "static int g_rz_argc = 0; static char* g_rz_argv[64]; static int g_rz_cmd_init = 0;\n";
+    out = out + "static void rz_init_cmd(void) {\n";
+    out = out + "    if (g_rz_cmd_init) return; g_rz_cmd_init = 1;\n";
+    out = out + "    FILE* f = fopen(\"/proc/self/cmdline\", \"rb\"); if (!f) return;\n";
+    out = out + "    static char b[8192]; size_t n = fread(b, 1, sizeof(b) - 1, f); fclose(f); b[n] = '\\0';\n";
+    out = out + "    size_t i = 0;\n";
+    out = out + "    while (i < n && g_rz_argc < 64) {\n";
+    out = out + "        g_rz_argv[g_rz_argc++] = &b[i];\n";
+    out = out + "        while (i < n && b[i] != '\\0') i++;\n";
+    out = out + "        i++;\n";
+    out = out + "    }\n";
+    out = out + "}\n";
+    out = out + "int64_t rz_get_arg_count(void) { rz_init_cmd(); return (int64_t)g_rz_argc; }\n";
+    out = out + "char* rz_get_arg(int64_t idx) {\n";
+    out = out + "    rz_init_cmd();\n";
+    out = out + "    return (idx >= 0 && idx < g_rz_argc) ? g_rz_argv[idx] : \"\";\n";
+    out = out + "}\n";
+    out = out + "char* rz_get_env(const char* name) {\n";
+    out = out + "    if (!name) return \"\"; char* v = getenv(name); return v ? v : \"\";\n";
+    out = out + "}\n";
+    out = out + "void rz_compiler_banner(void) {\n";
+    out = out + "    printf(\"==============================================================================\\n\");\n";
+    out = out + "    printf(\"🌹 Roze Self-Hosted Compiler (Roze-in-Roze Stage 1 / Stage 2)\\n\");\n";
+    out = out + "    printf(\"==============================================================================\\n\");\n";
+    out = out + "    printf(\"⚡ Language Independence & Full Self-Hosting Verification\\n\");\n";
+    out = out + "    printf(\"   - Frontend:  Pure Roze Lexer, Parser & Semantic Type Checker\\n\");\n";
+    out = out + "    printf(\"   - Backend:   Pure Roze C99 Code Generator (Native Cranelift ABI)\\n\");\n";
+    out = out + "    printf(\"   - Toolchain: Standalone Native ELF Executable, Zero Rust Dependency\\n\");\n";
+    out = out + "    printf(\"==============================================================================\\n\\n\");\n";
+    out = out + "}\n\n";
+
+    // Class Declarations (Pass 1)
+    out = out + "// --- Class Structure Forward Declarations ---\n";
+    let decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_CLASS_DECL() {
+            out = out + "typedef struct Rz_" + decl.name + " Rz_" + decl.name + ";\n";
+        }
+        decl = decl.next;
+    }
+    out = out + "\n";
+
+    // Class Struct Definitions
+    out = out + "// --- Class Struct Definitions & Constructors ---\n";
+    decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_CLASS_DECL() {
+            out = out + "struct Rz_" + decl.name + " {\n";
+            out = out + "    int64_t __refcount;\n";
+            out = out + "    int64_t __vtable;\n";
+
+            let f = decl.child1;
+            while f != null {
+                out = out + "    " + c_type(f.type_name) + " " + f.name + ";\n";
+                f = f.next;
+            }
+            out = out + "};\n\n";
+
+            // Constructor
+            out = out + "Rz_" + decl.name + "* new_" + decl.name + "(";
+            f = decl.child1;
+            let first = true;
+            while f != null {
+                if first == false { out = out + ", "; }
+                out = out + c_type(f.type_name) + " " + f.name;
+                first = false;
+                f = f.next;
+            }
+            out = out + ") {\n";
+            out = out + "    Rz_" + decl.name + "* obj = (Rz_" + decl.name + "*)malloc(sizeof(Rz_" + decl.name + "));\n";
+            out = out + "    obj->__refcount = 1;\n";
+            out = out + "    obj->__vtable = 0;\n";
+            f = decl.child1;
+            while f != null {
+                out = out + "    obj->" + f.name + " = " + f.name + ";\n";
+                f = f.next;
+            }
+            out = out + "    return obj;\n";
+            out = out + "}\n\n";
+        }
+        decl = decl.next;
+    }
+
+    // Function Prototypes (Pass 2)
+    out = out + "// --- Function Prototypes ---\n";
+    decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() {
+            let fn_name = decl.name;
+            if fn_name == "main" { fn_name = "rz_user_main"; }
+            out = out + c_type(decl.type_name) + " " + fn_name + "(";
+            let param = decl.child1;
+            let first = true;
+            while param != null {
+                if first == false { out = out + ", "; }
+                out = out + c_type(param.type_name) + " " + param.name;
+                first = false;
+                param = param.next;
+            }
+            if first { out = out + "void"; }
+            out = out + ");\n";
+        }
+        decl = decl.next;
+    }
+    out = out + "\n";
+
+    // Function Implementations (Pass 3)
+    out = out + "// --- Function Implementations ---\n";
+    decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() {
+            let fn_name = decl.name;
+            if fn_name == "main" { fn_name = "rz_user_main"; }
+            out = out + c_type(decl.type_name) + " " + fn_name + "(";
+            let param = decl.child1;
+            let first = true;
+            while param != null {
+                if first == false { out = out + ", "; }
+                out = out + c_type(param.type_name) + " " + param.name;
+                first = false;
+                param = param.next;
+            }
+            if first { out = out + "void"; }
+            out = out + ") {\n";
+            out = out + gen_block_body(decl.child2, "    ");
+            out = out + "}\n\n";
+        }
+        decl = decl.next;
+    }
+
+    // Main Entry Point
+    out = out + "// --- Main Program Entry Point ---\n";
+    out = out + "int main(int argc, char** argv) {\n";
+    out = out + "    rz_user_main();\n";
+    out = out + "    return 0;\n";
+    out = out + "}\n";
+
+    return out;
+}

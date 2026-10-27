@@ -1,0 +1,13 @@
+func is_even(n: int) -> bool {
+    return (n % 2) == 0;
+}
+
+func main() {
+    let count = 0;
+    for let i = 1; i <= 10; i = i + 1 {
+        if is_even(i) {
+            count = count + 1;
+        }
+    }
+    println(count);
+}

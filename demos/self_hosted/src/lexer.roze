@@ -1,0 +1,226 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Lexer (ADV-06)
+// ==============================================================================
+
+import "ast.roze";
+
+func is_digit(ch: int) -> bool {
+    return ch >= 48 && ch <= 57; // '0' .. '9'
+}
+
+func is_alpha(ch: int) -> bool {
+    if ch >= 65 && ch <= 90 { return true; } // 'A' .. 'Z'
+    if ch >= 97 && ch <= 122 { return true; } // 'a' .. 'z'
+    if ch == 95 { return true; } // '_'
+    return false;
+}
+
+func is_alnum(ch: int) -> bool {
+    return is_alpha(ch) || is_digit(ch);
+}
+
+func keyword_kind(text: string) -> int {
+    if text == "func" { return TOK_FUNC(); }
+    if text == "let" { return TOK_LET(); }
+    if text == "var" { return TOK_VAR(); }
+    if text == "if" { return TOK_IF(); }
+    if text == "else" { return TOK_ELSE(); }
+    if text == "while" { return TOK_WHILE(); }
+    if text == "for" { return TOK_FOR(); }
+    if text == "return" { return TOK_RETURN(); }
+    if text == "class" { return TOK_CLASS(); }
+    if text == "new" { return TOK_NEW(); }
+    if text == "extern" { return TOK_EXTERN(); }
+    if text == "import" { return TOK_IMPORT(); }
+    if text == "null" { return TOK_NULL(); }
+    if text == "true" { return TOK_BOOL(); }
+    if text == "false" { return TOK_BOOL(); }
+    return TOK_IDENT();
+}
+
+func tokenize(source: string) -> Token {
+    let head: Token = null;
+    let tail: Token = null;
+
+    let len = rz_str_len(source);
+    let pos = 0;
+    let line = 1;
+    let col = 1;
+
+    while pos < len {
+        let ch = rz_char_at(source, pos);
+
+        // Skip whitespace
+        if ch == 32 || ch == 9 || ch == 13 { // space, tab, \r
+            pos = pos + 1;
+            col = col + 1;
+        } else if ch == 10 { // newline
+            pos = pos + 1;
+            line = line + 1;
+            col = 1;
+        } else if ch == 47 { // '/' check for comments
+            let next_ch = rz_char_at(source, pos + 1);
+            if next_ch == 47 { // '//' single line comment
+                pos = pos + 2;
+                col = col + 2;
+                while pos < len && rz_char_at(source, pos) != 10 {
+                    pos = pos + 1;
+                    col = col + 1;
+                }
+            } else if next_ch == 42 { // '/*' multi-line comment
+                pos = pos + 2;
+                col = col + 2;
+                let in_comment = true;
+                while pos < len && in_comment {
+                    let c = rz_char_at(source, pos);
+                    if c == 10 {
+                        line = line + 1;
+                        col = 1;
+                        pos = pos + 1;
+                    } else if c == 42 && rz_char_at(source, pos + 1) == 47 { // '*/'
+                        pos = pos + 2;
+                        col = col + 2;
+                        in_comment = false;
+                    } else {
+                        pos = pos + 1;
+                        col = col + 1;
+                    }
+                }
+            } else {
+                // Division operator '/'
+                let tok = make_token(TOK_SLASH(), "/", 0, line, col);
+                if head == null { head = tok; tail = tok; } else { tail.next = tok; tail = tok; }
+                pos = pos + 1;
+                col = col + 1;
+            }
+        } else if is_alpha(ch) {
+            // Identifier or keyword
+            let start_pos = pos;
+            let start_col = col;
+            while pos < len && is_alnum(rz_char_at(source, pos)) {
+                pos = pos + 1;
+                col = col + 1;
+            }
+            let word = rz_substring(source, start_pos, pos - start_pos);
+            let kind = keyword_kind(word);
+            let int_val = 0;
+            if word == "true" { int_val = 1; }
+            let tok = make_token(kind, word, int_val, line, start_col);
+            if head == null { head = tok; tail = tok; } else { tail.next = tok; tail = tok; }
+        } else if is_digit(ch) {
+            // Integer number
+            let start_pos = pos;
+            let start_col = col;
+            let val = 0;
+            while pos < len && is_digit(rz_char_at(source, pos)) {
+                let d = rz_char_at(source, pos) - 48;
+                val = val * 10 + d;
+                pos = pos + 1;
+                col = col + 1;
+            }
+            let num_str = rz_substring(source, start_pos, pos - start_pos);
+            let tok = make_token(TOK_INT(), num_str, val, line, start_col);
+            if head == null { head = tok; tail = tok; } else { tail.next = tok; tail = tok; }
+        } else if ch == 34 { // '"' String literal
+            let start_col = col;
+            pos = pos + 1; // skip opening quote
+            col = col + 1;
+            let str_val = "";
+            let closed = false;
+            while pos < len && closed == false {
+                let c = rz_char_at(source, pos);
+                if c == 34 { // closing quote
+                    closed = true;
+                    pos = pos + 1;
+                    col = col + 1;
+                } else if c == 92 { // escape '\'
+                    pos = pos + 1;
+                    col = col + 1;
+                    let esc = rz_char_at(source, pos);
+                    if esc == 110 { // 'n'
+                        str_val = str_val + "\n";
+                    } else if esc == 116 { // 't'
+                        str_val = str_val + "\t";
+                    } else if esc == 34 { // '"'
+                        str_val = str_val + "\"";
+                    } else if esc == 92 { // '\'
+                        str_val = str_val + "\\";
+                    } else {
+                        str_val = str_val + rz_char_to_str(esc);
+                    }
+                    pos = pos + 1;
+                    col = col + 1;
+                } else if c == 10 {
+                    line = line + 1;
+                    col = 1;
+                    pos = pos + 1;
+                    str_val = str_val + "\n";
+                } else {
+                    str_val = str_val + rz_char_to_str(c);
+                    pos = pos + 1;
+                    col = col + 1;
+                }
+            }
+            let tok = make_token(TOK_STRING(), str_val, 0, line, start_col);
+            if head == null { head = tok; tail = tok; } else { tail.next = tok; tail = tok; }
+        } else {
+            // Symbols and operators
+            let tok_kind = 0;
+            let tok_text = "";
+            let advance = 1;
+
+            let next_c = rz_char_at(source, pos + 1);
+
+            if ch == 43 { tok_kind = TOK_PLUS(); tok_text = "+"; }
+            else if ch == 45 {
+                if next_c == 62 { tok_kind = TOK_ARROW(); tok_text = "->"; advance = 2; }
+                else { tok_kind = TOK_MINUS(); tok_text = "-"; }
+            }
+            else if ch == 42 { tok_kind = TOK_STAR(); tok_text = "*"; }
+            else if ch == 37 { tok_kind = TOK_PERCENT(); tok_text = "%"; }
+            else if ch == 61 {
+                if next_c == 61 { tok_kind = TOK_EQ(); tok_text = "=="; advance = 2; }
+                else { tok_kind = TOK_ASSIGN(); tok_text = "="; }
+            }
+            else if ch == 33 {
+                if next_c == 61 { tok_kind = TOK_NE(); tok_text = "!="; advance = 2; }
+                else { tok_kind = TOK_NOT(); tok_text = "!"; }
+            }
+            else if ch == 60 {
+                if next_c == 61 { tok_kind = TOK_LE(); tok_text = "<="; advance = 2; }
+                else { tok_kind = TOK_LT(); tok_text = "<"; }
+            }
+            else if ch == 62 {
+                if next_c == 61 { tok_kind = TOK_GE(); tok_text = ">="; advance = 2; }
+                else { tok_kind = TOK_GT(); tok_text = ">"; }
+            }
+            else if ch == 38 && next_c == 38 { tok_kind = TOK_AND(); tok_text = "&&"; advance = 2; }
+            else if ch == 124 && next_c == 124 { tok_kind = TOK_OR(); tok_text = "||"; advance = 2; }
+            else if ch == 40 { tok_kind = TOK_LPAREN(); tok_text = "("; }
+            else if ch == 41 { tok_kind = TOK_RPAREN(); tok_text = ")"; }
+            else if ch == 123 { tok_kind = TOK_LBRACE(); tok_text = "{"; }
+            else if ch == 125 { tok_kind = TOK_RBRACE(); tok_text = "}"; }
+            else if ch == 91 { tok_kind = TOK_LBRACKET(); tok_text = "["; }
+            else if ch == 93 { tok_kind = TOK_RBRACKET(); tok_text = "]"; }
+            else if ch == 59 { tok_kind = TOK_SEMI(); tok_text = ";"; }
+            else if ch == 44 { tok_kind = TOK_COMMA(); tok_text = ","; }
+            else if ch == 58 { tok_kind = TOK_COLON(); tok_text = ":"; }
+            else if ch == 46 { tok_kind = TOK_DOT(); tok_text = "."; }
+
+            if tok_kind > 0 {
+                let tok = make_token(tok_kind, tok_text, 0, line, col);
+                if head == null { head = tok; tail = tok; } else { tail.next = tok; tail = tok; }
+                pos = pos + advance;
+                col = col + advance;
+            } else {
+                // Unknown character, skip
+                pos = pos + 1;
+                col = col + 1;
+            }
+        }
+    }
+
+    let eof_tok = make_token(TOK_EOF(), "", 0, line, col);
+    if head == null { head = eof_tok; } else { tail.next = eof_tok; }
+    return head;
+}

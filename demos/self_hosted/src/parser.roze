@@ -1,0 +1,579 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Parser (ADV-06)
+// ==============================================================================
+
+import "ast.roze";
+
+class Parser {
+    curr: Token
+}
+
+func make_parser(tokens: Token) -> Parser {
+    return new Parser(tokens);
+}
+
+func peek_kind(p: Parser) -> int {
+    if p.curr == null { return TOK_EOF(); }
+    return p.curr.kind;
+}
+
+func peek_text(p: Parser) -> string {
+    if p.curr == null { return ""; }
+    return p.curr.text;
+}
+
+func peek_line(p: Parser) -> int {
+    if p.curr == null { return 0; }
+    return p.curr.line;
+}
+
+func peek_col(p: Parser) -> int {
+    if p.curr == null { return 0; }
+    return p.curr.col;
+}
+
+func advance_token(p: Parser) -> Token {
+    let tok = p.curr;
+    if p.curr != null {
+        p.curr = p.curr.next;
+    }
+    return tok;
+}
+
+func check_token(p: Parser, kind: int) -> bool {
+    return peek_kind(p) == kind;
+}
+
+func match_tok(p: Parser, kind: int) -> bool {
+    if check_token(p, kind) {
+        advance_token(p);
+        return true;
+    }
+    return false;
+}
+
+func consume_tok(p: Parser, kind: int, msg: string) -> Token {
+    if check_token(p, kind) {
+        return advance_token(p);
+    }
+    println("❌ Parser Error: " + msg + " (got '" + peek_text(p) + "') at line " + rz_int_to_str(peek_line(p)));
+    return advance_token(p);
+}
+
+// ------------------------------------------------------------------------------
+// Expressions (Precedence Climbing)
+// ------------------------------------------------------------------------------
+
+func parse_primary(p: Parser) -> AstNode {
+    let line = peek_line(p);
+    let col = peek_col(p);
+
+    if check_token(p, TOK_INT()) {
+        let tok = advance_token(p);
+        let node = make_ast_node(NODE_LITERAL_INT(), tok.text, "int", line, col);
+        node.int_val = tok.int_val;
+        return node;
+    }
+    if check_token(p, TOK_STRING()) {
+        let tok = advance_token(p);
+        let node = make_ast_node(NODE_LITERAL_STR(), tok.text, "string", line, col);
+        node.str_val = tok.text;
+        return node;
+    }
+    if check_token(p, TOK_BOOL()) {
+        let tok = advance_token(p);
+        let node = make_ast_node(NODE_LITERAL_BOOL(), tok.text, "bool", line, col);
+        node.int_val = tok.int_val;
+        return node;
+    }
+    if check_token(p, TOK_NULL()) {
+        advance_token(p);
+        return make_ast_node(NODE_LITERAL_NULL(), "null", "null", line, col);
+    }
+    if check_token(p, TOK_NEW()) {
+        advance_token(p); // 'new'
+        let class_name = consume_tok(p, TOK_IDENT(), "Expected class name after 'new'").text;
+        consume_tok(p, TOK_LPAREN(), "Expected '(' after class name");
+        let node = make_ast_node(NODE_NEW(), class_name, class_name, line, col);
+
+        let args_head: AstNode = null;
+        let args_tail: AstNode = null;
+        while check_token(p, TOK_RPAREN()) == false && check_token(p, TOK_EOF()) == false {
+            let arg = parse_expression(p);
+            if args_head == null { args_head = arg; args_tail = arg; }
+            else { args_tail.next = arg; args_tail = arg; }
+            if check_token(p, TOK_COMMA()) { advance_token(p); }
+        }
+        consume_tok(p, TOK_RPAREN(), "Expected ')' after new arguments");
+        node.child1 = args_head;
+        return node;
+    }
+    if check_token(p, TOK_LPAREN()) {
+        advance_token(p); // '('
+        let inner = parse_expression(p);
+        consume_tok(p, TOK_RPAREN(), "Expected ')' after grouped expression");
+        return inner;
+    }
+    if check_token(p, TOK_IDENT()) {
+        let tok = advance_token(p);
+        return make_ast_node(NODE_IDENT(), tok.text, "", line, col);
+    }
+
+    println("❌ Parser Error: Unexpected token '" + peek_text(p) + "' at line " + rz_int_to_str(line));
+    advance_token(p);
+    return make_ast_node(NODE_LITERAL_INT(), "0", "int", line, col);
+}
+
+func parse_postfix(p: Parser) -> AstNode {
+    let expr = parse_primary(p);
+
+    let looping = true;
+    while looping {
+        let line = peek_line(p);
+        let col = peek_col(p);
+
+        if check_token(p, TOK_LPAREN()) {
+            // Function call: expr(args...)
+            advance_token(p); // '('
+            let call_node = make_ast_node(NODE_CALL(), expr.name, "", line, col);
+            call_node.child1 = expr;
+
+            let args_head: AstNode = null;
+            let args_tail: AstNode = null;
+            while check_token(p, TOK_RPAREN()) == false && check_token(p, TOK_EOF()) == false {
+                let arg = parse_expression(p);
+                if args_head == null { args_head = arg; args_tail = arg; }
+                else { args_tail.next = arg; args_tail = arg; }
+                if check_token(p, TOK_COMMA()) { advance_token(p); }
+            }
+            consume_tok(p, TOK_RPAREN(), "Expected ')' after function arguments");
+            call_node.child2 = args_head;
+            expr = call_node;
+        } else if check_token(p, TOK_DOT()) {
+            // Member access: expr.field
+            advance_token(p); // '.'
+            let field_name = consume_tok(p, TOK_IDENT(), "Expected field identifier after '.'").text;
+            let member_node = make_ast_node(NODE_MEMBER(), field_name, "", line, col);
+            member_node.child1 = expr;
+            expr = member_node;
+        } else {
+            looping = false;
+        }
+    }
+
+    return expr;
+}
+
+func parse_unary(p: Parser) -> AstNode {
+    let line = peek_line(p);
+    let col = peek_col(p);
+
+    if check_token(p, TOK_NOT()) || check_token(p, TOK_MINUS()) {
+        let op_tok = advance_token(p);
+        let operand = parse_unary(p);
+        let node = make_ast_node(NODE_UNARY_OP(), "", "", line, col);
+        node.op = op_tok.text;
+        node.child1 = operand;
+        return node;
+    }
+    return parse_postfix(p);
+}
+
+func parse_factor(p: Parser) -> AstNode {
+    let left = parse_unary(p);
+
+    while check_token(p, TOK_STAR()) || check_token(p, TOK_SLASH()) || check_token(p, TOK_PERCENT()) {
+        let op_tok = advance_token(p);
+        let right = parse_unary(p);
+        let node = make_ast_node(NODE_BIN_OP(), "", "", op_tok.line, op_tok.col);
+        node.op = op_tok.text;
+        node.child1 = left;
+        node.child2 = right;
+        left = node;
+    }
+    return left;
+}
+
+func parse_term(p: Parser) -> AstNode {
+    let left = parse_factor(p);
+
+    while check_token(p, TOK_PLUS()) || check_token(p, TOK_MINUS()) {
+        let op_tok = advance_token(p);
+        let right = parse_factor(p);
+        let node = make_ast_node(NODE_BIN_OP(), "", "", op_tok.line, op_tok.col);
+        node.op = op_tok.text;
+        node.child1 = left;
+        node.child2 = right;
+        left = node;
+    }
+    return left;
+}
+
+func parse_comparison(p: Parser) -> AstNode {
+    let left = parse_term(p);
+
+    while check_token(p, TOK_LT()) || check_token(p, TOK_LE()) || check_token(p, TOK_GT()) || check_token(p, TOK_GE()) {
+        let op_tok = advance_token(p);
+        let right = parse_term(p);
+        let node = make_ast_node(NODE_BIN_OP(), "", "", op_tok.line, op_tok.col);
+        node.op = op_tok.text;
+        node.child1 = left;
+        node.child2 = right;
+        left = node;
+    }
+    return left;
+}
+
+func parse_equality(p: Parser) -> AstNode {
+    let left = parse_comparison(p);
+
+    while check_token(p, TOK_EQ()) || check_token(p, TOK_NE()) {
+        let op_tok = advance_token(p);
+        let right = parse_comparison(p);
+        let node = make_ast_node(NODE_BIN_OP(), "", "", op_tok.line, op_tok.col);
+        node.op = op_tok.text;
+        node.child1 = left;
+        node.child2 = right;
+        left = node;
+    }
+    return left;
+}
+
+func parse_logical_and(p: Parser) -> AstNode {
+    let left = parse_equality(p);
+
+    while check_token(p, TOK_AND()) {
+        let op_tok = advance_token(p);
+        let right = parse_equality(p);
+        let node = make_ast_node(NODE_BIN_OP(), "", "", op_tok.line, op_tok.col);
+        node.op = op_tok.text;
+        node.child1 = left;
+        node.child2 = right;
+        left = node;
+    }
+    return left;
+}
+
+func parse_logical_or(p: Parser) -> AstNode {
+    let left = parse_logical_and(p);
+
+    while check_token(p, TOK_OR()) {
+        let op_tok = advance_token(p);
+        let right = parse_logical_and(p);
+        let node = make_ast_node(NODE_BIN_OP(), "", "", op_tok.line, op_tok.col);
+        node.op = op_tok.text;
+        node.child1 = left;
+        node.child2 = right;
+        left = node;
+    }
+    return left;
+}
+
+func parse_expression(p: Parser) -> AstNode {
+    return parse_logical_or(p);
+}
+
+// ------------------------------------------------------------------------------
+// Statements
+// ------------------------------------------------------------------------------
+
+func parse_var_decl(p: Parser) -> AstNode {
+    let line = peek_line(p);
+    let col = peek_col(p);
+    advance_token(p); // 'let' or 'var'
+
+    let name = consume_tok(p, TOK_IDENT(), "Expected variable name").text;
+    let type_name = "";
+    if match_tok(p, TOK_COLON()) {
+        type_name = consume_tok(p, TOK_IDENT(), "Expected type name after ':'").text;
+    }
+
+    let node = make_ast_node(NODE_VAR_DECL(), name, type_name, line, col);
+    if match_tok(p, TOK_ASSIGN()) {
+        node.child1 = parse_expression(p);
+    }
+    consume_tok(p, TOK_SEMI(), "Expected ';' after variable declaration");
+    return node;
+}
+
+func parse_if_stmt(p: Parser) -> AstNode {
+    let line = peek_line(p);
+    let col = peek_col(p);
+    advance_token(p); // 'if'
+
+    let cond = parse_expression(p);
+    let then_branch = parse_block(p);
+    let else_branch: AstNode = null;
+
+    if match_tok(p, TOK_ELSE()) {
+        if check_token(p, TOK_IF()) {
+            else_branch = parse_if_stmt(p);
+        } else {
+            else_branch = parse_block(p);
+        }
+    }
+
+    let node = make_ast_node(NODE_IF(), "if", "", line, col);
+    node.child1 = cond;
+    node.child2 = then_branch;
+    node.child3 = else_branch;
+    return node;
+}
+
+func parse_while_stmt(p: Parser) -> AstNode {
+    let line = peek_line(p);
+    let col = peek_col(p);
+    advance_token(p); // 'while'
+
+    let cond = parse_expression(p);
+    let body = parse_block(p);
+
+    let node = make_ast_node(NODE_WHILE(), "while", "", line, col);
+    node.child1 = cond;
+    node.child2 = body;
+    return node;
+}
+
+func parse_for_stmt(p: Parser) -> AstNode {
+    let line = peek_line(p);
+    let col = peek_col(p);
+    advance_token(p); // 'for'
+
+    let init_stmt: AstNode = null;
+    if check_token(p, TOK_LET()) || check_token(p, TOK_VAR()) {
+        init_stmt = parse_var_decl(p);
+    } else {
+        init_stmt = parse_statement(p);
+    }
+
+    let cond = parse_expression(p);
+    consume_tok(p, TOK_SEMI(), "Expected ';' after for loop condition");
+
+    // Update statement (e.g. i = i + 1)
+    let update_target = parse_expression(p);
+    consume_tok(p, TOK_ASSIGN(), "Expected '=' in for loop update");
+    let update_val = parse_expression(p);
+    let update_stmt = make_ast_node(NODE_ASSIGN(), update_target.name, "", line, col);
+    update_stmt.child1 = update_target;
+    update_stmt.child2 = update_val;
+
+    let body = parse_block(p);
+
+    let node = make_ast_node(NODE_FOR(), "for", "", line, col);
+    node.child1 = init_stmt;
+    node.child2 = cond;
+    node.child3 = update_stmt;
+    node.child4 = body;
+    return node;
+}
+
+func parse_return_stmt(p: Parser) -> AstNode {
+    let line = peek_line(p);
+    let col = peek_col(p);
+    advance_token(p); // 'return'
+
+    let node = make_ast_node(NODE_RETURN(), "return", "", line, col);
+    if check_token(p, TOK_SEMI()) == false {
+        node.child1 = parse_expression(p);
+    }
+    consume_tok(p, TOK_SEMI(), "Expected ';' after return");
+    return node;
+}
+
+func parse_block(p: Parser) -> AstNode {
+    let line = peek_line(p);
+    let col = peek_col(p);
+    consume_tok(p, TOK_LBRACE(), "Expected '{' to start block");
+
+    let node = make_ast_node(NODE_BLOCK(), "block", "", line, col);
+    let stmts_head: AstNode = null;
+    let stmts_tail: AstNode = null;
+
+    while check_token(p, TOK_RBRACE()) == false && check_token(p, TOK_EOF()) == false {
+        let stmt = parse_statement(p);
+        if stmts_head == null { stmts_head = stmt; stmts_tail = stmt; }
+        else { stmts_tail.next = stmt; stmts_tail = stmt; }
+    }
+    consume_tok(p, TOK_RBRACE(), "Expected '}' to close block");
+    node.child1 = stmts_head;
+    return node;
+}
+
+func parse_statement(p: Parser) -> AstNode {
+    let line = peek_line(p);
+    let col = peek_col(p);
+
+    if check_token(p, TOK_LET()) || check_token(p, TOK_VAR()) {
+        return parse_var_decl(p);
+    }
+    if check_token(p, TOK_IF()) {
+        return parse_if_stmt(p);
+    }
+    if check_token(p, TOK_WHILE()) {
+        return parse_while_stmt(p);
+    }
+    if check_token(p, TOK_FOR()) {
+        return parse_for_stmt(p);
+    }
+    if check_token(p, TOK_RETURN()) {
+        return parse_return_stmt(p);
+    }
+    if check_token(p, TOK_LBRACE()) {
+        return parse_block(p);
+    }
+
+    // Expression or assignment statement
+    let expr = parse_expression(p);
+    if match_tok(p, TOK_ASSIGN()) {
+        let val = parse_expression(p);
+        consume_tok(p, TOK_SEMI(), "Expected ';' after assignment");
+        let assign_node = make_ast_node(NODE_ASSIGN(), expr.name, "", line, col);
+        assign_node.child1 = expr;
+        assign_node.child2 = val;
+        return assign_node;
+    }
+
+    consume_tok(p, TOK_SEMI(), "Expected ';' after expression statement");
+    let expr_stmt = make_ast_node(NODE_EXPR_STMT(), "expr_stmt", "", line, col);
+    expr_stmt.child1 = expr;
+    return expr_stmt;
+}
+
+// ------------------------------------------------------------------------------
+// Top-Level Declarations
+// ------------------------------------------------------------------------------
+
+func parse_func_decl(p: Parser) -> AstNode {
+    let line = peek_line(p);
+    let col = peek_col(p);
+    advance_token(p); // 'func'
+
+    let name = consume_tok(p, TOK_IDENT(), "Expected function name").text;
+    consume_tok(p, TOK_LPAREN(), "Expected '(' after function name");
+
+    let params_head: AstNode = null;
+    let params_tail: AstNode = null;
+    while check_token(p, TOK_RPAREN()) == false && check_token(p, TOK_EOF()) == false {
+        let p_line = peek_line(p);
+        let p_col = peek_col(p);
+        let p_name = consume_tok(p, TOK_IDENT(), "Expected parameter name").text;
+        consume_tok(p, TOK_COLON(), "Expected ':' after parameter name");
+        let p_type = consume_tok(p, TOK_IDENT(), "Expected parameter type").text;
+        let param_node = make_ast_node(NODE_PARAM(), p_name, p_type, p_line, p_col);
+
+        if params_head == null { params_head = param_node; params_tail = param_node; }
+        else { params_tail.next = param_node; params_tail = param_node; }
+
+        if check_token(p, TOK_COMMA()) { advance_token(p); }
+    }
+    consume_tok(p, TOK_RPAREN(), "Expected ')' after parameters");
+
+    let ret_type = "void";
+    if match_tok(p, TOK_ARROW()) {
+        ret_type = consume_tok(p, TOK_IDENT(), "Expected return type after '->'").text;
+    }
+
+    let body = parse_block(p);
+    let func_node = make_ast_node(NODE_FUNC_DECL(), name, ret_type, line, col);
+    func_node.child1 = params_head;
+    func_node.child2 = body;
+    return func_node;
+}
+
+func parse_extern_decl(p: Parser) -> AstNode {
+    let line = peek_line(p);
+    let col = peek_col(p);
+    advance_token(p); // 'extern'
+
+    let abi = consume_tok(p, TOK_STRING(), "Expected ABI string (e.g. \"C\")").text;
+    consume_tok(p, TOK_FUNC(), "Expected 'func' after extern ABI");
+    let name = consume_tok(p, TOK_IDENT(), "Expected extern function name").text;
+    consume_tok(p, TOK_LPAREN(), "Expected '(' after extern function name");
+
+    let params_head: AstNode = null;
+    let params_tail: AstNode = null;
+    while check_token(p, TOK_RPAREN()) == false && check_token(p, TOK_EOF()) == false {
+        let p_name = consume_tok(p, TOK_IDENT(), "Expected parameter name").text;
+        consume_tok(p, TOK_COLON(), "Expected ':' after parameter name");
+        let p_type = consume_tok(p, TOK_IDENT(), "Expected parameter type").text;
+        let param_node = make_ast_node(NODE_PARAM(), p_name, p_type, line, col);
+
+        if params_head == null { params_head = param_node; params_tail = param_node; }
+        else { params_tail.next = param_node; params_tail = param_node; }
+
+        if check_token(p, TOK_COMMA()) { advance_token(p); }
+    }
+    consume_tok(p, TOK_RPAREN(), "Expected ')' after parameters");
+
+    let ret_type = "void";
+    if match_tok(p, TOK_ARROW()) {
+        ret_type = consume_tok(p, TOK_IDENT(), "Expected return type").text;
+    }
+    consume_tok(p, TOK_SEMI(), "Expected ';' after extern declaration");
+
+    let extern_node = make_ast_node(NODE_EXTERN_DECL(), name, ret_type, line, col);
+    extern_node.str_val = abi;
+    extern_node.child1 = params_head;
+    return extern_node;
+}
+
+func parse_class_decl(p: Parser) -> AstNode {
+    let line = peek_line(p);
+    let col = peek_col(p);
+    advance_token(p); // 'class'
+
+    let name = consume_tok(p, TOK_IDENT(), "Expected class name").text;
+    consume_tok(p, TOK_LBRACE(), "Expected '{' after class name");
+
+    let fields_head: AstNode = null;
+    let fields_tail: AstNode = null;
+    while check_token(p, TOK_RBRACE()) == false && check_token(p, TOK_EOF()) == false {
+        let f_name = consume_tok(p, TOK_IDENT(), "Expected field name").text;
+        consume_tok(p, TOK_COLON(), "Expected ':' after field name");
+        let f_type = consume_tok(p, TOK_IDENT(), "Expected field type").text;
+        let field_node = make_ast_node(NODE_FIELD(), f_name, f_type, line, col);
+
+        if fields_head == null { fields_head = field_node; fields_tail = field_node; }
+        else { fields_tail.next = field_node; fields_tail = field_node; }
+
+        if check_token(p, TOK_COMMA()) { advance_token(p); }
+    }
+    consume_tok(p, TOK_RBRACE(), "Expected '}' after class fields");
+
+    let class_node = make_ast_node(NODE_CLASS_DECL(), name, name, line, col);
+    class_node.child1 = fields_head;
+    return class_node;
+}
+
+func parse_program(p: Parser) -> AstNode {
+    let prog = make_ast_node(NODE_PROGRAM(), "program", "", 1, 1);
+    let head: AstNode = null;
+    let tail: AstNode = null;
+
+    while check_token(p, TOK_EOF()) == false {
+        let decl: AstNode = null;
+
+        if check_token(p, TOK_IMPORT()) {
+            advance_token(p); // 'import'
+            let path = consume_tok(p, TOK_STRING(), "Expected import path").text;
+            consume_tok(p, TOK_SEMI(), "Expected ';' after import");
+            // Import is resolved or inlined
+        } else if check_token(p, TOK_EXTERN()) {
+            decl = parse_extern_decl(p);
+        } else if check_token(p, TOK_CLASS()) {
+            decl = parse_class_decl(p);
+        } else if check_token(p, TOK_FUNC()) {
+            decl = parse_func_decl(p);
+        } else {
+            decl = parse_statement(p);
+        }
+
+        if decl != null {
+            if head == null { head = decl; tail = decl; }
+            else { tail.next = decl; tail = decl; }
+        }
+    }
+
+    prog.child1 = head;
+    return prog;
+}

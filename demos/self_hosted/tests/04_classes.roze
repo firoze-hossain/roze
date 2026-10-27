@@ -1,0 +1,16 @@
+class Vector2 {
+    x: int,
+    y: int
+}
+
+func add_vectors(v1: Vector2, v2: Vector2) -> Vector2 {
+    return new Vector2(v1.x + v2.x, v1.y + v2.y);
+}
+
+func main() {
+    let a = new Vector2(10, 25);
+    let b = new Vector2(30, 45);
+    let c = add_vectors(a, b);
+    println(c.x);
+    println(c.y);
+}

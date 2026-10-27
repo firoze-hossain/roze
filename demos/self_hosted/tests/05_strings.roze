@@ -1,0 +1,8 @@
+func main() {
+    let greeting = "Roze";
+    let message = "Welcome to " + greeting + " Language!";
+    println(message);
+    if greeting == "Roze" {
+        println("Match: Roze");
+    }
+}

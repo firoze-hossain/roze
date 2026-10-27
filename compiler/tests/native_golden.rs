@@ -2898,4 +2898,20 @@ fn ai_ml_inference_demo_native() {
     assert!(stdout.contains("Roze AI / ML Inference Wrapper Verified Successfully! (ADV-05)"));
 }
 
+#[test]
+fn self_hosting_compiler_bootstrap_native() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+    let demo_dir = root.join("demos").join("self_hosted");
+
+    let status = Command::new("make")
+        .arg("bootstrap_test")
+        .arg("test_programs")
+        .current_dir(&demo_dir)
+        .status()
+        .expect("failed to run make in demos/self_hosted");
+
+    assert!(status.success(), "Self-hosting bootstrap test or test programs failed!");
+}
+
+
 

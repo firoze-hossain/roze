@@ -1,0 +1,16 @@
+func factorial(n: int) -> int {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+func main() {
+    let a = 15;
+    let b = 27;
+    println(a + b);
+    println(b - a);
+    println(a * 3);
+    println(b / 3);
+    println(factorial(5));
+}

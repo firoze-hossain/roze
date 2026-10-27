@@ -1,0 +1,176 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler (ADV-06)
+// ==============================================================================
+// Pure Roze compiler implementation:
+// - Lexer: tokenizes keywords, identifiers, literals, operators
+// - Parser: recursive descent producing AST
+// - Type Checker: semantic validation, symbol table, type inference
+// - Code Generator: emits standalone C99 source
+// - Driver: reads input .roze file, compiles, writes .c, and invokes clang/gcc
+// ==============================================================================
+
+import "ast.roze";
+import "lexer.roze";
+import "parser.roze";
+import "typechecker.roze";
+import "codegen.roze";
+
+// --- Driver & Pipeline ---
+
+func compile_source_to_c(source: string) -> string {
+    let tokens = tokenize(source);
+    let parser = make_parser(tokens);
+    let ast = parse_program(parser);
+    let tc = make_type_checker();
+    let err_count = check_program_types(tc, ast);
+    if err_count > 0 {
+        println("❌ Compilation failed with " + rz_int_to_str(err_count) + " type error(s).");
+        return "";
+    }
+    return generate_c_code(ast);
+}
+
+func compile_file(in_path: string, out_c_path: string, out_bin_path: string) -> int {
+    if rz_file_exists(in_path) == 0 {
+        println("❌ Error: input file not found: " + in_path);
+        return 1;
+    }
+
+    println("🌹 Roze Self-Hosted Compiler v0.1");
+    println("📁 Compiling: " + in_path);
+
+    let source = rz_read_file(in_path);
+    if rz_str_len(source) == 0 {
+        println("❌ Error: file is empty: " + in_path);
+        return 1;
+    }
+
+    let c_code = compile_source_to_c(source);
+    if rz_str_len(c_code) == 0 {
+        return 1;
+    }
+
+    // Write emitted C code
+    rz_write_file(out_c_path, c_code);
+    println("📝 Emitted C99: " + out_c_path);
+
+    // If binary output path specified, compile via clang/gcc
+    if rz_str_len(out_bin_path) > 0 {
+        let cmd = "gcc -O2 -w " + out_c_path + " -o " + out_bin_path + " -lm 2>/dev/null || clang -O2 -w " + out_c_path + " -o " + out_bin_path + " -lm";
+        let res = rz_exec(cmd);
+        if res != 0 {
+            println("❌ Error: C compiler linking failed (exit code " + rz_int_to_str(res) + ")");
+            return res;
+        }
+        println("✅ Linked executable: " + out_bin_path);
+    }
+
+    return 0;
+}
+
+func run_built_in_self_test() -> int {
+    println("==================================================================");
+    println("🌹 Running Roze Self-Hosted Compiler Self-Test Suite");
+    println("==================================================================");
+
+    let test_src = "class Point { x: int, y: int } func add(a: int, b: int) -> int { return a + b; } func main() { let msg = \"Hello from Self-Hosted Roze!\"; println(msg); let sum = add(20, 22); println(sum); let p = new Point(10, 20); println(p.x + p.y); for let i = 0; i < 3; i = i + 1 { println(i); } }";
+
+    let c_code = compile_source_to_c(test_src);
+    if rz_str_len(c_code) == 0 {
+        println("❌ Self-test C code generation failed!");
+        return 1;
+    }
+
+    rz_write_file("bin/self_test_generated.c", c_code);
+    let cmd = "gcc -O2 -w bin/self_test_generated.c -o bin/self_test_bin -lm 2>/dev/null || clang -O2 -w bin/self_test_generated.c -o bin/self_test_bin -lm";
+    let res = rz_exec(cmd);
+    if res != 0 {
+        println("❌ Self-test compilation failed!");
+        return 1;
+    }
+
+    let run_res = rz_exec("./bin/self_test_bin > bin/self_test.out");
+    if run_res != 0 {
+        println("❌ Self-test execution failed!");
+        return 1;
+    }
+
+    let output = rz_read_file("bin/self_test.out");
+    println("Output from compiled test binary:");
+    println(output);
+    println("✅ All self-tests passed successfully! 🎉");
+    return 0;
+}
+
+func main() {
+    rz_compiler_banner();
+
+    // Check environment variables first
+    let env_src = rz_get_env("ROZE_SRC");
+    let env_out = rz_get_env("ROZE_OUT");
+    let env_c = rz_get_env("ROZE_C");
+
+    if rz_str_len(env_src) > 0 {
+        let out_c = env_c;
+        if rz_str_len(out_c) == 0 {
+            out_c = env_src + ".c";
+        }
+        let res = compile_file(env_src, out_c, env_out);
+        return;
+    }
+
+    // Check command-line arguments
+    let argc = rz_get_arg_count();
+    if argc < 2 {
+        // No input file given: run built-in self-test mode
+        run_built_in_self_test();
+        return;
+    }
+
+    let in_file = "";
+    let out_bin = "";
+    let out_c = "";
+
+    for let i = 1; i < argc; i = i + 1 {
+        let arg = rz_get_arg(i);
+        if arg == "-o" {
+            i = i + 1;
+            if i < argc {
+                out_bin = rz_get_arg(i);
+            }
+        } else if arg == "-c" {
+            i = i + 1;
+            if i < argc {
+                out_c = rz_get_arg(i);
+            }
+        } else if arg == "--test" {
+            run_built_in_self_test();
+            return;
+        } else if arg == "--help" || arg == "-h" {
+            println("Usage: roze_self_hosted [options] <input.roze>");
+            println("Options:");
+            println("  -o <bin>     Specify output executable path");
+            println("  -c <out.c>   Specify emitted C source path");
+            println("  --test       Run compiler self-test suite");
+            println("  --help, -h   Show this help message");
+            return;
+        } else if in_file == "" {
+            in_file = arg;
+        }
+    }
+
+    if in_file == "" {
+        run_built_in_self_test();
+        return;
+    }
+
+    if out_c == "" {
+        if out_bin != "" {
+            out_c = out_bin + ".c";
+        } else {
+            out_c = in_file + ".c";
+        }
+    }
+
+    compile_file(in_file, out_c, out_bin);
+}

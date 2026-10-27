@@ -1247,7 +1247,7 @@ dependencies = [
 
 [[package]]
 name = "roze-build"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1264,7 +1264,7 @@ dependencies = [
 
 [[package]]
 name = "roze-compiler"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1280,7 +1280,7 @@ dependencies = [
 
 [[package]]
 name = "roze-lsp"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "dashmap 6.2.1",
@@ -1296,7 +1296,7 @@ dependencies = [
 
 [[package]]
 name = "roze-pkg"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1313,11 +1313,11 @@ dependencies = [
 
 [[package]]
 name = "roze-runtime"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "roze-stdlib"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "roze-runtime",
 ]

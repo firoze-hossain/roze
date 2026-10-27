@@ -1,8 +1,14 @@
 {
   "name": "roze-language",
   "displayName": "Roze Language",
-  "description": "Roze programming language support for VS Code",
-  "version": "0.1.0",
+  "description": "Official Roze programming language support with LSP, syntax highlighting, and build automation",
+  "version": "1.0.0",
+  "publisher": "roze-lang",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/firoze/roze.git"
+  },
+  "icon": "roze.png",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -91,11 +97,16 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
     "typescript": "^5.0.0"
   }
 }

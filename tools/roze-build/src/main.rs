@@ -14,7 +14,7 @@ use watcher::Watcher;
 
 #[derive(Parser)]
 #[command(name = "roze-build")]
-#[command(version = "0.1.0")]
+#[command(version = "1.0.0")]
 #[command(about = "🌹 Roze Build System")]
 struct Cli {
     #[command(subcommand)]

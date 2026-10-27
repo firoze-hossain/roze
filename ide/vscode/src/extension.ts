@@ -3,8 +3,14 @@ import * as vscode from 'vscode';
 import * as child_process from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import {
+    LanguageClient,
+    LanguageClientOptions,
+    ServerOptions,
+    TransportKind
+} from 'vscode-languageclient/node';
 
-let lspClient: vscode.LanguageClient | undefined;
+let lspClient: LanguageClient | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('🌹 Roze Language extension activated!');
@@ -106,13 +112,13 @@ function startLanguageServer(context: vscode.ExtensionContext) {
     }
 
     // Server options
-    const serverOptions: vscode.ServerOptions = {
-        run: { command: lspPath, transport: vscode.TransportKind.stdio },
-        debug: { command: lspPath, transport: vscode.TransportKind.stdio }
+    const serverOptions: ServerOptions = {
+        run: { command: lspPath, transport: TransportKind.stdio },
+        debug: { command: lspPath, transport: TransportKind.stdio }
     };
 
     // Client options
-    const clientOptions: vscode.LanguageClientOptions = {
+    const clientOptions: LanguageClientOptions = {
         documentSelector: [{ scheme: 'file', language: 'roze' }],
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.roze')
@@ -122,7 +128,7 @@ function startLanguageServer(context: vscode.ExtensionContext) {
     };
 
     // Create and start the client
-    lspClient = new vscode.LanguageClient(
+    lspClient = new LanguageClient(
         'rozeLsp',
         'Roze Language Server',
         serverOptions,

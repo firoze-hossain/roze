@@ -66,6 +66,10 @@ impl RegistryClient {
         self
     }
 
+    pub fn catalog(&self) -> &HashMap<String, PackageMetadata> {
+        &self.builtin_catalog
+    }
+
     fn populate_builtin_catalog(&mut self) {
         // 1. std::json
         self.register_builtin_package(

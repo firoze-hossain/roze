@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ============================================================================== -->
+<!-- WiX Toolset Source Specification for Roze Language v1.0.0 MSI Installer       -->
+<!-- ============================================================================== -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Roze Programming Language"
+           Language="1033"
+           Version="1.0.0.0"
+           Manufacturer="Roze Ecosystem"
+           UpgradeCode="4C6689C2-88E2-44BD-9F02-4D789B101E9E">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Platform="x64"
+             Description="Roze Programming Language Toolchain v1.0.0" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Roze is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="RozeIcon" SourceFile="packaging\windows\Roze.ico" />
+    <Property Id="ARPPRODUCTICON" Value="RozeIcon" />
+    <Property Id="ARPHELPLINK" Value="https://roze-lang.org" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="Roze">
+          <Directory Id="BINDIR" Name="bin" />
+          <Directory Id="STDLIBDIR" Name="stdlib" />
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="BINDIR">
+      <Component Id="RozeBinaries" Guid="1B8F31E8-E3A9-4E90-B8E5-3A4E217C9B10" Win64="yes">
+        <File Id="RozeExe" Source="target\release\roze.exe" KeyPath="yes" />
+        <File Id="RozePkgExe" Source="target\release\roze-pkg.exe" />
+        <File Id="RozeBuildExe" Source="target\release\roze-build.exe" />
+        <File Id="RozeLspExe" Source="target\release\roze-lsp.exe" />
+        <Environment Id="PATH" Name="PATH" Value="[BINDIR]" Permanent="no" Part="last" Action="set" System="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="STDLIBDIR">
+      <Component Id="RozeStdlib" Guid="5B2F99C1-F091-4BC3-A88E-6C18E94B3251" Win64="yes">
+        <File Id="CoreRoze" Source="stdlib\core.roze" KeyPath="yes" />
+        <Environment Id="ROZE_STDLIB_PATH" Name="ROZE_STDLIB_PATH" Value="[STDLIBDIR]" Permanent="no" Action="set" System="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="MainApplication" Title="Roze Toolchain" Level="1">
+      <ComponentRef Id="RozeBinaries" />
+      <ComponentRef Id="RozeStdlib" />
+    </Feature>
+  </Product>
+</Wix>

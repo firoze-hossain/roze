@@ -126,7 +126,7 @@ fn build_file(
     linker_script: Option<&str>,
     entry: Option<&str>,
 ) -> Result<(), ()> {
-    println!("{}", "🌹 Roze Compiler v0.1".bright_magenta());
+    println!("{}", "🌹 Roze Compiler v1.0.0".bright_magenta());
     println!("{} {}", "📁 Compiling:".cyan(), filename);
 
     let source = match fs::read_to_string(filename) {

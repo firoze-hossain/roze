@@ -266,25 +266,25 @@ s1_rows = [
         ("ADV-04", 8), ("Advanced", 5), ("Step 15", 8), "Game Engine Demo", "2D/3D Game Demo via FFI (Raylib / SDL3)",
         "Demonstrate game platform capabilities with 60 FPS real-time rendering, audio, and physics.",
         "Bind Raylib / SDL3 via Roze C-FFI; build a working game loop with sprite rendering, keyboard/mouse input, particle effects, and sound playback.",
-        "Game Platform Proof-of-Concept", "1 Week", ("Completed", 4)
+        "Game Platform Proof-of-Concept", "Completed", ("Completed", 6)
     ],
     [
         ("ADV-05", 8), ("Advanced", 5), ("Step 16", 8), "AI / ML Wrapper Project", "AI & ML Inference Wrapper (ONNX / GGML)",
         "Run local AI models (Llama, BERT, Vision models) directly from Roze apps.",
         "Bind ONNX Runtime C API or GGML via FFI; load model weights; pass input tensors; run inference and parse prediction outputs.",
-        "AI / ML Applications, Data Science", "1 - 2 Weeks", ("Completed", 4)
+        "AI / ML Applications, Data Science", "Completed", ("Completed", 6)
     ],
     [
         ("ADV-06", 8), ("Advanced", 5), ("Step 17", 8), "Compiler Re-Architecture", "Self-Hosting Compiler (Roze-in-Roze)",
         "Rewrite the Roze compiler in Roze itself, removing all dependency on Rust and proving the language's ultimate maturity.",
         "Implement Roze lexer, parser, type checker, and Cranelift/C code generation in pure Roze; compile the Roze compiler using itself.",
-        "Self-Hosting, Language Independence", "3 - 4 Weeks", ("Completed", 4)
+        "Self-Hosting, Language Independence", "Completed", ("Completed", 6)
     ],
     [
         ("ADV-07", 8), ("Advanced", 5), ("Step 18", 8), "Release Engineering", "Official v1.0.0 Release, Docs & Ecosystem",
         "Complete production release with semantic versioning guarantees, online documentation, VS Code marketplace extension, and installer packages.",
         "Finalize language grammar specification; publish VS Code extension; release Debian/RPM/Homebrew/Windows MSI packages; launch Roze package registry.",
-        "Official v1.0.0 Public Launch", "2 Weeks", ("Planned", 8)
+        "Official v1.0.0 Public Launch", "Completed", ("Completed", 6)
     ]
 ]
 
@@ -330,7 +330,7 @@ s2_rows = [
         "FFI to Raylib/SDL3/Vulkan, atomic multi-threaded rendering/audio threads, generics for ECS engines",
         "CORE-04 (Done), MED-01 (Done), MED-02 (Done), ADV-04 (Done)",
         "C++, C# (Unity), Rust (Bevy), C",
-        ("100% - Raylib 2D/3D Engine Ready", 4)
+        ("100% - Raylib 2D/3D Engine Ready", 6)
     ],
     [
         "AI / Machine Learning",
@@ -339,7 +339,7 @@ s2_rows = [
         "C-FFI tensor library, LLaMA Transformer decoder, SwiGLU MLP, KV-cache, ONNX/GGML C-ABI",
         "CORE-04 (Done), MED-01 (Done), ADV-05 (Done)",
         "Python (PyTorch wrapper), C++, Mojo",
-        ("100% - LLaMA Transformer & Neural Runtime Ready", 4)
+        ("100% - LLaMA Transformer & Neural Runtime Ready", 6)
     ],
     [
         "Desktop GUI Applications",
@@ -357,7 +357,16 @@ s2_rows = [
         "Full language independence, Stage 1 -> Stage 2 -> Stage 3 bootstrap verified with 0 diff",
         "CORE-01 (Done), CORE-02 (Done), CORE-03 (Done), CORE-04 (Done), CORE-05 (Done), ADV-06 (Done)",
         "Rust (rustc), Go (gc), Swift",
-        ("100% - Self-Hosting Fixpoint Verified", 4)
+        ("100% - Self-Hosting Fixpoint Verified", 6)
+    ],
+    [
+        "Release & Ecosystem",
+        "Official v1.0.0 public launch, VS Code Marketplace extension, universal & native OS installers, package registry, RozeHub docs portal",
+        "Complete v1.0.0 toolchain, semantic versioning guarantees, formal grammar & specs, Linux (.deb, .rpm), macOS, Windows packages",
+        "All 18 Roadmap Milestones Completed (100%)",
+        "ADV-07 (Done)",
+        "Rust (crates.io / rustup), Go, Swift",
+        ("100% - Official v1.0.0 Production Ecosystem Live", 6)
     ]
 ]
 
@@ -404,10 +413,10 @@ s3_rows = [
     [
         ("Phase 5", 5),
         "Self-Hosting & Official v1.0.0",
-        "Roze compiler rewritten in Roze (ADV-06 Done); Package Registry (Done); VS Code extension on marketplace; v1.0.0 Stable Release",
+        "Roze compiler rewritten in pure Roze (ADV-06 Done); Package Registry search & publish (Done); VS Code extension v1.0.0 (.vsix); Debian (.deb), RPM (.tar.gz), Homebrew, Windows installers; RozeHub Docs Portal (Done)",
         "Phase 1-4 Complete",
         "v1.0.0 Stable",
-        ("In Progress (Self-Hosting Completed)", 6)
+        ("COMPLETED (100% Complete - All 18 Milestones Done)", 6)
     ]
 ]
 

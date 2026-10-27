@@ -34,11 +34,11 @@
         },
         {
           "name": "keyword.declaration.roze",
-          "match": "\\b(let|mut|func|class|interface|extends|implements|new)\\b"
+          "match": "\\b(let|var|mut|func|class|enum|trait|impl|extern|unsafe|new)\\b"
         },
         {
           "name": "keyword.other.roze",
-          "match": "\\b(true|false|null|this|super|async|await|try|catch|throw)\\b"
+          "match": "\\b(true|false|null|this|super|async|await|try|catch|throw|as|in)\\b"
         }
       ]
     },
@@ -46,7 +46,7 @@
       "patterns": [
         {
           "name": "storage.type.roze",
-          "match": "\\b(int|float|string|bool|void|any|unknown|never)\\b"
+          "match": "\\b(int|float|string|bool|void|any|unknown|never|u8|rawpointer|Option|Result|Some|None|Ok|Err|List|Map|Channel|Thread)\\b"
         }
       ]
     },
@@ -63,7 +63,7 @@
         },
         {
           "name": "support.function.builtin.roze",
-          "match": "\\b(println|print|read_line|assert|panic)\\b"
+          "match": "\\b(println|print|read_line|assert|panic|alloc|free_ptr|write_bytes|read_bytes|thread_spawn|channel_new|channel_send|channel_recv|http_server_start|http_server_accept|http_server_respond|http_server_stop|sql_connect|sql_query|sql_execute|sql_close|list_new|list_push|list_get|list_set|list_remove|list_length|list_is_empty|map_new|map_put|map_get|map_has|map_remove|map_size|map_is_empty|read_file|write_file|append_file|file_exists|delete_file|http_get|http_post|json_encode|json_decode)\\b"
         }
       ]
     },

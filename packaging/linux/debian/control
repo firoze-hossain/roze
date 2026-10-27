@@ -1,0 +1,14 @@
+Package: roze
+Version: 1.0.0
+Section: devel
+Priority: optional
+Architecture: amd64
+Depends: libc6 (>= 2.31), gcc | clang
+Suggests: default-jdk
+Maintainer: Firoze <firoze@roze-lang.org>
+Description: The Roze Programming Language Toolchain
+ Roze is an expressive, fast, statically typed systems programming
+ language supporting dual native Cranelift/C code generation and JVM
+ execution, automatic reference counting, safe concurrency, and bare-metal
+ freestanding kernel capabilities.
+ Homepage: https://roze-lang.org

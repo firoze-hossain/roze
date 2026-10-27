@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roze Programming Language 🌹 | v1.0.0 Production Release</title>
+    <meta name="description" content="The Roze Programming Language - Fast, statically typed, dual-backend systems language with deterministic ARC and full self-hosting.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0c10;
+            --bg-secondary: #12161f;
+            --bg-tertiary: #1a202c;
+            --border-color: #2d3748;
+            --text-main: #f7fafc;
+            --text-muted: #a0aec0;
+            --rose-primary: #e53e3e;
+            --rose-glow: rgba(229, 62, 62, 0.35);
+            --accent-cyan: #38bdf8;
+            --accent-green: #48bb78;
+            --accent-purple: #9f7aea;
+            --code-bg: #0d1117;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* Navigation */
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.25rem 3rem;
+            background: rgba(10, 12, 16, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .logo {
+            font-size: 1.6rem;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #fff;
+            text-decoration: none;
+        }
+        .logo span { color: var(--rose-primary); }
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            align-items: center;
+        }
+        .nav-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        .nav-links a:hover { color: #fff; }
+        .btn-nav {
+            background: linear-gradient(135deg, #e53e3e, #c53030);
+            color: #fff !important;
+            padding: 0.5rem 1.25rem;
+            border-radius: 8px;
+            font-weight: 600;
+            box-shadow: 0 4px 14px var(--rose-glow);
+        }
+
+        /* Hero */
+        .hero {
+            padding: 6rem 2rem 4rem;
+            text-align: center;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.35rem 1rem;
+            border-radius: 9999px;
+            background: rgba(229, 62, 62, 0.15);
+            border: 1px solid rgba(229, 62, 62, 0.3);
+            color: #fc8181;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            font-size: 4rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            line-height: 1.1;
+            margin-bottom: 1.5rem;
+        }
+        .gradient-text {
+            background: linear-gradient(135deg, #fff 30%, #fc8181 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .lead {
+            font-size: 1.25rem;
+            color: var(--text-muted);
+            max-width: 750px;
+            margin: 0 auto 2.5rem;
+            font-weight: 400;
+        }
+
+        /* Install box */
+        .install-box {
+            background: var(--code-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem 1.5rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 1rem;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.95rem;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+            margin-bottom: 3rem;
+        }
+        .install-box code { color: #38bdf8; }
+        .btn-copy {
+            background: #2d3748;
+            border: none;
+            color: #fff;
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: background 0.2s;
+        }
+        .btn-copy:hover { background: #4a5568; }
+
+        /* Feature Cards */
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            max-width: 1200px;
+            margin: 3rem auto;
+            padding: 0 2rem;
+        }
+        .feature-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 2rem;
+            text-align: left;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .feature-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(229, 62, 62, 0.5);
+        }
+        .feature-card h3 {
+            font-size: 1.25rem;
+            margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .feature-card p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        /* Playground / Tabs */
+        .code-section {
+            max-width: 1100px;
+            margin: 4rem auto;
+            padding: 0 2rem;
+        }
+        .code-window {
+            background: var(--code-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+        }
+        .window-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1.25rem;
+            background: #161b22;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .tab {
+            padding: 0.4rem 1rem;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text-muted);
+            border: none;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        .tab.active {
+            background: #21262d;
+            color: #fff;
+        }
+        pre {
+            padding: 1.5rem;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.95rem;
+            color: #e6edf3;
+            overflow-x: auto;
+            text-align: left;
+        }
+        .kw { color: #ff7b72; font-weight: 600; }
+        .fn { color: #d2a8ff; }
+        .str { color: #a5d6ff; }
+        .num { color: #79c0ff; }
+        .cm { color: #8b949e; font-style: italic; }
+
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--border-color);
+            padding: 4rem 2rem;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-top: 5rem;
+        }
+        footer a { color: var(--rose-primary); text-decoration: none; }
+    </style>
+</head>
+<body>
+
+    <nav>
+        <a href="#" class="logo">🌹 <span>Roze</span></a>
+        <div class="nav-links">
+            <a href="https://rozehub.roze-lang.org/projects/roze-language/docs">Documentation</a>
+            <a href="https://rozehub.roze-lang.org/projects/roze-language/releases">Releases</a>
+            <a href="https://github.com/firoze/roze">GitHub</a>
+            <a href="#install" class="btn-nav">Get Roze v1.0.0</a>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="badge">🚀 Production Release: Roze v1.0.0 Stable</div>
+        <h1>The Language for <span class="gradient-text">Systems & Cloud</span></h1>
+        <p class="lead">
+            Roze is a fast, statically typed language featuring deterministic atomic reference counting, dual native Cranelift & JVM backends, safe concurrency, and full self-hosting independence.
+        </p>
+
+        <div class="install-box" id="install">
+            <span>$</span>
+            <code>curl -fsSL https://roze-lang.org/install.sh | bash</code>
+            <button class="btn-copy" onclick="navigator.clipboard.writeText('curl -fsSL https://roze-lang.org/install.sh | bash'); this.innerText='Copied!';">Copy</button>
+        </div>
+    </section>
+
+    <section class="features">
+        <div class="feature-card">
+            <h3>⚡ Dual-Backend Architecture</h3>
+            <p>Compile to ultra-fast standalone native ELF/Mach-O/PE binaries via Cranelift, or target the JVM for seamless enterprise Java interoperability.</p>
+        </div>
+        <div class="feature-card">
+            <h3>🛡️ Deterministic ARC Memory</h3>
+            <p>Thread-safe automatic reference counting without garbage collection pauses. Deterministic destructors reclaim memory the moment it goes out of scope.</p>
+        </div>
+        <div class="feature-card">
+            <h3>🌐 Pure Self-Hosting</h3>
+            <p>Written in Roze, compiled by Roze. Proven via 3-stage bootstrap fixpoint verification with byte-for-byte compiler idempotence.</p>
+        </div>
+        <div class="feature-card">
+            <h3>🎮 Multi-Domain Power</h3>
+            <p>Build 60 FPS games via Raylib FFI, enterprise REST services with RozeBoot, local AI inference with GGML/LLaMA, or bare-metal multiboot2 OS kernels.</p>
+        </div>
+    </section>
+
+    <section class="code-section">
+        <div class="code-window">
+            <div class="window-header">
+                <div class="tabs">
+                    <button class="tab active" onclick="switchCode('enums')">Enums & Pattern Matching</button>
+                    <button class="tab" onclick="switchCode('web')">Async Web Server</button>
+                    <button class="tab" onclick="switchCode('ffi')">C-ABI Native FFI</button>
+                    <button class="tab" onclick="switchCode('self')">Self-Hosted Lexer</button>
+                </div>
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-family: 'Fira Code', monospace;">main.roze</span>
+            </div>
+            <pre id="code-display"><span class="cm">// Algebraic Data Types & Exhaustive Pattern Matching</span>
+<span class="kw">enum</span> Result&lt;T, E&gt; {
+    Ok(val: T),
+    Err(msg: E)
+}
+
+<span class="kw">func</span> <span class="fn">divide</span>(a: <span class="kw">int</span>, b: <span class="kw">int</span>) -&gt; Result&lt;<span class="kw">int</span>, <span class="kw">string</span>&gt; {
+    <span class="kw">if</span> b == <span class="num">0</span> {
+        <span class="kw">return</span> Result::Err(<span class="str">"division by zero"</span>);
+    }
+    <span class="kw">return</span> Result::Ok(a / b);
+}
+
+<span class="kw">func</span> <span class="fn">main</span>() {
+    <span class="kw">let</span> res = divide(<span class="num">100</span>, <span class="num">5</span>);
+    <span class="kw">match</span> res {
+        Result::Ok(v) =&gt; println(<span class="str">"Result: "</span> + v),
+        Result::Err(e) =&gt; println(<span class="str">"Error: "</span> + e)
+    }
+}</pre>
+        </div>
+    </section>
+
+    <footer>
+        <p>Released under the MIT License • Built with passion for software engineering by Firoze • <a href="https://rozehub.roze-lang.org">RozeHub Ecosystem Portal</a></p>
+    </footer>
+
+    <script>
+        const snippets = {
+            enums: `// Algebraic Data Types & Exhaustive Pattern Matching
+enum Result<T, E> {
+    Ok(val: T),
+    Err(msg: E)
+}
+
+func divide(a: int, b: int) -> Result<int, string> {
+    if b == 0 {
+        return Result::Err("division by zero");
+    }
+    return Result::Ok(a / b);
+}
+
+func main() {
+    let res = divide(100, 5);
+    match res {
+        Result::Ok(v) => println("Result: " + v),
+        Result::Err(e) => println("Error: " + e)
+    }
+}`,
+            web: `// Multithreaded REST Controller Framework (RozeBoot)
+import "web";
+
+func main() {
+    let server = http_server_start(8080);
+    println("🚀 RozeBoot Server running on http://localhost:8080");
+
+    while true {
+        let req = http_server_accept(server);
+        let path = map_get(req, "path");
+
+        if path == "/health" {
+            http_server_respond(req, 200, "{\\"status\\": \\"up\\", \\"version\\": \\"1.0.0\\"}");
+        } else {
+            http_server_respond(req, 404, "{\\"error\\": \\"not found\\"}");
+        }
+    }
+}`,
+            ffi: `// Direct C-ABI FFI & Safe Memory Manipulation
+extern "C" func sin(x: float) -> float;
+extern "C" func printf(fmt: string, val: int) -> int;
+
+func main() {
+    let angle = 3.14159 / 2.0;
+    println("sin(pi/2) = " + sin(angle));
+
+    unsafe {
+        let mem = alloc(64);
+        write_bytes(mem, 0x55, 64);
+        println("Raw memory block configured.");
+        free_ptr(mem);
+    }
+}`,
+            self: `// Self-Hosted Compiler Lexer Implementation
+func is_alpha(ch: int) -> bool {
+    return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch == 95;
+}
+
+func tokenize_ident(src: string, pos: int) -> Token {
+    let start = pos;
+    while is_alpha(rz_char_at(src, pos)) {
+        pos = pos + 1;
+    }
+    let ident = rz_substring(src, start, pos - start);
+    return make_token(TOK_IDENT(), ident, 0, 1, start);
+}`
+        };
+
+        function switchCode(key) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('code-display').textContent = snippets[key];
+        }
+    </script>
+</body>
+</html>

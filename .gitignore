@@ -48,3 +48,9 @@ Thumbs.db
 
 # --- Language Server / tooling caches ---
 .roze-cache/
+
+# --- Build & Distribution outputs ---
+/dist/
+/demos/self_hosted/bin/
+ide/vscode/node_modules/
+ide/vscode/out/

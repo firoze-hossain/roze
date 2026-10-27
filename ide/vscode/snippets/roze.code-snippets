@@ -89,7 +89,63 @@
   },
   "Let Variable": {
     "prefix": "let",
-    "body": "let ${1:name} = ${2:value};",
+    "body": "let ${1:name}: ${2:type} = ${3:value};",
     "description": "Variable declaration"
+  },
+  "Enum": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:Name} {",
+      "    ${2:Variant1},",
+      "    ${3:Variant2}(${4:param}: ${5:type})",
+      "}"
+    ],
+    "description": "Enum definition"
+  },
+  "Match": {
+    "prefix": "match",
+    "body": [
+      "match ${1:expr} {",
+      "    ${2:Pattern} => ${3:result},",
+      "    _ => ${4:default}",
+      "}"
+    ],
+    "description": "Pattern matching expression"
+  },
+  "Trait": {
+    "prefix": "trait",
+    "body": [
+      "trait ${1:Name} {",
+      "    func ${2:method}(self) -> ${3:void};",
+      "}"
+    ],
+    "description": "Trait definition"
+  },
+  "Impl": {
+    "prefix": "impl",
+    "body": [
+      "impl ${1:Trait} for ${2:Type} {",
+      "    func ${3:method}(self) -> ${4:void} {",
+      "        ${5:// implementation}",
+      "    }",
+      "}"
+    ],
+    "description": "Trait implementation"
+  },
+  "Unsafe Block": {
+    "prefix": "unsafe",
+    "body": [
+      "unsafe {",
+      "    let ${1:ptr} = alloc(${2:size});",
+      "    ${3:// memory operations}",
+      "    free_ptr(${1:ptr});",
+      "}"
+    ],
+    "description": "Unsafe direct memory block"
+  },
+  "Extern Function": {
+    "prefix": "extern",
+    "body": "extern \"C\" func ${1:name}(${2:param}: ${3:type}) -> ${4:int};",
+    "description": "C-ABI external function binding"
   }
 }

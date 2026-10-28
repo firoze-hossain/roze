@@ -1407,8 +1407,9 @@ class RozeThreadHandle {
 }
 
 class RozeChannel {
-    private final Object[] buffer;
+    private Object[] buffer;
     private final int capacity;
+    private int allocCap;
     private int head = 0;
     private int tail = 0;
     private int count = 0;
@@ -1418,26 +1419,59 @@ class RozeChannel {
     private final java.util.concurrent.locks.Condition notFull = lock.newCondition();
 
     public RozeChannel(int capacity) {
-        if (capacity <= 0) capacity = 64;
+        if (capacity <= 0 && capacity != -1) capacity = 64;
         this.capacity = capacity;
-        this.buffer = new Object[capacity];
+        this.allocCap = (capacity > 0) ? capacity : 64;
+        this.buffer = new Object[this.allocCap];
+    }
+
+    private void ensureCapacity(int minCap) {
+        if (minCap > allocCap) {
+            int newCap = allocCap * 2;
+            Object[] newBuf = new Object[newCap];
+            for (int i = 0; i < count; i++) {
+                newBuf[i] = buffer[(head + i) % allocCap];
+            }
+            buffer = newBuf;
+            head = 0;
+            tail = count;
+            allocCap = newCap;
+        }
     }
 
     public boolean send(Object val) {
         lock.lock();
         try {
-            while (count == capacity && !closed) {
-                notFull.await();
+            if (capacity > 0) {
+                while (count == capacity && !closed) {
+                    notFull.await();
+                }
             }
             if (closed) return false;
+            ensureCapacity(count + 1);
             buffer[tail] = val;
-            tail = (tail + 1) % capacity;
+            tail = (tail + 1) % allocCap;
             count++;
             notEmpty.signal();
             return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public boolean trySend(Object val) {
+        if (!lock.tryLock()) return false;
+        try {
+            if (closed || (capacity > 0 && count >= capacity)) return false;
+            ensureCapacity(count + 1);
+            buffer[tail] = val;
+            tail = (tail + 1) % allocCap;
+            count++;
+            notEmpty.signal();
+            return true;
         } finally {
             lock.unlock();
         }
@@ -1452,13 +1486,28 @@ class RozeChannel {
             if (count == 0 && closed) return null;
             Object val = buffer[head];
             buffer[head] = null;
-            head = (head + 1) % capacity;
+            head = (head + 1) % allocCap;
             count--;
             notFull.signal();
             return val;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return null;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public Object tryRecv() {
+        if (!lock.tryLock()) return null;
+        try {
+            if (count == 0) return null;
+            Object val = buffer[head];
+            buffer[head] = null;
+            head = (head + 1) % allocCap;
+            count--;
+            notFull.signal();
+            return val;
         } finally {
             lock.unlock();
         }
@@ -1491,6 +1540,58 @@ class RozeChannel {
         } finally {
             lock.unlock();
         }
+    }
+
+    public int getCapacity() {
+        return capacity;
+    }
+}
+
+class RozeMutex {
+    public final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
+
+    public void lock() {
+        lock.lock();
+    }
+
+    public void unlock() {
+        if (lock.isHeldByCurrentThread()) {
+            lock.unlock();
+        }
+    }
+
+    public boolean tryLock() {
+        return lock.tryLock();
+    }
+}
+
+class RozeRwLock {
+    public final java.util.concurrent.locks.ReentrantReadWriteLock rwlock = new java.util.concurrent.locks.ReentrantReadWriteLock();
+
+    public void readLock() {
+        rwlock.readLock().lock();
+    }
+
+    public void readUnlock() {
+        rwlock.readLock().unlock();
+    }
+
+    public void writeLock() {
+        rwlock.writeLock().lock();
+    }
+
+    public void writeUnlock() {
+        if (rwlock.isWriteLockedByCurrentThread()) {
+            rwlock.writeLock().unlock();
+        }
+    }
+
+    public boolean tryReadLock() {
+        return rwlock.readLock().tryLock();
+    }
+
+    public boolean tryWriteLock() {
+        return rwlock.writeLock().tryLock();
     }
 }
 
@@ -1702,6 +1803,219 @@ const CONCURRENCY_HELPER_METHODS: &str = r#"
             return ((RozeChannel) chan).len();
         }
         return 0;
+    }
+
+    private static RozeChannel __roze_channel_unbounded() {
+        return new RozeChannel(-1);
+    }
+
+    private static boolean __roze_channel_try_send(Object chan, Object val) {
+        if (chan instanceof RozeChannel) {
+            return ((RozeChannel) chan).trySend(val);
+        }
+        return false;
+    }
+
+    private static Object __roze_channel_try_recv(Object chan) {
+        if (chan instanceof RozeChannel) {
+            return ((RozeChannel) chan).tryRecv();
+        }
+        return null;
+    }
+
+    private static int __roze_channel_capacity(Object chan) {
+        if (chan instanceof RozeChannel) {
+            return ((RozeChannel) chan).getCapacity();
+        }
+        return 0;
+    }
+
+    private static RozeMutex __roze_mutex_new() {
+        return new RozeMutex();
+    }
+
+    private static void __roze_mutex_lock(Object m) {
+        if (m instanceof RozeMutex) ((RozeMutex) m).lock();
+    }
+
+    private static void __roze_mutex_unlock(Object m) {
+        if (m instanceof RozeMutex) ((RozeMutex) m).unlock();
+    }
+
+    private static boolean __roze_mutex_try_lock(Object m) {
+        if (m instanceof RozeMutex) return ((RozeMutex) m).tryLock();
+        return false;
+    }
+
+    private static RozeRwLock __roze_rwlock_new() {
+        return new RozeRwLock();
+    }
+
+    private static void __roze_rwlock_read_lock(Object rw) {
+        if (rw instanceof RozeRwLock) ((RozeRwLock) rw).readLock();
+    }
+
+    private static void __roze_rwlock_read_unlock(Object rw) {
+        if (rw instanceof RozeRwLock) ((RozeRwLock) rw).readUnlock();
+    }
+
+    private static void __roze_rwlock_write_lock(Object rw) {
+        if (rw instanceof RozeRwLock) ((RozeRwLock) rw).writeLock();
+    }
+
+    private static void __roze_rwlock_write_unlock(Object rw) {
+        if (rw instanceof RozeRwLock) ((RozeRwLock) rw).writeUnlock();
+    }
+
+    private static boolean __roze_rwlock_try_read_lock(Object rw) {
+        if (rw instanceof RozeRwLock) return ((RozeRwLock) rw).tryReadLock();
+        return false;
+    }
+
+    private static boolean __roze_rwlock_try_write_lock(Object rw) {
+        if (rw instanceof RozeRwLock) return ((RozeRwLock) rw).tryWriteLock();
+        return false;
+    }
+
+    private static java.util.concurrent.atomic.AtomicBoolean __roze_atomic_bool_new(boolean init) {
+        return new java.util.concurrent.atomic.AtomicBoolean(init);
+    }
+    private static boolean __roze_atomic_bool_load(Object a) {
+        if (a instanceof java.util.concurrent.atomic.AtomicBoolean) return ((java.util.concurrent.atomic.AtomicBoolean) a).get();
+        return false;
+    }
+    private static void __roze_atomic_bool_store(Object a, boolean val) {
+        if (a instanceof java.util.concurrent.atomic.AtomicBoolean) ((java.util.concurrent.atomic.AtomicBoolean) a).set(val);
+    }
+    private static boolean __roze_atomic_bool_swap(Object a, boolean val) {
+        if (a instanceof java.util.concurrent.atomic.AtomicBoolean) return ((java.util.concurrent.atomic.AtomicBoolean) a).getAndSet(val);
+        return false;
+    }
+    private static boolean __roze_atomic_bool_cas(Object a, boolean exp, boolean des) {
+        if (a instanceof java.util.concurrent.atomic.AtomicBoolean) return ((java.util.concurrent.atomic.AtomicBoolean) a).compareAndSet(exp, des);
+        return false;
+    }
+
+    private static java.util.concurrent.atomic.AtomicLong __roze_atomic_i64_new(long init) {
+        return new java.util.concurrent.atomic.AtomicLong(init);
+    }
+    private static int __roze_atomic_i64_load(Object a) {
+        if (a instanceof java.util.concurrent.atomic.AtomicLong) return (int) ((java.util.concurrent.atomic.AtomicLong) a).get();
+        return 0;
+    }
+    private static void __roze_atomic_i64_store(Object a, long val) {
+        if (a instanceof java.util.concurrent.atomic.AtomicLong) ((java.util.concurrent.atomic.AtomicLong) a).set(val);
+    }
+    private static int __roze_atomic_i64_swap(Object a, long val) {
+        if (a instanceof java.util.concurrent.atomic.AtomicLong) return (int) ((java.util.concurrent.atomic.AtomicLong) a).getAndSet(val);
+        return 0;
+    }
+    private static boolean __roze_atomic_i64_cas(Object a, long exp, long des) {
+        if (a instanceof java.util.concurrent.atomic.AtomicLong) return ((java.util.concurrent.atomic.AtomicLong) a).compareAndSet(exp, des);
+        return false;
+    }
+    private static int __roze_atomic_i64_add(Object a, long delta) {
+        if (a instanceof java.util.concurrent.atomic.AtomicLong) return (int) ((java.util.concurrent.atomic.AtomicLong) a).getAndAdd(delta);
+        return 0;
+    }
+    private static int __roze_atomic_i64_sub(Object a, long delta) {
+        if (a instanceof java.util.concurrent.atomic.AtomicLong) return (int) ((java.util.concurrent.atomic.AtomicLong) a).getAndAdd(-delta);
+        return 0;
+    }
+    private static int __roze_atomic_i64_and(Object a, long val) {
+        if (a instanceof java.util.concurrent.atomic.AtomicLong) return (int) ((java.util.concurrent.atomic.AtomicLong) a).getAndAccumulate(val, (x, y) -> x & y);
+        return 0;
+    }
+    private static int __roze_atomic_i64_or(Object a, long val) {
+        if (a instanceof java.util.concurrent.atomic.AtomicLong) return (int) ((java.util.concurrent.atomic.AtomicLong) a).getAndAccumulate(val, (x, y) -> x | y);
+        return 0;
+    }
+    private static int __roze_atomic_i64_xor(Object a, long val) {
+        if (a instanceof java.util.concurrent.atomic.AtomicLong) return (int) ((java.util.concurrent.atomic.AtomicLong) a).getAndAccumulate(val, (x, y) -> x ^ y);
+        return 0;
+    }
+
+    private static java.util.concurrent.atomic.AtomicLong __roze_atomic_usize_new(long init) {
+        return new java.util.concurrent.atomic.AtomicLong(init);
+    }
+    private static int __roze_atomic_usize_load(Object a) {
+        return __roze_atomic_i64_load(a);
+    }
+    private static void __roze_atomic_usize_store(Object a, long val) {
+        __roze_atomic_i64_store(a, val);
+    }
+    private static int __roze_atomic_usize_swap(Object a, long val) {
+        return __roze_atomic_i64_swap(a, val);
+    }
+    private static boolean __roze_atomic_usize_cas(Object a, long exp, long des) {
+        return __roze_atomic_i64_cas(a, exp, des);
+    }
+    private static int __roze_atomic_usize_add(Object a, long delta) {
+        return __roze_atomic_i64_add(a, delta);
+    }
+    private static int __roze_atomic_usize_sub(Object a, long delta) {
+        return __roze_atomic_i64_sub(a, delta);
+    }
+
+    private static java.util.concurrent.atomic.AtomicReference<Object> __roze_atomic_ptr_new(Object init) {
+        return new java.util.concurrent.atomic.AtomicReference<>(init);
+    }
+    private static Object __roze_atomic_ptr_load(Object a) {
+        if (a instanceof java.util.concurrent.atomic.AtomicReference) return ((java.util.concurrent.atomic.AtomicReference<?>) a).get();
+        return null;
+    }
+    private static void __roze_atomic_ptr_store(Object a, Object val) {
+        if (a instanceof java.util.concurrent.atomic.AtomicReference) ((java.util.concurrent.atomic.AtomicReference<Object>) a).set(val);
+    }
+    private static Object __roze_atomic_ptr_swap(Object a, Object val) {
+        if (a instanceof java.util.concurrent.atomic.AtomicReference) return ((java.util.concurrent.atomic.AtomicReference<Object>) a).getAndSet(val);
+        return null;
+    }
+    private static boolean __roze_atomic_ptr_cas(Object a, Object exp, Object des) {
+        if (a instanceof java.util.concurrent.atomic.AtomicReference) {
+            java.util.concurrent.atomic.AtomicReference<Object> ref = (java.util.concurrent.atomic.AtomicReference<Object>) a;
+            Object cur = ref.get();
+            if (java.util.Objects.equals(cur, exp)) {
+                return ref.compareAndSet(cur, des);
+            }
+        }
+        return false;
+    }
+
+    private static Object __roze_atomic_load(Object a) {
+        if (a instanceof java.util.concurrent.atomic.AtomicBoolean) return ((java.util.concurrent.atomic.AtomicBoolean) a).get();
+        if (a instanceof java.util.concurrent.atomic.AtomicLong) return (int) ((java.util.concurrent.atomic.AtomicLong) a).get();
+        if (a instanceof java.util.concurrent.atomic.AtomicReference) return ((java.util.concurrent.atomic.AtomicReference<?>) a).get();
+        return null;
+    }
+    private static void __roze_atomic_store(Object a, Object val) {
+        if (a instanceof java.util.concurrent.atomic.AtomicBoolean) ((java.util.concurrent.atomic.AtomicBoolean) a).set(Boolean.TRUE.equals(val));
+        else if (a instanceof java.util.concurrent.atomic.AtomicLong) ((java.util.concurrent.atomic.AtomicLong) a).set(val instanceof Number ? ((Number) val).longValue() : 0L);
+        else if (a instanceof java.util.concurrent.atomic.AtomicReference) ((java.util.concurrent.atomic.AtomicReference<Object>) a).set(val);
+    }
+    private static Object __roze_atomic_swap(Object a, Object val) {
+        if (a instanceof java.util.concurrent.atomic.AtomicBoolean) return ((java.util.concurrent.atomic.AtomicBoolean) a).getAndSet(Boolean.TRUE.equals(val));
+        if (a instanceof java.util.concurrent.atomic.AtomicLong) return (int) ((java.util.concurrent.atomic.AtomicLong) a).getAndSet(val instanceof Number ? ((Number) val).longValue() : 0L);
+        if (a instanceof java.util.concurrent.atomic.AtomicReference) return ((java.util.concurrent.atomic.AtomicReference<Object>) a).getAndSet(val);
+        return null;
+    }
+    private static boolean __roze_atomic_cas(Object a, Object exp, Object des) {
+        if (a instanceof java.util.concurrent.atomic.AtomicBoolean) return ((java.util.concurrent.atomic.AtomicBoolean) a).compareAndSet(Boolean.TRUE.equals(exp), Boolean.TRUE.equals(des));
+        if (a instanceof java.util.concurrent.atomic.AtomicLong) return ((java.util.concurrent.atomic.AtomicLong) a).compareAndSet(exp instanceof Number ? ((Number) exp).longValue() : 0L, des instanceof Number ? ((Number) des).longValue() : 0L);
+        if (a instanceof java.util.concurrent.atomic.AtomicReference) {
+            java.util.concurrent.atomic.AtomicReference<Object> ref = (java.util.concurrent.atomic.AtomicReference<Object>) a;
+            Object cur = ref.get();
+            if (java.util.Objects.equals(cur, exp)) {
+                return ref.compareAndSet(cur, des);
+            }
+        }
+        return false;
+    }
+    private static int __roze_atomic_add(Object a, long delta) {
+        return __roze_atomic_i64_add(a, delta);
+    }
+    private static int __roze_atomic_sub(Object a, long delta) {
+        return __roze_atomic_i64_sub(a, delta);
     }
 "#;
 
@@ -1994,11 +2308,49 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "future_ready" | "__roze_future_ready" => Some("RozeFuture"),
         "async_sleep" | "__roze_async_sleep" => Some("RozeFuture"),
         "channel_new" => Some("RozeChannel"),
+        "channel_unbounded" => Some("RozeChannel"),
         "channel_send" | "send" => Some("boolean"),
+        "channel_try_send" => Some("boolean"),
         "channel_recv" | "recv" => Some(OBJECT_TYPE),
+        "channel_try_recv" => Some(OBJECT_TYPE),
         "channel_close" => Some("void"),
         "channel_is_closed" => Some("boolean"),
         "channel_len" => Some("int"),
+        "channel_capacity" => Some("int"),
+
+        // Mutex & RwLock (M1-T06)
+        "mutex_new" => Some("RozeMutex"),
+        "mutex_lock" | "mutex_unlock" => Some("void"),
+        "mutex_try_lock" => Some("boolean"),
+
+        "rwlock_new" => Some("RozeRwLock"),
+        "rwlock_read_lock" | "rwlock_read_unlock" | "rwlock_write_lock" | "rwlock_write_unlock" => Some("void"),
+        "rwlock_try_read_lock" | "rwlock_try_write_lock" => Some("boolean"),
+
+        // Atomics (M1-T06)
+        "atomic_bool_new" => Some("java.util.concurrent.atomic.AtomicBoolean"),
+        "atomic_bool_load" | "atomic_bool_swap" | "atomic_bool_cas" => Some("boolean"),
+        "atomic_bool_store" => Some("void"),
+
+        "atomic_i64_new" => Some("java.util.concurrent.atomic.AtomicLong"),
+        "atomic_i64_load" | "atomic_i64_swap" | "atomic_i64_add" | "atomic_i64_sub" | "atomic_i64_and" | "atomic_i64_or" | "atomic_i64_xor" => Some("int"),
+        "atomic_i64_store" => Some("void"),
+        "atomic_i64_cas" => Some("boolean"),
+
+        "atomic_usize_new" => Some("java.util.concurrent.atomic.AtomicLong"),
+        "atomic_usize_load" | "atomic_usize_swap" | "atomic_usize_add" | "atomic_usize_sub" => Some("int"),
+        "atomic_usize_store" => Some("void"),
+        "atomic_usize_cas" => Some("boolean"),
+
+        "atomic_ptr_new" => Some("java.util.concurrent.atomic.AtomicReference"),
+        "atomic_ptr_load" | "atomic_ptr_swap" => Some(OBJECT_TYPE),
+        "atomic_ptr_store" => Some("void"),
+        "atomic_ptr_cas" => Some("boolean"),
+
+        "atomic_load" | "atomic_swap" => Some(OBJECT_TYPE),
+        "atomic_store" => Some("void"),
+        "atomic_cas" => Some("boolean"),
+        "atomic_add" | "atomic_sub" => Some("int"),
 
         // Unsafe Raw Pointers & Direct Memory (MED-05)
         "alloc" | "alloc_zeroed" | "realloc" => Some("long"),
@@ -2095,6 +2447,16 @@ fn java_type_name(ty: &Type) -> String {
                 "RozeFiberHandle".to_string()
             } else if base == "Future" || base == "future" {
                 "RozeFuture".to_string()
+            } else if base == "Mutex" || base == "mutex" {
+                "RozeMutex".to_string()
+            } else if base == "RwLock" || base == "rwlock" {
+                "RozeRwLock".to_string()
+            } else if base == "AtomicBool" || base == "atomic_bool" {
+                "java.util.concurrent.atomic.AtomicBoolean".to_string()
+            } else if base == "AtomicI64" || base == "atomic_i64" || base == "AtomicUsize" || base == "atomic_usize" {
+                "java.util.concurrent.atomic.AtomicLong".to_string()
+            } else if base == "AtomicPtr" || base == "atomic_ptr" {
+                "java.util.concurrent.atomic.AtomicReference".to_string()
             } else {
                 escape_java_identifier(&crate::semantic::specialized_name(base, type_args))
             }
@@ -2126,6 +2488,18 @@ fn java_unbox(ty: &Type, expr_str: &str) -> String {
                 format!("((RozeThreadHandle) {})", expr_str)
             } else if base == "Fiber" || base == "fiber" {
                 format!("((RozeFiberHandle) {})", expr_str)
+            } else if base == "Future" || base == "future" {
+                format!("((RozeFuture) {})", expr_str)
+            } else if base == "Mutex" || base == "mutex" {
+                format!("((RozeMutex) {})", expr_str)
+            } else if base == "RwLock" || base == "rwlock" {
+                format!("((RozeRwLock) {})", expr_str)
+            } else if base == "AtomicBool" || base == "atomic_bool" {
+                format!("((java.util.concurrent.atomic.AtomicBoolean) {})", expr_str)
+            } else if base == "AtomicI64" || base == "atomic_i64" || base == "AtomicUsize" || base == "atomic_usize" {
+                format!("((java.util.concurrent.atomic.AtomicLong) {})", expr_str)
+            } else if base == "AtomicPtr" || base == "atomic_ptr" {
+                format!("((java.util.concurrent.atomic.AtomicReference) {})", expr_str)
             } else {
                 let spec = crate::semantic::specialized_name(base, type_args);
                 format!("(({}) {})", escape_java_identifier(&spec), expr_str)
@@ -3245,7 +3619,7 @@ impl JavaSourceGenerator {
                 }
             }
             TypedExpressionKind::Call { function, arguments } => {
-                if (function == "list_get" || function == "map_get" || function == "channel_recv" || function == "recv" || function == "thread_join" || function == "fiber_join" || function == "future_await" || function == "__roze_future_await") && expr.type_ != Type::Unknown {
+                if (function == "list_get" || function == "map_get" || function == "channel_recv" || function == "recv" || function == "channel_try_recv" || function == "thread_join" || function == "fiber_join" || function == "future_await" || function == "__roze_future_await" || function == "atomic_ptr_load" || function == "atomic_load" || function == "atomic_ptr_swap" || function == "atomic_swap") && expr.type_ != Type::Unknown {
                     let mut call_buf = String::new();
                     self.generate_call(&mut call_buf, function, arguments)?;
                     source.push_str(&java_unbox(&expr.type_, &call_buf));
@@ -4104,6 +4478,9 @@ impl JavaSourceGenerator {
                 }
                 source.push(')');
             }
+            "channel_unbounded" if arguments.is_empty() => {
+                source.push_str("__roze_channel_unbounded()");
+            }
             "channel_send" | "send" if arguments.len() == 2 => {
                 source.push_str("__roze_channel_send(");
                 self.generate_expression(source, &arguments[0])?;
@@ -4111,8 +4488,20 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
+            "channel_try_send" if arguments.len() == 2 => {
+                source.push_str("__roze_channel_try_send(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
             "channel_recv" | "recv" if arguments.len() == 1 => {
                 source.push_str("__roze_channel_recv(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "channel_try_recv" if arguments.len() == 1 => {
+                source.push_str("__roze_channel_try_recv(");
                 self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
@@ -4129,6 +4518,295 @@ impl JavaSourceGenerator {
             "channel_len" if arguments.len() == 1 => {
                 source.push_str("__roze_channel_len(");
                 self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "channel_capacity" if arguments.len() == 1 => {
+                source.push_str("__roze_channel_capacity(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+
+            // Mutex & RwLock (M1-T06)
+            "mutex_new" if arguments.is_empty() => {
+                source.push_str("__roze_mutex_new()");
+            }
+            "mutex_lock" if arguments.len() == 1 => {
+                source.push_str("__roze_mutex_lock(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "mutex_unlock" if arguments.len() == 1 => {
+                source.push_str("__roze_mutex_unlock(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "mutex_try_lock" if arguments.len() == 1 => {
+                source.push_str("__roze_mutex_try_lock(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+
+            "rwlock_new" if arguments.is_empty() => {
+                source.push_str("__roze_rwlock_new()");
+            }
+            "rwlock_read_lock" if arguments.len() == 1 => {
+                source.push_str("__roze_rwlock_read_lock(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "rwlock_read_unlock" if arguments.len() == 1 => {
+                source.push_str("__roze_rwlock_read_unlock(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "rwlock_write_lock" if arguments.len() == 1 => {
+                source.push_str("__roze_rwlock_write_lock(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "rwlock_write_unlock" if arguments.len() == 1 => {
+                source.push_str("__roze_rwlock_write_unlock(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "rwlock_try_read_lock" if arguments.len() == 1 => {
+                source.push_str("__roze_rwlock_try_read_lock(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "rwlock_try_write_lock" if arguments.len() == 1 => {
+                source.push_str("__roze_rwlock_try_write_lock(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+
+            // Atomics (M1-T06)
+            "atomic_bool_new" if arguments.len() == 1 => {
+                source.push_str("__roze_atomic_bool_new(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "atomic_bool_load" if arguments.len() == 1 => {
+                source.push_str("__roze_atomic_bool_load(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "atomic_bool_store" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_bool_store(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_bool_swap" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_bool_swap(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_bool_cas" if arguments.len() == 3 => {
+                source.push_str("__roze_atomic_bool_cas(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+
+            "atomic_i64_new" if arguments.len() == 1 => {
+                source.push_str("__roze_atomic_i64_new(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "atomic_i64_load" if arguments.len() == 1 => {
+                source.push_str("__roze_atomic_i64_load(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "atomic_i64_store" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_i64_store(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_i64_swap" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_i64_swap(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_i64_cas" if arguments.len() == 3 => {
+                source.push_str("__roze_atomic_i64_cas(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "atomic_i64_add" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_i64_add(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_i64_sub" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_i64_sub(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_i64_and" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_i64_and(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_i64_or" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_i64_or(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_i64_xor" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_i64_xor(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+
+            "atomic_usize_new" if arguments.len() == 1 => {
+                source.push_str("__roze_atomic_usize_new(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "atomic_usize_load" if arguments.len() == 1 => {
+                source.push_str("__roze_atomic_usize_load(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "atomic_usize_store" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_usize_store(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_usize_swap" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_usize_swap(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_usize_cas" if arguments.len() == 3 => {
+                source.push_str("__roze_atomic_usize_cas(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "atomic_usize_add" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_usize_add(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_usize_sub" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_usize_sub(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+
+            "atomic_ptr_new" if arguments.len() == 1 => {
+                source.push_str("__roze_atomic_ptr_new(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "atomic_ptr_load" if arguments.len() == 1 => {
+                source.push_str("__roze_atomic_ptr_load(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "atomic_ptr_store" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_ptr_store(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_ptr_swap" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_ptr_swap(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_ptr_cas" if arguments.len() == 3 => {
+                source.push_str("__roze_atomic_ptr_cas(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+
+            // Polymorphic Atomics
+            "atomic_load" if arguments.len() == 1 => {
+                source.push_str("__roze_atomic_load(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "atomic_store" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_store(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_swap" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_swap(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_cas" if arguments.len() == 3 => {
+                source.push_str("__roze_atomic_cas(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "atomic_add" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_add(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "atomic_sub" if arguments.len() == 2 => {
+                source.push_str("__roze_atomic_sub(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
 

@@ -1,0 +1,181 @@
+// compiler/tests/fixtures/synchronization.roze
+//
+// Tests Synchronization: Lock-Free Primitives & Channels (M1-T06)
+// - Atomic types: AtomicBool, AtomicI64, AtomicUsize, AtomicPtr
+// - Mutex & RwLock synchronization
+// - Bounded and unbounded MPMC ring-buffer channels
+// - Stdlib "sync" module integration
+
+import "sync";
+import "concurrency";
+
+func main() {
+    // ---------------------------------------------------------
+    // 1. AtomicBool operations
+    // ---------------------------------------------------------
+    let ab: AtomicBool = atomic_bool_new(false);
+    println(atomic_bool_load(ab));
+    atomic_bool_store(ab, true);
+    println(atomic_bool_load(ab));
+    let old_b = atomic_bool_swap(ab, false);
+    println(old_b);
+    println(atomic_bool_load(ab));
+    let cas_b1 = atomic_bool_cas(ab, false, true);
+    println(cas_b1);
+    println(atomic_bool_load(ab));
+    let cas_b2 = atomic_bool_cas(ab, false, false);
+    println(cas_b2);
+
+    // ---------------------------------------------------------
+    // 2. AtomicI64 operations & bitwise atomics
+    // ---------------------------------------------------------
+    let ai: AtomicI64 = atomic_i64_new(10);
+    println(atomic_i64_load(ai));
+    atomic_i64_store(ai, 20);
+    println(atomic_i64_load(ai));
+    let old_i = atomic_i64_add(ai, 5);
+    println(old_i);
+    println(atomic_i64_load(ai));
+    let old_s = atomic_i64_sub(ai, 3);
+    println(old_s);
+    println(atomic_i64_load(ai));
+    let cas_i = atomic_i64_cas(ai, 22, 100);
+    println(cas_i);
+    println(atomic_i64_load(ai));
+    // Bitwise: 100 & 240 = 96
+    let old_and = atomic_i64_and(ai, 240);
+    println(old_and);
+    println(atomic_i64_load(ai));
+    // 96 | 7 = 103
+    let old_or = atomic_i64_or(ai, 7);
+    println(old_or);
+    println(atomic_i64_load(ai));
+    // 103 ^ 3 = 100
+    let old_xor = atomic_i64_xor(ai, 3);
+    println(old_xor);
+    println(atomic_i64_load(ai));
+
+    // ---------------------------------------------------------
+    // 3. AtomicUsize operations
+    // ---------------------------------------------------------
+    let au: AtomicUsize = atomic_usize_new(500);
+    println(atomic_usize_load(au));
+    atomic_usize_add(au, 100);
+    println(atomic_usize_load(au));
+    let cas_u = atomic_usize_cas(au, 600, 777);
+    println(cas_u);
+    let swap_u = atomic_usize_swap(au, 888);
+    println(swap_u);
+    println(atomic_usize_load(au));
+
+    // ---------------------------------------------------------
+    // 4. AtomicPtr operations
+    // ---------------------------------------------------------
+    let ap: AtomicPtr<int> = atomic_ptr_new(12345);
+    let p1: int = atomic_ptr_load(ap);
+    println(p1);
+    atomic_ptr_store(ap, 67890);
+    let p2: int = atomic_ptr_load(ap);
+    println(p2);
+    let cas_p = atomic_ptr_cas(ap, 67890, 99999);
+    println(cas_p);
+    let p3: int = atomic_ptr_load(ap);
+    println(p3);
+
+    // ---------------------------------------------------------
+    // 5. Mutex & critical sections
+    // ---------------------------------------------------------
+    let m: Mutex = mutex_new();
+    mutex_lock(m);
+    mutex_unlock(m);
+    let locked = mutex_try_lock(m);
+    println(locked);
+    mutex_unlock(m);
+
+    // Method syntax on Mutex
+    m.lock();
+    m.unlock();
+
+    // Multi-threaded Mutex protection
+    let counter: AtomicI64 = atomic_i64_new(0);
+    let t1 = thread_spawn(|| {
+        m.lock();
+        let cur: int = counter.load();
+        counter.store(cur + 1);
+        m.unlock();
+        return 0;
+    });
+    let t2 = thread_spawn(|| {
+        m.lock();
+        let cur2: int = counter.load();
+        counter.store(cur2 + 1);
+        m.unlock();
+        return 0;
+    });
+    thread_join(t1);
+    thread_join(t2);
+    println(counter.load());
+
+    // ---------------------------------------------------------
+    // 6. Reader-Writer Lock (RwLock)
+    // ---------------------------------------------------------
+    let rw: RwLock = rwlock_new();
+    rw.read_lock();
+    rw.read_unlock();
+    let r_ok = rw.try_read_lock();
+    println(r_ok);
+    rw.read_unlock();
+
+    rw.write_lock();
+    rw.write_unlock();
+    let w_ok = rw.try_write_lock();
+    println(w_ok);
+    rw.write_unlock();
+
+    // ---------------------------------------------------------
+    // 7. Bounded Channel: capacity, try_send, try_recv
+    // ---------------------------------------------------------
+    let bch = channel_new(2);
+    println(channel_capacity(bch));
+    println(bch.try_send(10));
+    println(bch.try_send(20));
+    println(bch.try_send(30));
+    let v1: int = bch.try_recv();
+    println(v1);
+    let v2: int = bch.try_recv();
+    println(v2);
+    println(bch.len());
+
+    // ---------------------------------------------------------
+    // 8. Unbounded Channel: dynamic growth & high-throughput MPMC
+    // ---------------------------------------------------------
+    let uch = channel_unbounded();
+    println(channel_capacity(uch));
+
+    let i = 0;
+    while i < 10 {
+        uch.send(i * 10);
+        i = i + 1;
+    }
+    println(uch.len());
+
+    let sum = 0;
+    let j = 0;
+    while j < 10 {
+        let val: int = uch.recv();
+        sum = sum + val;
+        j = j + 1;
+    }
+    println(sum);
+    println(uch.len());
+
+    // ---------------------------------------------------------
+    // 9. Stdlib "sync" module constructor helpers
+    // ---------------------------------------------------------
+    let sm = new_mutex();
+    let srw = new_rwlock();
+    let sab = new_atomic_bool(true);
+    let sai = new_atomic_i64(42);
+    println(sab.load());
+    println(sai.load());
+}

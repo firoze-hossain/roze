@@ -250,7 +250,7 @@ s1_rows = [
         ("M1-T06", 8), ("Month 1", 3), ("Sprint 2 (W03-W04)", 8), "Synchronization", "Lock-Free Primitives & Channels",
         "Atomic types (AtomicBool, AtomicI64, AtomicPtr, AtomicUsize). Implement high-throughput MPMC bounded and unbounded ring-buffer channels, Mutex, and RwLock.",
         "Matches Rust std::sync and Java java.util.concurrent.atomic / locks.",
-        "Enterprise, Game Engines, Systems", "6 Days", ("High", 14), ("Planned", 12)
+        "Enterprise, Game Engines, Systems", "6 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M1-T07", 8), ("Month 1", 3), ("Sprint 2 (W03-W04)", 8), "Structured Concurrency", "Nursery, Task Groups & Cancelation",

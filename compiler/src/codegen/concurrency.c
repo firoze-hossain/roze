@@ -567,7 +567,7 @@ void __roze_fiber_release(int64_t fiber_val) {
 }
 
 // -------------------------------------------------------------
-// Channel Implementation (Ring Buffer)
+// Channel Implementation (High-Throughput MPMC Bounded & Unbounded)
 // -------------------------------------------------------------
 
 typedef struct {
@@ -576,7 +576,8 @@ typedef struct {
     pthread_cond_t not_empty;
     pthread_cond_t not_full;
     int64_t* buffer;
-    int64_t capacity;
+    int64_t capacity;       // -1 for unbounded, >0 for bounded
+    int64_t alloc_cap;      // current allocated size
     int64_t head;
     int64_t tail;
     int64_t count;
@@ -584,7 +585,7 @@ typedef struct {
 } RozeChannel;
 
 int64_t __roze_channel_new(int64_t capacity) {
-    if (capacity <= 0) capacity = 64;
+    if (capacity <= 0 && capacity != -1) capacity = 64;
     RozeChannel* chan = (RozeChannel*)malloc(sizeof(RozeChannel));
     if (!chan) return 0;
 
@@ -593,8 +594,10 @@ int64_t __roze_channel_new(int64_t capacity) {
     pthread_cond_init(&chan->not_empty, NULL);
     pthread_cond_init(&chan->not_full, NULL);
 
-    chan->buffer = (int64_t*)malloc(sizeof(int64_t) * capacity);
+    int64_t init_alloc = (capacity > 0) ? capacity : 64;
+    chan->buffer = (int64_t*)malloc(sizeof(int64_t) * init_alloc);
     chan->capacity = capacity;
+    chan->alloc_cap = init_alloc;
     chan->head = 0;
     chan->tail = 0;
     chan->count = 0;
@@ -603,26 +606,83 @@ int64_t __roze_channel_new(int64_t capacity) {
     return (int64_t)chan;
 }
 
+int64_t __roze_channel_unbounded(void) {
+    return __roze_channel_new(-1);
+}
+
+int64_t __roze_channel_capacity(int64_t chan_val) {
+    if (!chan_val) return 0;
+    RozeChannel* chan = (RozeChannel*)chan_val;
+    return chan->capacity;
+}
+
 int64_t __roze_channel_send(int64_t chan_val, int64_t val) {
     if (!chan_val) return 0;
     RozeChannel* chan = (RozeChannel*)chan_val;
 
     pthread_mutex_lock(&chan->lock);
-    while (chan->count == chan->capacity && !chan->closed) {
-        pthread_cond_wait(&chan->not_full, &chan->lock);
+    if (chan->capacity > 0) {
+        while (chan->count == chan->capacity && !chan->closed) {
+            pthread_cond_wait(&chan->not_full, &chan->lock);
+        }
     }
     if (chan->closed) {
         pthread_mutex_unlock(&chan->lock);
         return 0; // false: channel closed
     }
 
+    if (chan->count == chan->alloc_cap) {
+        int64_t new_cap = chan->alloc_cap * 2;
+        int64_t* new_buf = (int64_t*)malloc(sizeof(int64_t) * new_cap);
+        for (int64_t i = 0; i < chan->count; i++) {
+            new_buf[i] = chan->buffer[(chan->head + i) % chan->alloc_cap];
+        }
+        free(chan->buffer);
+        chan->buffer = new_buf;
+        chan->head = 0;
+        chan->tail = chan->count;
+        chan->alloc_cap = new_cap;
+    }
+
     chan->buffer[chan->tail] = val;
-    chan->tail = (chan->tail + 1) % chan->capacity;
+    chan->tail = (chan->tail + 1) % chan->alloc_cap;
     chan->count++;
 
     pthread_cond_signal(&chan->not_empty);
     pthread_mutex_unlock(&chan->lock);
     return 1; // true: sent successfully
+}
+
+int64_t __roze_channel_try_send(int64_t chan_val, int64_t val) {
+    if (!chan_val) return 0;
+    RozeChannel* chan = (RozeChannel*)chan_val;
+
+    if (pthread_mutex_trylock(&chan->lock) != 0) return 0;
+    if (chan->closed || (chan->capacity > 0 && chan->count >= chan->capacity)) {
+        pthread_mutex_unlock(&chan->lock);
+        return 0;
+    }
+
+    if (chan->count == chan->alloc_cap) {
+        int64_t new_cap = chan->alloc_cap * 2;
+        int64_t* new_buf = (int64_t*)malloc(sizeof(int64_t) * new_cap);
+        for (int64_t i = 0; i < chan->count; i++) {
+            new_buf[i] = chan->buffer[(chan->head + i) % chan->alloc_cap];
+        }
+        free(chan->buffer);
+        chan->buffer = new_buf;
+        chan->head = 0;
+        chan->tail = chan->count;
+        chan->alloc_cap = new_cap;
+    }
+
+    chan->buffer[chan->tail] = val;
+    chan->tail = (chan->tail + 1) % chan->alloc_cap;
+    chan->count++;
+
+    pthread_cond_signal(&chan->not_empty);
+    pthread_mutex_unlock(&chan->lock);
+    return 1;
 }
 
 int64_t __roze_channel_recv(int64_t chan_val) {
@@ -639,10 +699,33 @@ int64_t __roze_channel_recv(int64_t chan_val) {
     }
 
     int64_t val = chan->buffer[chan->head];
-    chan->head = (chan->head + 1) % chan->capacity;
+    chan->head = (chan->head + 1) % chan->alloc_cap;
     chan->count--;
 
-    pthread_cond_signal(&chan->not_full);
+    if (chan->capacity > 0) {
+        pthread_cond_signal(&chan->not_full);
+    }
+    pthread_mutex_unlock(&chan->lock);
+    return val;
+}
+
+int64_t __roze_channel_try_recv(int64_t chan_val) {
+    if (!chan_val) return 0;
+    RozeChannel* chan = (RozeChannel*)chan_val;
+
+    if (pthread_mutex_trylock(&chan->lock) != 0) return 0;
+    if (chan->count == 0) {
+        pthread_mutex_unlock(&chan->lock);
+        return 0;
+    }
+
+    int64_t val = chan->buffer[chan->head];
+    chan->head = (chan->head + 1) % chan->alloc_cap;
+    chan->count--;
+
+    if (chan->capacity > 0) {
+        pthread_cond_signal(&chan->not_full);
+    }
     pthread_mutex_unlock(&chan->lock);
     return val;
 }
@@ -695,6 +778,277 @@ void __roze_channel_release(int64_t chan_val) {
         free(chan);
     }
 }
+
+// -------------------------------------------------------------
+// Synchronization: Mutex, RwLock, and Atomic Types (M1-T06)
+// -------------------------------------------------------------
+
+#define ROZE_MAGIC_MUTEX  0x524F5A4D55544558ULL /* "ROZMUTEX" */
+#define ROZE_MAGIC_RWLOCK 0x524F5A52574C4F43ULL /* "ROZRWLOC" */
+#define ROZE_MAGIC_ATOMIC 0x524F5A41544F4D49ULL /* "ROZATOMI" */
+
+typedef struct {
+    int64_t refcount;
+    uint64_t magic;
+    pthread_mutex_t lock;
+} RozeMutex;
+
+int64_t __roze_mutex_new(void) {
+    RozeMutex* m = (RozeMutex*)malloc(sizeof(RozeMutex));
+    if (!m) return 0;
+    m->refcount = 1;
+    m->magic = ROZE_MAGIC_MUTEX;
+    pthread_mutex_init(&m->lock, NULL);
+    return (int64_t)m;
+}
+
+void __roze_mutex_lock(int64_t m_val) {
+    if (!m_val) return;
+    RozeMutex* m = (RozeMutex*)m_val;
+    if (m->magic == ROZE_MAGIC_MUTEX) {
+        pthread_mutex_lock(&m->lock);
+    }
+}
+
+void __roze_mutex_unlock(int64_t m_val) {
+    if (!m_val) return;
+    RozeMutex* m = (RozeMutex*)m_val;
+    if (m->magic == ROZE_MAGIC_MUTEX) {
+        pthread_mutex_unlock(&m->lock);
+    }
+}
+
+int64_t __roze_mutex_try_lock(int64_t m_val) {
+    if (!m_val) return 0;
+    RozeMutex* m = (RozeMutex*)m_val;
+    if (m->magic == ROZE_MAGIC_MUTEX) {
+        return pthread_mutex_trylock(&m->lock) == 0 ? 1 : 0;
+    }
+    return 0;
+}
+
+void __roze_mutex_retain(int64_t m_val) {
+    if (!m_val) return;
+    RozeMutex* m = (RozeMutex*)m_val;
+    if (m->magic == ROZE_MAGIC_MUTEX) {
+        __atomic_fetch_add(&m->refcount, 1, __ATOMIC_SEQ_CST);
+    }
+}
+
+void __roze_mutex_release(int64_t m_val) {
+    if (!m_val) return;
+    RozeMutex* m = (RozeMutex*)m_val;
+    if (m->magic == ROZE_MAGIC_MUTEX) {
+        if (__atomic_fetch_sub(&m->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+            pthread_mutex_destroy(&m->lock);
+            free(m);
+        }
+    }
+}
+
+typedef struct {
+    int64_t refcount;
+    uint64_t magic;
+    pthread_rwlock_t rwlock;
+} RozeRwLock;
+
+int64_t __roze_rwlock_new(void) {
+    RozeRwLock* rw = (RozeRwLock*)malloc(sizeof(RozeRwLock));
+    if (!rw) return 0;
+    rw->refcount = 1;
+    rw->magic = ROZE_MAGIC_RWLOCK;
+    pthread_rwlock_init(&rw->rwlock, NULL);
+    return (int64_t)rw;
+}
+
+void __roze_rwlock_read_lock(int64_t rw_val) {
+    if (!rw_val) return;
+    RozeRwLock* rw = (RozeRwLock*)rw_val;
+    if (rw->magic == ROZE_MAGIC_RWLOCK) {
+        pthread_rwlock_rdlock(&rw->rwlock);
+    }
+}
+
+void __roze_rwlock_read_unlock(int64_t rw_val) {
+    if (!rw_val) return;
+    RozeRwLock* rw = (RozeRwLock*)rw_val;
+    if (rw->magic == ROZE_MAGIC_RWLOCK) {
+        pthread_rwlock_unlock(&rw->rwlock);
+    }
+}
+
+void __roze_rwlock_write_lock(int64_t rw_val) {
+    if (!rw_val) return;
+    RozeRwLock* rw = (RozeRwLock*)rw_val;
+    if (rw->magic == ROZE_MAGIC_RWLOCK) {
+        pthread_rwlock_wrlock(&rw->rwlock);
+    }
+}
+
+void __roze_rwlock_write_unlock(int64_t rw_val) {
+    if (!rw_val) return;
+    RozeRwLock* rw = (RozeRwLock*)rw_val;
+    if (rw->magic == ROZE_MAGIC_RWLOCK) {
+        pthread_rwlock_unlock(&rw->rwlock);
+    }
+}
+
+int64_t __roze_rwlock_try_read_lock(int64_t rw_val) {
+    if (!rw_val) return 0;
+    RozeRwLock* rw = (RozeRwLock*)rw_val;
+    if (rw->magic == ROZE_MAGIC_RWLOCK) {
+        return pthread_rwlock_tryrdlock(&rw->rwlock) == 0 ? 1 : 0;
+    }
+    return 0;
+}
+
+int64_t __roze_rwlock_try_write_lock(int64_t rw_val) {
+    if (!rw_val) return 0;
+    RozeRwLock* rw = (RozeRwLock*)rw_val;
+    if (rw->magic == ROZE_MAGIC_RWLOCK) {
+        return pthread_rwlock_trywrlock(&rw->rwlock) == 0 ? 1 : 0;
+    }
+    return 0;
+}
+
+void __roze_rwlock_retain(int64_t rw_val) {
+    if (!rw_val) return;
+    RozeRwLock* rw = (RozeRwLock*)rw_val;
+    if (rw->magic == ROZE_MAGIC_RWLOCK) {
+        __atomic_fetch_add(&rw->refcount, 1, __ATOMIC_SEQ_CST);
+    }
+}
+
+void __roze_rwlock_release(int64_t rw_val) {
+    if (!rw_val) return;
+    RozeRwLock* rw = (RozeRwLock*)rw_val;
+    if (rw->magic == ROZE_MAGIC_RWLOCK) {
+        if (__atomic_fetch_sub(&rw->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+            pthread_rwlock_destroy(&rw->rwlock);
+            free(rw);
+        }
+    }
+}
+
+typedef struct {
+    int64_t refcount;
+    uint64_t magic;
+    _Atomic int64_t value;
+} RozeAtomic;
+
+int64_t __roze_atomic_new(int64_t init) {
+    RozeAtomic* a = (RozeAtomic*)malloc(sizeof(RozeAtomic));
+    if (!a) return 0;
+    a->refcount = 1;
+    a->magic = ROZE_MAGIC_ATOMIC;
+    __atomic_store_n(&a->value, init, __ATOMIC_SEQ_CST);
+    return (int64_t)a;
+}
+
+int64_t __roze_atomic_load(int64_t a_val) {
+    if (!a_val) return 0;
+    RozeAtomic* a = (RozeAtomic*)a_val;
+    return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST);
+}
+
+void __roze_atomic_store(int64_t a_val, int64_t val) {
+    if (!a_val) return;
+    RozeAtomic* a = (RozeAtomic*)a_val;
+    __atomic_store_n(&a->value, val, __ATOMIC_SEQ_CST);
+}
+
+int64_t __roze_atomic_swap(int64_t a_val, int64_t val) {
+    if (!a_val) return 0;
+    RozeAtomic* a = (RozeAtomic*)a_val;
+    return __atomic_exchange_n(&a->value, val, __ATOMIC_SEQ_CST);
+}
+
+int64_t __roze_atomic_cas(int64_t a_val, int64_t expected, int64_t desired) {
+    if (!a_val) return 0;
+    RozeAtomic* a = (RozeAtomic*)a_val;
+    int64_t exp = expected;
+    return __atomic_compare_exchange_n(&a->value, &exp, desired, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ? 1 : 0;
+}
+
+int64_t __roze_atomic_add(int64_t a_val, int64_t delta) {
+    if (!a_val) return 0;
+    RozeAtomic* a = (RozeAtomic*)a_val;
+    return __atomic_fetch_add(&a->value, delta, __ATOMIC_SEQ_CST);
+}
+
+int64_t __roze_atomic_sub(int64_t a_val, int64_t delta) {
+    if (!a_val) return 0;
+    RozeAtomic* a = (RozeAtomic*)a_val;
+    return __atomic_fetch_sub(&a->value, delta, __ATOMIC_SEQ_CST);
+}
+
+int64_t __roze_atomic_and(int64_t a_val, int64_t val) {
+    if (!a_val) return 0;
+    RozeAtomic* a = (RozeAtomic*)a_val;
+    return __atomic_fetch_and(&a->value, val, __ATOMIC_SEQ_CST);
+}
+
+int64_t __roze_atomic_or(int64_t a_val, int64_t val) {
+    if (!a_val) return 0;
+    RozeAtomic* a = (RozeAtomic*)a_val;
+    return __atomic_fetch_or(&a->value, val, __ATOMIC_SEQ_CST);
+}
+
+int64_t __roze_atomic_xor(int64_t a_val, int64_t val) {
+    if (!a_val) return 0;
+    RozeAtomic* a = (RozeAtomic*)a_val;
+    return __atomic_fetch_xor(&a->value, val, __ATOMIC_SEQ_CST);
+}
+
+void __roze_atomic_retain(int64_t a_val) {
+    if (!a_val) return;
+    RozeAtomic* a = (RozeAtomic*)a_val;
+    if (a->magic == ROZE_MAGIC_ATOMIC) {
+        __atomic_fetch_add(&a->refcount, 1, __ATOMIC_SEQ_CST);
+    }
+}
+
+void __roze_atomic_release(int64_t a_val) {
+    if (!a_val) return;
+    RozeAtomic* a = (RozeAtomic*)a_val;
+    if (a->magic == ROZE_MAGIC_ATOMIC) {
+        if (__atomic_fetch_sub(&a->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+            free(a);
+        }
+    }
+}
+
+// Typed atomic wrappers
+int64_t __roze_atomic_bool_new(int64_t val) { return __roze_atomic_new(val ? 1 : 0); }
+int64_t __roze_atomic_bool_load(int64_t a) { return __roze_atomic_load(a) ? 1 : 0; }
+void __roze_atomic_bool_store(int64_t a, int64_t val) { __roze_atomic_store(a, val ? 1 : 0); }
+int64_t __roze_atomic_bool_swap(int64_t a, int64_t val) { return __roze_atomic_swap(a, val ? 1 : 0) ? 1 : 0; }
+int64_t __roze_atomic_bool_cas(int64_t a, int64_t exp, int64_t des) { return __roze_atomic_cas(a, exp ? 1 : 0, des ? 1 : 0); }
+
+int64_t __roze_atomic_i64_new(int64_t val) { return __roze_atomic_new(val); }
+int64_t __roze_atomic_i64_load(int64_t a) { return __roze_atomic_load(a); }
+void __roze_atomic_i64_store(int64_t a, int64_t val) { __roze_atomic_store(a, val); }
+int64_t __roze_atomic_i64_swap(int64_t a, int64_t val) { return __roze_atomic_swap(a, val); }
+int64_t __roze_atomic_i64_cas(int64_t a, int64_t exp, int64_t des) { return __roze_atomic_cas(a, exp, des); }
+int64_t __roze_atomic_i64_add(int64_t a, int64_t delta) { return __roze_atomic_add(a, delta); }
+int64_t __roze_atomic_i64_sub(int64_t a, int64_t delta) { return __roze_atomic_sub(a, delta); }
+int64_t __roze_atomic_i64_and(int64_t a, int64_t val) { return __roze_atomic_and(a, val); }
+int64_t __roze_atomic_i64_or(int64_t a, int64_t val) { return __roze_atomic_or(a, val); }
+int64_t __roze_atomic_i64_xor(int64_t a, int64_t val) { return __roze_atomic_xor(a, val); }
+
+int64_t __roze_atomic_usize_new(int64_t val) { return __roze_atomic_new(val); }
+int64_t __roze_atomic_usize_load(int64_t a) { return __roze_atomic_load(a); }
+void __roze_atomic_usize_store(int64_t a, int64_t val) { __roze_atomic_store(a, val); }
+int64_t __roze_atomic_usize_swap(int64_t a, int64_t val) { return __roze_atomic_swap(a, val); }
+int64_t __roze_atomic_usize_cas(int64_t a, int64_t exp, int64_t des) { return __roze_atomic_cas(a, exp, des); }
+int64_t __roze_atomic_usize_add(int64_t a, int64_t delta) { return __roze_atomic_add(a, delta); }
+int64_t __roze_atomic_usize_sub(int64_t a, int64_t delta) { return __roze_atomic_sub(a, delta); }
+
+int64_t __roze_atomic_ptr_new(int64_t val) { return __roze_atomic_new(val); }
+int64_t __roze_atomic_ptr_load(int64_t a) { return __roze_atomic_load(a); }
+void __roze_atomic_ptr_store(int64_t a, int64_t val) { __roze_atomic_store(a, val); }
+int64_t __roze_atomic_ptr_swap(int64_t a, int64_t val) { return __roze_atomic_swap(a, val); }
+int64_t __roze_atomic_ptr_cas(int64_t a, int64_t exp, int64_t des) { return __roze_atomic_cas(a, exp, des); }
 
 // ============================================================================
 // 4. Async / Await State-Machine Engine & Future<T> Runtime (M1-T05)

@@ -770,6 +770,37 @@ long __roze_future_ready(long v) { return v; }
 long __roze_async_sleep(long ms) { (void)ms; return 0; }
 void __roze_future_retain(long f) { (void)f; }
 void __roze_future_release(long f) { (void)f; }
+long __roze_channel_unbounded(void) { return 0; }
+long __roze_channel_try_send(long ch, long val) { (void)ch; (void)val; return 0; }
+long __roze_channel_try_recv(long ch) { (void)ch; return 0; }
+long __roze_channel_capacity(long ch) { (void)ch; return 0; }
+long __roze_mutex_new(void) { return 0; }
+void __roze_mutex_lock(long m) { (void)m; }
+void __roze_mutex_unlock(long m) { (void)m; }
+long __roze_mutex_try_lock(long m) { (void)m; return 0; }
+void __roze_mutex_retain(long m) { (void)m; }
+void __roze_mutex_release(long m) { (void)m; }
+long __roze_rwlock_new(void) { return 0; }
+void __roze_rwlock_read_lock(long rw) { (void)rw; }
+void __roze_rwlock_read_unlock(long rw) { (void)rw; }
+void __roze_rwlock_write_lock(long rw) { (void)rw; }
+void __roze_rwlock_write_unlock(long rw) { (void)rw; }
+long __roze_rwlock_try_read_lock(long rw) { (void)rw; return 0; }
+long __roze_rwlock_try_write_lock(long rw) { (void)rw; return 0; }
+void __roze_rwlock_retain(long rw) { (void)rw; }
+void __roze_rwlock_release(long rw) { (void)rw; }
+long __roze_atomic_new(long v) { (void)v; return 0; }
+long __roze_atomic_load(long a) { (void)a; return 0; }
+void __roze_atomic_store(long a, long v) { (void)a; (void)v; }
+long __roze_atomic_swap(long a, long v) { (void)a; (void)v; return 0; }
+long __roze_atomic_cas(long a, long exp, long des) { (void)a; (void)exp; (void)des; return 0; }
+long __roze_atomic_add(long a, long d) { (void)a; (void)d; return 0; }
+long __roze_atomic_sub(long a, long d) { (void)a; (void)d; return 0; }
+long __roze_atomic_and(long a, long v) { (void)a; (void)v; return 0; }
+long __roze_atomic_or(long a, long v) { (void)a; (void)v; return 0; }
+long __roze_atomic_xor(long a, long v) { (void)a; (void)v; return 0; }
+void __roze_atomic_retain(long a) { (void)a; }
+void __roze_atomic_release(long a) { (void)a; }
 
 // 6. Bootstrap entry point called by entry64
 __attribute__((weak))
@@ -2802,11 +2833,15 @@ struct ConcurrencyRuntime {
     fiber_retain_id: FuncId,
     fiber_release_id: FuncId,
     channel_new_id: FuncId,
+    channel_unbounded_id: FuncId,
     channel_send_id: FuncId,
+    channel_try_send_id: FuncId,
     channel_recv_id: FuncId,
+    channel_try_recv_id: FuncId,
     channel_close_id: FuncId,
     channel_is_closed_id: FuncId,
     channel_len_id: FuncId,
+    channel_capacity_id: FuncId,
     channel_retain_id: FuncId,
     channel_release_id: FuncId,
     future_spawn_id: FuncId,
@@ -2816,6 +2851,39 @@ struct ConcurrencyRuntime {
     async_sleep_id: FuncId,
     future_retain_id: FuncId,
     future_release_id: FuncId,
+
+    // Mutex
+    mutex_new_id: FuncId,
+    mutex_lock_id: FuncId,
+    mutex_unlock_id: FuncId,
+    mutex_try_lock_id: FuncId,
+    mutex_retain_id: FuncId,
+    mutex_release_id: FuncId,
+
+    // RwLock
+    rwlock_new_id: FuncId,
+    rwlock_read_lock_id: FuncId,
+    rwlock_read_unlock_id: FuncId,
+    rwlock_write_lock_id: FuncId,
+    rwlock_write_unlock_id: FuncId,
+    rwlock_try_read_lock_id: FuncId,
+    rwlock_try_write_lock_id: FuncId,
+    rwlock_retain_id: FuncId,
+    rwlock_release_id: FuncId,
+
+    // Atomics
+    atomic_new_id: FuncId,
+    atomic_load_id: FuncId,
+    atomic_store_id: FuncId,
+    atomic_swap_id: FuncId,
+    atomic_cas_id: FuncId,
+    atomic_add_id: FuncId,
+    atomic_sub_id: FuncId,
+    atomic_and_id: FuncId,
+    atomic_or_id: FuncId,
+    atomic_xor_id: FuncId,
+    atomic_retain_id: FuncId,
+    atomic_release_id: FuncId,
 }
 
 fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyRuntime> {
@@ -2835,6 +2903,16 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
     i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
     i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
     i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_i64_to_void = module.make_signature();
+    i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_i64_i64_to_i64 = module.make_signature();
+    i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
 
     let thread_spawn_id = module.declare_function("__roze_thread_spawn", Linkage::Import, &i64_to_i64)
         .map_err(|e| anyhow!(e.to_string()))?;
@@ -2870,15 +2948,23 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
 
     let channel_new_id = module.declare_function("__roze_channel_new", Linkage::Import, &i64_to_i64)
         .map_err(|e| anyhow!(e.to_string()))?;
+    let channel_unbounded_id = module.declare_function("__roze_channel_unbounded", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
     let channel_send_id = module.declare_function("__roze_channel_send", Linkage::Import, &i64_i64_to_i64)
         .map_err(|e| anyhow!(e.to_string()))?;
+    let channel_try_send_id = module.declare_function("__roze_channel_try_send", Linkage::Import, &i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
     let channel_recv_id = module.declare_function("__roze_channel_recv", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let channel_try_recv_id = module.declare_function("__roze_channel_try_recv", Linkage::Import, &i64_to_i64)
         .map_err(|e| anyhow!(e.to_string()))?;
     let channel_close_id = module.declare_function("__roze_channel_close", Linkage::Import, &i64_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
     let channel_is_closed_id = module.declare_function("__roze_channel_is_closed", Linkage::Import, &i64_to_i64)
         .map_err(|e| anyhow!(e.to_string()))?;
     let channel_len_id = module.declare_function("__roze_channel_len", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let channel_capacity_id = module.declare_function("__roze_channel_capacity", Linkage::Import, &i64_to_i64)
         .map_err(|e| anyhow!(e.to_string()))?;
     let channel_retain_id = module.declare_function("__roze_channel_retain", Linkage::Import, &i64_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
@@ -2900,6 +2986,66 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
     let future_release_id = module.declare_function("__roze_future_release", Linkage::Import, &i64_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
 
+    // Mutex
+    let mutex_new_id = module.declare_function("__roze_mutex_new", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mutex_lock_id = module.declare_function("__roze_mutex_lock", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mutex_unlock_id = module.declare_function("__roze_mutex_unlock", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mutex_try_lock_id = module.declare_function("__roze_mutex_try_lock", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mutex_retain_id = module.declare_function("__roze_mutex_retain", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mutex_release_id = module.declare_function("__roze_mutex_release", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    // RwLock
+    let rwlock_new_id = module.declare_function("__roze_rwlock_new", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let rwlock_read_lock_id = module.declare_function("__roze_rwlock_read_lock", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let rwlock_read_unlock_id = module.declare_function("__roze_rwlock_read_unlock", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let rwlock_write_lock_id = module.declare_function("__roze_rwlock_write_lock", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let rwlock_write_unlock_id = module.declare_function("__roze_rwlock_write_unlock", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let rwlock_try_read_lock_id = module.declare_function("__roze_rwlock_try_read_lock", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let rwlock_try_write_lock_id = module.declare_function("__roze_rwlock_try_write_lock", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let rwlock_retain_id = module.declare_function("__roze_rwlock_retain", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let rwlock_release_id = module.declare_function("__roze_rwlock_release", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    // Atomics
+    let atomic_new_id = module.declare_function("__roze_atomic_new", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let atomic_load_id = module.declare_function("__roze_atomic_load", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let atomic_store_id = module.declare_function("__roze_atomic_store", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let atomic_swap_id = module.declare_function("__roze_atomic_swap", Linkage::Import, &i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let atomic_cas_id = module.declare_function("__roze_atomic_cas", Linkage::Import, &i64_i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let atomic_add_id = module.declare_function("__roze_atomic_add", Linkage::Import, &i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let atomic_sub_id = module.declare_function("__roze_atomic_sub", Linkage::Import, &i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let atomic_and_id = module.declare_function("__roze_atomic_and", Linkage::Import, &i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let atomic_or_id = module.declare_function("__roze_atomic_or", Linkage::Import, &i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let atomic_xor_id = module.declare_function("__roze_atomic_xor", Linkage::Import, &i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let atomic_retain_id = module.declare_function("__roze_atomic_retain", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let atomic_release_id = module.declare_function("__roze_atomic_release", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
     Ok(ConcurrencyRuntime {
         thread_spawn_id,
         thread_join_id,
@@ -2917,11 +3063,15 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
         fiber_retain_id,
         fiber_release_id,
         channel_new_id,
+        channel_unbounded_id,
         channel_send_id,
+        channel_try_send_id,
         channel_recv_id,
+        channel_try_recv_id,
         channel_close_id,
         channel_is_closed_id,
         channel_len_id,
+        channel_capacity_id,
         channel_retain_id,
         channel_release_id,
         future_spawn_id,
@@ -2931,6 +3081,33 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
         async_sleep_id,
         future_retain_id,
         future_release_id,
+        mutex_new_id,
+        mutex_lock_id,
+        mutex_unlock_id,
+        mutex_try_lock_id,
+        mutex_retain_id,
+        mutex_release_id,
+        rwlock_new_id,
+        rwlock_read_lock_id,
+        rwlock_read_unlock_id,
+        rwlock_write_lock_id,
+        rwlock_write_unlock_id,
+        rwlock_try_read_lock_id,
+        rwlock_try_write_lock_id,
+        rwlock_retain_id,
+        rwlock_release_id,
+        atomic_new_id,
+        atomic_load_id,
+        atomic_store_id,
+        atomic_swap_id,
+        atomic_cas_id,
+        atomic_add_id,
+        atomic_sub_id,
+        atomic_and_id,
+        atomic_or_id,
+        atomic_xor_id,
+        atomic_retain_id,
+        atomic_release_id,
     })
 }
 
@@ -4425,6 +4602,24 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
             }
+            Type::Generic { base, .. } if base == "Mutex" || base == "mutex" => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.mutex_retain_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "RwLock" || base == "rwlock" => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.rwlock_retain_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "AtomicBool" || base == "atomic_bool"
+                || base == "AtomicI64" || base == "atomic_i64"
+                || base == "AtomicUsize" || base == "atomic_usize"
+                || base == "AtomicPtr" || base == "atomic_ptr" => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.atomic_retain_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
             Type::Generic { .. } => self.emit_class_retain(val),
             _ => Ok(()),
         }
@@ -4518,6 +4713,24 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             Type::Generic { base, .. } if base == "Future" || base == "future" => {
                 let release_ref = self.module.declare_func_in_func(self.concurrency.future_release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "Mutex" || base == "mutex" => {
+                let release_ref = self.module.declare_func_in_func(self.concurrency.mutex_release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "RwLock" || base == "rwlock" => {
+                let release_ref = self.module.declare_func_in_func(self.concurrency.rwlock_release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "AtomicBool" || base == "atomic_bool"
+                || base == "AtomicI64" || base == "atomic_i64"
+                || base == "AtomicUsize" || base == "atomic_usize"
+                || base == "AtomicPtr" || base == "atomic_ptr" => {
+                let release_ref = self.module.declare_func_in_func(self.concurrency.atomic_release_id, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
@@ -5958,6 +6171,216 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let call = self.builder.ins().call(func_ref, &[chan_val]);
                 let result = self.builder.inst_results(call)[0];
                 self.release_if_fresh(&arguments[0], chan_val)?;
+                return Ok(result);
+            }
+            "channel_unbounded" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.channel_unbounded_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "channel_try_send" if arguments.len() == 2 => {
+                let chan_val = self.compile_expression(&arguments[0])?;
+                let item_val = self.compile_expression(&arguments[1])?;
+                self.retain_for_arc_type(&arguments[1].type_, item_val)?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.channel_try_send_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[chan_val, item_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], chan_val)?;
+                self.release_if_fresh(&arguments[1], item_val)?;
+                return Ok(result);
+            }
+            "channel_try_recv" if arguments.len() == 1 => {
+                let chan_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.channel_try_recv_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[chan_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], chan_val)?;
+                return Ok(result);
+            }
+            "channel_capacity" if arguments.len() == 1 => {
+                let chan_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.channel_capacity_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[chan_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], chan_val)?;
+                return Ok(result);
+            }
+
+            // Mutex
+            "mutex_new" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.mutex_new_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "mutex_lock" if arguments.len() == 1 => {
+                let m_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.mutex_lock_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[m_val]);
+                self.release_if_fresh(&arguments[0], m_val)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "mutex_unlock" if arguments.len() == 1 => {
+                let m_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.mutex_unlock_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[m_val]);
+                self.release_if_fresh(&arguments[0], m_val)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "mutex_try_lock" if arguments.len() == 1 => {
+                let m_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.mutex_try_lock_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[m_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], m_val)?;
+                return Ok(result);
+            }
+
+            // RwLock
+            "rwlock_new" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.rwlock_new_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "rwlock_read_lock" if arguments.len() == 1 => {
+                let rw_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.rwlock_read_lock_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[rw_val]);
+                self.release_if_fresh(&arguments[0], rw_val)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "rwlock_read_unlock" if arguments.len() == 1 => {
+                let rw_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.rwlock_read_unlock_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[rw_val]);
+                self.release_if_fresh(&arguments[0], rw_val)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "rwlock_write_lock" if arguments.len() == 1 => {
+                let rw_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.rwlock_write_lock_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[rw_val]);
+                self.release_if_fresh(&arguments[0], rw_val)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "rwlock_write_unlock" if arguments.len() == 1 => {
+                let rw_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.rwlock_write_unlock_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[rw_val]);
+                self.release_if_fresh(&arguments[0], rw_val)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "rwlock_try_read_lock" if arguments.len() == 1 => {
+                let rw_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.rwlock_try_read_lock_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[rw_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], rw_val)?;
+                return Ok(result);
+            }
+            "rwlock_try_write_lock" if arguments.len() == 1 => {
+                let rw_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.rwlock_try_write_lock_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[rw_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], rw_val)?;
+                return Ok(result);
+            }
+
+            // Atomics
+            "atomic_bool_new" | "atomic_i64_new" | "atomic_usize_new" | "atomic_ptr_new" if arguments.len() == 1 => {
+                let init_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.atomic_new_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[init_val]);
+                self.release_if_fresh(&arguments[0], init_val)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "atomic_load" | "atomic_bool_load" | "atomic_i64_load" | "atomic_usize_load" | "atomic_ptr_load" if arguments.len() == 1 => {
+                let a_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.atomic_load_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a_val)?;
+                return Ok(result);
+            }
+            "atomic_store" | "atomic_bool_store" | "atomic_i64_store" | "atomic_usize_store" | "atomic_ptr_store" if arguments.len() == 2 => {
+                let a_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.atomic_store_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[a_val, val]);
+                self.release_if_fresh(&arguments[0], a_val)?;
+                self.release_if_fresh(&arguments[1], val)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "atomic_swap" | "atomic_bool_swap" | "atomic_i64_swap" | "atomic_usize_swap" | "atomic_ptr_swap" if arguments.len() == 2 => {
+                let a_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.atomic_swap_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a_val, val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a_val)?;
+                self.release_if_fresh(&arguments[1], val)?;
+                return Ok(result);
+            }
+            "atomic_cas" | "atomic_bool_cas" | "atomic_i64_cas" | "atomic_usize_cas" | "atomic_ptr_cas" if arguments.len() == 3 => {
+                let a_val = self.compile_expression(&arguments[0])?;
+                let exp_val = self.compile_expression(&arguments[1])?;
+                let des_val = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.atomic_cas_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a_val, exp_val, des_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a_val)?;
+                self.release_if_fresh(&arguments[1], exp_val)?;
+                self.release_if_fresh(&arguments[2], des_val)?;
+                return Ok(result);
+            }
+            "atomic_add" | "atomic_i64_add" | "atomic_usize_add" if arguments.len() == 2 => {
+                let a_val = self.compile_expression(&arguments[0])?;
+                let delta_val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.atomic_add_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a_val, delta_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a_val)?;
+                self.release_if_fresh(&arguments[1], delta_val)?;
+                return Ok(result);
+            }
+            "atomic_sub" | "atomic_i64_sub" | "atomic_usize_sub" if arguments.len() == 2 => {
+                let a_val = self.compile_expression(&arguments[0])?;
+                let delta_val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.atomic_sub_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a_val, delta_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a_val)?;
+                self.release_if_fresh(&arguments[1], delta_val)?;
+                return Ok(result);
+            }
+            "atomic_i64_and" if arguments.len() == 2 => {
+                let a_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.atomic_and_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a_val, val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a_val)?;
+                self.release_if_fresh(&arguments[1], val)?;
+                return Ok(result);
+            }
+            "atomic_i64_or" if arguments.len() == 2 => {
+                let a_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.atomic_or_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a_val, val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a_val)?;
+                self.release_if_fresh(&arguments[1], val)?;
+                return Ok(result);
+            }
+            "atomic_i64_xor" if arguments.len() == 2 => {
+                let a_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.atomic_xor_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a_val, val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a_val)?;
+                self.release_if_fresh(&arguments[1], val)?;
                 return Ok(result);
             }
 

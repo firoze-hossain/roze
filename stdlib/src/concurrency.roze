@@ -68,6 +68,10 @@ func bounded_channel(capacity: int) -> Channel {
     return channel_new(capacity);
 }
 
+func unbounded_channel() -> Channel {
+    return channel_unbounded();
+}
+
 func future_completed(val: int) -> Future<int> {
     return future_ready(val);
 }

@@ -163,6 +163,12 @@ impl Type {
             "thread" | "Thread" => Type::Generic { base: "Thread".to_string(), type_args: vec![] },
             "fiber" | "Fiber" => Type::Generic { base: "Fiber".to_string(), type_args: vec![] },
             "future" | "Future" => Type::Generic { base: "Future".to_string(), type_args: vec![] },
+            "mutex" | "Mutex" => Type::Generic { base: "Mutex".to_string(), type_args: vec![] },
+            "rwlock" | "RwLock" => Type::Generic { base: "RwLock".to_string(), type_args: vec![] },
+            "atomic_bool" | "AtomicBool" => Type::Generic { base: "AtomicBool".to_string(), type_args: vec![] },
+            "atomic_i64" | "AtomicI64" => Type::Generic { base: "AtomicI64".to_string(), type_args: vec![] },
+            "atomic_usize" | "AtomicUsize" => Type::Generic { base: "AtomicUsize".to_string(), type_args: vec![] },
+            "atomic_ptr" | "AtomicPtr" => Type::Generic { base: "AtomicPtr".to_string(), type_args: vec![] },
             _ => Type::Unknown,
         }
     }
@@ -201,6 +207,16 @@ impl Type {
                     "RozeFiberHandle".to_string()
                 } else if base == "Future" || base == "future" {
                     "RozeFuture".to_string()
+                } else if base == "Mutex" || base == "mutex" {
+                    "RozeMutex".to_string()
+                } else if base == "RwLock" || base == "rwlock" {
+                    "RozeRwLock".to_string()
+                } else if base == "AtomicBool" || base == "atomic_bool" {
+                    "java.util.concurrent.atomic.AtomicBoolean".to_string()
+                } else if base == "AtomicI64" || base == "atomic_i64" || base == "AtomicUsize" || base == "atomic_usize" {
+                    "java.util.concurrent.atomic.AtomicLong".to_string()
+                } else if base == "AtomicPtr" || base == "atomic_ptr" {
+                    "java.util.concurrent.atomic.AtomicReference".to_string()
                 } else {
                     specialized_name(base, type_args)
                 }
@@ -255,6 +271,7 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
         (Type::Unknown, _) | (_, Type::Unknown) => true,
         (Type::Float, Type::Int) => true,
         (Type::RawPointer(_), Type::RawPointer(_)) => true,
+        (Type::RawPointer(_), Type::Int) | (Type::Int, Type::RawPointer(_)) => true,
         (Type::U8, Type::Int) | (Type::Int, Type::U8) => true,
         // List <-> List<T>
         (Type::List, Type::Generic { base, .. }) if base == "List" || base == "list" => true,
@@ -280,6 +297,24 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
         // Future <-> Future
         (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
             if (b1 == "Future" || b1 == "future") && (b2 == "Future" || b2 == "future") => true,
+        // Mutex <-> Mutex
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "Mutex" || b1 == "mutex") && (b2 == "Mutex" || b2 == "mutex") => true,
+        // RwLock <-> RwLock
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "RwLock" || b1 == "rwlock") && (b2 == "RwLock" || b2 == "rwlock") => true,
+        // AtomicBool <-> AtomicBool
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "AtomicBool" || b1 == "atomic_bool") && (b2 == "AtomicBool" || b2 == "atomic_bool") => true,
+        // AtomicI64 <-> AtomicI64
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "AtomicI64" || b1 == "atomic_i64") && (b2 == "AtomicI64" || b2 == "atomic_i64") => true,
+        // AtomicUsize <-> AtomicUsize
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "AtomicUsize" || b1 == "atomic_usize") && (b2 == "AtomicUsize" || b2 == "atomic_usize") => true,
+        // AtomicPtr <-> AtomicPtr
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "AtomicPtr" || b1 == "atomic_ptr") && (b2 == "AtomicPtr" || b2 == "atomic_ptr") => true,
         // Fiber <-> Thread interoperability
         (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
             if ((b1 == "Fiber" || b1 == "fiber") && (b2 == "Thread" || b2 == "thread"))
@@ -586,13 +621,71 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("__roze_async_sleep", vec![Type::Int], Type::Generic { base: "Future".to_string(), type_args: vec![Type::Int] }),
 
         ("channel_new", vec![], Type::Generic { base: "Channel".to_string(), type_args: vec![] }),
+        ("channel_unbounded", vec![], Type::Generic { base: "Channel".to_string(), type_args: vec![] }),
         ("channel_send", vec![Type::Unknown, Type::Unknown], Type::Bool),
         ("send", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("channel_try_send", vec![Type::Unknown, Type::Unknown], Type::Bool),
         ("channel_recv", vec![Type::Unknown], Type::Unknown),
         ("recv", vec![Type::Unknown], Type::Unknown),
+        ("channel_try_recv", vec![Type::Unknown], Type::Unknown),
         ("channel_close", vec![Type::Unknown], Type::Void),
         ("channel_is_closed", vec![Type::Unknown], Type::Bool),
         ("channel_len", vec![Type::Unknown], Type::Int),
+        ("channel_capacity", vec![Type::Unknown], Type::Int),
+
+        // ---- Synchronization: Mutex & RwLock (M1-T06) ----
+        ("mutex_new", vec![], Type::Generic { base: "Mutex".to_string(), type_args: vec![] }),
+        ("mutex_lock", vec![Type::Unknown], Type::Void),
+        ("mutex_unlock", vec![Type::Unknown], Type::Void),
+        ("mutex_try_lock", vec![Type::Unknown], Type::Bool),
+
+        ("rwlock_new", vec![], Type::Generic { base: "RwLock".to_string(), type_args: vec![] }),
+        ("rwlock_read_lock", vec![Type::Unknown], Type::Void),
+        ("rwlock_read_unlock", vec![Type::Unknown], Type::Void),
+        ("rwlock_write_lock", vec![Type::Unknown], Type::Void),
+        ("rwlock_write_unlock", vec![Type::Unknown], Type::Void),
+        ("rwlock_try_read_lock", vec![Type::Unknown], Type::Bool),
+        ("rwlock_try_write_lock", vec![Type::Unknown], Type::Bool),
+
+        // ---- Synchronization: Atomic Types (M1-T06) ----
+        ("atomic_bool_new", vec![Type::Bool], Type::Generic { base: "AtomicBool".to_string(), type_args: vec![] }),
+        ("atomic_bool_load", vec![Type::Unknown], Type::Bool),
+        ("atomic_bool_store", vec![Type::Unknown, Type::Bool], Type::Void),
+        ("atomic_bool_swap", vec![Type::Unknown, Type::Bool], Type::Bool),
+        ("atomic_bool_cas", vec![Type::Unknown, Type::Bool, Type::Bool], Type::Bool),
+
+        ("atomic_i64_new", vec![Type::Int], Type::Generic { base: "AtomicI64".to_string(), type_args: vec![] }),
+        ("atomic_i64_load", vec![Type::Unknown], Type::Int),
+        ("atomic_i64_store", vec![Type::Unknown, Type::Int], Type::Void),
+        ("atomic_i64_swap", vec![Type::Unknown, Type::Int], Type::Int),
+        ("atomic_i64_cas", vec![Type::Unknown, Type::Int, Type::Int], Type::Bool),
+        ("atomic_i64_add", vec![Type::Unknown, Type::Int], Type::Int),
+        ("atomic_i64_sub", vec![Type::Unknown, Type::Int], Type::Int),
+        ("atomic_i64_and", vec![Type::Unknown, Type::Int], Type::Int),
+        ("atomic_i64_or", vec![Type::Unknown, Type::Int], Type::Int),
+        ("atomic_i64_xor", vec![Type::Unknown, Type::Int], Type::Int),
+
+        ("atomic_usize_new", vec![Type::Int], Type::Generic { base: "AtomicUsize".to_string(), type_args: vec![] }),
+        ("atomic_usize_load", vec![Type::Unknown], Type::Int),
+        ("atomic_usize_store", vec![Type::Unknown, Type::Int], Type::Void),
+        ("atomic_usize_swap", vec![Type::Unknown, Type::Int], Type::Int),
+        ("atomic_usize_cas", vec![Type::Unknown, Type::Int, Type::Int], Type::Bool),
+        ("atomic_usize_add", vec![Type::Unknown, Type::Int], Type::Int),
+        ("atomic_usize_sub", vec![Type::Unknown, Type::Int], Type::Int),
+
+        ("atomic_ptr_new", vec![Type::Unknown], Type::Generic { base: "AtomicPtr".to_string(), type_args: vec![] }),
+        ("atomic_ptr_load", vec![Type::Unknown], Type::Unknown),
+        ("atomic_ptr_store", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("atomic_ptr_swap", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("atomic_ptr_cas", vec![Type::Unknown, Type::Unknown, Type::Unknown], Type::Bool),
+
+        // Polymorphic / generic convenience aliases
+        ("atomic_load", vec![Type::Unknown], Type::Unknown),
+        ("atomic_store", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("atomic_swap", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("atomic_cas", vec![Type::Unknown, Type::Unknown, Type::Unknown], Type::Bool),
+        ("atomic_add", vec![Type::Unknown, Type::Int], Type::Int),
+        ("atomic_sub", vec![Type::Unknown, Type::Int], Type::Int),
 
         // ---- Unsafe Raw Pointers & Direct Memory (MED-05) ----
         ("alloc", vec![Type::Int], Type::RawPointer(Box::new(Type::U8))),
@@ -2984,7 +3077,7 @@ impl TypeChecker {
                             ).into());
                         }
                         Type::Generic { base: "Channel".to_string(), type_args: vec![] }
-                    } else if (name == "send" || name == "channel_send") && typed_arguments.len() == 2 {
+                    } else if (name == "send" || name == "channel_send" || name == "channel_try_send") && typed_arguments.len() == 2 {
                         let chan_ty = &typed_arguments[0].type_;
                         match chan_ty {
                             Type::Generic { base, type_args } if (base == "Channel" || base == "channel") && !type_args.is_empty() => {
@@ -2999,7 +3092,7 @@ impl TypeChecker {
                             _ => {}
                         }
                         Type::Bool
-                    } else if (name == "recv" || name == "channel_recv") && typed_arguments.len() == 1 {
+                    } else if (name == "recv" || name == "channel_recv" || name == "channel_try_recv") && typed_arguments.len() == 1 {
                         let chan_ty = &typed_arguments[0].type_;
                         match chan_ty {
                             Type::Generic { base, type_args } if (base == "Channel" || base == "channel") && !type_args.is_empty() => {
@@ -3007,6 +3100,18 @@ impl TypeChecker {
                             }
                             _ => Type::Unknown,
                         }
+                    } else if (name == "atomic_ptr_load" || (name == "atomic_load" && matches!(typed_arguments[0].type_, Type::Generic { ref base, .. } if base == "AtomicPtr" || base == "atomic_ptr"))) && typed_arguments.len() == 1 {
+                        let a_ty = &typed_arguments[0].type_;
+                        match a_ty {
+                            Type::Generic { base, type_args } if (base == "AtomicPtr" || base == "atomic_ptr") && !type_args.is_empty() => {
+                                type_args[0].clone()
+                            }
+                            _ => Type::RawPointer(Box::new(Type::U8)),
+                        }
+                    } else if (name == "atomic_bool_load" || (name == "atomic_load" && matches!(typed_arguments[0].type_, Type::Generic { ref base, .. } if base == "AtomicBool" || base == "atomic_bool"))) && typed_arguments.len() == 1 {
+                        Type::Bool
+                    } else if (name == "atomic_i64_load" || name == "atomic_usize_load" || name == "atomic_load") && typed_arguments.len() == 1 {
+                        Type::Int
                     } else if (name == "thread_spawn" || name == "fiber_spawn" || name == "future_spawn" || name == "__roze_async_spawn") && typed_arguments.len() == 1 {
                         let ret_type = match &typed_arguments[0].type_ {
                             Type::Function { return_type, .. } => vec![*return_type.clone()],
@@ -3636,6 +3741,83 @@ impl TypeChecker {
                                 arguments: typed_args,
                             },
                             type_: sig.return_type,
+                            location: location.clone(),
+                        })
+                    }
+                    Type::Generic { base, type_args } => {
+                        let (fn_name, ret_ty) = match (base.as_str(), method.as_str()) {
+                            // Channel
+                            ("Channel" | "channel", "send") => ("channel_send", Type::Bool),
+                            ("Channel" | "channel", "try_send") => ("channel_try_send", Type::Bool),
+                            ("Channel" | "channel", "recv") => ("channel_recv", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("Channel" | "channel", "try_recv") => ("channel_try_recv", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("Channel" | "channel", "close") => ("channel_close", Type::Void),
+                            ("Channel" | "channel", "is_closed") => ("channel_is_closed", Type::Bool),
+                            ("Channel" | "channel", "len") => ("channel_len", Type::Int),
+                            ("Channel" | "channel", "capacity") => ("channel_capacity", Type::Int),
+
+                            // Mutex
+                            ("Mutex" | "mutex", "lock") => ("mutex_lock", Type::Void),
+                            ("Mutex" | "mutex", "unlock") => ("mutex_unlock", Type::Void),
+                            ("Mutex" | "mutex", "try_lock") => ("mutex_try_lock", Type::Bool),
+
+                            // RwLock
+                            ("RwLock" | "rwlock", "read_lock") => ("rwlock_read_lock", Type::Void),
+                            ("RwLock" | "rwlock", "read_unlock") => ("rwlock_read_unlock", Type::Void),
+                            ("RwLock" | "rwlock", "write_lock") => ("rwlock_write_lock", Type::Void),
+                            ("RwLock" | "rwlock", "write_unlock") => ("rwlock_write_unlock", Type::Void),
+                            ("RwLock" | "rwlock", "try_read_lock") => ("rwlock_try_read_lock", Type::Bool),
+                            ("RwLock" | "rwlock", "try_write_lock") => ("rwlock_try_write_lock", Type::Bool),
+
+                            // AtomicBool
+                            ("AtomicBool" | "atomic_bool", "load") => ("atomic_bool_load", Type::Bool),
+                            ("AtomicBool" | "atomic_bool", "store") => ("atomic_bool_store", Type::Void),
+                            ("AtomicBool" | "atomic_bool", "swap") => ("atomic_bool_swap", Type::Bool),
+                            ("AtomicBool" | "atomic_bool", "cas") => ("atomic_bool_cas", Type::Bool),
+
+                            // AtomicI64
+                            ("AtomicI64" | "atomic_i64", "load") => ("atomic_i64_load", Type::Int),
+                            ("AtomicI64" | "atomic_i64", "store") => ("atomic_i64_store", Type::Void),
+                            ("AtomicI64" | "atomic_i64", "swap") => ("atomic_i64_swap", Type::Int),
+                            ("AtomicI64" | "atomic_i64", "cas") => ("atomic_i64_cas", Type::Bool),
+                            ("AtomicI64" | "atomic_i64", "add") => ("atomic_i64_add", Type::Int),
+                            ("AtomicI64" | "atomic_i64", "sub") => ("atomic_i64_sub", Type::Int),
+                            ("AtomicI64" | "atomic_i64", "and") => ("atomic_i64_and", Type::Int),
+                            ("AtomicI64" | "atomic_i64", "or") => ("atomic_i64_or", Type::Int),
+                            ("AtomicI64" | "atomic_i64", "xor") => ("atomic_i64_xor", Type::Int),
+
+                            // AtomicUsize
+                            ("AtomicUsize" | "atomic_usize", "load") => ("atomic_usize_load", Type::Int),
+                            ("AtomicUsize" | "atomic_usize", "store") => ("atomic_usize_store", Type::Void),
+                            ("AtomicUsize" | "atomic_usize", "swap") => ("atomic_usize_swap", Type::Int),
+                            ("AtomicUsize" | "atomic_usize", "cas") => ("atomic_usize_cas", Type::Bool),
+                            ("AtomicUsize" | "atomic_usize", "add") => ("atomic_usize_add", Type::Int),
+                            ("AtomicUsize" | "atomic_usize", "sub") => ("atomic_usize_sub", Type::Int),
+
+                            // AtomicPtr
+                            ("AtomicPtr" | "atomic_ptr", "load") => ("atomic_ptr_load", if type_args.is_empty() { Type::RawPointer(Box::new(Type::U8)) } else { type_args[0].clone() }),
+                            ("AtomicPtr" | "atomic_ptr", "store") => ("atomic_ptr_store", Type::Void),
+                            ("AtomicPtr" | "atomic_ptr", "swap") => ("atomic_ptr_swap", if type_args.is_empty() { Type::RawPointer(Box::new(Type::U8)) } else { type_args[0].clone() }),
+                            ("AtomicPtr" | "atomic_ptr", "cas") => ("atomic_ptr_cas", Type::Bool),
+
+                            _ => {
+                                return Err(RozeError::type_error(
+                                    format!("Cannot call method '{}' on non-class/trait type '{}'", method, obj_type),
+                                    location.line, location.column,
+                                ).into());
+                            }
+                        };
+
+                        let mut all_args = Vec::with_capacity(1 + typed_args.len());
+                        all_args.push(typed_obj);
+                        all_args.extend(typed_args);
+
+                        Ok(TypedExpression {
+                            kind: TypedExpressionKind::Call {
+                                function: fn_name.to_string(),
+                                arguments: all_args,
+                            },
+                            type_: ret_ty,
                             location: location.clone(),
                         })
                     }

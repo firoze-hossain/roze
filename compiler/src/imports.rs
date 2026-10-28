@@ -42,6 +42,9 @@ const CORE_DISPLAY_NAME: &str = "core (built-in)";
 const CONCURRENCY_SOURCE: &str = include_str!("../../stdlib/src/concurrency.roze");
 const CONCURRENCY_DISPLAY_NAME: &str = "concurrency (built-in)";
 
+const SYNC_SOURCE: &str = include_str!("../../stdlib/src/sync.roze");
+const SYNC_DISPLAY_NAME: &str = "sync (built-in)";
+
 const WEB_SOURCE: &str = include_str!("../../stdlib/src/web.roze");
 const WEB_DISPLAY_NAME: &str = "web (built-in)";
 
@@ -151,6 +154,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "concurrency" {
         return Ok((CONCURRENCY_SOURCE.to_string(), CONCURRENCY_DISPLAY_NAME.to_string()));
+    }
+    if path == "sync" {
+        return Ok((SYNC_SOURCE.to_string(), SYNC_DISPLAY_NAME.to_string()));
     }
     if path == "web" {
         return Ok((WEB_SOURCE.to_string(), WEB_DISPLAY_NAME.to_string()));

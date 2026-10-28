@@ -1033,3 +1033,59 @@ Hello, Roze!
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
 
+#[test]
+fn synchronization_primitives_and_channels() {
+    let (stdout, stderr, ok) = run_fixture("synchronization.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+false
+true
+true
+false
+true
+true
+false
+10
+20
+20
+25
+25
+22
+true
+100
+100
+96
+96
+103
+103
+100
+500
+600
+true
+777
+888
+12345
+67890
+true
+99999
+true
+2
+true
+true
+2
+true
+true
+false
+10
+20
+0
+-1
+10
+450
+0
+true
+42";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+

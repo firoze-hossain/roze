@@ -3109,3 +3109,65 @@ Hello, Roze!
     assert_eq!(out.trim_end(), expected);
 }
 
+#[test]
+fn native_synchronization_primitives_and_channels() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("synchronization.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read synchronization.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("synchronization_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    let expected = "\
+false
+true
+true
+false
+true
+true
+false
+10
+20
+20
+25
+25
+22
+true
+100
+100
+96
+96
+103
+103
+100
+500
+600
+true
+777
+888
+12345
+67890
+true
+99999
+true
+2
+true
+true
+2
+true
+true
+false
+10
+20
+0
+-1
+10
+450
+0
+true
+42";
+    assert_eq!(out.trim_end(), expected);
+}
+
+

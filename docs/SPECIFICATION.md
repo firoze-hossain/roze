@@ -372,6 +372,48 @@ func main() {
 }
 ```
 
+### 3.6 Synchronization: Lock-Free Primitives & Channels
+Roze implements low-overhead lock-free synchronization primitives, mutual exclusion, and high-throughput MPMC ring-buffer channels matching Rust `std::sync` / `crossbeam-channel` and Java `java.util.concurrent.atomic` / `locks`:
+
+- **Atomic Types**:
+  - `AtomicBool`: Lock-free 64-bit aligned atomic boolean with sequential consistency.
+  - `AtomicI64`: Lock-free atomic 64-bit integer supporting `load`, `store`, `swap`, `cas`, `add`, `sub`, and atomic bitwise `and`, `or`, `xor`.
+  - `AtomicUsize`: Pointer-sized atomic integer for indexes and allocation counters.
+  - `AtomicPtr<T>`: Atomic memory address and object reference supporting lock-free pointer manipulation.
+- **Mutual Exclusion (`Mutex`)**:
+  - Fast-path uncontended acquisition via atomic test-and-set and OS condition/futex fallback.
+  - Operations: `mutex_new()`, `mutex_lock()`, `mutex_unlock()`, `mutex_try_lock()`.
+  - Supports both procedural and method-call syntax: `m.lock()`, `m.unlock()`, `m.try_lock()`.
+- **Reader-Writer Lock (`RwLock`)**:
+  - Multiple concurrent readers with single exclusive writer semantics.
+  - Operations: `rwlock_new()`, `rwlock_read_lock()`, `rwlock_read_unlock()`, `rwlock_write_lock()`, `rwlock_write_unlock()`, `rwlock_try_read_lock()`, `rwlock_try_write_lock()`.
+- **High-Throughput MPMC Channels**:
+  - Bounded ring-buffer channels: FIFO blocking queue with fixed buffer capacity.
+  - Unbounded channels: Lock-free dynamic buffer growth avoiding deadlocks and eliminating backpressure blocking on senders.
+  - Operations: `channel_new(cap)`, `channel_unbounded()`, `channel_send()`, `channel_try_send()`, `channel_recv()`, `channel_try_recv()`, `channel_close()`, `channel_is_closed()`, `channel_len()`, `channel_capacity()`.
+- **Backend Mapping**:
+  - **JVM Backend**: Maps to `java.util.concurrent.atomic` (`AtomicBoolean`, `AtomicLong`, `AtomicReference`), `ReentrantLock`, `ReentrantReadWriteLock`, and thread-safe MPMC `RozeChannel`.
+  - **Native Backend**: C11 `_Atomic` sequentially consistent primitives, `pthread_mutex_t`, `pthread_rwlock_t`, and dynamic circular ring-buffer with condition signaling.
+
+```roze
+import "sync";
+
+func main() {
+    let atomic_val = atomic_i64_new(10);
+    atomic_val.add(5); // 15
+    atomic_val.cas(15, 42);
+
+    let m = mutex_new();
+    m.lock();
+    // Critical section
+    m.unlock();
+
+    let uch = channel_unbounded();
+    uch.send(100);
+    let item: int = uch.recv();
+}
+```
+
 ---
 
 ## 4. Error Handling (`Result`, `Option`, `?`)

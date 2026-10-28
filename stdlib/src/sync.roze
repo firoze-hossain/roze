@@ -1,0 +1,92 @@
+// stdlib/src/sync.roze
+//
+// Roze Synchronization & Lock-Free Primitives Module (M1-T06)
+// Provides:
+//   - Lock-Free Atomic types: AtomicBool, AtomicI64, AtomicUsize, AtomicPtr
+//   - High-throughput Mutual Exclusion (Mutex)
+//   - Reader-Writer Lock (RwLock)
+//   - MPMC bounded and unbounded ring-buffer channels
+//
+// Bundled directly into the Roze binary at compile time (via compiler/src/imports.rs).
+//
+// ---- Intrinsics (always available, no import needed) ----
+//
+//   mutex_new()               -> Mutex      : creates reentrant mutual exclusion lock
+//   mutex_lock(m)             -> void       : acquires lock, blocking until available
+//   mutex_unlock(m)           -> void       : releases lock
+//   mutex_try_lock(m)         -> bool       : non-blocking lock attempt (true if acquired)
+//
+//   rwlock_new()              -> RwLock     : creates reader-writer lock (shared read, exclusive write)
+//   rwlock_read_lock(rw)      -> void       : acquires shared read lock
+//   rwlock_read_unlock(rw)    -> void       : releases shared read lock
+//   rwlock_write_lock(rw)     -> void       : acquires exclusive write lock
+//   rwlock_write_unlock(rw)   -> void       : releases exclusive write lock
+//   rwlock_try_read_lock(rw)  -> bool       : non-blocking read lock attempt
+//   rwlock_try_write_lock(rw) -> bool       : non-blocking write lock attempt
+//
+//   atomic_bool_new(init)     -> AtomicBool : creates 64-bit aligned atomic boolean
+//   atomic_bool_load(a)       -> bool       : atomic load with sequential consistency
+//   atomic_bool_store(a, val) -> void       : atomic store
+//   atomic_bool_swap(a, val)  -> bool       : atomic exchange (returns old value)
+//   atomic_bool_cas(a, exp, d)-> bool       : compare-and-swap (true if swapped)
+//
+//   atomic_i64_new(init)      -> AtomicI64  : creates 64-bit atomic integer
+//   atomic_i64_load(a)        -> int        : atomic load
+//   atomic_i64_store(a, val)  -> void       : atomic store
+//   atomic_i64_swap(a, val)   -> int        : atomic exchange
+//   atomic_i64_cas(a, exp, des)-> bool      : compare-and-swap
+//   atomic_i64_add(a, delta)  -> int        : atomic fetch-and-add (returns old value)
+//   atomic_i64_sub(a, delta)  -> int        : atomic fetch-and-sub
+//   atomic_i64_and(a, val)    -> int        : atomic bitwise AND
+//   atomic_i64_or(a, val)     -> int        : atomic bitwise OR
+//   atomic_i64_xor(a, val)    -> int        : atomic bitwise XOR
+//
+//   atomic_usize_new(init)    -> AtomicUsize: creates atomic pointer-sized integer
+//   atomic_usize_load(a)      -> int
+//   atomic_usize_store(a, val)-> void
+//   atomic_usize_swap(a, val) -> int
+//   atomic_usize_cas(a, e, d) -> bool
+//   atomic_usize_add(a, delta)-> int
+//   atomic_usize_sub(a, delta)-> int
+//
+//   atomic_ptr_new(init)      -> AtomicPtr  : creates atomic pointer / object reference
+//   atomic_ptr_load(a)        -> T
+//   atomic_ptr_store(a, val)  -> void
+//   atomic_ptr_swap(a, val)   -> T
+//   atomic_ptr_cas(a, exp, d) -> bool
+//
+//   channel_new([cap])        -> Channel    : bounded MPMC ring-buffer channel
+//   channel_unbounded()       -> Channel    : unbounded MPMC ring-buffer channel (dynamically grows)
+//   channel_send(chan, val)   -> bool       : sends value into channel (blocks if bounded full)
+//   channel_try_send(chan, val)-> bool      : non-blocking send (false if full/closed)
+//   channel_recv(chan)        -> T          : receives value (blocks if empty)
+//   channel_try_recv(chan)    -> T          : non-blocking receive (null/0 if empty)
+//   channel_capacity(chan)    -> int        : returns capacity (-1 for unbounded)
+
+func new_mutex() -> Mutex {
+    return mutex_new();
+}
+
+func new_rwlock() -> RwLock {
+    return rwlock_new();
+}
+
+func new_atomic_bool(init: bool) -> AtomicBool {
+    return atomic_bool_new(init);
+}
+
+func new_atomic_i64(init: int) -> AtomicI64 {
+    return atomic_i64_new(init);
+}
+
+func new_atomic_usize(init: int) -> AtomicUsize {
+    return atomic_usize_new(init);
+}
+
+func new_atomic_ptr(init: int) -> AtomicPtr {
+    return atomic_ptr_new(init);
+}
+
+func unbounded_channel() -> Channel {
+    return channel_unbounded();
+}

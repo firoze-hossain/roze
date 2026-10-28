@@ -1329,6 +1329,44 @@ const OPTION_RESULT_HELPER_METHODS: &str = r#"
 "#;
 
 const CONCURRENCY_HELPER_CLASSES: &str = r#"
+class RozeFiberHandle {
+    public final Thread thread;
+    public volatile Object result = null;
+    public volatile Throwable error = null;
+
+    public RozeFiberHandle(java.util.concurrent.Callable<Object> task) {
+        Runnable runnable = () -> {
+            try {
+                this.result = task.call();
+            } catch (Throwable t) {
+                this.error = t;
+            }
+        };
+        Thread t = null;
+        try {
+            t = Thread.ofVirtual().name("roze-fiber-", 0).start(runnable);
+        } catch (Throwable fallback) {
+            t = new Thread(runnable);
+            t.start();
+        }
+        this.thread = t;
+    }
+
+    public Object join() {
+        try {
+            this.thread.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
+        if (this.error != null) {
+            if (this.error instanceof RuntimeException) throw (RuntimeException) this.error;
+            throw new RuntimeException(this.error);
+        }
+        return this.result;
+    }
+}
+
 class RozeThreadHandle {
     public final Thread thread;
     public volatile Object result = null;
@@ -1458,6 +1496,58 @@ class RozeChannel {
 "#;
 
 const CONCURRENCY_HELPER_METHODS: &str = r#"
+    private static final java.util.concurrent.atomic.AtomicLong __ROZE_ACTIVE_FIBERS = new java.util.concurrent.atomic.AtomicLong(0);
+
+    private static RozeFiberHandle __roze_fiber_spawn(Object fnObj) {
+        RozeFn fn = (RozeFn) fnObj;
+        __ROZE_ACTIVE_FIBERS.incrementAndGet();
+        return new RozeFiberHandle(() -> {
+            try {
+                return fn.apply();
+            } finally {
+                __ROZE_ACTIVE_FIBERS.decrementAndGet();
+            }
+        });
+    }
+
+    private static Object __roze_fiber_join(Object handleObj) {
+        if (handleObj instanceof RozeFiberHandle) {
+            return ((RozeFiberHandle) handleObj).join();
+        } else if (handleObj instanceof RozeThreadHandle) {
+            return ((RozeThreadHandle) handleObj).join();
+        }
+        return null;
+    }
+
+    private static void __roze_fiber_yield() {
+        Thread.yield();
+    }
+
+    private static void __roze_fiber_sleep(long ms) {
+        if (ms <= 0) {
+            Thread.yield();
+            return;
+        }
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static int __roze_fiber_id() {
+        return (int) Thread.currentThread().threadId();
+    }
+
+    private static int __roze_fiber_count() {
+        return (int) __ROZE_ACTIVE_FIBERS.get();
+    }
+
+    private static void __roze_fiber_stats() {
+        int active = (int) __ROZE_ACTIVE_FIBERS.get();
+        System.out.println("[Roze Project Loom Virtual Thread Scheduler] Active: " + active + " Carrier: ForkJoinPool");
+    }
+
     private static RozeThreadHandle __roze_thread_spawn(Object fnObj) {
         RozeFn fn = (RozeFn) fnObj;
         return new RozeThreadHandle(() -> fn.apply());
@@ -1466,6 +1556,8 @@ const CONCURRENCY_HELPER_METHODS: &str = r#"
     private static Object __roze_thread_join(Object handleObj) {
         if (handleObj instanceof RozeThreadHandle) {
             return ((RozeThreadHandle) handleObj).join();
+        } else if (handleObj instanceof RozeFiberHandle) {
+            return ((RozeFiberHandle) handleObj).join();
         }
         return null;
     }
@@ -1798,6 +1890,13 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "thread_join" => Some(OBJECT_TYPE),
         "thread_sleep" => Some("void"),
         "thread_current_id" => Some("int"),
+        "fiber_spawn" => Some("RozeFiberHandle"),
+        "fiber_join" => Some(OBJECT_TYPE),
+        "fiber_yield" => Some("void"),
+        "fiber_sleep" => Some("void"),
+        "fiber_id" => Some("int"),
+        "fiber_count" => Some("int"),
+        "fiber_stats" => Some("void"),
         "channel_new" => Some("RozeChannel"),
         "channel_send" | "send" => Some("boolean"),
         "channel_recv" | "recv" => Some(OBJECT_TYPE),
@@ -1896,6 +1995,8 @@ fn java_type_name(ty: &Type) -> String {
                 "RozeChannel".to_string()
             } else if base == "Thread" || base == "thread" {
                 "RozeThreadHandle".to_string()
+            } else if base == "Fiber" || base == "fiber" {
+                "RozeFiberHandle".to_string()
             } else {
                 escape_java_identifier(&crate::semantic::specialized_name(base, type_args))
             }
@@ -1925,6 +2026,8 @@ fn java_unbox(ty: &Type, expr_str: &str) -> String {
                 format!("((RozeChannel) {})", expr_str)
             } else if base == "Thread" || base == "thread" {
                 format!("((RozeThreadHandle) {})", expr_str)
+            } else if base == "Fiber" || base == "fiber" {
+                format!("((RozeFiberHandle) {})", expr_str)
             } else {
                 let spec = crate::semantic::specialized_name(base, type_args);
                 format!("(({}) {})", escape_java_identifier(&spec), expr_str)
@@ -3044,7 +3147,7 @@ impl JavaSourceGenerator {
                 }
             }
             TypedExpressionKind::Call { function, arguments } => {
-                if (function == "list_get" || function == "map_get" || function == "channel_recv" || function == "recv" || function == "thread_join") && expr.type_ != Type::Unknown {
+                if (function == "list_get" || function == "map_get" || function == "channel_recv" || function == "recv" || function == "thread_join" || function == "fiber_join") && expr.type_ != Type::Unknown {
                     let mut call_buf = String::new();
                     self.generate_call(&mut call_buf, function, arguments)?;
                     source.push_str(&java_unbox(&expr.type_, &call_buf));
@@ -3828,6 +3931,35 @@ impl JavaSourceGenerator {
             }
             "thread_current_id" if arguments.is_empty() => {
                 source.push_str("__roze_thread_current_id()");
+            }
+
+            // ---- Modern Concurrency: M:N Green Threads / Virtual Threads (M1-T04) ----
+            "fiber_spawn" if arguments.len() == 1 => {
+                source.push_str("__roze_fiber_spawn(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "fiber_join" if arguments.len() == 1 => {
+                source.push_str("__roze_fiber_join(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "fiber_yield" if arguments.is_empty() => {
+                source.push_str("__roze_fiber_yield()");
+            }
+            "fiber_sleep" if arguments.len() == 1 => {
+                source.push_str("__roze_fiber_sleep(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "fiber_id" if arguments.is_empty() => {
+                source.push_str("__roze_fiber_id()");
+            }
+            "fiber_count" if arguments.is_empty() => {
+                source.push_str("__roze_fiber_count()");
+            }
+            "fiber_stats" if arguments.is_empty() => {
+                source.push_str("__roze_fiber_stats()");
             }
             "channel_new" => {
                 source.push_str("__roze_channel_new(");

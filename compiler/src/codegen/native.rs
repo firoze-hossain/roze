@@ -263,7 +263,9 @@ pub fn compile_to_native(program: TypedProgram, input_file: &str, extra_libs: &[
     println!("📝 Generated native object file: {}", obj_path);
 
     let mut all_libs = extra_libs.to_vec();
-    let temp_concurrency_c = std::env::temp_dir().join("roze_concurrency.c");
+    let pid = std::process::id();
+    let safe_output = output_name.replace('/', "_");
+    let temp_concurrency_c = std::env::temp_dir().join(format!("roze_concurrency_{}_{}.c", pid, safe_output));
     fs::write(&temp_concurrency_c, CONCURRENCY_RUNTIME_C)?;
     all_libs.push(temp_concurrency_c.to_string_lossy().to_string());
     all_libs.push("pthread".to_string());
@@ -741,6 +743,15 @@ void __roze_thread_sleep(long ms) { (void)ms; }
 long __roze_thread_current_id(void) { return 0; }
 void __roze_thread_retain(long t) { (void)t; }
 void __roze_thread_release(long t) { (void)t; }
+long __roze_fiber_spawn(long f) { (void)f; return 0; }
+long __roze_fiber_join(long f) { (void)f; return 0; }
+void __roze_fiber_yield(void) {}
+void __roze_fiber_sleep(long ms) { (void)ms; }
+long __roze_fiber_id(void) { return 0; }
+long __roze_fiber_count(void) { return 0; }
+void __roze_fiber_stats(void) {}
+void __roze_fiber_retain(long f) { (void)f; }
+void __roze_fiber_release(long f) { (void)f; }
 long __roze_channel_new(long cap) { (void)cap; return 0; }
 long __roze_channel_send(long ch, long val) { (void)ch; (void)val; return 0; }
 long __roze_channel_recv(long ch) { (void)ch; return 0; }
@@ -2771,6 +2782,15 @@ struct ConcurrencyRuntime {
     thread_current_id: FuncId,
     thread_retain_id: FuncId,
     thread_release_id: FuncId,
+    fiber_spawn_id: FuncId,
+    fiber_join_id: FuncId,
+    fiber_yield_id: FuncId,
+    fiber_sleep_id: FuncId,
+    fiber_id_id: FuncId,
+    fiber_count_id: FuncId,
+    fiber_stats_id: FuncId,
+    fiber_retain_id: FuncId,
+    fiber_release_id: FuncId,
     channel_new_id: FuncId,
     channel_send_id: FuncId,
     channel_recv_id: FuncId,
@@ -2792,6 +2812,8 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
     let mut void_to_i64 = module.make_signature();
     void_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
 
+    let void_to_void = module.make_signature();
+
     let mut i64_i64_to_i64 = module.make_signature();
     i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
     i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
@@ -2808,6 +2830,25 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
     let thread_retain_id = module.declare_function("__roze_thread_retain", Linkage::Import, &i64_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
     let thread_release_id = module.declare_function("__roze_thread_release", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    let fiber_spawn_id = module.declare_function("__roze_fiber_spawn", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let fiber_join_id = module.declare_function("__roze_fiber_join", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let fiber_yield_id = module.declare_function("__roze_fiber_yield", Linkage::Import, &void_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let fiber_sleep_id = module.declare_function("__roze_fiber_sleep", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let fiber_id_id = module.declare_function("__roze_fiber_id", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let fiber_count_id = module.declare_function("__roze_fiber_count", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let fiber_stats_id = module.declare_function("__roze_fiber_stats", Linkage::Import, &void_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let fiber_retain_id = module.declare_function("__roze_fiber_retain", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let fiber_release_id = module.declare_function("__roze_fiber_release", Linkage::Import, &i64_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
 
     let channel_new_id = module.declare_function("__roze_channel_new", Linkage::Import, &i64_to_i64)
@@ -2834,6 +2875,15 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
         thread_current_id,
         thread_retain_id,
         thread_release_id,
+        fiber_spawn_id,
+        fiber_join_id,
+        fiber_yield_id,
+        fiber_sleep_id,
+        fiber_id_id,
+        fiber_count_id,
+        fiber_stats_id,
+        fiber_retain_id,
+        fiber_release_id,
         channel_new_id,
         channel_send_id,
         channel_recv_id,
@@ -4326,6 +4376,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
             }
+            Type::Generic { base, .. } if base == "Fiber" || base == "fiber" => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.fiber_retain_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
             Type::Generic { .. } => self.emit_class_retain(val),
             _ => Ok(()),
         }
@@ -4409,6 +4464,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             Type::Generic { base, .. } if base == "Thread" || base == "thread" => {
                 let release_ref = self.module.declare_func_in_func(self.concurrency.thread_release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "Fiber" || base == "fiber" => {
+                let release_ref = self.module.declare_func_in_func(self.concurrency.fiber_release_id, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
@@ -5710,6 +5770,49 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let func_ref = self.module.declare_func_in_func(self.concurrency.thread_current_id, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.inst_results(call)[0]);
+            }
+
+            // ---- Modern Concurrency: M:N Green Threads / Virtual Threads (M1-T04) ----
+            "fiber_spawn" if arguments.len() == 1 => {
+                let closure_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.fiber_spawn_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[closure_val]);
+                let result = self.builder.inst_results(call)[0];
+                return Ok(result);
+            }
+            "fiber_join" if arguments.len() == 1 => {
+                let handle_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.fiber_join_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[handle_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], handle_val)?;
+                return Ok(result);
+            }
+            "fiber_yield" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.fiber_yield_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "fiber_sleep" if arguments.len() == 1 => {
+                let ms_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.fiber_sleep_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[ms_val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "fiber_id" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.fiber_id_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "fiber_count" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.fiber_count_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "fiber_stats" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.fiber_stats_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
             "channel_new" => {
                 let cap_val = if arguments.len() == 1 {

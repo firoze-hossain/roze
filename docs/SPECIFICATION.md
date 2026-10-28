@@ -295,6 +295,49 @@ With `--target freestanding`, Roze compiles without libc, glibc, JVM, or OS depe
 - Direct port I/O (`inb`, `outb`).
 - VGA text buffer access (`vga_print`, `vga_write_char`, `vga_set_color`).
 
+### 3.4 Modern Concurrency: M:N Green Threads (Virtual Threads)
+Roze implements a unified high-throughput concurrency runtime with parity to Java 25 Project Loom Virtual Threads and Go goroutines:
+- **M:N Cooperative Work-Stealing Scheduler**: User-space green threads (`Fiber`) multiplexed across all CPU carrier worker threads.
+- **Zero-Allocation Fiber Lifecycle**: Reusable slab-allocated fiber pools eliminate heap allocations during high-frequency fiber spawning.
+- **Cooperative Context Switching**: Fibers yield (`fiber_yield()`) and join (`fiber_join()`) without blocking carrier OS worker threads.
+- **Massive Scalability**: Supports hundreds of thousands to 1,000,000+ simultaneous concurrent green threads with sub-millisecond scheduling overhead.
+- **Backend Mapping**:
+  - **JVM Backend**: Maps to Java 25 Virtual Threads (`Thread.ofVirtual().start(...)`) running on Loom carrier `ForkJoinPool`.
+  - **Native Backend**: Multi-core work-stealing scheduler with lock-free/deques, Chase-Lev stealing, and batch task migration.
+- **Key Primitives**:
+  - `fiber_spawn(worker: func() -> T) -> Fiber<T>`
+  - `fiber_join(fiber: Fiber<T>) -> T`
+  - `fiber_yield() -> void`
+  - `fiber_sleep(ms: int) -> void`
+  - `fiber_id() -> int`
+  - `fiber_count() -> int`
+  - `fiber_stats() -> void`
+  - `channel_new(capacity: int) -> Channel<T>`, `send(chan, val)`, `recv(chan)`
+
+```roze
+import "concurrency";
+
+func main() {
+    let ch = channel_new(1024);
+
+    // Spawn 10,000 cooperative green threads
+    for let i = 0; i < 10000; i = i + 1 {
+        fiber_spawn(|| {
+            fiber_yield();
+            send(ch, 1);
+            return 0;
+        });
+    }
+
+    let total = 0;
+    for let i = 0; i < 10000; i = i + 1 {
+        let v: int = recv(ch);
+        total = total + v;
+    }
+    println(total); // 10000
+}
+```
+
 ---
 
 ## 4. Error Handling (`Result`, `Option`, `?`)

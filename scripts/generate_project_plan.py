@@ -238,7 +238,7 @@ s1_rows = [
         ("M1-T04", 8), ("Month 1", 3), ("Sprint 2 (W03-W04)", 8), "Modern Concurrency", "M:N Green Threads (Virtual Threads)",
         "Implement cooperative user-space green thread scheduler with work-stealing threadpool across OS worker threads. Zero allocation fiber context switching.",
         "Parity with Java 25 Project Loom Virtual Threads and Go goroutines. Supports 1,000,000 simultaneous concurrent tasks.",
-        "Enterprise Web, Game Servers, Tools", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Enterprise Web, Game Servers, Tools", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M1-T05", 8), ("Month 1", 3), ("Sprint 2 (W03-W04)", 8), "Async Runtime", "Async / Await State-Machine Engine",

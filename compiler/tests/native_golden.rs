@@ -2051,6 +2051,109 @@ true
 }
 
 #[test]
+fn native_green_threads_m_n_concurrency() {
+    let source = r#"
+import "concurrency";
+
+func main() {
+    // 1. Fiber spawn and join
+    let f1 = fiber_spawn(|| {
+        fiber_sleep(5);
+        return 42;
+    });
+    let res1: int = fiber_join(f1);
+    println(res1);
+
+    // 2. Fiber ID
+    let fid = fiber_id();
+    println(fid != 0);
+
+    // 3. Channels and fiber communication
+    let ch = channel_new(8);
+    let f2 = fiber_spawn(|| {
+        fiber_yield();
+        send(ch, 100);
+        send(ch, 200);
+        return 1;
+    });
+    let f3 = fiber_spawn(|| {
+        let v1: int = recv(ch);
+        let v2: int = recv(ch);
+        return v1 + v2;
+    });
+    let res3: int = fiber_join(f3);
+    println(res3);
+    let res2: int = fiber_join(f2);
+    println(res2);
+
+    // 4. Concurrency stdlib helpers
+    let f4 = spawn(|| {
+        yield_now();
+        return 777;
+    });
+    let res4: int = fiber_wait(f4);
+    println(res4);
+
+    // 5. Work-stealing multi-task pipeline (100 concurrent green threads)
+    let results = channel_new(128);
+    for let i = 0; i < 100; i = i + 1 {
+        fiber_spawn(|| {
+            fiber_yield();
+            send(results, 5);
+            return 0;
+        });
+    }
+
+    let sum = 0;
+    for let i = 0; i < 100; i = i + 1 {
+        let v: int = recv(results);
+        sum = sum + v;
+    }
+    println(sum);
+}
+"#;
+    let (stdout, stderr, ok) = run_native_source("native_green_threads", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+42
+true
+300
+1
+777
+500";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
+fn native_massive_green_threads_work_stealing() {
+    let source = r#"
+import "concurrency";
+
+func main() {
+    let count = 2000;
+    let ch = channel_new(2048);
+    for let i = 0; i < count; i = i + 1 {
+        fiber_spawn(|| {
+            fiber_yield();
+            send(ch, 1);
+            return 0;
+        });
+    }
+
+    let total = 0;
+    for let i = 0; i < count; i = i + 1 {
+        let v: int = recv(ch);
+        total = total + v;
+    }
+    println(total);
+}
+"#;
+    let (stdout, stderr, ok) = run_native_source("native_massive_fibers", source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert_eq!(program_output(&stdout).trim_end(), "2000");
+}
+
+#[test]
 fn native_concurrency_worker_pool_pipeline() {
     let source = r#"
 func main() {

@@ -161,6 +161,7 @@ impl Type {
             "result" | "Result" => Type::Result,
             "channel" | "Channel" => Type::Generic { base: "Channel".to_string(), type_args: vec![] },
             "thread" | "Thread" => Type::Generic { base: "Thread".to_string(), type_args: vec![] },
+            "fiber" | "Fiber" => Type::Generic { base: "Fiber".to_string(), type_args: vec![] },
             _ => Type::Unknown,
         }
     }
@@ -195,6 +196,8 @@ impl Type {
                     "RozeChannel".to_string()
                 } else if base == "Thread" || base == "thread" {
                     "Thread".to_string()
+                } else if base == "Fiber" || base == "fiber" {
+                    "RozeFiberHandle".to_string()
                 } else {
                     specialized_name(base, type_args)
                 }
@@ -268,6 +271,13 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
         // Thread <-> Thread
         (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
             if (b1 == "Thread" || b1 == "thread") && (b2 == "Thread" || b2 == "thread") => true,
+        // Fiber <-> Fiber
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "Fiber" || b1 == "fiber") && (b2 == "Fiber" || b2 == "fiber") => true,
+        // Fiber <-> Thread interoperability
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if ((b1 == "Fiber" || b1 == "fiber") && (b2 == "Thread" || b2 == "thread"))
+            || ((b1 == "Thread" || b1 == "thread") && (b2 == "Fiber" || b2 == "fiber")) => true,
         // Generic with matching base and compatible type arguments:
         (
             Type::Generic { base: b1, type_args: a1 },
@@ -547,6 +557,15 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("thread_join", vec![Type::Unknown], Type::Unknown),
         ("thread_sleep", vec![Type::Int], Type::Void),
         ("thread_current_id", vec![], Type::Int),
+
+        // ---- Modern Concurrency: M:N Green Threads / Virtual Threads (M1-T04) ----
+        ("fiber_spawn", vec![Type::Unknown], Type::Generic { base: "Fiber".to_string(), type_args: vec![] }),
+        ("fiber_join", vec![Type::Unknown], Type::Unknown),
+        ("fiber_yield", vec![], Type::Void),
+        ("fiber_sleep", vec![Type::Int], Type::Void),
+        ("fiber_id", vec![], Type::Int),
+        ("fiber_count", vec![], Type::Int),
+        ("fiber_stats", vec![], Type::Void),
 
         ("channel_new", vec![], Type::Generic { base: "Channel".to_string(), type_args: vec![] }),
         ("channel_send", vec![Type::Unknown, Type::Unknown], Type::Bool),
@@ -2852,16 +2871,17 @@ impl TypeChecker {
                             }
                             _ => Type::Unknown,
                         }
-                    } else if name == "thread_spawn" && typed_arguments.len() == 1 {
+                    } else if (name == "thread_spawn" || name == "fiber_spawn") && typed_arguments.len() == 1 {
                         let ret_type = match &typed_arguments[0].type_ {
                             Type::Function { return_type, .. } => vec![*return_type.clone()],
                             _ => vec![],
                         };
-                        Type::Generic { base: "Thread".to_string(), type_args: ret_type }
-                    } else if name == "thread_join" && typed_arguments.len() == 1 {
+                        let base = if name == "fiber_spawn" { "Fiber" } else { "Thread" };
+                        Type::Generic { base: base.to_string(), type_args: ret_type }
+                    } else if (name == "thread_join" || name == "fiber_join") && typed_arguments.len() == 1 {
                         let th_ty = &typed_arguments[0].type_;
                         match th_ty {
-                            Type::Generic { base, type_args } if (base == "Thread" || base == "thread") && !type_args.is_empty() => {
+                            Type::Generic { base, type_args } if (base == "Thread" || base == "thread" || base == "Fiber" || base == "fiber") && !type_args.is_empty() => {
                                 type_args[0].clone()
                             }
                             _ => Type::Unknown,

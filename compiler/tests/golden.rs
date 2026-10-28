@@ -723,6 +723,20 @@ true
 }
 
 #[test]
+fn green_threads_m_n_concurrency() {
+    let (stdout, stderr, ok) = run_fixture("green_threads_m_n.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+42
+true
+300
+1
+777
+500";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
 fn concurrent_async_http_server_and_router() {
     let (stdout, stderr, ok) = run_fixture("web_server.roze");
     assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);

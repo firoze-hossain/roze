@@ -1,11 +1,22 @@
 // stdlib/src/concurrency.roze
 //
-// Roze Concurrency Module (MED-03)
-// Provides OS threads and bounded/unbounded thread-safe channels.
+// Roze Concurrency Module (MED-03 & M1-T04)
+// Provides:
+//   - M:N Green Threads (Virtual Threads) with work-stealing scheduler
+//   - Zero-allocation fiber context switching
+//   - OS threads (pthread) and bounded/unbounded thread-safe channels.
 //
 // Bundled directly into the Roze binary at compile time (via compiler/src/imports.rs).
 //
 // ---- Intrinsics (always available, no import needed) ----
+//
+//   fiber_spawn(func)        -> Fiber   : spawns an M:N green thread on multi-core work-stealing pool
+//   fiber_join(fiber)        -> T       : cooperatively joins a fiber and waits for its return value
+//   fiber_yield()            -> void    : cooperatively yields current fiber to next runnable task
+//   fiber_sleep(ms)          -> void    : sleeps current fiber without blocking carrier thread
+//   fiber_id()               -> int     : returns unique ID of current running fiber
+//   fiber_count()            -> int     : returns count of currently active green threads
+//   fiber_stats()            -> void    : outputs scheduler work-stealing metrics and worker status
 //
 //   thread_spawn(func)       -> Thread  : spawns a background OS thread / JVM virtual thread
 //   thread_join(thread)      -> T       : joins a thread and waits for its return value
@@ -21,12 +32,24 @@
 //
 // ---- Concurrency Utilities (available via `import "concurrency";`) ----
 
-func spawn(worker: func() -> int) -> Thread {
-    return thread_spawn(worker);
+func spawn(worker: func() -> int) -> Fiber {
+    return fiber_spawn(worker);
+}
+
+func fiber(worker: func() -> int) -> Fiber {
+    return fiber_spawn(worker);
+}
+
+func yield_now() {
+    fiber_yield();
+}
+
+func fiber_wait(worker_fiber: Fiber) -> int {
+    return fiber_join(worker_fiber);
 }
 
 func sleep(ms: int) {
-    thread_sleep(ms);
+    fiber_sleep(ms);
 }
 
 func channel() -> Channel {

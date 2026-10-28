@@ -1,0 +1,60 @@
+import "concurrency";
+
+func main() {
+    // 1. Basic fiber spawn and cooperative join
+    let f1 = fiber_spawn(|| {
+        fiber_sleep(5);
+        return 42;
+    });
+    let r1: int = fiber_join(f1);
+    println(r1);
+
+    // 2. Fiber ID check
+    let fid = fiber_id();
+    println(fid != 0);
+
+    // 3. Cooperative yield between producer and consumer fibers
+    let ch = channel_new(8);
+    let f2 = fiber_spawn(|| {
+        fiber_yield();
+        send(ch, 100);
+        send(ch, 200);
+        return 1;
+    });
+
+    let f3 = fiber_spawn(|| {
+        let v1: int = recv(ch);
+        let v2: int = recv(ch);
+        return v1 + v2;
+    });
+
+    let r3: int = fiber_join(f3);
+    println(r3);
+    let r2: int = fiber_join(f2);
+    println(r2);
+
+    // 4. Concurrency stdlib helpers (spawn, yield_now, fiber_wait)
+    let f4 = spawn(|| {
+        yield_now();
+        return 777;
+    });
+    let r4: int = fiber_wait(f4);
+    println(r4);
+
+    // 5. Work-stealing multi-task pipeline (50 concurrent fibers)
+    let results = channel_new(64);
+    for let i = 0; i < 50; i = i + 1 {
+        fiber_spawn(|| {
+            fiber_yield();
+            send(results, 10);
+            return 0;
+        });
+    }
+
+    let sum = 0;
+    for let i = 0; i < 50; i = i + 1 {
+        let v: int = recv(results);
+        sum = sum + v;
+    }
+    println(sum);
+}

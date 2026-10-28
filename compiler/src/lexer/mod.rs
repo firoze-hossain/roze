@@ -272,6 +272,8 @@ impl<'a> Lexer<'a> {
                             "extern" => Token::Extern,
                             "unsafe" => Token::Unsafe,
                             "raw" => Token::Raw,
+                            "type" => Token::Type,
+                            "where" => Token::Where,
                             "true" => Token::True,
                             "false" => Token::False,
                             "null" => Token::Null,

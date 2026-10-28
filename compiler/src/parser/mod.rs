@@ -298,6 +298,64 @@ impl Parser {
             None
         };
 
+        // Parse optional where clause: where T: Trait1 + Trait2, U: Trait3
+        let mut type_params = type_params;
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        if self.check(&Token::Where) {
+            self.advance(); // Skip 'where'
+            loop {
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                let param_name = match &self.current().token {
+                    Token::Identifier(n) => {
+                        let name = n.clone();
+                        self.advance();
+                        name
+                    }
+                    other => return Err(self.error(format!("Expected type parameter name in where clause, found {}", other))),
+                };
+                if !self.check(&Token::Colon) {
+                    return Err(self.error("Expected ':' after type parameter in where clause"));
+                }
+                self.advance(); // Skip ':'
+                let mut bounds = Vec::new();
+                loop {
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    match &self.current().token {
+                        Token::Identifier(trait_name) => {
+                            bounds.push(trait_name.clone());
+                            self.advance();
+                        }
+                        other => return Err(self.error(format!("Expected trait name in where clause, found {}", other))),
+                    }
+                    if self.check(&Token::Plus) {
+                        self.advance(); // Skip '+'
+                    } else {
+                        break;
+                    }
+                }
+                if let Some(tp) = type_params.iter_mut().find(|p| p.name == param_name) {
+                    tp.bounds.extend(bounds);
+                } else {
+                    type_params.push(crate::parser::ast::TypeParam::with_bounds(param_name, bounds));
+                }
+
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+
         // Skip newlines before body
         while self.check(&Token::Newline) {
             self.advance();
@@ -812,6 +870,7 @@ impl Parser {
         }
 
         let mut methods = Vec::new();
+        let mut associated_types = Vec::new();
         while !self.check(&Token::RightBrace) && !self.check(&Token::EOF) {
             while self.check(&Token::Newline) {
                 self.advance();
@@ -819,9 +878,31 @@ impl Parser {
             if self.check(&Token::RightBrace) {
                 break;
             }
+            if self.check(&Token::Type) {
+                self.advance(); // Skip 'type'
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                let assoc_name = match &self.current().token {
+                    Token::Identifier(n) => {
+                        let n = n.clone();
+                        self.advance();
+                        n
+                    }
+                    other => return Err(self.error(format!("Expected associated type name after 'type', found {}", other))),
+                };
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::Semicolon) {
+                    self.advance();
+                }
+                associated_types.push(assoc_name);
+                continue;
+            }
             let method_loc = Location::new(self.current().line, self.current().column);
             if !self.check(&Token::Func) {
-                return Err(self.error(format!("Expected 'func' in trait definition, found {}", self.current().token)));
+                return Err(self.error(format!("Expected 'func' or 'type' in trait definition, found {}", self.current().token)));
             }
             self.advance(); // Skip 'func'
 
@@ -925,6 +1006,7 @@ impl Parser {
 
         Ok(Statement::TraitDecl {
             name,
+            associated_types,
             methods,
             location,
         })
@@ -970,12 +1052,46 @@ impl Parser {
         }
 
         let mut methods = Vec::new();
+        let mut associated_types = Vec::new();
         while !self.check(&Token::RightBrace) && !self.check(&Token::EOF) {
             while self.check(&Token::Newline) {
                 self.advance();
             }
             if self.check(&Token::RightBrace) {
                 break;
+            }
+            if self.check(&Token::Type) {
+                self.advance(); // Skip 'type'
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                let assoc_name = match &self.current().token {
+                    Token::Identifier(n) => {
+                        let n = n.clone();
+                        self.advance();
+                        n
+                    }
+                    other => return Err(self.error(format!("Expected associated type name after 'type', found {}", other))),
+                };
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if !self.check(&Token::Equals) {
+                    return Err(self.error("Expected '=' after associated type name"));
+                }
+                self.advance(); // Skip '='
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                let target_type = self.parse_type_name()?;
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::Semicolon) {
+                    self.advance();
+                }
+                associated_types.push((assoc_name, target_type));
+                continue;
             }
             let method = self.parse_function()?;
             methods.push(method);
@@ -992,6 +1108,7 @@ impl Parser {
         Ok(Statement::ImplDecl {
             trait_name,
             class_name,
+            associated_types,
             methods,
             location,
         })
@@ -1585,7 +1702,7 @@ impl Parser {
         }
     }
 
-    fn parse_type_params(&mut self) -> Result<Vec<String>> {
+    fn parse_type_params(&mut self) -> Result<Vec<crate::parser::ast::TypeParam>> {
         if !self.check(&Token::LessThan) {
             return Ok(Vec::new());
         }
@@ -1598,13 +1715,36 @@ impl Parser {
             if self.check(&Token::GreaterThan) {
                 break;
             }
-            match &self.current().token {
+            let name = match &self.current().token {
                 Token::Identifier(name) => {
-                    params.push(name.clone());
+                    let n = name.clone();
                     self.advance();
+                    n
                 }
                 other => return Err(self.error(format!("Expected type parameter name, found {}", other))),
+            };
+            let mut bounds = Vec::new();
+            if self.check(&Token::Colon) {
+                self.advance(); // Skip ':'
+                loop {
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    match &self.current().token {
+                        Token::Identifier(trait_name) => {
+                            bounds.push(trait_name.clone());
+                            self.advance();
+                        }
+                        other => return Err(self.error(format!("Expected trait name after ':', found {}", other))),
+                    }
+                    if self.check(&Token::Plus) {
+                        self.advance(); // Skip '+'
+                    } else {
+                        break;
+                    }
+                }
             }
+            params.push(crate::parser::ast::TypeParam::with_bounds(name, bounds));
             while self.check(&Token::Newline) {
                 self.advance();
             }

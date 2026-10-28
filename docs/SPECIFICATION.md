@@ -70,8 +70,8 @@ impl Printable for Point {
 }
 ```
 
-### 2.5 Generics
-Type parameters allow parameterized data types and algorithms:
+### 2.5 Generics & Trait Bounds
+Type parameters allow parameterized data types and algorithms with compile-time trait bound validation:
 ```roze
 class Pair<A, B> {
     first: A,
@@ -80,6 +80,62 @@ class Pair<A, B> {
 
 let pair = new Pair<int, string>(1, "roze");
 ```
+
+#### Trait Bounds (`<T: Bound1 + Bound2>`)
+Generic type parameters can be constrained by one or more traits using the `:` bound syntax and `+` operator:
+```roze
+trait Printable {
+    func print_info() -> int;
+}
+
+trait Cloneable {
+    func clone_val() -> int;
+}
+
+func show_and_clone<T: Printable + Cloneable>(item: T) -> int {
+    let copy = item.clone_val();
+    item.print_info();
+    return copy;
+}
+```
+
+#### Where Clauses
+When generic signatures involve complex relationships or multiple parameters, `where` clauses provide clean and readable constraints:
+```roze
+func render_elements<A, B>(a: A, b: B) -> int
+    where A: Printable, B: Printable + Cloneable
+{
+    a.print_info();
+    b.print_info();
+    return 1;
+}
+```
+
+#### Associated Types in Traits
+Traits can specify associated types (`type Item;`), allowing implementations to define concrete associated types without cluttering the trait signature with unnecessary type parameters:
+```roze
+trait Producer {
+    type Item;
+    func produce() -> int;
+}
+
+class NumberProducer {
+    val: int
+}
+
+impl Producer for NumberProducer {
+    type Item = int;
+    func produce() -> int {
+        return this.val;
+    }
+}
+```
+
+#### Static Monomorphization Engine
+Generic functions and classes undergo compile-time specialization (monomorphization):
+- Each distinct concrete type instantiation creates a dedicated, specialized typed AST node and backend code block (e.g. `show_item__User`).
+- All trait method invocations on monomorphized types resolve directly to direct static calls or inlined functions with zero vtable pointer chasing.
+- Violations of trait bounds are detected at compile-time with clear error diagnostics.
 
 ---
 

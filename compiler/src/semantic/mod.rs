@@ -299,6 +299,7 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Symbol {
     pub name: String,
     pub type_: Type,
@@ -599,7 +600,7 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
 #[derive(Clone, Debug)]
 pub struct GenericClassDef {
     pub name: String,
-    pub type_params: Vec<String>,
+    pub type_params: Vec<crate::parser::ast::TypeParam>,
     pub fields: Vec<FunctionParam>,
     pub location: Location,
 }
@@ -607,7 +608,7 @@ pub struct GenericClassDef {
 #[derive(Clone, Debug)]
 pub struct GenericFuncDef {
     pub name: String,
-    pub type_params: Vec<String>,
+    pub type_params: Vec<crate::parser::ast::TypeParam>,
     pub params: Vec<FunctionParam>,
     pub return_type: Option<String>,
     pub body: Statement,
@@ -615,16 +616,19 @@ pub struct GenericFuncDef {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct GenericEnumDef {
     pub name: String,
-    pub type_params: Vec<String>,
+    pub type_params: Vec<crate::parser::ast::TypeParam>,
     pub variants: Vec<EnumVariant>,
     pub location: Location,
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct TraitDef {
     pub name: String,
+    pub associated_types: Vec<String>,
     pub methods: HashMap<String, FunctionSig>,
     pub location: Location,
 }
@@ -759,14 +763,16 @@ fn substitute_statement(stmt: &Statement, map: &HashMap<String, String>) -> Stat
             }).collect(),
             location: location.clone(),
         },
-        Statement::TraitDecl { name, methods, location } => Statement::TraitDecl {
+        Statement::TraitDecl { name, associated_types, methods, location } => Statement::TraitDecl {
             name: name.clone(),
+            associated_types: associated_types.clone(),
             methods: methods.clone(),
             location: location.clone(),
         },
-        Statement::ImplDecl { trait_name, class_name, methods, location } => Statement::ImplDecl {
+        Statement::ImplDecl { trait_name, class_name, associated_types, methods, location } => Statement::ImplDecl {
             trait_name: trait_name.clone(),
             class_name: class_name.clone(),
+            associated_types: associated_types.clone(),
             methods: methods.iter().map(|s| substitute_statement(s, map)).collect(),
             location: location.clone(),
         },
@@ -859,11 +865,11 @@ fn substitute_expression(expr: &Expression, map: &HashMap<String, String>) -> Ex
 fn infer_type_param(
     pattern: &str,
     actual: &Type,
-    type_params: &[String],
+    type_params: &[crate::parser::ast::TypeParam],
     inferred: &mut HashMap<String, Type>,
 ) {
     let pattern = pattern.trim();
-    if type_params.contains(&pattern.to_string()) {
+    if type_params.iter().any(|tp| tp.name == pattern) {
         inferred.entry(pattern.to_string()).or_insert_with(|| actual.clone());
         return;
     }
@@ -909,6 +915,7 @@ pub struct TypeChecker {
     pub next_trait_slot: usize,
     pub class_traits: HashMap<String, Vec<String>>,
     pub class_methods: HashMap<String, HashMap<String, FunctionSig>>,
+    pub impl_associated_types: HashMap<(String, String), Type>,
     pub current_class: Option<String>,
     pub generated_class_decls: Vec<TypedStatement>,
     pub generated_func_decls: Vec<TypedStatement>,
@@ -969,6 +976,7 @@ impl TypeChecker {
             next_trait_slot: 1,
             class_traits: HashMap::new(),
             class_methods: HashMap::new(),
+            impl_associated_types: HashMap::new(),
             current_class: None,
             generated_class_decls: Vec::new(),
             generated_func_decls: Vec::new(),
@@ -981,6 +989,86 @@ impl TypeChecker {
             closure_counter: 0,
             errors: Vec::new(),
         }
+    }
+
+    pub fn type_satisfies_trait(&self, ty: &Type, trait_name: &str) -> bool {
+        if trait_name == "Any" {
+            return true;
+        }
+
+        match trait_name {
+            "Display" | "ToString" => {
+                match ty {
+                    Type::Int | Type::Float | Type::Bool | Type::String | Type::U8 => return true,
+                    Type::Class(name) => {
+                        if let Some(traits) = self.class_traits.get(name) {
+                            if traits.iter().any(|t| t == trait_name || t == "Display" || t == "ToString") {
+                                return true;
+                            }
+                        }
+                        if let Some(methods) = self.class_methods.get(name) {
+                            if methods.contains_key("to_string") {
+                                return true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            "Clone" => {
+                match ty {
+                    Type::Int | Type::Float | Type::Bool | Type::String | Type::U8 | Type::List | Type::Map => return true,
+                    Type::Class(name) => {
+                        if let Some(traits) = self.class_traits.get(name) {
+                            if traits.iter().any(|t| t == trait_name) {
+                                return true;
+                            }
+                        }
+                        if let Some(methods) = self.class_methods.get(name) {
+                            if methods.contains_key("clone") {
+                                return true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            "Debug" => return true,
+            "Comparable" | "Ord" | "Eq" => {
+                match ty {
+                    Type::Int | Type::Float | Type::Bool | Type::String | Type::U8 => return true,
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+
+        match ty {
+            Type::Class(class_name) => {
+                if let Some(traits) = self.class_traits.get(class_name) {
+                    if traits.iter().any(|t| t == trait_name) {
+                        return true;
+                    }
+                }
+                if let Some(trait_def) = self.traits.get(trait_name) {
+                    if let Some(methods) = self.class_methods.get(class_name) {
+                        if trait_def.methods.keys().all(|m| methods.contains_key(m)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            Type::Generic { base, .. } => {
+                if let Some(traits) = self.class_traits.get(base) {
+                    if traits.iter().any(|t| t == trait_name) {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        false
     }
 
     pub fn instantiate_generic_class(&mut self, base: &str, type_args: &[Type]) -> Result<String> {
@@ -999,6 +1087,22 @@ impl TypeChecker {
             ).into());
         }
 
+        // Validate trait bounds for generic class
+        for (tp, actual_ty) in template.type_params.iter().zip(type_args.iter()) {
+            for bound in &tp.bounds {
+                if !self.type_satisfies_trait(actual_ty, bound) {
+                    return Err(RozeError::type_error(
+                        format!(
+                            "Type '{}' does not satisfy trait bound '{}' required by parameter '{}'",
+                            actual_ty, bound, tp.name
+                        ),
+                        template.location.line,
+                        template.location.column,
+                    ).into());
+                }
+            }
+        }
+
         let spec_name = specialized_name(base, type_args);
         if self.instantiated_classes.contains(&spec_name) {
             return Ok(spec_name);
@@ -1006,7 +1110,7 @@ impl TypeChecker {
         self.instantiated_classes.insert(spec_name.clone());
 
         let map: HashMap<String, String> = template.type_params.iter().zip(type_args.iter())
-            .map(|(param, ty)| (param.clone(), ty.to_string()))
+            .map(|(param, ty)| (param.name.clone(), ty.to_string()))
             .collect();
 
         let mut specialized_fields = Vec::with_capacity(template.fields.len());
@@ -1047,6 +1151,22 @@ impl TypeChecker {
             ).into());
         }
 
+        // Validate trait bounds for generic function
+        for (tp, actual_ty) in template.type_params.iter().zip(type_args.iter()) {
+            for bound in &tp.bounds {
+                if !self.type_satisfies_trait(actual_ty, bound) {
+                    return Err(RozeError::type_error(
+                        format!(
+                            "Type '{}' does not satisfy trait bound '{}' required by parameter '{}'",
+                            actual_ty, bound, tp.name
+                        ),
+                        template.location.line,
+                        template.location.column,
+                    ).into());
+                }
+            }
+        }
+
         let spec_name = specialized_name(base, type_args);
         if self.instantiated_functions.contains(&spec_name) {
             return Ok(spec_name);
@@ -1054,7 +1174,7 @@ impl TypeChecker {
         self.instantiated_functions.insert(spec_name.clone());
 
         let map: HashMap<String, String> = template.type_params.iter().zip(type_args.iter())
-            .map(|(param, ty)| (param.clone(), ty.to_string()))
+            .map(|(param, ty)| (param.name.clone(), ty.to_string()))
             .collect();
 
         let subbed_params: Vec<FunctionParam> = template.params.iter().map(|p| FunctionParam {
@@ -1118,11 +1238,11 @@ impl TypeChecker {
 
         let mut result = Vec::with_capacity(template.type_params.len());
         for tp in &template.type_params {
-            if let Some(ty) = inferred.get(tp) {
+            if let Some(ty) = inferred.get(&tp.name) {
                 result.push(ty.clone());
             } else {
                 return Err(RozeError::type_error(
-                    format!("Could not infer type parameter '{}' for function '{}'", tp, template.name),
+                    format!("Could not infer type parameter '{}' for function '{}'", tp.name, template.name),
                     call_loc.line,
                     call_loc.column,
                 ).into());
@@ -1157,11 +1277,11 @@ impl TypeChecker {
 
         let mut result = Vec::with_capacity(template.type_params.len());
         for tp in &template.type_params {
-            if let Some(ty) = inferred.get(tp) {
+            if let Some(ty) = inferred.get(&tp.name) {
                 result.push(ty.clone());
             } else {
                 return Err(RozeError::type_error(
-                    format!("Could not infer type parameter '{}' for class '{}'", tp, template.name),
+                    format!("Could not infer type parameter '{}' for class '{}'", tp.name, template.name),
                     ctor_loc.line,
                     ctor_loc.column,
                 ).into());
@@ -1251,6 +1371,20 @@ impl TypeChecker {
             Type::Enum(name.to_string())
         } else if self.classes.contains_key(name) {
             Type::Class(name.to_string())
+        } else if let Some(ref c) = self.current_class {
+            if let Some(ty) = self.impl_associated_types.get(&(c.clone(), trimmed.to_string())) {
+                ty.clone()
+            } else {
+                Type::from_name(name)
+            }
+        } else if let Some(pos) = trimmed.find("::") {
+            let class_part = trimmed[..pos].trim();
+            let item_part = trimmed[pos + 2..].trim();
+            if let Some(ty) = self.impl_associated_types.get(&(class_part.to_string(), item_part.to_string())) {
+                ty.clone()
+            } else {
+                Type::from_name(name)
+            }
         } else {
             Type::from_name(name)
         }
@@ -1335,7 +1469,7 @@ impl TypeChecker {
         }
 
         for stmt in &program.statements {
-            if let Statement::TraitDecl { name, methods, location } = stmt {
+            if let Statement::TraitDecl { name, associated_types, methods, location } = stmt {
                 let mut method_map = HashMap::new();
                 for m in methods {
                     let mut param_types = Vec::with_capacity(m.params.len());
@@ -1354,6 +1488,7 @@ impl TypeChecker {
                 }
                 self.traits.insert(name.clone(), TraitDef {
                     name: name.clone(),
+                    associated_types: associated_types.clone(),
                     methods: method_map,
                     location: location.clone(),
                 });
@@ -1361,7 +1496,12 @@ impl TypeChecker {
         }
 
         for stmt in &program.statements {
-            if let Statement::ImplDecl { trait_name, class_name, methods, location } = stmt {
+            if let Statement::ImplDecl { trait_name, class_name, associated_types, methods, location } = stmt {
+                for (assoc_name, target_ty_str) in associated_types {
+                    let resolved_ty = self.resolve_type_name(target_ty_str);
+                    self.impl_associated_types.insert((class_name.clone(), assoc_name.clone()), resolved_ty);
+                }
+
                 if let Some(t_name) = trait_name {
                     let trait_def = self.traits.get(t_name).cloned().ok_or_else(|| {
                         RozeError::type_error(format!("Undefined trait '{}'", t_name), location.line, location.column)
@@ -1887,7 +2027,7 @@ impl TypeChecker {
                     location: location.clone(),
                 }))
             }
-            Statement::TraitDecl { name, methods, location } => {
+            Statement::TraitDecl { name, associated_types: _, methods, location } => {
                 let mut typed_methods = Vec::with_capacity(methods.len());
                 for m in methods {
                     let mut typed_params = Vec::with_capacity(m.params.len());
@@ -1912,7 +2052,7 @@ impl TypeChecker {
                     location: location.clone(),
                 }))
             }
-            Statement::ImplDecl { trait_name, class_name, methods, location } => {
+            Statement::ImplDecl { trait_name, class_name, associated_types: _, methods, location } => {
                 self.current_class = Some(class_name.clone());
                 let mut typed_methods = Vec::with_capacity(methods.len());
                 for m in methods {

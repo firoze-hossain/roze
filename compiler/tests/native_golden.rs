@@ -2913,5 +2913,24 @@ fn self_hosting_compiler_bootstrap_native() {
     assert!(status.success(), "Self-hosting bootstrap test or test programs failed!");
 }
 
+#[test]
+fn native_trait_bounds_and_associated_types() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("trait_bounds.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read trait_bounds.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("trait_bounds_test", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    assert!(out.contains("=== Single Trait Bound ==="));
+    assert!(out.contains("=== Multiple Trait Bounds ==="));
+    assert!(out.contains("=== Where Clause ==="));
+    assert!(out.contains("=== Generic Class with Bound ==="));
+    assert!(out.contains("=== Associated Types ==="));
+    assert!(out.contains("trait bounds and associated types verified!"));
+}
+
+
 
 

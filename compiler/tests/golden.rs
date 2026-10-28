@@ -822,3 +822,50 @@ Roze Keyboard
 true";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
+
+#[test]
+fn trait_bounds_and_associated_types() {
+    let (stdout, stderr, ok) = run_fixture("trait_bounds.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+=== Single Trait Bound ===
+User id:
+42
+Product price:
+199
+=== Multiple Trait Bounds ===
+User id:
+42
+42
+=== Where Clause ===
+User id:
+42
+Product price:
+199
+=== Generic Class with Bound ===
+User id:
+42
+=== Associated Types ===
+777
+trait bounds and associated types verified!";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
+fn trait_bound_violation_reports_cleanly() {
+    let dir = scratch_dir("trait_bound_violation");
+    std::fs::write(
+        dir.join("bound_error.roze"),
+        "trait Describable { func desc() -> string; }\nclass Item { id: int }\nfunc inspect<T: Describable>(x: T) { x.desc(); }\nfunc main() { let i = new Item(1); inspect<Item>(i); }\n",
+    ).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("bound_error.roze")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke roze");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Type 'Item' does not satisfy trait bound 'Describable'"), "got:\n{}", stderr);
+}
+

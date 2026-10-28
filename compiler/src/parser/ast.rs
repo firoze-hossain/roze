@@ -11,6 +11,40 @@ impl Location {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeParam {
+    pub name: String,
+    pub bounds: Vec<String>,
+}
+
+impl TypeParam {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            bounds: Vec::new(),
+        }
+    }
+
+    pub fn with_bounds(name: impl Into<String>, bounds: Vec<String>) -> Self {
+        Self {
+            name: name.into(),
+            bounds,
+        }
+    }
+}
+
+impl From<String> for TypeParam {
+    fn from(name: String) -> Self {
+        Self::new(name)
+    }
+}
+
+impl From<&str> for TypeParam {
+    fn from(name: &str) -> Self {
+        Self::new(name)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Program {
     pub statements: Vec<Statement>,
@@ -46,7 +80,7 @@ pub enum Statement {
     },
     Function {
         name: String,
-        type_params: Vec<String>,
+        type_params: Vec<TypeParam>,
         params: Vec<FunctionParam>,
         return_type: Option<String>,
         body: Box<Statement>,
@@ -85,7 +119,7 @@ pub enum Statement {
     /// since it's already exactly "a name plus an optional type name."
     ClassDecl {
         name: String,
-        type_params: Vec<String>,
+        type_params: Vec<TypeParam>,
         fields: Vec<FunctionParam>,
         location: Location,
     },
@@ -102,7 +136,7 @@ pub enum Statement {
     /// `enum Name { Variant1, Variant2(Type), ... }`
     EnumDecl {
         name: String,
-        type_params: Vec<String>,
+        type_params: Vec<TypeParam>,
         variants: Vec<EnumVariant>,
         location: Location,
     },
@@ -115,6 +149,7 @@ pub enum Statement {
     /// `trait Name { func method(...) -> Type; ... }`
     TraitDecl {
         name: String,
+        associated_types: Vec<String>,
         methods: Vec<TraitMethod>,
         location: Location,
     },
@@ -122,6 +157,7 @@ pub enum Statement {
     ImplDecl {
         trait_name: Option<String>,
         class_name: String,
+        associated_types: Vec<(String, String)>,
         methods: Vec<Statement>,
         location: Location,
     },

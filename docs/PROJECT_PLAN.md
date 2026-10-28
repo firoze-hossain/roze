@@ -421,3 +421,32 @@ in order:
 4. **Start the adoption track this week, not after some phase
    completes.** Write the honest "what worked, what didn't" post about
    using Roze for something real, today, with what already exists.
+
+---
+
+# 🚀 The 6-Month Master Execution Plan (Java 25 & Rust 1.99.1 Parity)
+
+The master project spreadsheet has been regenerated and updated in:
+- `ROZE_PROJECT_PLAN.xlsx` (Workspace root)
+- `docs/ROZE_PROJECT_PLAN.xlsx` (Documentation root)
+
+### Summary of the 6-Month Milestones
+
+| Month | Strategic Focus | Key Deliverables | Parity Benchmark |
+| :--- | :--- | :--- | :--- |
+| **Month 1 (W01-W04)** | **Advanced Type System & Concurrency** | Generics with Trait Bounds (`<T: Display>`), Deep Pattern Matching with Guards, Comptime expressions, M:N Green Threads (1M fibers), Async/Await state machines, Lock-free Atomics & Channels. | Rust 1.99 trait system & Java 25 Loom Virtual Threads |
+| **Month 2 (W05-W08)** | **Systems Core & Bare-Metal OS Kernel** | Primitive Types (`i8`-`u128`, `f32`, `f64`), Hardware SIMD (`Vec4f`/`Vec8f` AVX-512/NEON), Advanced Collections (`VecDeque`, `BTreeMap`, `BinaryHeap`), Bare-metal `--target freestanding`, 4-level paging manager, IDT/GDT interrupt handlers, APIC, UART & GOP drivers. | Rust `#![no_std]` & Zig freestanding |
+| **Month 3 (W09-W12)** | **Cybersecurity & Enterprise Web (RozeBoot)** | Raw packet sockets (`AF_PACKET`/`BPF`), Packet crafter/dissector, 100k port/s SYN scanner, Pure TLS 1.3 & Crypto (AES-256-GCM, Ed25519), Binary disassembler, RozeBoot 2.0 (HTTP/2 & HTTP/3, `@RestController`, IoC container, HikariCP ORM, JWT, OpenAPI). | Spring Boot 3 on Java 25 & Python Scapy |
+| **Month 4 (W13-W16)** | **Native AI / ML & 2D/3D Game Dev** | N-D `Tensor<T, D>`, AVX-512/CUDA GEMM kernels, Dynamic Autograd tape, Native GGUF/ONNX loaders, Local LLaMA 3 inference with KV-cache, 3D Game Math (`Quat`, `Mat4`), Graphics HAL (Vulkan, Metal, DirectX 12), Archetype ECS, 3D Spatial Audio, Rigid Body Physics. | PyTorch / llama.cpp & Bevy / Raylib |
+| **Month 5 (W17-W20)** | **Desktop GUI & Standard Utilities** | Cross-platform Windowing (Win32/Cocoa/Wayland), GPU 2D Vector Canvas (Skia-grade), Reactive UI ("RozeUI") with Flexbox layout, Native Widget Kit, Embedded Webview, Linear-time Regex (DFA/NFA), Date/Time (JSR-310), Universal Serialization (JSON/TOML/MsgPack/Protobuf). | JavaFX / Tauri & Java 25 java.time |
+| **Month 6 (W21-W26)** | **Pure Roze Self-Hosting & Official Launch** | Roze-in-Roze Compiler v2.0 (Frontend, Type Checker, SSA Optimizer, Native Code Generator in pure Roze), 100% Decommissioning of Rust, 3-Stage Bootstrap Fixpoint Verification (`diff roze_stage2 roze_stage3` == 0 bytes), Monolithic CLI (`roze`), Package Registry Hub, LSP IDE Extension, Roze v2.0 "Prometheus" Launch. | Rustc self-hosting & Go gc autonomy |
+
+---
+
+### Sprint Execution Progress Log
+
+| Task ID | Sprint | Module | Deliverable | Status | Verification & Test Coverage |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **M1-T01** | Sprint 1 (W01-W02) | Core Type System | **Advanced Generics & Trait Bounds**: Trait bounds syntax (`<T: Display + Clone>`), `where` clauses (`where A: Printable, B: Cloneable`), associated types in traits (`trait Iterator { type Item; }`), and compile-time monomorphization engine validation. | **Completed** ✅ | `compiler/tests/fixtures/trait_bounds.roze` passed on JVM & Native Cranelift backends; golden integration tests `trait_bounds_and_associated_types` and `native_trait_bounds_and_associated_types` passing. |
+
+

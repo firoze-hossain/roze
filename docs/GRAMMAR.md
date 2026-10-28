@@ -30,7 +30,8 @@ Keyword         = "func"     | "let"      | "var"      | "if"       | "else"
                 | "while"    | "for"      | "return"   | "class"    | "new"
                 | "extern"   | "import"   | "enum"     | "match"    | "trait"
                 | "impl"     | "unsafe"   | "null"     | "true"     | "false"
-                | "as"       | "in"       | "break"    | "continue" ;
+                | "as"       | "in"       | "break"    | "continue" | "type"
+                | "where" ;
 ```
 
 ### 2.3 Identifiers
@@ -86,12 +87,17 @@ TopLevelItem    = ImportDecl
 
 ImportDecl      = "import" StringLiteral [ ";" ] ;
 
-FunctionDecl    = "func" Identifier [ TypeParams ] "(" [ ParameterList ] ")" [ "->" Type ] Block ;
+FunctionDecl    = "func" Identifier [ TypeParams ] "(" [ ParameterList ] ")" [ "->" Type ] [ WhereClause ] Block ;
 
 ParameterList   = Parameter { "," Parameter } ;
 Parameter       = Identifier ":" Type ;
 
-TypeParams      = "<" Identifier { "," Identifier } ">" ;
+TypeParams      = "<" TypeParam { "," TypeParam } ">" ;
+TypeParam       = Identifier [ ":" TraitBoundList ] ;
+TraitBoundList  = Identifier { "+" Identifier } ;
+
+WhereClause     = "where" WherePredicate { "," WherePredicate } ;
+WherePredicate  = Identifier ":" TraitBoundList ;
 ```
 
 ### 3.2 Types
@@ -122,10 +128,14 @@ EnumVariant     = Identifier [ "(" ParameterList ")" ] ;
 
 ### 3.5 Trait & Implementation Declarations
 ```ebnf
-TraitDecl       = "trait" Identifier [ TypeParams ] "{" { TraitMethodDecl } "}" ;
-TraitMethodDecl = "func" Identifier "(" [ ParameterList ] ")" [ "->" Type ] ";" ;
+TraitDecl          = "trait" Identifier [ TypeParams ] "{" { TraitItem } "}" ;
+TraitItem          = TraitMethodDecl | AssociatedTypeDecl ;
+TraitMethodDecl    = "func" Identifier "(" [ ParameterList ] ")" [ "->" Type ] ";" ;
+AssociatedTypeDecl = "type" Identifier ";" ;
 
-ImplDecl        = "impl" [ TypeParams ] Identifier "for" Type "{" { FunctionDecl } "}" ;
+ImplDecl           = "impl" [ TypeParams ] Identifier "for" Type "{" { ImplItem } "}" ;
+ImplItem           = FunctionDecl | AssociatedTypeDef ;
+AssociatedTypeDef  = "type" Identifier "=" Type ";" ;
 ```
 
 ### 3.6 Extern Declarations

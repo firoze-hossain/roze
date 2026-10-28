@@ -1,0 +1,63 @@
+// compiler/tests/fixtures/async_await.roze
+//
+// Tests Async Runtime: Async / Await State-Machine Engine (M1-T05)
+// - async func declaration and state machine lowering
+// - await expression cooperative execution
+// - Future<T> polling contract (future_poll)
+// - Immediate futures (future_ready)
+// - Timer reactor integration (async_sleep)
+
+async func compute(x: int) -> int {
+    let doubled = x * 2;
+    return doubled;
+}
+
+async func add_numbers(a: int, b: int) -> int {
+    return a + b;
+}
+
+async func greet(name: string) -> string {
+    return "Hello, " + name + "!";
+}
+
+async func delayed_task(val: int) -> int {
+    let timer = async_sleep(5);
+    await timer;
+    return val + 100;
+}
+
+async func chained_async(start: int) -> int {
+    let step1 = await compute(start);
+    let step2 = await add_numbers(step1, 10);
+    return step2;
+}
+
+func main() {
+    // 1. Immediate future via future_ready & future_poll
+    let immediate = future_ready(42);
+    let is_ready = future_poll(immediate);
+    println(is_ready);
+    let val1 = await immediate;
+    println(val1);
+
+    // 2. Simple async function
+    let f1 = compute(21);
+    let res1 = await f1;
+    println(res1);
+
+    // 3. Direct await on async function call
+    let res2 = await add_numbers(30, 12);
+    println(res2);
+
+    // 4. Async string return
+    let greeting = await greet("Roze");
+    println(greeting);
+
+    // 5. Timer reactor integration with async_sleep
+    let delayed_res = await delayed_task(50);
+    println(delayed_res);
+
+    // 6. Chained async/await calls
+    let chained_res = await chained_async(15);
+    println(chained_res);
+}

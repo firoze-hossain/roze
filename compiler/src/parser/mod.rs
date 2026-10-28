@@ -104,6 +104,7 @@ impl Parser {
         match &self.current().token {
             Token::Import => self.parse_import(),
             Token::Func => self.parse_function(),
+            Token::Async => self.parse_async_function(),
             Token::Let => self.parse_let(),
             Token::Return => self.parse_return(),
             Token::LeftBrace => self.parse_block(),
@@ -188,6 +189,22 @@ impl Parser {
     }
 
     fn parse_function(&mut self) -> Result<Statement> {
+        self.parse_function_with_async(false)
+    }
+
+    fn parse_async_function(&mut self) -> Result<Statement> {
+        self.advance(); // Skip 'async'
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        if !self.check(&Token::Func) {
+            return Err(self.error("Expected 'func' after 'async' keyword")
+                .context_hint("async function declarations look like: async func name(...) -> Type { ... }"));
+        }
+        self.parse_function_with_async(true)
+    }
+
+    fn parse_function_with_async(&mut self, is_async: bool) -> Result<Statement> {
         let location = Location::new(self.current().line, self.current().column);
 
         // Skip 'func' token
@@ -371,6 +388,7 @@ impl Parser {
             params,
             return_type,
             body: Box::new(body),
+            is_async,
             location,
         })
     }
@@ -1734,6 +1752,18 @@ impl Parser {
 
     fn parse_unary(&mut self) -> Result<Expression> {
         let location = Location::new(self.current().line, self.current().column);
+
+        if self.check(&Token::Await) {
+            self.advance(); // Skip 'await'
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            let operand = self.parse_unary()?;
+            return Ok(Expression::Await {
+                expr: Box::new(operand),
+                location,
+            });
+        }
 
         let operator = match &self.current().token {
             Token::Not => { self.advance(); Some(UnaryOperator::Not) }

@@ -696,6 +696,246 @@ void __roze_channel_release(int64_t chan_val) {
     }
 }
 
+// ============================================================================
+// 4. Async / Await State-Machine Engine & Future<T> Runtime (M1-T05)
+// ============================================================================
+
+#define ROZE_MAGIC_FUTURE 0x524F5A4655545552ULL /* "ROZFUTUR" */
+
+#define ROZE_FUTURE_PENDING 0
+#define ROZE_FUTURE_READY   1
+#define ROZE_FUTURE_ERROR   2
+
+typedef struct RozeFuture {
+    uint64_t refcount;
+    uint64_t magic;
+    _Atomic int status;
+    int64_t result;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+    struct RozeFuture* next_free;
+} RozeFuture;
+
+#define ROZE_FUTURES_PER_SLAB 512
+
+typedef struct RozeFutureSlab {
+    RozeFuture futures[ROZE_FUTURES_PER_SLAB];
+    struct RozeFutureSlab* next;
+} RozeFutureSlab;
+
+typedef struct {
+    pthread_mutex_t lock;
+    RozeFuture* free_head;
+    RozeFutureSlab* slabs;
+} RozeFuturePool;
+
+static RozeFuturePool g_future_pool = { PTHREAD_MUTEX_INITIALIZER, NULL, NULL };
+
+static RozeFuture* roze_future_alloc(void) {
+    pthread_mutex_lock(&g_future_pool.lock);
+    if (!g_future_pool.free_head) {
+        RozeFutureSlab* slab = (RozeFutureSlab*)calloc(1, sizeof(RozeFutureSlab));
+        if (!slab) {
+            pthread_mutex_unlock(&g_future_pool.lock);
+            return NULL;
+        }
+        slab->next = g_future_pool.slabs;
+        g_future_pool.slabs = slab;
+        for (int i = 0; i < ROZE_FUTURES_PER_SLAB; i++) {
+            pthread_mutex_init(&slab->futures[i].lock, NULL);
+            pthread_cond_init(&slab->futures[i].cond, NULL);
+            slab->futures[i].next_free = g_future_pool.free_head;
+            g_future_pool.free_head = &slab->futures[i];
+        }
+    }
+    RozeFuture* f = g_future_pool.free_head;
+    g_future_pool.free_head = f->next_free;
+    pthread_mutex_unlock(&g_future_pool.lock);
+
+    f->magic = ROZE_MAGIC_FUTURE;
+    f->refcount = 1;
+    f->status = ROZE_FUTURE_PENDING;
+    f->result = 0;
+    f->next_free = NULL;
+    return f;
+}
+
+static void roze_future_recycle(RozeFuture* f) {
+    if (!f || f->magic != ROZE_MAGIC_FUTURE) return;
+    f->magic = 0;
+    pthread_mutex_lock(&g_future_pool.lock);
+    f->next_free = g_future_pool.free_head;
+    g_future_pool.free_head = f;
+    pthread_mutex_unlock(&g_future_pool.lock);
+}
+
+void __roze_future_retain(int64_t fut_handle) {
+    if (!fut_handle) return;
+    RozeFuture* f = (RozeFuture*)fut_handle;
+    if (f->magic == ROZE_MAGIC_FUTURE) {
+        __atomic_fetch_add(&f->refcount, 1, __ATOMIC_SEQ_CST);
+    }
+}
+
+void __roze_future_release(int64_t fut_handle) {
+    if (!fut_handle) return;
+    RozeFuture* f = (RozeFuture*)fut_handle;
+    if (f->magic == ROZE_MAGIC_FUTURE) {
+        if (__atomic_fetch_sub(&f->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+            roze_future_recycle(f);
+        }
+    }
+}
+
+typedef struct {
+    RozeFuture* future;
+    RozeClosure* closure;
+} RozeFutureSpawnTask;
+
+static void* roze_future_task_worker(void* arg) {
+    RozeFutureSpawnTask* task = (RozeFutureSpawnTask*)arg;
+    RozeFuture* f = task->future;
+    RozeClosure* closure = task->closure;
+    free(task);
+
+    int64_t res = 0;
+    if (closure && closure->fn_ptr) {
+        res = (int64_t)closure->fn_ptr(closure);
+    }
+    if (closure) {
+        if (__atomic_fetch_sub(&closure->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+            free(closure);
+        }
+    }
+
+    pthread_mutex_lock(&f->lock);
+    f->result = res;
+    __atomic_store_n(&f->status, ROZE_FUTURE_READY, __ATOMIC_RELEASE);
+    pthread_cond_broadcast(&f->cond);
+    pthread_mutex_unlock(&f->lock);
+
+    __roze_future_release((int64_t)f);
+    return NULL;
+}
+
+int64_t __roze_async_spawn(void* closure_ptr) {
+    if (!closure_ptr) return 0;
+    RozeFuture* f = roze_future_alloc();
+    if (!f) return 0;
+    f->refcount = 2; // caller + worker
+    f->status = ROZE_FUTURE_PENDING;
+
+    RozeClosure* closure = (RozeClosure*)closure_ptr;
+    __atomic_fetch_add(&closure->refcount, 1, __ATOMIC_SEQ_CST);
+
+    RozeFutureSpawnTask* task = (RozeFutureSpawnTask*)malloc(sizeof(RozeFutureSpawnTask));
+    task->future = f;
+    task->closure = closure;
+
+    pthread_t th;
+    if (pthread_create(&th, NULL, roze_future_task_worker, task) == 0) {
+        pthread_detach(th);
+    } else {
+        roze_future_task_worker(task);
+    }
+
+    return (int64_t)f;
+}
+
+int64_t __roze_future_await(int64_t fut_handle) {
+    if (!fut_handle) return 0;
+    RozeFuture* f = (RozeFuture*)fut_handle;
+    if (f->magic != ROZE_MAGIC_FUTURE) return fut_handle;
+
+    // Fast path: already ready
+    if (__atomic_load_n(&f->status, __ATOMIC_ACQUIRE) == ROZE_FUTURE_READY) {
+        return f->result;
+    }
+
+    // Cooperative await loop
+    while (__atomic_load_n(&f->status, __ATOMIC_ACQUIRE) != ROZE_FUTURE_READY) {
+        pthread_mutex_lock(&f->lock);
+        if (__atomic_load_n(&f->status, __ATOMIC_ACQUIRE) == ROZE_FUTURE_READY) {
+            pthread_mutex_unlock(&f->lock);
+            break;
+        }
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_nsec += 250000; // 0.25 ms sleep per wait
+        if (ts.tv_nsec >= 1000000000) {
+            ts.tv_sec += 1;
+            ts.tv_nsec -= 1000000000;
+        }
+        pthread_cond_timedwait(&f->cond, &f->lock, &ts);
+        pthread_mutex_unlock(&f->lock);
+        sched_yield();
+    }
+
+    return f->result;
+}
+
+int64_t __roze_future_poll(int64_t fut_handle) {
+    if (!fut_handle) return 1;
+    RozeFuture* f = (RozeFuture*)fut_handle;
+    if (f->magic != ROZE_MAGIC_FUTURE) return 1;
+    return __atomic_load_n(&f->status, __ATOMIC_ACQUIRE) == ROZE_FUTURE_READY ? 1 : 0;
+}
+
+int64_t __roze_future_ready(int64_t val) {
+    RozeFuture* f = roze_future_alloc();
+    if (!f) return 0;
+    f->refcount = 1;
+    f->status = ROZE_FUTURE_READY;
+    f->result = val;
+    return (int64_t)f;
+}
+
+typedef struct {
+    RozeFuture* future;
+    int64_t ms;
+} RozeSleepTask;
+
+static void* roze_sleep_worker(void* arg) {
+    RozeSleepTask* task = (RozeSleepTask*)arg;
+    RozeFuture* f = task->future;
+    int64_t ms = task->ms;
+    free(task);
+
+    struct timespec req;
+    req.tv_sec = ms / 1000;
+    req.tv_nsec = (ms % 1000) * 1000000L;
+    nanosleep(&req, NULL);
+
+    pthread_mutex_lock(&f->lock);
+    f->result = ms;
+    __atomic_store_n(&f->status, ROZE_FUTURE_READY, __ATOMIC_RELEASE);
+    pthread_cond_broadcast(&f->cond);
+    pthread_mutex_unlock(&f->lock);
+
+    __roze_future_release((int64_t)f);
+    return NULL;
+}
+
+int64_t __roze_async_sleep(int64_t ms) {
+    RozeFuture* f = roze_future_alloc();
+    if (!f) return 0;
+    f->refcount = 2; // caller + worker
+    f->status = ROZE_FUTURE_PENDING;
+
+    RozeSleepTask* task = (RozeSleepTask*)malloc(sizeof(RozeSleepTask));
+    task->future = f;
+    task->ms = ms;
+
+    pthread_t th;
+    if (pthread_create(&th, NULL, roze_sleep_worker, task) == 0) {
+        pthread_detach(th);
+    } else {
+        roze_sleep_worker(task);
+    }
+
+    return (int64_t)f;
+}
+
 // Freestanding VGA Text Driver Stubs for Hosted Native Target
 __attribute__((weak)) void vga_clear(void) {}
 __attribute__((weak)) void vga_print(const char* s) { if (s) fputs(s, stdout); }

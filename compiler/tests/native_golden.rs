@@ -3088,8 +3088,24 @@ fn native_comptime_metaprogramming_evaluation() {
     assert!(out.contains("M1-T03 Comptime Fully Verified!"));
 }
 
-
-
-
-
+#[test]
+fn native_async_await_state_machine_engine() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("async_await.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read async_await.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("async_await_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    let expected = "\
+true
+42
+42
+42
+Hello, Roze!
+150
+40";
+    assert_eq!(out.trim_end(), expected);
+}
 

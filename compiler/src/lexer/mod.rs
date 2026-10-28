@@ -290,6 +290,8 @@ impl<'a> Lexer<'a> {
                             "type" => Token::Type,
                             "where" => Token::Where,
                             "comptime" => Token::Comptime,
+                            "async" => Token::Async,
+                            "await" => Token::Await,
                             "true" => Token::True,
                             "false" => Token::False,
                             "null" => Token::Null,

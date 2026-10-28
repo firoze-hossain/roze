@@ -244,7 +244,7 @@ s1_rows = [
         ("M1-T05", 8), ("Month 1", 3), ("Sprint 2 (W03-W04)", 8), "Async Runtime", "Async / Await State-Machine Engine",
         "Lower 'async func' and 'await' expressions to zero-allocation state machine generator structs. Native Future<T> polling contract with reactor integration.",
         "Full parity with Rust async/await and modern Java CompletableFuture / Structured Concurrency.",
-        "Web Microservices, Network I/O", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Web Microservices, Network I/O", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M1-T06", 8), ("Month 1", 3), ("Sprint 2 (W03-W04)", 8), "Synchronization", "Lock-Free Primitives & Channels",

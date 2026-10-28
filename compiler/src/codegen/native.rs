@@ -205,6 +205,9 @@ fn collect_closures_and_refs_from_expr(
         TypedExpressionKind::Try(inner) => {
             collect_closures_and_refs_from_expr(inner, closures, func_refs);
         }
+        TypedExpressionKind::Await(inner) => {
+            collect_closures_and_refs_from_expr(inner, closures, func_refs);
+        }
         TypedExpressionKind::MethodCall { object, arguments, .. } |
         TypedExpressionKind::TraitMethodCall { object, arguments, .. } => {
             collect_closures_and_refs_from_expr(object, closures, func_refs);
@@ -760,6 +763,13 @@ long __roze_channel_is_closed(long ch) { (void)ch; return 1; }
 long __roze_channel_len(long ch) { (void)ch; return 0; }
 void __roze_channel_retain(long ch) { (void)ch; }
 void __roze_channel_release(long ch) { (void)ch; }
+long __roze_async_spawn(long f) { (void)f; return 0; }
+long __roze_future_await(long f) { (void)f; return 0; }
+long __roze_future_poll(long f) { (void)f; return 1; }
+long __roze_future_ready(long v) { return v; }
+long __roze_async_sleep(long ms) { (void)ms; return 0; }
+void __roze_future_retain(long f) { (void)f; }
+void __roze_future_release(long f) { (void)f; }
 
 // 6. Bootstrap entry point called by entry64
 __attribute__((weak))
@@ -2799,6 +2809,13 @@ struct ConcurrencyRuntime {
     channel_len_id: FuncId,
     channel_retain_id: FuncId,
     channel_release_id: FuncId,
+    future_spawn_id: FuncId,
+    future_await_id: FuncId,
+    future_poll_id: FuncId,
+    future_ready_id: FuncId,
+    async_sleep_id: FuncId,
+    future_retain_id: FuncId,
+    future_release_id: FuncId,
 }
 
 fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyRuntime> {
@@ -2868,6 +2885,21 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
     let channel_release_id = module.declare_function("__roze_channel_release", Linkage::Import, &i64_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
 
+    let future_spawn_id = module.declare_function("__roze_async_spawn", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let future_await_id = module.declare_function("__roze_future_await", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let future_poll_id = module.declare_function("__roze_future_poll", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let future_ready_id = module.declare_function("__roze_future_ready", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let async_sleep_id = module.declare_function("__roze_async_sleep", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let future_retain_id = module.declare_function("__roze_future_retain", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let future_release_id = module.declare_function("__roze_future_release", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
     Ok(ConcurrencyRuntime {
         thread_spawn_id,
         thread_join_id,
@@ -2892,6 +2924,13 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
         channel_len_id,
         channel_retain_id,
         channel_release_id,
+        future_spawn_id,
+        future_await_id,
+        future_poll_id,
+        future_ready_id,
+        async_sleep_id,
+        future_retain_id,
+        future_release_id,
     })
 }
 
@@ -4381,6 +4420,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
             }
+            Type::Generic { base, .. } if base == "Future" || base == "future" => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.future_retain_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
             Type::Generic { .. } => self.emit_class_retain(val),
             _ => Ok(()),
         }
@@ -4469,6 +4513,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             Type::Generic { base, .. } if base == "Fiber" || base == "fiber" => {
                 let release_ref = self.module.declare_func_in_func(self.concurrency.fiber_release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "Future" || base == "future" => {
+                let release_ref = self.module.declare_func_in_func(self.concurrency.future_release_id, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
@@ -5512,6 +5561,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     Ok(results[0])
                 }
             }
+            TypedExpressionKind::Await(inner) => {
+                let fut_val = self.compile_expression(inner)?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.future_await_id, self.builder.func);
+                let call_inst = self.builder.ins().call(func_ref, &[fut_val]);
+                let result = self.builder.inst_results(call_inst)[0];
+                self.release_if_fresh(inner, fut_val)?;
+                Ok(result)
+            }
         }
     }
 
@@ -5813,6 +5870,43 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let func_ref = self.module.declare_func_in_func(self.concurrency.fiber_stats_id, self.builder.func);
                 self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "future_spawn" | "__roze_async_spawn" if arguments.len() == 1 => {
+                let closure_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.future_spawn_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[closure_val]);
+                let result = self.builder.inst_results(call)[0];
+                return Ok(result);
+            }
+            "future_await" | "__roze_future_await" if arguments.len() == 1 => {
+                let handle_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.future_await_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[handle_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], handle_val)?;
+                return Ok(result);
+            }
+            "future_poll" | "__roze_future_poll" if arguments.len() == 1 => {
+                let handle_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.future_poll_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[handle_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], handle_val)?;
+                return Ok(result);
+            }
+            "future_ready" | "__roze_future_ready" if arguments.len() == 1 => {
+                let val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.future_ready_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[val]);
+                let result = self.builder.inst_results(call)[0];
+                return Ok(result);
+            }
+            "async_sleep" | "__roze_async_sleep" if arguments.len() == 1 => {
+                let ms_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.async_sleep_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ms_val]);
+                let result = self.builder.inst_results(call)[0];
+                return Ok(result);
             }
             "channel_new" => {
                 let cap_val = if arguments.len() == 1 {

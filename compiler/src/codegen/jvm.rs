@@ -1493,10 +1493,101 @@ class RozeChannel {
         }
     }
 }
+
+class RozeFuture {
+    public final java.util.concurrent.CompletableFuture<Object> cf;
+
+    public RozeFuture(java.util.concurrent.CompletableFuture<Object> cf) {
+        this.cf = cf;
+    }
+
+    public static RozeFuture supply(RozeFn fn) {
+        java.util.concurrent.CompletableFuture<Object> cf = new java.util.concurrent.CompletableFuture<>();
+        Runnable task = () -> {
+            try {
+                Object res = fn.apply();
+                cf.complete(res);
+            } catch (Throwable t) {
+                cf.completeExceptionally(t);
+            }
+        };
+        try {
+            Object ofVirtual = Thread.class.getMethod("ofVirtual").invoke(null);
+            ofVirtual.getClass().getMethod("start", Runnable.class).invoke(ofVirtual, task);
+        } catch (Throwable fallback) {
+            Thread t = new Thread(task);
+            t.setDaemon(true);
+            t.start();
+        }
+        return new RozeFuture(cf);
+    }
+
+    public static RozeFuture completed(Object val) {
+        return new RozeFuture(java.util.concurrent.CompletableFuture.completedFuture(val));
+    }
+
+    public Object awaitResult() {
+        try {
+            return this.cf.join();
+        } catch (java.util.concurrent.CompletionException ce) {
+            Throwable cause = ce.getCause();
+            if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+            throw new RuntimeException(cause);
+        }
+    }
+
+    public boolean isDone() {
+        return this.cf.isDone();
+    }
+}
 "#;
 
 const CONCURRENCY_HELPER_METHODS: &str = r#"
     private static final java.util.concurrent.atomic.AtomicLong __ROZE_ACTIVE_FIBERS = new java.util.concurrent.atomic.AtomicLong(0);
+
+    private static RozeFuture __roze_async_spawn(Object fnObj) {
+        RozeFn fn = (RozeFn) fnObj;
+        return RozeFuture.supply(fn);
+    }
+
+    private static Object __roze_future_await(Object futObj) {
+        if (futObj instanceof RozeFuture) {
+            return ((RozeFuture) futObj).awaitResult();
+        }
+        return futObj;
+    }
+
+    private static boolean __roze_future_poll(Object futObj) {
+        if (futObj instanceof RozeFuture) {
+            return ((RozeFuture) futObj).isDone();
+        }
+        return true;
+    }
+
+    private static RozeFuture __roze_future_ready(Object val) {
+        return RozeFuture.completed(val);
+    }
+
+    private static RozeFuture __roze_async_sleep(int ms) {
+        java.util.concurrent.CompletableFuture<Object> cf = new java.util.concurrent.CompletableFuture<>();
+        Runnable sleeper = () -> {
+            try {
+                Thread.sleep(ms);
+                cf.complete((long) ms);
+            } catch (InterruptedException e) {
+                cf.completeExceptionally(e);
+            }
+        };
+        try {
+            Object ofVirtual = Thread.class.getMethod("ofVirtual").invoke(null);
+            ofVirtual.getClass().getMethod("start", Runnable.class).invoke(ofVirtual, sleeper);
+        } catch (Throwable fallback) {
+            Thread t = new Thread(sleeper);
+            t.setDaemon(true);
+            t.start();
+        }
+        return new RozeFuture(cf);
+    }
 
     private static RozeFiberHandle __roze_fiber_spawn(Object fnObj) {
         RozeFn fn = (RozeFn) fnObj;
@@ -1897,6 +1988,11 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "fiber_id" => Some("int"),
         "fiber_count" => Some("int"),
         "fiber_stats" => Some("void"),
+        "future_spawn" | "__roze_async_spawn" => Some("RozeFuture"),
+        "future_await" | "__roze_future_await" => Some(OBJECT_TYPE),
+        "future_poll" | "__roze_future_poll" => Some("boolean"),
+        "future_ready" | "__roze_future_ready" => Some("RozeFuture"),
+        "async_sleep" | "__roze_async_sleep" => Some("RozeFuture"),
         "channel_new" => Some("RozeChannel"),
         "channel_send" | "send" => Some("boolean"),
         "channel_recv" | "recv" => Some(OBJECT_TYPE),
@@ -1997,6 +2093,8 @@ fn java_type_name(ty: &Type) -> String {
                 "RozeThreadHandle".to_string()
             } else if base == "Fiber" || base == "fiber" {
                 "RozeFiberHandle".to_string()
+            } else if base == "Future" || base == "future" {
+                "RozeFuture".to_string()
             } else {
                 escape_java_identifier(&crate::semantic::specialized_name(base, type_args))
             }
@@ -3147,7 +3245,7 @@ impl JavaSourceGenerator {
                 }
             }
             TypedExpressionKind::Call { function, arguments } => {
-                if (function == "list_get" || function == "map_get" || function == "channel_recv" || function == "recv" || function == "thread_join" || function == "fiber_join") && expr.type_ != Type::Unknown {
+                if (function == "list_get" || function == "map_get" || function == "channel_recv" || function == "recv" || function == "thread_join" || function == "fiber_join" || function == "future_await" || function == "__roze_future_await") && expr.type_ != Type::Unknown {
                     let mut call_buf = String::new();
                     self.generate_call(&mut call_buf, function, arguments)?;
                     source.push_str(&java_unbox(&expr.type_, &call_buf));
@@ -3340,6 +3438,17 @@ impl JavaSourceGenerator {
                     self.generate_expression(source, arg)?;
                 }
                 source.push(')');
+            }
+            TypedExpressionKind::Await(inner) => {
+                let mut await_buf = String::new();
+                await_buf.push_str("__roze_future_await(");
+                self.generate_expression(&mut await_buf, inner)?;
+                await_buf.push(')');
+                if expr.type_ != Type::Unknown && expr.type_ != Type::Void {
+                    source.push_str(&java_unbox(&expr.type_, &await_buf));
+                } else {
+                    source.push_str(&await_buf);
+                }
             }
         }
 
@@ -3960,6 +4069,31 @@ impl JavaSourceGenerator {
             }
             "fiber_stats" if arguments.is_empty() => {
                 source.push_str("__roze_fiber_stats()");
+            }
+            "future_spawn" | "__roze_async_spawn" if arguments.len() == 1 => {
+                source.push_str("__roze_async_spawn(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "future_await" | "__roze_future_await" if arguments.len() == 1 => {
+                source.push_str("__roze_future_await(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "future_poll" | "__roze_future_poll" if arguments.len() == 1 => {
+                source.push_str("__roze_future_poll(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "future_ready" | "__roze_future_ready" if arguments.len() == 1 => {
+                source.push_str("__roze_future_ready(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "async_sleep" | "__roze_async_sleep" if arguments.len() == 1 => {
+                source.push_str("__roze_async_sleep((int)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
             }
             "channel_new" => {
                 source.push_str("__roze_channel_new(");

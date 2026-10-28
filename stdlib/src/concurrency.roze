@@ -30,6 +30,14 @@
 //   channel_is_closed(chan)  -> bool    : true if chan has been closed
 //   channel_len(chan)        -> int     : current number of pending items in channel buffer
 //
+// ---- Async / Await State-Machine Engine (M1-T05) ----
+//
+//   async func name(...)     -> Future  : lowers async function to zero-allocation state machine task
+//   await fut                -> T       : cooperatively awaits future completion, returning resolved value
+//   future_poll(fut)         -> bool    : non-blocking poll returning true if future is ready
+//   future_ready(val)        -> Future  : creates an immediately resolved future with val
+//   async_sleep(ms)          -> Future  : asynchronous non-blocking timer future
+//
 // ---- Concurrency Utilities (available via `import "concurrency";`) ----
 
 func spawn(worker: func() -> int) -> Fiber {
@@ -58,4 +66,12 @@ func channel() -> Channel {
 
 func bounded_channel(capacity: int) -> Channel {
     return channel_new(capacity);
+}
+
+func future_completed(val: int) -> Future<int> {
+    return future_ready(val);
+}
+
+func future_is_done(fut: Future<int>) -> bool {
+    return future_poll(fut);
 }

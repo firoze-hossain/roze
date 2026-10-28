@@ -63,6 +63,7 @@ pub enum TypedStatement {
         params: Vec<TypedFunctionParam>,
         return_type: Type,
         body: Box<TypedStatement>,
+        is_async: bool,
         location: Location,
     },
     If {
@@ -302,4 +303,6 @@ pub enum TypedExpressionKind {
         slot: usize,
         arguments: Vec<TypedExpression>,
     },
+    /// `await <expr>` -- await completion of a Future / asynchronous task
+    Await(Box<TypedExpression>),
 }

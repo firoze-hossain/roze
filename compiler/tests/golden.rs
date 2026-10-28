@@ -1018,5 +1018,18 @@ fn comptime_recursion_limit_fails_at_compile_time() {
     assert!(stderr.contains("maximum evaluation steps exceeded"), "got:\n{}", stderr);
 }
 
-
+#[test]
+fn async_await_state_machine_engine() {
+    let (stdout, stderr, ok) = run_fixture("async_await.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+true
+42
+42
+42
+Hello, Roze!
+150
+40";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
 

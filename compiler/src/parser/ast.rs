@@ -84,6 +84,7 @@ pub enum Statement {
         params: Vec<FunctionParam>,
         return_type: Option<String>,
         body: Box<Statement>,
+        is_async: bool,
         location: Location,
     },
     Import {
@@ -361,6 +362,11 @@ pub enum Expression {
     /// `comptime { <statements> }` compile-time evaluated block
     ComptimeBlock {
         block: Box<Statement>,
+        location: Location,
+    },
+    /// `await <expr>` -- await completion of a Future / asynchronous task
+    Await {
+        expr: Box<Expression>,
         location: Location,
     },
 }

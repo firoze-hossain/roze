@@ -162,6 +162,7 @@ impl Type {
             "channel" | "Channel" => Type::Generic { base: "Channel".to_string(), type_args: vec![] },
             "thread" | "Thread" => Type::Generic { base: "Thread".to_string(), type_args: vec![] },
             "fiber" | "Fiber" => Type::Generic { base: "Fiber".to_string(), type_args: vec![] },
+            "future" | "Future" => Type::Generic { base: "Future".to_string(), type_args: vec![] },
             _ => Type::Unknown,
         }
     }
@@ -198,6 +199,8 @@ impl Type {
                     "Thread".to_string()
                 } else if base == "Fiber" || base == "fiber" {
                     "RozeFiberHandle".to_string()
+                } else if base == "Future" || base == "future" {
+                    "RozeFuture".to_string()
                 } else {
                     specialized_name(base, type_args)
                 }
@@ -274,6 +277,9 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
         // Fiber <-> Fiber
         (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
             if (b1 == "Fiber" || b1 == "fiber") && (b2 == "Fiber" || b2 == "fiber") => true,
+        // Future <-> Future
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "Future" || b1 == "future") && (b2 == "Future" || b2 == "future") => true,
         // Fiber <-> Thread interoperability
         (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
             if ((b1 == "Fiber" || b1 == "fiber") && (b2 == "Thread" || b2 == "thread"))
@@ -567,6 +573,18 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("fiber_count", vec![], Type::Int),
         ("fiber_stats", vec![], Type::Void),
 
+        // ---- Async Runtime: Async / Await & Future<T> (M1-T05) ----
+        ("__roze_async_spawn", vec![Type::Unknown], Type::Generic { base: "Future".to_string(), type_args: vec![] }),
+        ("future_spawn", vec![Type::Unknown], Type::Generic { base: "Future".to_string(), type_args: vec![] }),
+        ("future_await", vec![Type::Unknown], Type::Unknown),
+        ("future_poll", vec![Type::Unknown], Type::Bool),
+        ("future_ready", vec![Type::Unknown], Type::Generic { base: "Future".to_string(), type_args: vec![] }),
+        ("async_sleep", vec![Type::Int], Type::Generic { base: "Future".to_string(), type_args: vec![Type::Int] }),
+        ("__roze_future_await", vec![Type::Unknown], Type::Unknown),
+        ("__roze_future_poll", vec![Type::Unknown], Type::Bool),
+        ("__roze_future_ready", vec![Type::Unknown], Type::Generic { base: "Future".to_string(), type_args: vec![] }),
+        ("__roze_async_sleep", vec![Type::Int], Type::Generic { base: "Future".to_string(), type_args: vec![Type::Int] }),
+
         ("channel_new", vec![], Type::Generic { base: "Channel".to_string(), type_args: vec![] }),
         ("channel_send", vec![Type::Unknown, Type::Unknown], Type::Bool),
         ("send", vec![Type::Unknown, Type::Unknown], Type::Bool),
@@ -635,6 +653,7 @@ pub struct GenericFuncDef {
     pub return_type: Option<String>,
     pub body: Statement,
     pub location: Location,
+    pub is_async: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -703,7 +722,7 @@ fn substitute_statement(stmt: &Statement, map: &HashMap<String, String>) -> Stat
             statements: statements.iter().map(|s| substitute_statement(s, map)).collect(),
             location: location.clone(),
         },
-        Statement::Function { name, type_params, params, return_type, body, location } => {
+        Statement::Function { name, type_params, params, return_type, body, location, is_async } => {
             let new_params = params.iter().map(|p| FunctionParam {
                 name: p.name.clone(),
                 type_name: p.type_name.as_ref().map(|t| substitute_type_string(t, map)),
@@ -716,6 +735,7 @@ fn substitute_statement(stmt: &Statement, map: &HashMap<String, String>) -> Stat
                 return_type: new_return_type,
                 body: Box::new(substitute_statement(body, map)),
                 location: location.clone(),
+                is_async: *is_async,
             }
         }
         Statement::Import { path, location } => Statement::Import {
@@ -892,6 +912,10 @@ fn substitute_expression(expr: &Expression, map: &HashMap<String, String>) -> Ex
         },
         Expression::ComptimeBlock { block, location } => Expression::ComptimeBlock {
             block: Box::new(substitute_statement(block, map)),
+            location: location.clone(),
+        },
+        Expression::Await { expr, location } => Expression::Await {
+            expr: Box::new(substitute_expression(expr, map)),
             location: location.clone(),
         },
     }
@@ -1423,6 +1447,7 @@ impl TypeChecker {
             return_type: subbed_return_type.clone(),
             body: Box::new(subbed_body),
             location: template.location.clone(),
+            is_async: template.is_async,
         };
 
         let mut param_types = Vec::with_capacity(subbed_params.len());
@@ -1645,7 +1670,115 @@ impl TypeChecker {
     /// bodies, so forward references and mutual recursion type-check
     /// correctly regardless of source order.
     pub fn check_program(&mut self, program: &Program) -> Result<TypedProgram> {
+        let mut desugared_stmts = Vec::with_capacity(program.statements.len() * 2);
         for stmt in &program.statements {
+            match stmt {
+                Statement::Function { name, type_params, params, return_type, body, location, is_async: true } => {
+                    let inner_name = format!("__roze_async_inner_{}", name);
+                    let inner_fn = Statement::Function {
+                        name: inner_name.clone(),
+                        type_params: type_params.clone(),
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                        body: body.clone(),
+                        location: location.clone(),
+                        is_async: false,
+                    };
+
+                    let outer_ret = match return_type {
+                        Some(rt) => {
+                            let trimmed = rt.trim();
+                            if trimmed.starts_with("Future<") || trimmed == "Future" || trimmed == "future" {
+                                Some(rt.clone())
+                            } else {
+                                Some(format!("Future<{}>", trimmed))
+                            }
+                        }
+                        None => Some("Future<void>".to_string()),
+                    };
+
+                    let is_void = match return_type {
+                        Some(rt) if rt.trim() == "void" => true,
+                        None => true,
+                        _ => false,
+                    };
+
+                    let call_inner = Expression::Call {
+                        function: Box::new(Expression::Identifier {
+                            name: inner_name,
+                            location: location.clone(),
+                        }),
+                        arguments: params.iter().map(|p| Expression::Identifier {
+                            name: p.name.clone(),
+                            location: location.clone(),
+                        }).collect(),
+                        location: location.clone(),
+                    };
+
+                    let closure_body = if is_void {
+                        Statement::Block {
+                            statements: vec![
+                                Statement::Expression { expr: Box::new(call_inner), location: location.clone() },
+                            ],
+                            location: location.clone(),
+                        }
+                    } else {
+                        Statement::Block {
+                            statements: vec![
+                                Statement::Return {
+                                    value: Some(Box::new(call_inner)),
+                                    location: location.clone(),
+                                },
+                            ],
+                            location: location.clone(),
+                        }
+                    };
+
+                    let outer_body = Statement::Block {
+                        statements: vec![
+                            Statement::Return {
+                                value: Some(Box::new(Expression::Call {
+                                    function: Box::new(Expression::Identifier {
+                                        name: "__roze_async_spawn".to_string(),
+                                        location: location.clone(),
+                                    }),
+                                    arguments: vec![
+                                        Expression::Closure {
+                                            params: vec![],
+                                            return_type: None,
+                                            body: Box::new(closure_body),
+                                            location: location.clone(),
+                                        }
+                                    ],
+                                    location: location.clone(),
+                                })),
+                                location: location.clone(),
+                            }
+                        ],
+                        location: location.clone(),
+                    };
+
+                    let outer_fn = Statement::Function {
+                        name: name.clone(),
+                        type_params: type_params.clone(),
+                        params: params.clone(),
+                        return_type: outer_ret,
+                        body: Box::new(outer_body),
+                        location: location.clone(),
+                        is_async: false,
+                    };
+
+                    desugared_stmts.push(inner_fn);
+                    desugared_stmts.push(outer_fn);
+                }
+                other => {
+                    desugared_stmts.push(other.clone());
+                }
+            }
+        }
+        let program_statements = desugared_stmts;
+
+        for stmt in &program_statements {
             if let Statement::EnumDecl { name, type_params, variants, location } = stmt {
                 if !type_params.is_empty() {
                     self.generic_enums.insert(name.clone(), GenericEnumDef {
@@ -1671,7 +1804,7 @@ impl TypeChecker {
 
         // Pre-register all class names so mutually-referential or forward-referencing
         // class field types resolve to Type::Class instead of Type::Unknown.
-        for stmt in &program.statements {
+        for stmt in &program_statements {
             if let Statement::ClassDecl { name, type_params, .. } = stmt {
                 if type_params.is_empty() {
                     self.classes.insert(name.clone(), Vec::new());
@@ -1679,7 +1812,7 @@ impl TypeChecker {
             }
         }
 
-        for stmt in &program.statements {
+        for stmt in &program_statements {
             if let Statement::ClassDecl { name, type_params, fields, location } = stmt {
                 if !type_params.is_empty() {
                     self.generic_classes.insert(name.clone(), GenericClassDef {
@@ -1699,7 +1832,7 @@ impl TypeChecker {
             }
         }
 
-        for stmt in &program.statements {
+        for stmt in &program_statements {
             if let Statement::TraitDecl { name, associated_types, methods, location } = stmt {
                 let mut method_map = HashMap::new();
                 for m in methods {
@@ -1726,7 +1859,7 @@ impl TypeChecker {
             }
         }
 
-        for stmt in &program.statements {
+        for stmt in &program_statements {
             if let Statement::ImplDecl { trait_name, class_name, associated_types, methods, location } = stmt {
                 for (assoc_name, target_ty_str) in associated_types {
                     let resolved_ty = self.resolve_type_name(target_ty_str);
@@ -1789,8 +1922,8 @@ impl TypeChecker {
             }
         }
 
-        for stmt in &program.statements {
-            if let Statement::Function { name, type_params, params, return_type, body, location } = stmt {
+        for stmt in &program_statements {
+            if let Statement::Function { name, type_params, params, return_type, body, location, is_async } = stmt {
                 self.ast_functions.insert(name.clone(), stmt.clone());
                 if !type_params.is_empty() {
                     self.generic_functions.insert(name.clone(), GenericFuncDef {
@@ -1800,6 +1933,7 @@ impl TypeChecker {
                         return_type: return_type.clone(),
                         body: (**body).clone(),
                         location: location.clone(),
+                        is_async: *is_async,
                     });
                 } else {
                     let mut param_types = Vec::with_capacity(params.len());
@@ -1812,7 +1946,7 @@ impl TypeChecker {
             }
         }
 
-        for stmt in &program.statements {
+        for stmt in &program_statements {
             if let Statement::ExternFunction { abi, name, params, return_type, location } = stmt {
                 if abi != "C" {
                     return Err(RozeError::type_error(
@@ -1830,8 +1964,8 @@ impl TypeChecker {
             }
         }
 
-        let mut user_statements = Vec::with_capacity(program.statements.len());
-        for stmt in &program.statements {
+        let mut user_statements = Vec::with_capacity(program_statements.len());
+        for stmt in &program_statements {
             if let Some(typed) = self.check_statement(stmt)? {
                 user_statements.push(typed);
             }
@@ -1849,7 +1983,7 @@ impl TypeChecker {
     /// counterpart -- see `ir::TypedStatement`'s doc comment).
     pub fn check_statement(&mut self, stmt: &Statement) -> Result<Option<TypedStatement>> {
         match stmt {
-            Statement::Function { name, type_params, params, return_type, body, location } => {
+            Statement::Function { name, type_params, params, return_type, body, location, is_async } => {
                 if !type_params.is_empty() {
                     return Ok(None);
                 }
@@ -1888,6 +2022,7 @@ impl TypeChecker {
                     params: typed_params,
                     return_type: resolved_return_type,
                     body: Box::new(typed_body),
+                    is_async: *is_async,
                     location: location.clone(),
                 }))
             }
@@ -2273,6 +2408,7 @@ impl TypeChecker {
                             params: typed_params,
                             return_type: resolved_return_type,
                             body: Box::new(typed_body),
+                            is_async: false,
                             location: f_loc.clone(),
                         });
                     }
@@ -2871,21 +3007,29 @@ impl TypeChecker {
                             }
                             _ => Type::Unknown,
                         }
-                    } else if (name == "thread_spawn" || name == "fiber_spawn") && typed_arguments.len() == 1 {
+                    } else if (name == "thread_spawn" || name == "fiber_spawn" || name == "future_spawn" || name == "__roze_async_spawn") && typed_arguments.len() == 1 {
                         let ret_type = match &typed_arguments[0].type_ {
                             Type::Function { return_type, .. } => vec![*return_type.clone()],
                             _ => vec![],
                         };
-                        let base = if name == "fiber_spawn" { "Fiber" } else { "Thread" };
+                        let base = if name == "fiber_spawn" {
+                            "Fiber"
+                        } else if name == "future_spawn" || name == "__roze_async_spawn" {
+                            "Future"
+                        } else {
+                            "Thread"
+                        };
                         Type::Generic { base: base.to_string(), type_args: ret_type }
-                    } else if (name == "thread_join" || name == "fiber_join") && typed_arguments.len() == 1 {
+                    } else if (name == "thread_join" || name == "fiber_join" || name == "future_await" || name == "__roze_future_await") && typed_arguments.len() == 1 {
                         let th_ty = &typed_arguments[0].type_;
                         match th_ty {
-                            Type::Generic { base, type_args } if (base == "Thread" || base == "thread" || base == "Fiber" || base == "fiber") && !type_args.is_empty() => {
+                            Type::Generic { base, type_args } if (base == "Thread" || base == "thread" || base == "Fiber" || base == "fiber" || base == "Future" || base == "future") && !type_args.is_empty() => {
                                 type_args[0].clone()
                             }
                             _ => Type::Unknown,
                         }
+                    } else if (name == "future_ready" || name == "__roze_future_ready") && typed_arguments.len() == 1 {
+                        Type::Generic { base: "Future".to_string(), type_args: vec![typed_arguments[0].type_.clone()] }
                     } else if (name == "ptr_add" || name == "ptr_offset") && typed_arguments.len() == 2 {
                         if !matches!(typed_arguments[0].type_, Type::RawPointer(_)) {
                             return Err(RozeError::type_error(
@@ -3527,6 +3671,30 @@ impl TypeChecker {
                     other => other,
                 };
                 self.comptime_value_to_typed_expr(&final_val, location)
+            }
+            Expression::Await { expr, location } => {
+                let typed_expr = self.check_expression(expr)?;
+                let result_type = match &typed_expr.type_ {
+                    Type::Generic { base, type_args } if (base == "Future" || base == "future") && !type_args.is_empty() => {
+                        type_args[0].clone()
+                    }
+                    Type::Generic { base, .. } if (base == "Future" || base == "future") => {
+                        Type::Unknown
+                    }
+                    Type::Unknown => Type::Unknown,
+                    _ => {
+                        return Err(RozeError::type_error(
+                            format!("Cannot await non-Future type '{}'", typed_expr.type_),
+                            location.line,
+                            location.column,
+                        ).into());
+                    }
+                };
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::Await(Box::new(typed_expr)),
+                    type_: result_type,
+                    location: location.clone(),
+                })
             }
         }
     }

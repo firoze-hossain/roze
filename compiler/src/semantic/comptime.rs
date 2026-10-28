@@ -433,6 +433,9 @@ impl<'a> ComptimeEvaluator<'a> {
             Expression::Closure { .. } | Expression::MethodCall { .. } => {
                 Err(RozeError::type_error("Comptime closure definition/method call not directly supported in this context", 0, 0).into())
             }
+            Expression::Await { location, .. } => {
+                Err(RozeError::type_error("Cannot 'await' an asynchronous expression at compile time (comptime)", location.line, location.column).into())
+            }
         }
     }
 

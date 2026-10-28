@@ -31,7 +31,7 @@ Keyword         = "func"     | "let"      | "var"      | "if"       | "else"
                 | "extern"   | "import"   | "enum"     | "match"    | "trait"
                 | "impl"     | "unsafe"   | "null"     | "true"     | "false"
                 | "as"       | "in"       | "break"    | "continue" | "type"
-                | "where"    | "comptime" ;
+                | "where"    | "comptime" | "async"    | "await" ;
 ```
 
 ### 2.3 Identifiers
@@ -87,7 +87,7 @@ TopLevelItem    = ImportDecl
 
 ImportDecl      = "import" StringLiteral [ ";" ] ;
 
-FunctionDecl    = "func" Identifier [ TypeParams ] "(" [ ParameterList ] ")" [ "->" Type ] [ WhereClause ] Block ;
+FunctionDecl    = [ "async" ] "func" Identifier [ TypeParams ] "(" [ ParameterList ] ")" [ "->" Type ] [ WhereClause ] Block ;
 
 ParameterList   = Parameter { "," Parameter } ;
 Parameter       = Identifier ":" Type ;
@@ -221,7 +221,7 @@ Bitwise         = Additive { ( "&" | "|" | "^" ) Additive } ;      (* Level 5 *)
 Additive        = Multiplicative { ( "+" | "-" ) Multiplicative } ;(* Level 6 *)
 Multiplicative  = Unary { ( "*" | "/" | "%" ) Unary } ;            (* Level 7 *)
 
-Unary           = ( "-" | "!" | "*" | "&" ) Unary                  (* Level 8 *)
+Unary           = ( "-" | "!" | "*" | "&" | "await" ) Unary          (* Level 8 *)
                 | TryExpression ;
 
 TryExpression   = Postfix [ "?" ] ;                                (* Level 9 *)

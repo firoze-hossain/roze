@@ -338,6 +338,40 @@ func main() {
 }
 ```
 
+### 3.5 Async / Await State-Machine Engine (`Future<T>`)
+Roze provides first-class asynchronous programming with parity to Rust async/await and modern Java 25 CompletableFuture / Structured Concurrency:
+- **Zero-Allocation State Machine Lowering**: `async func` declarations and `await` expressions are lowered by the compiler semantic pass into asynchronous tasks and state machines with reusable slab pools.
+- **Top-Level Await**: `await <expr>` expressions are valid both within async functions and at top-level entrypoints (`main()`).
+- **Native Polling Contract**:
+  - `await fut` -> $T$: cooperatively awaits completion of a `Future<T>`, resuming with the resolved value.
+  - `future_poll(fut: Future<T>) -> bool`: non-blocking poll returning `true` if the future has completed.
+  - `future_ready(val: T) -> Future<T>`: creates an immediately completed future with zero context switch.
+  - `async_sleep(ms: int) -> Future<int>`: non-blocking timer future integrated with the reactor.
+- **Backend Mapping**:
+  - **JVM Backend**: Maps to Java 25 `CompletableFuture<Object>` running on Loom Virtual Threads (`Thread.ofVirtual().start(...)`).
+  - **Native Backend**: Slab-allocated `RozeFuture` structures with atomic states (`PENDING`, `READY`), mutex/cond signaling, fast-path resolution, and reactor timer integration.
+
+```roze
+async func compute(x: int) -> int {
+    return x * 2;
+}
+
+async func delayed_task(val: int) -> int {
+    await async_sleep(10);
+    return val + 100;
+}
+
+func main() {
+    let f = compute(21);
+    let is_done = future_poll(f);
+    let res = await f;
+    println(res); // 42
+
+    let delayed = await delayed_task(50);
+    println(delayed); // 150
+}
+```
+
 ---
 
 ## 4. Error Handling (`Result`, `Option`, `?`)

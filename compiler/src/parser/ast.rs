@@ -174,6 +174,11 @@ pub enum Statement {
         body: Box<Statement>,
         location: Location,
     },
+    /// `comptime { ... }` compile-time execution statement
+    Comptime {
+        statement: Box<Statement>,
+        location: Location,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -346,6 +351,16 @@ pub enum Expression {
     /// `unsafe { expr }` or `unsafe expr`
     Unsafe {
         expr: Box<Expression>,
+        location: Location,
+    },
+    /// `comptime <expr>` compile-time evaluated expression
+    Comptime {
+        expr: Box<Expression>,
+        location: Location,
+    },
+    /// `comptime { <statements> }` compile-time evaluated block
+    ComptimeBlock {
+        block: Box<Statement>,
         location: Location,
     },
 }

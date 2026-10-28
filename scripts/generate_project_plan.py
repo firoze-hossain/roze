@@ -232,7 +232,7 @@ s1_rows = [
         ("M1-T03", 8), ("Month 1", 3), ("Sprint 1 (W01-W02)", 8), "Metaprogramming", "Compile-Time Function Execution (comptime)",
         "Add 'comptime' expression evaluator in compiler semantic pass. Evaluate constant math, generate lookup tables, and compute type layouts during compilation.",
         "Matches Zig comptime and Rust const fn capabilities; eliminates runtime overhead for static structures.",
-        "Games, OS Kernels, AI/ML Tensors", "6 Days", ("High", 14), ("Planned", 12)
+        "Games, OS Kernels, AI/ML Tensors", "6 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M1-T04", 8), ("Month 1", 3), ("Sprint 2 (W03-W04)", 8), "Modern Concurrency", "M:N Green Threads (Virtual Threads)",

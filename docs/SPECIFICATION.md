@@ -200,6 +200,73 @@ match score {
 #### Compile-Time Exhaustiveness Guarantees
 For enum matches, the semantic analyzer verifies that every variant is covered. Missing variants in the absence of an unconditional wildcard (`_`) or variable catch-all trigger a compile-time type error pointing to the unhandled variants.
 
+### 2.7 Compile-Time Function Execution (`comptime`) & Type Reflection
+
+Roze integrates compile-time function execution and metaprogramming matching Zig `comptime` and Rust `const fn` capabilities. Expressions and blocks marked with `comptime` are evaluated during the compiler semantic analysis pass, completely eliminating runtime calculation overhead for static algorithms, math tables, and data structures.
+
+#### Constant Math Folding
+Arithmetic, floating-point operations, boolean logic, and string concatenations are evaluated at compile time:
+```roze
+let const_int = comptime (100 * 25 + 500 / 2); // folded to 2750
+let const_float = comptime (3.14159 * 2.0);    // folded to 6.28318
+let const_bool = comptime (10 > 5 && !false);  // folded to true
+let const_str = comptime ("Roze " + "v2.0");   // folded to "Roze v2.0"
+```
+
+#### Pure Compile-Time Function Execution
+User-defined functions with recursion, loops, and local mutation can be executed entirely during compilation:
+```roze
+func factorial(n: int) -> int {
+    if n <= 1 { return 1; }
+    return n * factorial(n - 1);
+}
+
+let fact7 = comptime factorial(7); // evaluated to 5040 during compilation
+```
+
+#### Precomputed Lookup Tables
+Lookup tables for games, neural network tensor weights, and OS kernels are generated at compile time:
+```roze
+func generate_powers_of_two(count: int) -> list {
+    let tbl = list_new();
+    let p = 1;
+    for let i = 0; i < count; i = i + 1 {
+        list_push(tbl, p);
+        p = p * 2;
+    }
+    return tbl;
+}
+
+let POWERS = comptime generate_powers_of_two(8);
+// At runtime, POWERS is pre-populated with [1, 2, 4, 8, 16, 32, 64, 128]
+```
+
+#### Compile-Time Blocks (`comptime { ... }`)
+Arbitrary statements can be evaluated within compile-time blocks:
+```roze
+let block_sum = comptime {
+    let acc = 0;
+    for let i = 1; i <= 20; i = i + 1 {
+        acc = acc + i;
+    }
+    return acc;
+}; // evaluated to 210
+```
+
+#### Type Layout Reflection (`size_of`, `align_of`, `offset_of`)
+Calculates struct byte sizes, natural alignments, and field offsets matching 64-bit ABI conventions:
+```roze
+class Particle {
+    id: int,
+    active: bool,
+    weight: float
+}
+
+let size = comptime size_of<Particle>();        // 24 bytes
+let align = comptime align_of<Particle>();      // 8 bytes
+let offset_w = comptime offset_of<Particle>("weight"); // byte offset 16
+```
+
 ---
 
 ## 3. Memory Model & Safety

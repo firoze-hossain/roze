@@ -2912,6 +2912,9 @@ impl JavaSourceGenerator {
             TypedStatement::UnsafeBlock { body, .. } => {
                 self.generate_statement(source, body, indent, return_type, is_closure)?;
             }
+            TypedStatement::Comptime { body, .. } => {
+                self.generate_statement(source, body, indent, return_type, is_closure)?;
+            }
             TypedStatement::TraitDecl { .. } | TypedStatement::ImplDecl { .. } | TypedStatement::ExternFunction { .. } => {}
         }
 

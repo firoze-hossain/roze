@@ -145,6 +145,9 @@ fn collect_closures_and_refs_from_stmt(
         TypedStatement::UnsafeBlock { body, .. } => {
             collect_closures_and_refs_from_stmt(body, closures, func_refs);
         }
+        TypedStatement::Comptime { body, .. } => {
+            collect_closures_and_refs_from_stmt(body, closures, func_refs);
+        }
         TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } | TypedStatement::TraitDecl { .. } | TypedStatement::ExternFunction { .. } => {}
     }
 }
@@ -5185,6 +5188,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 Ok(false)
             }
             TypedStatement::UnsafeBlock { body, .. } => {
+                self.compile_statement(body)
+            }
+            TypedStatement::Comptime { body, .. } => {
                 self.compile_statement(body)
             }
         }

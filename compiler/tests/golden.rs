@@ -928,4 +928,81 @@ fn pattern_matching_non_exhaustive_error() {
     assert!(stderr.contains("Non-exhaustive pattern match") && stderr.contains("missing variant(s) Blue"), "got:\n{}", stderr);
 }
 
+#[test]
+fn comptime_metaprogramming_evaluation() {
+    let (stdout, stderr, ok) = run_fixture("comptime_metaprogramming.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+=== 1. Constant Math Evaluation ===
+2750
+6.28318
+true
+Roze Metaprogramming v2.0
+=== 2. Compile-Time Function Execution ===
+5040
+144
+=== 3. Comptime Blocks ===
+210
+=== 4. Precomputed Lookup Tables ===
+8
+1
+8
+128
+707
+1000
+=== 5. Type Layout Reflection ===
+16
+8
+0
+8
+24
+8
+0
+8
+16
+=== 6. List Literals ===
+4
+10
+40
+M1-T03 Comptime Fully Verified!";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
+fn comptime_division_by_zero_fails_at_compile_time() {
+    let dir = scratch_dir("comptime_div_zero");
+    std::fs::write(
+        dir.join("div_zero.roze"),
+        "func main() {\n    let x = comptime (100 / 0);\n}\n",
+    ).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("div_zero.roze")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke roze");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Compile-time evaluation error: division by zero"), "got:\n{}", stderr);
+}
+
+#[test]
+fn comptime_recursion_limit_fails_at_compile_time() {
+    let dir = scratch_dir("comptime_infinite_loop");
+    std::fs::write(
+        dir.join("inf_loop.roze"),
+        "func loop_forever() -> int {\n    while true {}\n    return 0;\n}\nfunc main() {\n    let x = comptime loop_forever();\n}\n",
+    ).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("inf_loop.roze")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke roze");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("maximum evaluation steps exceeded"), "got:\n{}", stderr);
+}
+
+
 

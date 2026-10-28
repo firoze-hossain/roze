@@ -1,4 +1,7 @@
 // compiler/src/semantic/mod.rs
+pub mod comptime;
+pub use comptime::{ComptimeEvaluator, ComptimeValue, comptime_value_to_ast};
+
 use crate::error::RozeError;
 use crate::ir::{
     TypedExpression, TypedExpressionKind, TypedFunctionParam, TypedMatchArm, TypedPattern,
@@ -788,6 +791,10 @@ fn substitute_statement(stmt: &Statement, map: &HashMap<String, String>) -> Stat
             body: Box::new(substitute_statement(body, map)),
             location: location.clone(),
         },
+        Statement::Comptime { statement, location } => Statement::Comptime {
+            statement: Box::new(substitute_statement(statement, map)),
+            location: location.clone(),
+        },
     }
 }
 
@@ -858,6 +865,14 @@ fn substitute_expression(expr: &Expression, map: &HashMap<String, String>) -> Ex
         },
         Expression::Unsafe { expr, location } => Expression::Unsafe {
             expr: Box::new(substitute_expression(expr, map)),
+            location: location.clone(),
+        },
+        Expression::Comptime { expr, location } => Expression::Comptime {
+            expr: Box::new(substitute_expression(expr, map)),
+            location: location.clone(),
+        },
+        Expression::ComptimeBlock { block, location } => Expression::ComptimeBlock {
+            block: Box::new(substitute_statement(block, map)),
             location: location.clone(),
         },
     }
@@ -932,6 +947,7 @@ pub struct TypeChecker {
     pub in_main: bool,
     pub in_unsafe: bool,
     pub closure_counter: usize,
+    pub ast_functions: HashMap<String, Statement>,
     pub errors: Vec<String>,
 }
 
@@ -988,7 +1004,202 @@ impl TypeChecker {
             in_main: false,
             in_unsafe: false,
             closure_counter: 0,
+            ast_functions: HashMap::new(),
             errors: Vec::new(),
+        }
+    }
+
+    pub fn compute_type_type_layout(&self, ty: &Type) -> Result<(usize, usize)> {
+        match ty {
+            Type::Int => Ok((8, 8)),
+            Type::Float => Ok((8, 8)),
+            Type::Bool => Ok((1, 1)),
+            Type::U8 => Ok((1, 1)),
+            Type::String => Ok((8, 8)),
+            Type::RawPointer(_) => Ok((8, 8)),
+            Type::Void => Ok((0, 1)),
+            Type::List | Type::Map | Type::Option | Type::Result | Type::Function { .. } => Ok((8, 8)),
+            Type::Class(name) => self.compute_type_layout(name),
+            Type::Enum(name) => self.compute_type_layout(name),
+            Type::Generic { base, .. } => self.compute_type_layout(base),
+            Type::Trait(_) => Ok((8, 8)),
+            Type::Unknown => Ok((8, 8)),
+        }
+    }
+
+    pub fn compute_type_layout(&self, ty_name: &str) -> Result<(usize, usize)> {
+        match ty_name {
+            "int" | "i64" => Ok((8, 8)),
+            "float" | "f64" => Ok((8, 8)),
+            "bool" => Ok((1, 1)),
+            "u8" => Ok((1, 1)),
+            "string" => Ok((8, 8)),
+            "rawpointer" => Ok((8, 8)),
+            "void" => Ok((0, 1)),
+            "list" | "map" => Ok((8, 8)),
+            class_name => {
+                if let Some(fields) = self.classes.get(class_name) {
+                    let mut current_offset = 0;
+                    let mut max_align = 1;
+                    for (_field_name, field_type) in fields {
+                        let (f_size, f_align) = self.compute_type_type_layout(field_type)?;
+                        max_align = max_align.max(f_align);
+                        if f_align > 0 {
+                            current_offset = (current_offset + f_align - 1) / f_align * f_align;
+                        }
+                        current_offset += f_size;
+                    }
+                    if max_align > 0 {
+                        current_offset = (current_offset + max_align - 1) / max_align * max_align;
+                    }
+                    let total_size = if current_offset == 0 { 1 } else { current_offset };
+                    Ok((total_size, max_align))
+                } else if let Some(variants) = self.enums.get(class_name) {
+                    let tag_size = 8;
+                    let tag_align = 8;
+                    let mut max_payload_size = 0;
+                    let mut max_payload_align = 1;
+                    for (_vname, payload_types) in variants {
+                        let mut v_offset = 0;
+                        let mut v_align = 1;
+                        for pt in payload_types {
+                            let (ps, pa) = self.compute_type_type_layout(pt)?;
+                            v_align = v_align.max(pa);
+                            if pa > 0 {
+                                v_offset = (v_offset + pa - 1) / pa * pa;
+                            }
+                            v_offset += ps;
+                        }
+                        max_payload_size = max_payload_size.max(v_offset);
+                        max_payload_align = max_payload_align.max(v_align);
+                    }
+                    let total_align = tag_align.max(max_payload_align);
+                    let mut total_size = tag_size;
+                    if max_payload_size > 0 {
+                        total_size = (total_size + max_payload_align - 1) / max_payload_align * max_payload_align;
+                        total_size += max_payload_size;
+                    }
+                    total_size = (total_size + total_align - 1) / total_align * total_align;
+                    Ok((total_size, total_align))
+                } else {
+                    Err(RozeError::type_error(format!("Cannot compute layout for unknown type '{}'", ty_name), 0, 0).into())
+                }
+            }
+        }
+    }
+
+    pub fn compute_field_offset(&self, class_name: &str, target_field: &str) -> Result<usize> {
+        if let Some(fields) = self.classes.get(class_name) {
+            let mut current_offset = 0;
+            for (field_name, field_type) in fields {
+                let (f_size, f_align) = self.compute_type_type_layout(field_type)?;
+                if f_align > 0 {
+                    current_offset = (current_offset + f_align - 1) / f_align * f_align;
+                }
+                if field_name == target_field {
+                    return Ok(current_offset);
+                }
+                current_offset += f_size;
+            }
+            Err(RozeError::type_error(format!("Class '{}' has no field '{}'", class_name, target_field), 0, 0).into())
+        } else {
+            Err(RozeError::type_error(format!("Unknown class '{}'", class_name), 0, 0).into())
+        }
+    }
+
+    pub fn comptime_value_to_typed_expr(
+        &mut self,
+        val: &ComptimeValue,
+        location: &Location,
+    ) -> Result<TypedExpression> {
+        match val {
+            ComptimeValue::Int(n) => Ok(TypedExpression {
+                kind: TypedExpressionKind::Number(n.to_string()),
+                type_: Type::Int,
+                location: location.clone(),
+            }),
+            ComptimeValue::Float(f) => {
+                let mut s = f.to_string();
+                if !s.contains('.') {
+                    s.push_str(".0");
+                }
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::Number(s),
+                    type_: Type::Float,
+                    location: location.clone(),
+                })
+            }
+            ComptimeValue::Bool(b) => Ok(TypedExpression {
+                kind: TypedExpressionKind::Boolean(*b),
+                type_: Type::Bool,
+                location: location.clone(),
+            }),
+            ComptimeValue::String(s) => Ok(TypedExpression {
+                kind: TypedExpressionKind::String(s.clone()),
+                type_: Type::String,
+                location: location.clone(),
+            }),
+            ComptimeValue::Null => Ok(TypedExpression {
+                kind: TypedExpressionKind::Null,
+                type_: Type::Unknown,
+                location: location.clone(),
+            }),
+            ComptimeValue::Void => Ok(TypedExpression {
+                kind: TypedExpressionKind::Null,
+                type_: Type::Void,
+                location: location.clone(),
+            }),
+            ComptimeValue::Return(inner) => {
+                self.comptime_value_to_typed_expr(inner, location)
+            }
+            ComptimeValue::List(items) => {
+                let mut stmts = Vec::new();
+                let list_var = format!("__comptime_tbl_{}_{}", location.line, location.column);
+                stmts.push(Statement::Let {
+                    name: list_var.clone(),
+                    type_name: None,
+                    value: Box::new(Expression::Call {
+                        function: Box::new(Expression::Identifier { name: "list_new".to_string(), location: location.clone() }),
+                        arguments: vec![],
+                        location: location.clone(),
+                    }),
+                    location: location.clone(),
+                });
+                for item in items.borrow().iter() {
+                    let item_ast = comptime_value_to_ast(item, location)?;
+                    stmts.push(Statement::Expression {
+                        expr: Box::new(Expression::Call {
+                            function: Box::new(Expression::Identifier { name: "list_push".to_string(), location: location.clone() }),
+                            arguments: vec![
+                                Expression::Identifier { name: list_var.clone(), location: location.clone() },
+                                item_ast,
+                            ],
+                            location: location.clone(),
+                        }),
+                        location: location.clone(),
+                    });
+                }
+                stmts.push(Statement::Return {
+                    value: Some(Box::new(Expression::Identifier { name: list_var, location: location.clone() })),
+                    location: location.clone(),
+                });
+                let closure_expr = Expression::Call {
+                    function: Box::new(Expression::Closure {
+                        params: vec![],
+                        return_type: Some("list".to_string()),
+                        body: Box::new(Statement::Block { statements: stmts, location: location.clone() }),
+                        location: location.clone(),
+                    }),
+                    arguments: vec![],
+                    location: location.clone(),
+                };
+                self.check_expression(&closure_expr)
+            }
+            other => Err(RozeError::type_error(
+                format!("Unsupported comptime value '{:?}' cannot be converted to runtime expression", other),
+                location.line,
+                location.column,
+            ).into()),
         }
     }
 
@@ -1561,6 +1772,7 @@ impl TypeChecker {
 
         for stmt in &program.statements {
             if let Statement::Function { name, type_params, params, return_type, body, location } = stmt {
+                self.ast_functions.insert(name.clone(), stmt.clone());
                 if !type_params.is_empty() {
                     self.generic_functions.insert(name.clone(), GenericFuncDef {
                         name: name.clone(),
@@ -2083,6 +2295,16 @@ impl TypeChecker {
                 };
                 Ok(Some(TypedStatement::UnsafeBlock {
                     body: Box::new(typed_b),
+                    location: location.clone(),
+                }))
+            }
+            Statement::Comptime { statement, location } => {
+                let _ = {
+                    let mut eval = ComptimeEvaluator::new(self);
+                    eval.eval_stmt(statement)?
+                };
+                Ok(Some(TypedStatement::Comptime {
+                    body: Box::new(TypedStatement::Block { statements: vec![], location: location.clone() }),
                     location: location.clone(),
                 }))
             }
@@ -2866,6 +3088,48 @@ impl TypeChecker {
                 })
             }
             Expression::GenericCall { function, type_args, arguments, location } => {
+                if function == "size_of" {
+                    if type_args.is_empty() {
+                        return Err(RozeError::type_error("size_of::<T>() requires 1 type argument", location.line, location.column).into());
+                    }
+                    let (sz, _) = self.compute_type_layout(&type_args[0])?;
+                    return Ok(TypedExpression {
+                        kind: TypedExpressionKind::Number(sz.to_string()),
+                        type_: Type::Int,
+                        location: location.clone(),
+                    });
+                }
+                if function == "align_of" {
+                    if type_args.is_empty() {
+                        return Err(RozeError::type_error("align_of::<T>() requires 1 type argument", location.line, location.column).into());
+                    }
+                    let (_, al) = self.compute_type_layout(&type_args[0])?;
+                    return Ok(TypedExpression {
+                        kind: TypedExpressionKind::Number(al.to_string()),
+                        type_: Type::Int,
+                        location: location.clone(),
+                    });
+                }
+                if function == "offset_of" {
+                    if type_args.is_empty() {
+                        return Err(RozeError::type_error("offset_of::<T>() requires 1 type argument", location.line, location.column).into());
+                    }
+                    if arguments.is_empty() {
+                        return Err(RozeError::type_error("offset_of::<T>(field_name) requires a field name argument", location.line, location.column).into());
+                    }
+                    let field_expr = self.check_expression(&arguments[0])?;
+                    if let TypedExpressionKind::String(ref fname) = field_expr.kind {
+                        let off = self.compute_field_offset(&type_args[0], fname)?;
+                        return Ok(TypedExpression {
+                            kind: TypedExpressionKind::Number(off.to_string()),
+                            type_: Type::Int,
+                            location: location.clone(),
+                        });
+                    } else {
+                        return Err(RozeError::type_error("offset_of field argument must be a string literal", location.line, location.column).into());
+                    }
+                }
+
                 if let Some(_template) = self.generic_functions.get(function).cloned() {
                     let mut resolved_type_args = Vec::with_capacity(type_args.len());
                     for ta in type_args {
@@ -3225,6 +3489,24 @@ impl TypeChecker {
                 let res = self.check_expression(expr);
                 self.in_unsafe = prev_unsafe;
                 res
+            }
+            Expression::Comptime { expr, location } => {
+                let val = {
+                    let mut eval = ComptimeEvaluator::new(self);
+                    eval.eval_expr(expr)?
+                };
+                self.comptime_value_to_typed_expr(&val, location)
+            }
+            Expression::ComptimeBlock { block, location } => {
+                let val = {
+                    let mut eval = ComptimeEvaluator::new(self);
+                    eval.eval_stmt(block)?
+                };
+                let final_val = match val {
+                    ComptimeValue::Return(r) => *r,
+                    other => other,
+                };
+                self.comptime_value_to_typed_expr(&final_val, location)
             }
         }
     }

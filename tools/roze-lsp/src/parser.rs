@@ -167,6 +167,9 @@ fn collect_statement(stmt: &Statement, ast: &mut Ast) {
                 collect_statement(&arm.body, ast);
             }
         }
+        Statement::Comptime { statement, .. } => {
+            collect_statement(statement, ast);
+        }
     }
 }
 

@@ -117,6 +117,7 @@ impl Parser {
             Token::Impl => self.parse_impl(),
             Token::Extern => self.parse_extern_function(),
             Token::Unsafe => self.parse_unsafe_block(),
+            Token::Comptime => self.parse_comptime_statement(),
             _ => {
                 // Parse a full expression first, then decide: if `=`
                 // follows, this is an assignment (either to a bare name
@@ -1266,6 +1267,31 @@ impl Parser {
         })
     }
 
+    fn parse_comptime_statement(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // Skip 'comptime'
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        if self.check(&Token::LeftBrace) {
+            let body = self.parse_block()?;
+            Ok(Statement::Comptime {
+                statement: Box::new(body),
+                location,
+            })
+        } else {
+            let expr = self.parse_expression()?;
+            if self.match_token(&Token::Semicolon) {}
+            Ok(Statement::Comptime {
+                statement: Box::new(Statement::Expression {
+                    expr: Box::new(expr),
+                    location: location.clone(),
+                }),
+                location,
+            })
+        }
+    }
+
     fn parse_pattern(&mut self) -> Result<Pattern> {
         let location = Location::new(self.current().line, self.current().column);
         match &self.current().token {
@@ -2299,6 +2325,90 @@ impl Parser {
                         location,
                     })
                 }
+            }
+            Token::Comptime => {
+                self.advance(); // Skip 'comptime'
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::LeftBrace) {
+                    let block = self.parse_block()?;
+                    Ok(Expression::ComptimeBlock {
+                        block: Box::new(block),
+                        location,
+                    })
+                } else {
+                    let expr = self.parse_expression()?;
+                    Ok(Expression::Comptime {
+                        expr: Box::new(expr),
+                        location,
+                    })
+                }
+            }
+            Token::LeftBracket => {
+                self.advance(); // Skip '['
+                let mut elements = Vec::new();
+                while !self.check(&Token::RightBracket) && !self.check(&Token::EOF) {
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    if self.check(&Token::RightBracket) {
+                        break;
+                    }
+                    elements.push(self.parse_expression()?);
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    if self.check(&Token::Comma) {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                if !self.check(&Token::RightBracket) {
+                    return Err(self.error("Expected ']' after list elements"));
+                }
+                self.advance(); // Skip ']'
+
+                let mut stmts = Vec::new();
+                let list_var = format!("__list_lit_{}_{}", location.line, location.column);
+                stmts.push(Statement::Let {
+                    name: list_var.clone(),
+                    type_name: None,
+                    value: Box::new(Expression::Call {
+                        function: Box::new(Expression::Identifier { name: "list_new".to_string(), location: location.clone() }),
+                        arguments: vec![],
+                        location: location.clone(),
+                    }),
+                    location: location.clone(),
+                });
+                for el in elements {
+                    stmts.push(Statement::Expression {
+                        expr: Box::new(Expression::Call {
+                            function: Box::new(Expression::Identifier { name: "list_push".to_string(), location: location.clone() }),
+                            arguments: vec![
+                                Expression::Identifier { name: list_var.clone(), location: location.clone() },
+                                el,
+                            ],
+                            location: location.clone(),
+                        }),
+                        location: location.clone(),
+                    });
+                }
+                stmts.push(Statement::Return {
+                    value: Some(Box::new(Expression::Identifier { name: list_var, location: location.clone() })),
+                    location: location.clone(),
+                });
+                Ok(Expression::Call {
+                    function: Box::new(Expression::Closure {
+                        params: vec![],
+                        return_type: Some("list".to_string()),
+                        body: Box::new(Statement::Block { statements: stmts, location: location.clone() }),
+                        location: location.clone(),
+                    }),
+                    arguments: vec![],
+                    location,
+                })
             }
             Token::Error => {
                 Err(RozeError::lexer("Unrecognized character", current_token.line, current_token.column).into())

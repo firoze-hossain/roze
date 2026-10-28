@@ -1,0 +1,133 @@
+// compiler/tests/fixtures/comptime_metaprogramming.roze
+// Comprehensive verification of Compile-Time Function Execution (comptime) (M1-T03)
+
+class Point {
+    x: int,
+    y: int
+}
+
+class Particle {
+    id: int,
+    active: bool,
+    weight: float
+}
+
+// 1. Pure recursive compile-time function
+func compile_time_factorial(n: int) -> int {
+    if n <= 1 {
+        return 1;
+    }
+    return n * compile_time_factorial(n - 1);
+}
+
+// 2. Pure iterative compile-time function
+func compile_time_fibonacci(n: int) -> int {
+    if n <= 0 {
+        return 0;
+    }
+    if n == 1 {
+        return 1;
+    }
+    let prev = 0;
+    let curr = 1;
+    for let i = 2; i <= n; i = i + 1 {
+        let nxt = prev + curr;
+        prev = curr;
+        curr = nxt;
+    }
+    return curr;
+}
+
+// 3. Compile-time lookup table generator
+func generate_powers_of_two(count: int) -> list {
+    let tbl = list_new();
+    let p = 1;
+    for let i = 0; i < count; i = i + 1 {
+        list_push(tbl, p);
+        p = p * 2;
+    }
+    return tbl;
+}
+
+// 4. Compile-time sine/fixed-point lookup table
+func generate_sine_table() -> list {
+    let tbl = list_new();
+    list_push(tbl, 0);
+    list_push(tbl, 707);   // sin(45 deg) * 1000
+    list_push(tbl, 1000);  // sin(90 deg) * 1000
+    list_push(tbl, 707);   // sin(135 deg) * 1000
+    list_push(tbl, 0);     // sin(180 deg) * 1000
+    return tbl;
+}
+
+func main() {
+    println("=== 1. Constant Math Evaluation ===");
+    let const_int = comptime (100 * 25 + 500 / 2);
+    println(const_int);
+
+    let const_float = comptime (3.14159 * 2.0);
+    println(const_float);
+
+    let const_bool = comptime (10 > 5 && 3 <= 4 && !false);
+    println(const_bool);
+
+    let const_str = comptime ("Roze " + "Metaprogramming " + "v2.0");
+    println(const_str);
+
+    println("=== 2. Compile-Time Function Execution ===");
+    let fact7 = comptime compile_time_factorial(7);
+    println(fact7);
+
+    let fib12 = comptime compile_time_fibonacci(12);
+    println(fib12);
+
+    println("=== 3. Comptime Blocks ===");
+    let block_sum = comptime {
+        let acc = 0;
+        for let i = 1; i <= 20; i = i + 1 {
+            acc = acc + i;
+        }
+        return acc;
+    };
+    println(block_sum);
+
+    println("=== 4. Precomputed Lookup Tables ===");
+    let POWERS = comptime generate_powers_of_two(8);
+    println(list_length(POWERS));
+    println(list_get(POWERS, 0));
+    println(list_get(POWERS, 3));
+    println(list_get(POWERS, 7));
+
+    let SINES = comptime generate_sine_table();
+    println(list_get(SINES, 1));
+    println(list_get(SINES, 2));
+
+    println("=== 5. Type Layout Reflection ===");
+    let pt_sz = comptime size_of<Point>();
+    let pt_align = comptime align_of<Point>();
+    let pt_off_x = comptime offset_of<Point>("x");
+    let pt_off_y = comptime offset_of<Point>("y");
+    println(pt_sz);
+    println(pt_align);
+    println(pt_off_x);
+    println(pt_off_y);
+
+    let part_sz = comptime size_of<Particle>();
+    let part_align = comptime align_of<Particle>();
+    let part_off_id = comptime offset_of<Particle>("id");
+    let part_off_active = comptime offset_of<Particle>("active");
+    let part_off_weight = comptime offset_of<Particle>("weight");
+    println(part_sz);
+    println(part_align);
+    println(part_off_id);
+    println(part_off_active);
+    println(part_off_weight);
+
+    println("=== 6. List Literals ===");
+    let lit_list = [10, 20, 30, 40];
+    println(list_length(lit_list));
+    println(list_get(lit_list, 0));
+    println(list_get(lit_list, 3));
+
+    println("M1-T03 Comptime Fully Verified!");
+}

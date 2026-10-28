@@ -31,7 +31,7 @@ Keyword         = "func"     | "let"      | "var"      | "if"       | "else"
                 | "extern"   | "import"   | "enum"     | "match"    | "trait"
                 | "impl"     | "unsafe"   | "null"     | "true"     | "false"
                 | "as"       | "in"       | "break"    | "continue" | "type"
-                | "where" ;
+                | "where"    | "comptime" ;
 ```
 
 ### 2.3 Identifiers
@@ -157,6 +157,7 @@ Statement       = Block
                 | MatchStatement
                 | ReturnStatement
                 | UnsafeStatement
+                | ComptimeStatement
                 | ExpressionStatement ;
 
 Block           = "{" { Statement } "}" ;
@@ -198,6 +199,8 @@ ReturnStatement = "return" [ Expression ] ";" ;
 
 UnsafeStatement = "unsafe" Block ;
 
+ComptimeStatement = "comptime" ( Block | Statement | Expression [ ";" ] ) ;
+
 ExpressionStatement = Expression ";" ;
 ```
 
@@ -235,12 +238,18 @@ Primary         = Literal                                          (* Level 11 *
                 | Identifier
                 | NewExpression
                 | ClosureExpression
+                | ComptimeExpression
+                | ListLiteral
                 | "(" Expression ")" ;
 
 NewExpression   = "new" Identifier [ TypeArgs ] "(" [ ArgumentList ] ")" ;
 TypeArgs        = "<" Type { "," Type } ">" ;
 
 ClosureExpression = "(" [ ParameterList ] ")" [ "->" Type ] "=>" ( Block | Expression ) ;
+
+ComptimeExpression = "comptime" ( Block | Expression ) ;
+
+ListLiteral     = "[" [ ArgumentList ] "]" ;
 ```
 
 ---

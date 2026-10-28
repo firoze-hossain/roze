@@ -289,6 +289,7 @@ impl<'a> Lexer<'a> {
                             "raw" => Token::Raw,
                             "type" => Token::Type,
                             "where" => Token::Where,
+                            "comptime" => Token::Comptime,
                             "true" => Token::True,
                             "false" => Token::False,
                             "null" => Token::Null,

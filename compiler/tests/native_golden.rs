@@ -2956,6 +2956,36 @@ fn native_pattern_matching_deep_destructuring_and_guards() {
     assert!(out.contains("M1-T02 Pattern Matching Fully Verified!"));
 }
 
+#[test]
+fn native_comptime_metaprogramming_evaluation() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("comptime_metaprogramming.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read comptime_metaprogramming.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("comptime_test", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    assert!(out.contains("=== 1. Constant Math Evaluation ==="));
+    assert!(out.contains("2750"));
+    assert!(out.contains("6.28318"));
+    assert!(out.contains("true"));
+    assert!(out.contains("Roze Metaprogramming v2.0"));
+    assert!(out.contains("=== 2. Compile-Time Function Execution ==="));
+    assert!(out.contains("5040"));
+    assert!(out.contains("144"));
+    assert!(out.contains("=== 3. Comptime Blocks ==="));
+    assert!(out.contains("210"));
+    assert!(out.contains("=== 4. Precomputed Lookup Tables ==="));
+    assert!(out.contains("8\n1\n8\n128\n707\n1000"));
+    assert!(out.contains("=== 5. Type Layout Reflection ==="));
+    assert!(out.contains("16\n8\n0\n8\n24\n8\n0\n8\n16"));
+    assert!(out.contains("=== 6. List Literals ==="));
+    assert!(out.contains("4\n10\n40"));
+    assert!(out.contains("M1-T03 Comptime Fully Verified!"));
+}
+
+
 
 
 

@@ -158,8 +158,23 @@ impl<'a> Lexer<'a> {
                 ')' => { self.advance(); Token::RightParen }
                 '{' => { self.advance(); Token::LeftBrace }
                 '}' => { self.advance(); Token::RightBrace }
+                '[' => { self.advance(); Token::LeftBracket }
+                ']' => { self.advance(); Token::RightBracket }
                 ',' => { self.advance(); Token::Comma }
-                '.' => { self.advance(); Token::Dot }
+                '.' => {
+                    self.advance();
+                    if self.current_char == Some('.') {
+                        self.advance();
+                        if self.current_char == Some('=') {
+                            self.advance();
+                            Token::DotDotEquals
+                        } else {
+                            Token::DotDot
+                        }
+                    } else {
+                        Token::Dot
+                    }
+                }
                 '?' => { self.advance(); Token::Question }
                 ';' => { self.advance(); Token::Semicolon }
                 ':' => {

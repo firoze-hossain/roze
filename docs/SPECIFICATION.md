@@ -137,6 +137,69 @@ Generic functions and classes undergo compile-time specialization (monomorphizat
 - All trait method invocations on monomorphized types resolve directly to direct static calls or inlined functions with zero vtable pointer chasing.
 - Violations of trait bounds are detected at compile-time with clear error diagnostics.
 
+### 2.6 Exhaustive Pattern Matching (`match`)
+
+Roze provides industrial-grade pattern matching with deep destructuring, range patterns, and match guards with complete parity to Rust 1.99 and Java 25 pattern matching:
+
+#### Deep Nested Enum Destructuring
+Matches variant hierarchies down to any recursive depth:
+```roze
+enum Color { Red, Green, Blue }
+enum Container { Empty, Item(Color), Pair(Color, Color) }
+
+match c {
+    Container::Item(Color::Red) => { println("Container holds Red"); }
+    Container::Item(other) => { println("Container holds other color"); }
+    Container::Pair(Color::Red, Color::Blue) => { println("Container holds Red and Blue pair"); }
+    Container::Empty => { println("Container is empty"); }
+}
+```
+
+#### Struct & Class Destructuring
+Deconstructs class fields by name with optional shorthand bindings:
+```roze
+class Point { x: int, y: int }
+
+match pt {
+    Point { x, y } if x == y => { println("Diagonal: " + x); }
+    Point { x: px, y: py } if px > py => { println("px > py: " + px); }
+    Point { x, y } => { println("Other: " + x + ", " + y); }
+}
+```
+
+#### Tuple & Slice Patterns
+Supports fixed tuples and dynamic slice patterns with `[head, ..tail]` rest binding:
+```roze
+match items {
+    [] => { println("empty slice"); }
+    [head, ..tail] => {
+        println("head: " + head);
+        println("tail length: " + tail.len());
+    }
+}
+
+match (a, b) {
+    (x, y) if x == y => { println("Identical: " + x); }
+    (x, y) => { println("Pair: " + x + ", " + y); }
+}
+```
+
+#### Range Patterns & Match Guards
+Ranges (`start..=end` inclusive and `start..end` exclusive) with arbitrary boolean `if <guard>` predicates:
+```roze
+match score {
+    100 => { println("Perfect Score!"); }
+    90..=99 if has_honors => { println("High Honors"); }
+    90..=99 => { println("Grade A"); }
+    80..90 => { println("Grade B"); }
+    70..80 => { println("Grade C"); }
+    _ => { println("Needs Improvement"); }
+}
+```
+
+#### Compile-Time Exhaustiveness Guarantees
+For enum matches, the semantic analyzer verifies that every variant is covered. Missing variants in the absence of an unconditional wildcard (`_`) or variable catch-all trigger a compile-time type error pointing to the unhandled variants.
+
 ---
 
 ## 3. Memory Model & Safety

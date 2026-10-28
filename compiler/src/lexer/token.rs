@@ -57,8 +57,12 @@ pub enum Token {
     RightParen,  // )
     LeftBrace,   // {
     RightBrace,  // }
+    LeftBracket, // [
+    RightBracket,// ]
     Comma,       // ,
     Dot,         // .
+    DotDot,      // ..
+    DotDotEquals,// ..=
     Semicolon,   // ;
     Colon,       // :
     ColonColon,  // ::
@@ -124,7 +128,11 @@ impl fmt::Display for Token {
             Token::LeftBrace => write!(f, "{{"),
             Token::RightBrace => write!(f, "}}"),
             Token::Comma => write!(f, ","),
+            Token::LeftBracket => write!(f, "["),
+            Token::RightBracket => write!(f, "]"),
             Token::Dot => write!(f, "."),
+            Token::DotDot => write!(f, ".."),
+            Token::DotDotEquals => write!(f, "..="),
             Token::Semicolon => write!(f, ";"),
             Token::Colon => write!(f, ":"),
             Token::ColonColon => write!(f, "::"),

@@ -869,3 +869,63 @@ fn trait_bound_violation_reports_cleanly() {
     assert!(stderr.contains("Type 'Item' does not satisfy trait bound 'Describable'"), "got:\n{}", stderr);
 }
 
+#[test]
+fn pattern_matching_deep_destructuring_and_guards() {
+    let (stdout, stderr, ok) = run_fixture("pattern_matching_deep.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+=== 1. Struct Patterns & Guards ===
+Point on diagonal:
+10
+Point x > y:
+25
+5
+Point other:
+3
+18
+=== 2. Range Patterns & Guards ===
+Perfect Score!
+Grade A
+Grade B
+Grade C
+Needs Improvement
+=== 3. Nested Enums ===
+Container holds Red
+Container holds other color
+Container holds Red and Blue pair
+Container is empty
+=== 4. Slice Patterns ===
+Slice is empty
+Slice head:
+42
+Slice tail length:
+2
+=== 5. Tuple Patterns ===
+Tuple identical:
+7
+Tuple pair:
+10
+20
+M1-T02 Pattern Matching Fully Verified!";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+#[test]
+fn pattern_matching_non_exhaustive_error() {
+    let dir = scratch_dir("pattern_match_non_exhaustive");
+    std::fs::write(
+        dir.join("non_exhaustive.roze"),
+        "enum Color { Red, Green, Blue }\nfunc test(c: Color) -> int {\n    match c {\n        Color::Red => { return 1; },\n        Color::Green => { return 2; }\n    }\n}\nfunc main() {}\n",
+    ).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("non_exhaustive.roze")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke roze");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Non-exhaustive pattern match") && stderr.contains("missing variant(s) Blue"), "got:\n{}", stderr);
+}
+
+

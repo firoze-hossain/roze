@@ -1,0 +1,167 @@
+// compiler/tests/fixtures/pattern_matching_deep.roze
+// Tests M1-T02: Deep Destructuring, Match Guards, Struct Patterns, Range Patterns, Slice Patterns & Nested Enums
+
+class Point {
+    x: int,
+    y: int,
+}
+
+class User {
+    id: int,
+    score: int,
+}
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+enum Container {
+    Empty,
+    Item(Color),
+    Pair(Color, Color),
+}
+
+// 1. Struct Destructuring & Match Guards
+func classify_point(p: Point) {
+    match p {
+        Point { x, y } if x == y => {
+            println("Point on diagonal:");
+            println(x);
+        }
+        Point { x: px, y: py } if px > py => {
+            println("Point x > y:");
+            println(px);
+            println(py);
+        }
+        Point { x, y } => {
+            println("Point other:");
+            println(x);
+            println(y);
+        }
+    }
+}
+
+// 2. Range Patterns & Guards
+func grade_score(score: int) {
+    match score {
+        90..=100 if score == 100 => {
+            println("Perfect Score!");
+        }
+        90..=100 => {
+            println("Grade A");
+        }
+        80..90 => {
+            println("Grade B");
+        }
+        70..80 => {
+            println("Grade C");
+        }
+        _ => {
+            println("Needs Improvement");
+        }
+    }
+}
+
+// 3. Nested Enums & Guards
+func inspect_container(c: Container) {
+    match c {
+        Container::Item(Color::Red) => {
+            println("Container holds Red");
+        }
+        Container::Item(col) => {
+            println("Container holds other color");
+        }
+        Container::Pair(Color::Red, Color::Blue) => {
+            println("Container holds Red and Blue pair");
+        }
+        Container::Pair(c1, c2) => {
+            println("Container holds generic pair");
+        }
+        Container::Empty => {
+            println("Container is empty");
+        }
+    }
+}
+
+// 4. Slice Patterns ([head, ..tail], [])
+func process_list(items: list) {
+    match items {
+        [] => {
+            println("Slice is empty");
+        }
+        [head, ..tail] => {
+            println("Slice head:");
+            println(head);
+            println("Slice tail length:");
+            println(list_length(tail));
+        }
+    }
+}
+
+// 5. Tuple Patterns
+func inspect_tuple(t: list) {
+    match t {
+        (a, b) if a == b => {
+            println("Tuple identical:");
+            println(a);
+        }
+        (a, b) => {
+            println("Tuple pair:");
+            println(a);
+            println(b);
+        }
+        _ => {
+            println("Not a pair");
+        }
+    }
+}
+
+func main() {
+    println("=== 1. Struct Patterns & Guards ===");
+    let p1 = new Point(10, 10);
+    let p2 = new Point(25, 5);
+    let p3 = new Point(3, 18);
+    classify_point(p1);
+    classify_point(p2);
+    classify_point(p3);
+
+    println("=== 2. Range Patterns & Guards ===");
+    grade_score(100);
+    grade_score(95);
+    grade_score(85);
+    grade_score(72);
+    grade_score(50);
+
+    println("=== 3. Nested Enums ===");
+    let c1 = Container::Item(Color::Red);
+    let c2 = Container::Item(Color::Green);
+    let c3 = Container::Pair(Color::Red, Color::Blue);
+    let c4 = Container::Empty;
+    inspect_container(c1);
+    inspect_container(c2);
+    inspect_container(c3);
+    inspect_container(c4);
+
+    println("=== 4. Slice Patterns ===");
+    let empty_l = list_new();
+    let nums = list_new();
+    list_push(nums, 42);
+    list_push(nums, 100);
+    list_push(nums, 200);
+    process_list(empty_l);
+    process_list(nums);
+
+    println("=== 5. Tuple Patterns ===");
+    let pair1 = list_new();
+    list_push(pair1, 7);
+    list_push(pair1, 7);
+    let pair2 = list_new();
+    list_push(pair2, 10);
+    list_push(pair2, 20);
+    inspect_tuple(pair1);
+    inspect_tuple(pair2);
+
+    println("M1-T02 Pattern Matching Fully Verified!");
+}

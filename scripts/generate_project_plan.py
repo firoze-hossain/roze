@@ -226,7 +226,7 @@ s1_rows = [
         ("M1-T02", 8), ("Month 1", 3), ("Sprint 1 (W01-W02)", 8), "Pattern Matching", "Deep Destructuring & Match Guards",
         "Exhaustive pattern matching compiler for nested enums, struct fields, tuples, slice patterns ([head, ..tail]), range patterns (1..=10), and 'if' match guards.",
         "Parity with Rust 1.99 pattern matching and Java 25 Pattern Matching for switch and Record Patterns.",
-        "Compiler, Web Framework, Security", "7 Days", ("High", 14), ("Planned", 12)
+        "Compiler, Web Framework, Security", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M1-T03", 8), ("Month 1", 3), ("Sprint 1 (W01-W02)", 8), "Metaprogramming", "Compile-Time Function Execution (comptime)",

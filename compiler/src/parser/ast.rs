@@ -195,17 +195,43 @@ pub struct EnumVariant {
 #[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub guard: Option<Box<Expression>>,
     pub body: Box<Statement>,
     pub location: Location,
 }
 
 #[derive(Debug, Clone)]
 pub enum Pattern {
-    /// `EnumName::Variant(v1, v2)` or `Variant(v1, v2)` or unit `EnumName::Variant` / `Variant`
+    /// `EnumName::Variant(p1, p2)` or `Variant(p1, p2)` or unit `EnumName::Variant` / `Variant`
     Variant {
         enum_name: Option<String>,
         variant: String,
-        bindings: Vec<String>,
+        bindings: Vec<Pattern>,
+        location: Location,
+    },
+    /// Struct / Class field destructuring: `Point { x, y }` or `Point { x: px, y: py }`
+    Struct {
+        class_name: String,
+        fields: Vec<(String, Pattern)>,
+        location: Location,
+    },
+    /// Tuple destructuring: `(p1, p2, ...)`
+    Tuple {
+        elements: Vec<Pattern>,
+        location: Location,
+    },
+    /// Slice pattern: `[head, ..tail]` or `[first, second]` or `[]`
+    Slice {
+        prefix: Vec<Pattern>,
+        slice_rest: Option<Box<Pattern>>,
+        suffix: Vec<Pattern>,
+        location: Location,
+    },
+    /// Range pattern: `1..=10` or `1..10`
+    Range {
+        start: Box<Expression>,
+        end: Box<Expression>,
+        inclusive: bool,
         location: Location,
     },
     /// `_` wildcard

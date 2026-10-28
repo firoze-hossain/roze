@@ -128,6 +128,9 @@ fn collect_closures_and_refs_from_stmt(
         TypedStatement::Match { expr, arms, .. } => {
             collect_closures_and_refs_from_expr(expr, closures, func_refs);
             for arm in arms {
+                if let Some(g) = &arm.guard {
+                    collect_closures_and_refs_from_expr(g, closures, func_refs);
+                }
                 collect_closures_and_refs_from_stmt(&arm.body, closures, func_refs);
             }
         }
@@ -4768,7 +4771,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             TypedStatement::Match { expr, arms, .. } => {
                 let target_val = self.compile_expression(expr)?;
-                let tag_val = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), target_val, ENUM_HEADER_SIZE as i32);
+                let is_enum = matches!(expr.type_, Type::Enum(_));
+                let tag_val = if is_enum {
+                    Some(self.builder.ins().load(VALUE_TYPE, MemFlags::new(), target_val, ENUM_HEADER_SIZE as i32))
+                } else {
+                    None
+                };
 
                 let exit_block = self.builder.create_block();
                 let mut all_terminated = !arms.is_empty();
@@ -4779,22 +4787,155 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
                     match &arm.pattern {
                         TypedPattern::Variant { tag, bindings, .. } => {
-                            let expected_tag = self.builder.ins().iconst(VALUE_TYPE, *tag as i64);
-                            let matches_tag = self.builder.ins().icmp(IntCC::Equal, tag_val, expected_tag);
-                            self.builder.ins().brif(matches_tag, arm_body_block, &[], next_arm_block, &[]);
+                            if let Some(tv) = tag_val {
+                                let expected_tag = self.builder.ins().iconst(VALUE_TYPE, *tag as i64);
+                                let matches_tag = self.builder.ins().icmp(IntCC::Equal, tv, expected_tag);
+                                self.builder.ins().brif(matches_tag, arm_body_block, &[], next_arm_block, &[]);
+
+                                self.builder.switch_to_block(arm_body_block);
+                                self.builder.seal_block(arm_body_block);
+                                self.push_scope();
+
+                                for (i, b_pat) in bindings.iter().enumerate() {
+                                    let offset = (ENUM_HEADER_SIZE + 8 + (i as i64) * 8) as i32;
+                                    match b_pat {
+                                        TypedPattern::Variable { name, type_: b_type, .. } => {
+                                            if name != "_" {
+                                                let cranelift_ty = cranelift_type_for(b_type);
+                                                let val = self.builder.ins().load(cranelift_ty, MemFlags::new(), target_val, offset);
+                                                let var = self.declare_local(name, b_type.clone());
+                                                self.builder.def_var(var, val);
+                                            }
+                                        }
+                                        TypedPattern::Variant { tag: sub_tag, .. } => {
+                                            let sub_ptr = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), target_val, offset);
+                                            let sub_tag_val = self.builder.ins().load(VALUE_TYPE, MemFlags::new(), sub_ptr, ENUM_HEADER_SIZE as i32);
+                                            let expected_sub_tag = self.builder.ins().iconst(VALUE_TYPE, *sub_tag as i64);
+                                            let sub_matches = self.builder.ins().icmp(IntCC::Equal, sub_tag_val, expected_sub_tag);
+                                            let sub_pass = self.builder.create_block();
+                                            self.builder.ins().brif(sub_matches, sub_pass, &[], next_arm_block, &[]);
+                                            self.builder.switch_to_block(sub_pass);
+                                            self.builder.seal_block(sub_pass);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+
+                                if let Some(guard) = &arm.guard {
+                                    let guard_val = self.compile_expression(guard)?;
+                                    let guard_pass = self.builder.create_block();
+                                    self.builder.ins().brif(guard_val, guard_pass, &[], next_arm_block, &[]);
+                                    self.builder.switch_to_block(guard_pass);
+                                    self.builder.seal_block(guard_pass);
+                                }
+
+                                let terminated = self.compile_statement(&arm.body)?;
+                                if !terminated {
+                                    self.release_frame(self.scopes.len() - 1)?;
+                                    self.builder.ins().jump(exit_block, &[]);
+                                    all_terminated = false;
+                                } else {
+                                    self.release_frame(self.scopes.len() - 1)?;
+                                }
+                                self.scopes.pop();
+
+                                self.builder.switch_to_block(next_arm_block);
+                                self.builder.seal_block(next_arm_block);
+                            } else {
+                                self.builder.ins().jump(next_arm_block, &[]);
+                                self.builder.switch_to_block(next_arm_block);
+                                self.builder.seal_block(next_arm_block);
+                            }
+                        }
+                        TypedPattern::Struct { class_name, fields, .. } => {
+                            let not_null = self.builder.ins().icmp_imm(IntCC::NotEqual, target_val, 0);
+                            self.builder.ins().brif(not_null, arm_body_block, &[], next_arm_block, &[]);
 
                             self.builder.switch_to_block(arm_body_block);
                             self.builder.seal_block(arm_body_block);
                             self.push_scope();
 
-                            for (i, (b_name, b_type)) in bindings.iter().enumerate() {
-                                if b_name != "_" {
-                                    let offset = (ENUM_HEADER_SIZE + 8 + (i as i64) * 8) as i32;
-                                    let cranelift_ty = cranelift_type_for(b_type);
-                                    let val = self.builder.ins().load(cranelift_ty, MemFlags::new(), target_val, offset);
-                                    let var = self.declare_local(b_name, b_type.clone());
-                                    self.builder.def_var(var, val);
+                            for (f_name, f_pat) in fields {
+                                if let TypedPattern::Variable { name, type_: f_type, .. } = f_pat {
+                                    if name != "_" {
+                                        let offset = self.class_field_offset(class_name, f_name);
+                                        let cranelift_ty = cranelift_type_for(f_type);
+                                        let val = self.builder.ins().load(cranelift_ty, MemFlags::new(), target_val, offset);
+                                        let var = self.declare_local(name, f_type.clone());
+                                        self.builder.def_var(var, val);
+                                    }
                                 }
+                            }
+
+                            if let Some(guard) = &arm.guard {
+                                let guard_val = self.compile_expression(guard)?;
+                                let guard_pass = self.builder.create_block();
+                                self.builder.ins().brif(guard_val, guard_pass, &[], next_arm_block, &[]);
+                                self.builder.switch_to_block(guard_pass);
+                                self.builder.seal_block(guard_pass);
+                            }
+
+                            let terminated = self.compile_statement(&arm.body)?;
+                            if !terminated {
+                                self.release_frame(self.scopes.len() - 1)?;
+                                self.builder.ins().jump(exit_block, &[]);
+                                all_terminated = false;
+                            } else {
+                                self.release_frame(self.scopes.len() - 1)?;
+                            }
+                            self.scopes.pop();
+
+                            self.builder.switch_to_block(next_arm_block);
+                            self.builder.seal_block(next_arm_block);
+                        }
+                        TypedPattern::Range { start, end, inclusive, .. } => {
+                            let start_val = self.compile_expression(start)?;
+                            let end_val = self.compile_expression(end)?;
+                            let ge = self.builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, target_val, start_val);
+                            let le = self.builder.ins().icmp(if *inclusive { IntCC::SignedLessThanOrEqual } else { IntCC::SignedLessThan }, target_val, end_val);
+                            let in_range = self.builder.ins().band(ge, le);
+                            self.builder.ins().brif(in_range, arm_body_block, &[], next_arm_block, &[]);
+
+                            self.builder.switch_to_block(arm_body_block);
+                            self.builder.seal_block(arm_body_block);
+                            self.push_scope();
+
+                            if let Some(guard) = &arm.guard {
+                                let guard_val = self.compile_expression(guard)?;
+                                let guard_pass = self.builder.create_block();
+                                self.builder.ins().brif(guard_val, guard_pass, &[], next_arm_block, &[]);
+                                self.builder.switch_to_block(guard_pass);
+                                self.builder.seal_block(guard_pass);
+                            }
+
+                            let terminated = self.compile_statement(&arm.body)?;
+                            if !terminated {
+                                self.release_frame(self.scopes.len() - 1)?;
+                                self.builder.ins().jump(exit_block, &[]);
+                                all_terminated = false;
+                            } else {
+                                self.release_frame(self.scopes.len() - 1)?;
+                            }
+                            self.scopes.pop();
+
+                            self.builder.switch_to_block(next_arm_block);
+                            self.builder.seal_block(next_arm_block);
+                        }
+                        TypedPattern::Literal { expr: lit, .. } => {
+                            let lit_val = self.compile_expression(lit)?;
+                            let eq = self.builder.ins().icmp(IntCC::Equal, target_val, lit_val);
+                            self.builder.ins().brif(eq, arm_body_block, &[], next_arm_block, &[]);
+
+                            self.builder.switch_to_block(arm_body_block);
+                            self.builder.seal_block(arm_body_block);
+                            self.push_scope();
+
+                            if let Some(guard) = &arm.guard {
+                                let guard_val = self.compile_expression(guard)?;
+                                let guard_pass = self.builder.create_block();
+                                self.builder.ins().brif(guard_val, guard_pass, &[], next_arm_block, &[]);
+                                self.builder.switch_to_block(guard_pass);
+                                self.builder.seal_block(guard_pass);
                             }
 
                             let terminated = self.compile_statement(&arm.body)?;
@@ -4814,25 +4955,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                             self.builder.ins().jump(arm_body_block, &[]);
                             self.builder.switch_to_block(arm_body_block);
                             self.builder.seal_block(arm_body_block);
-
-                            let terminated = self.compile_statement(&arm.body)?;
-                            if !terminated {
-                                self.builder.ins().jump(exit_block, &[]);
-                                all_terminated = false;
-                            }
-
-                            self.builder.switch_to_block(next_arm_block);
-                            self.builder.seal_block(next_arm_block);
-                        }
-                        TypedPattern::Variable { name, type_: ty, .. } => {
-                            self.builder.ins().jump(arm_body_block, &[]);
-                            self.builder.switch_to_block(arm_body_block);
-                            self.builder.seal_block(arm_body_block);
                             self.push_scope();
 
-                            if name != "_" {
-                                let var = self.declare_local(name, ty.clone());
-                                self.builder.def_var(var, target_val);
+                            if let Some(guard) = &arm.guard {
+                                let guard_val = self.compile_expression(guard)?;
+                                let guard_pass = self.builder.create_block();
+                                self.builder.ins().brif(guard_val, guard_pass, &[], next_arm_block, &[]);
+                                self.builder.switch_to_block(guard_pass);
+                                self.builder.seal_block(guard_pass);
                             }
 
                             let terminated = self.compile_statement(&arm.body)?;
@@ -4848,9 +4978,163 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                             self.builder.switch_to_block(next_arm_block);
                             self.builder.seal_block(next_arm_block);
                         }
-                        _ => {
-                            self.builder.ins().jump(exit_block, &[]);
-                            all_terminated = false;
+                        TypedPattern::Variable { name, type_: ty, .. } => {
+                            self.builder.ins().jump(arm_body_block, &[]);
+                            self.builder.switch_to_block(arm_body_block);
+                            self.builder.seal_block(arm_body_block);
+                            self.push_scope();
+
+                            if name != "_" {
+                                let var = self.declare_local(name, ty.clone());
+                                self.builder.def_var(var, target_val);
+                            }
+
+                            if let Some(guard) = &arm.guard {
+                                let guard_val = self.compile_expression(guard)?;
+                                let guard_pass = self.builder.create_block();
+                                self.builder.ins().brif(guard_val, guard_pass, &[], next_arm_block, &[]);
+                                self.builder.switch_to_block(guard_pass);
+                                self.builder.seal_block(guard_pass);
+                            }
+
+                            let terminated = self.compile_statement(&arm.body)?;
+                            if !terminated {
+                                self.release_frame(self.scopes.len() - 1)?;
+                                self.builder.ins().jump(exit_block, &[]);
+                                all_terminated = false;
+                            } else {
+                                self.release_frame(self.scopes.len() - 1)?;
+                            }
+                            self.scopes.pop();
+
+                            self.builder.switch_to_block(next_arm_block);
+                            self.builder.seal_block(next_arm_block);
+                        }
+                        TypedPattern::Slice { prefix, slice_rest, suffix, .. } => {
+                            let len_val = self.emit_list_length(target_val)?;
+                            let min_len = (prefix.len() + suffix.len()) as i64;
+                            let min_len_val = self.builder.ins().iconst(VALUE_TYPE, min_len);
+                            let cond = if slice_rest.is_some() {
+                                self.builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, len_val, min_len_val)
+                            } else {
+                                self.builder.ins().icmp(IntCC::Equal, len_val, min_len_val)
+                            };
+                            self.builder.ins().brif(cond, arm_body_block, &[], next_arm_block, &[]);
+
+                            self.builder.switch_to_block(arm_body_block);
+                            self.builder.seal_block(arm_body_block);
+                            self.push_scope();
+
+                            for (i, p) in prefix.iter().enumerate() {
+                                if let TypedPattern::Variable { name, type_: p_type, .. } = p {
+                                    if name != "_" {
+                                        let idx_val = self.builder.ins().iconst(VALUE_TYPE, i as i64);
+                                        let elem_val = self.emit_list_get(target_val, idx_val)?;
+                                        let var = self.declare_local(name, p_type.clone());
+                                        self.builder.def_var(var, elem_val);
+                                    }
+                                }
+                            }
+
+                            if let Some(rest_pat) = slice_rest {
+                                if let TypedPattern::Variable { name, type_: r_type, .. } = &**rest_pat {
+                                    if name != "_" {
+                                        let tail_list = self.emit_list_new()?;
+
+                                        let start_idx = prefix.len() as i64;
+                                        let loop_head = self.builder.create_block();
+                                        let loop_body = self.builder.create_block();
+                                        let loop_exit = self.builder.create_block();
+
+                                        let idx_var = self.declare_local(&format!("__tail_idx_{}", self.scopes.len()), Type::Int);
+                                        let start_val = self.builder.ins().iconst(VALUE_TYPE, start_idx);
+                                        self.builder.def_var(idx_var, start_val);
+                                        self.builder.ins().jump(loop_head, &[]);
+
+                                        self.builder.switch_to_block(loop_head);
+                                        let curr_idx = self.builder.use_var(idx_var);
+                                        let has_more = self.builder.ins().icmp(IntCC::SignedLessThan, curr_idx, len_val);
+                                        self.builder.ins().brif(has_more, loop_body, &[], loop_exit, &[]);
+
+                                        self.builder.switch_to_block(loop_body);
+                                        self.builder.seal_block(loop_body);
+                                        let item_val = self.emit_list_get(target_val, curr_idx)?;
+                                        self.emit_list_push(tail_list, item_val)?;
+                                        let one = self.builder.ins().iconst(VALUE_TYPE, 1);
+                                        let next_idx = self.builder.ins().iadd(curr_idx, one);
+                                        self.builder.def_var(idx_var, next_idx);
+                                        self.builder.ins().jump(loop_head, &[]);
+
+                                        self.builder.switch_to_block(loop_exit);
+                                        self.builder.seal_block(loop_head);
+                                        self.builder.seal_block(loop_exit);
+
+                                        let var = self.declare_local(name, r_type.clone());
+                                        self.builder.def_var(var, tail_list);
+                                    }
+                                }
+                            }
+
+                            if let Some(guard) = &arm.guard {
+                                let guard_val = self.compile_expression(guard)?;
+                                let guard_pass = self.builder.create_block();
+                                self.builder.ins().brif(guard_val, guard_pass, &[], next_arm_block, &[]);
+                                self.builder.switch_to_block(guard_pass);
+                                self.builder.seal_block(guard_pass);
+                            }
+
+                            let terminated = self.compile_statement(&arm.body)?;
+                            if !terminated {
+                                self.release_frame(self.scopes.len() - 1)?;
+                                self.builder.ins().jump(exit_block, &[]);
+                                all_terminated = false;
+                            } else {
+                                self.release_frame(self.scopes.len() - 1)?;
+                            }
+                            self.scopes.pop();
+
+                            self.builder.switch_to_block(next_arm_block);
+                            self.builder.seal_block(next_arm_block);
+                        }
+                        TypedPattern::Tuple { elements, .. } => {
+                            let len_val = self.emit_list_length(target_val)?;
+                            let expected_len = self.builder.ins().iconst(VALUE_TYPE, elements.len() as i64);
+                            let cond = self.builder.ins().icmp(IntCC::Equal, len_val, expected_len);
+                            self.builder.ins().brif(cond, arm_body_block, &[], next_arm_block, &[]);
+
+                            self.builder.switch_to_block(arm_body_block);
+                            self.builder.seal_block(arm_body_block);
+                            self.push_scope();
+
+                            for (i, elem) in elements.iter().enumerate() {
+                                if let TypedPattern::Variable { name, type_: e_type, .. } = elem {
+                                    if name != "_" {
+                                        let idx_val = self.builder.ins().iconst(VALUE_TYPE, i as i64);
+                                        let elem_val = self.emit_list_get(target_val, idx_val)?;
+                                        let var = self.declare_local(name, e_type.clone());
+                                        self.builder.def_var(var, elem_val);
+                                    }
+                                }
+                            }
+
+                            if let Some(guard) = &arm.guard {
+                                let guard_val = self.compile_expression(guard)?;
+                                let guard_pass = self.builder.create_block();
+                                self.builder.ins().brif(guard_val, guard_pass, &[], next_arm_block, &[]);
+                                self.builder.switch_to_block(guard_pass);
+                                self.builder.seal_block(guard_pass);
+                            }
+
+                            let terminated = self.compile_statement(&arm.body)?;
+                            if !terminated {
+                                self.release_frame(self.scopes.len() - 1)?;
+                                self.builder.ins().jump(exit_block, &[]);
+                                all_terminated = false;
+                            } else {
+                                self.release_frame(self.scopes.len() - 1)?;
+                            }
+                            self.scopes.pop();
+
                             self.builder.switch_to_block(next_arm_block);
                             self.builder.seal_block(next_arm_block);
                         }

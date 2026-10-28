@@ -758,6 +758,7 @@ fn substitute_statement(stmt: &Statement, map: &HashMap<String, String>) -> Stat
             expr: Box::new(substitute_expression(expr, map)),
             arms: arms.iter().map(|arm| MatchArm {
                 pattern: arm.pattern.clone(),
+                guard: arm.guard.as_ref().map(|g| Box::new(substitute_expression(g, map))),
                 body: Box::new(substitute_statement(&arm.body, map)),
                 location: arm.location.clone(),
             }).collect(),
@@ -1918,93 +1919,20 @@ impl TypeChecker {
                 for arm in arms {
                     self.symbol_table.push_scope();
 
-                    let typed_pattern = match &arm.pattern {
-                        Pattern::Wildcard { location: pat_loc } => {
-                            TypedPattern::Wildcard { location: pat_loc.clone() }
-                        }
-                        Pattern::Literal { expr: lit_expr, location: pat_loc } => {
-                            let typed_lit = self.check_expression(lit_expr)?;
-                            TypedPattern::Literal { expr: typed_lit, location: pat_loc.clone() }
-                        }
-                        Pattern::Variable { name, location: pat_loc } => {
-                            self.symbol_table.define(name, typed_expr.type_.clone(), pat_loc.line, pat_loc.column)?;
-                            TypedPattern::Variable {
-                                name: name.clone(),
-                                type_: typed_expr.type_.clone(),
-                                location: pat_loc.clone(),
-                            }
-                        }
-                        Pattern::Variant { enum_name, variant, bindings, location: pat_loc } => {
-                            let target_enum = match enum_name {
-                                Some(en) => {
-                                    if !self.enums.contains_key(en) {
-                                        return Err(RozeError::type_error(
-                                            format!("Unknown enum '{}' in match pattern", en),
-                                            pat_loc.line,
-                                            pat_loc.column,
-                                        ).into());
-                                    }
-                                    en.clone()
-                                }
-                                None => {
-                                    if let Type::Enum(en) = &typed_expr.type_ {
-                                        en.clone()
-                                    } else if let Some(candidates) = self.variant_to_enum.get(variant) {
-                                        if candidates.len() == 1 {
-                                            candidates[0].clone()
-                                        } else {
-                                            return Err(RozeError::type_error(
-                                                format!("Ambiguous variant '{}': belongs to multiple enums ({:?}). Qualify it with 'EnumName::{}'", variant, candidates, variant),
-                                                pat_loc.line,
-                                                pat_loc.column,
-                                            ).into());
-                                        }
-                                    } else {
-                                        return Err(RozeError::type_error(
-                                            format!("Unknown variant '{}' in match pattern", variant),
-                                            pat_loc.line,
-                                            pat_loc.column,
-                                        ).into());
-                                    }
-                                }
-                            };
+                    let typed_pattern = self.check_pattern(&arm.pattern, &typed_expr.type_)?;
 
-                            let variants = self.enums.get(&target_enum).unwrap();
-                            let (tag, (_, payload_types)) = variants.iter().enumerate()
-                                .find(|(_, (vname, _))| vname == variant)
-                                .ok_or_else(|| RozeError::type_error(
-                                    format!("Enum '{}' has no variant '{}'", target_enum, variant),
-                                    pat_loc.line,
-                                    pat_loc.column,
-                                ))?;
-
-                            if bindings.len() != payload_types.len() {
-                                return Err(RozeError::type_error(
-                                    format!(
-                                        "Variant '{}::{}' expects {} argument(s), but pattern has {}",
-                                        target_enum, variant, payload_types.len(), bindings.len()
-                                    ),
-                                    pat_loc.line,
-                                    pat_loc.column,
-                                ).into());
-                            }
-
-                            let mut typed_bindings = Vec::with_capacity(bindings.len());
-                            for (b_name, b_type) in bindings.iter().zip(payload_types.iter()) {
-                                if b_name != "_" {
-                                    self.symbol_table.define(b_name, b_type.clone(), pat_loc.line, pat_loc.column)?;
-                                }
-                                typed_bindings.push((b_name.clone(), b_type.clone()));
-                            }
-
-                            TypedPattern::Variant {
-                                enum_name: target_enum,
-                                variant: variant.clone(),
-                                tag,
-                                bindings: typed_bindings,
-                                location: pat_loc.clone(),
-                            }
+                    let typed_guard = if let Some(guard_expr) = &arm.guard {
+                        let tg = self.check_expression(guard_expr)?;
+                        if tg.type_ != Type::Bool && tg.type_ != Type::Unknown {
+                            return Err(RozeError::type_error(
+                                format!("Match guard condition must evaluate to 'bool', found '{}'", tg.type_),
+                                arm.location.line,
+                                arm.location.column,
+                            ).into());
                         }
+                        Some(tg)
+                    } else {
+                        None
                     };
 
                     let typed_body = match self.check_statement(&arm.body)? {
@@ -2016,9 +1944,40 @@ impl TypeChecker {
 
                     typed_arms.push(TypedMatchArm {
                         pattern: typed_pattern,
+                        guard: typed_guard,
                         body: Box::new(typed_body),
                         location: arm.location.clone(),
                     });
+                }
+
+                // Exhaustiveness analysis on enums
+                if let Type::Enum(en) = &typed_expr.type_ {
+                    let has_unconditional_catchall = typed_arms.iter().any(|arm| {
+                        arm.guard.is_none() && matches!(arm.pattern, TypedPattern::Wildcard { .. } | TypedPattern::Variable { .. })
+                    });
+                    if !has_unconditional_catchall {
+                        if let Some(variants) = self.enums.get(en) {
+                            let mut covered = std::collections::HashSet::new();
+                            for arm in &typed_arms {
+                                if arm.guard.is_none() {
+                                    if let TypedPattern::Variant { variant, .. } = &arm.pattern {
+                                        covered.insert(variant.clone());
+                                    }
+                                }
+                            }
+                            let missing: Vec<String> = variants.iter()
+                                .filter(|(vname, _)| !covered.contains(vname))
+                                .map(|(vname, _)| vname.clone())
+                                .collect();
+                            if !missing.is_empty() {
+                                return Err(RozeError::type_error(
+                                    format!("Non-exhaustive pattern match on enum '{}': missing variant(s) {}. Add missing arms or a wildcard '_' catch-all", en, missing.join(", ")),
+                                    location.line,
+                                    location.column,
+                                ).into());
+                            }
+                        }
+                    }
                 }
 
                 Ok(Some(TypedStatement::Match {
@@ -2138,6 +2097,167 @@ impl TypeChecker {
             "ptr_add" | "ptr_offset" | "ptr_diff" | "ptr_to_int" | "int_to_ptr" |
             "ptr_is_null" | "mem_copy" | "mem_set"
         )
+    }
+
+    pub fn check_pattern(&mut self, pat: &Pattern, target_type: &Type) -> Result<TypedPattern> {
+        match pat {
+            Pattern::Wildcard { location } => Ok(TypedPattern::Wildcard { location: location.clone() }),
+            Pattern::Literal { expr, location } => {
+                let typed_lit = self.check_expression(expr)?;
+                Ok(TypedPattern::Literal { expr: typed_lit, location: location.clone() })
+            }
+            Pattern::Variable { name, location } => {
+                if name != "_" {
+                    self.symbol_table.define(name, target_type.clone(), location.line, location.column)?;
+                }
+                Ok(TypedPattern::Variable {
+                    name: name.clone(),
+                    type_: target_type.clone(),
+                    location: location.clone(),
+                })
+            }
+            Pattern::Range { start, end, inclusive, location } => {
+                let typed_start = self.check_expression(start)?;
+                let typed_end = self.check_expression(end)?;
+                Ok(TypedPattern::Range {
+                    start: typed_start,
+                    end: typed_end,
+                    inclusive: *inclusive,
+                    location: location.clone(),
+                })
+            }
+            Pattern::Struct { class_name, fields, location } => {
+                let class_def = self.classes.get(class_name).cloned().ok_or_else(|| {
+                    RozeError::type_error(
+                        format!("Unknown class '{}' in struct pattern", class_name),
+                        location.line,
+                        location.column,
+                    )
+                })?;
+
+                let mut typed_fields = Vec::with_capacity(fields.len());
+                for (f_name, f_pat) in fields {
+                    let f_type = class_def.iter()
+                        .find(|(name, _)| name == f_name)
+                        .map(|(_, ty)| ty.clone())
+                        .ok_or_else(|| {
+                            RozeError::type_error(
+                                format!("Class '{}' has no field '{}'", class_name, f_name),
+                                location.line,
+                                location.column,
+                            )
+                        })?;
+                    let typed_pat = self.check_pattern(f_pat, &f_type)?;
+                    typed_fields.push((f_name.clone(), typed_pat));
+                }
+
+                Ok(TypedPattern::Struct {
+                    class_name: class_name.clone(),
+                    fields: typed_fields,
+                    location: location.clone(),
+                })
+            }
+            Pattern::Tuple { elements, location } => {
+                let mut typed_elems = Vec::with_capacity(elements.len());
+                for elem in elements {
+                    typed_elems.push(self.check_pattern(elem, &Type::Unknown)?);
+                }
+                Ok(TypedPattern::Tuple {
+                    elements: typed_elems,
+                    location: location.clone(),
+                })
+            }
+            Pattern::Slice { prefix, slice_rest, suffix, location } => {
+                let mut typed_prefix = Vec::with_capacity(prefix.len());
+                for p in prefix {
+                    typed_prefix.push(self.check_pattern(p, &Type::Unknown)?);
+                }
+                let typed_rest = if let Some(rest) = slice_rest {
+                    Some(Box::new(self.check_pattern(rest, &Type::List)?))
+                } else {
+                    None
+                };
+                let mut typed_suffix = Vec::with_capacity(suffix.len());
+                for s in suffix {
+                    typed_suffix.push(self.check_pattern(s, &Type::Unknown)?);
+                }
+                Ok(TypedPattern::Slice {
+                    prefix: typed_prefix,
+                    slice_rest: typed_rest,
+                    suffix: typed_suffix,
+                    location: location.clone(),
+                })
+            }
+            Pattern::Variant { enum_name, variant, bindings, location } => {
+                let target_enum = match enum_name {
+                    Some(en) => {
+                        if !self.enums.contains_key(en) {
+                            return Err(RozeError::type_error(
+                                format!("Unknown enum '{}' in match pattern", en),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                        en.clone()
+                    }
+                    None => {
+                        if let Type::Enum(en) = target_type {
+                            en.clone()
+                        } else if let Some(candidates) = self.variant_to_enum.get(variant) {
+                            if candidates.len() == 1 {
+                                candidates[0].clone()
+                            } else {
+                                return Err(RozeError::type_error(
+                                    format!("Ambiguous variant '{}': belongs to multiple enums ({:?}). Qualify it with 'EnumName::{}'", variant, candidates, variant),
+                                    location.line,
+                                    location.column,
+                                ).into());
+                            }
+                        } else {
+                            return Err(RozeError::type_error(
+                                format!("Unknown variant '{}' in match pattern", variant),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                    }
+                };
+
+                let variants = self.enums.get(&target_enum).unwrap().clone();
+                let (tag, (_, payload_types)) = variants.iter().enumerate()
+                    .find(|(_, (vname, _))| vname == variant)
+                    .ok_or_else(|| RozeError::type_error(
+                        format!("Enum '{}' has no variant '{}'", target_enum, variant),
+                        location.line,
+                        location.column,
+                    ))?;
+
+                if bindings.len() != payload_types.len() {
+                    return Err(RozeError::type_error(
+                        format!(
+                            "Variant '{}::{}' expects {} argument(s), but pattern has {}",
+                            target_enum, variant, payload_types.len(), bindings.len()
+                        ),
+                        location.line,
+                        location.column,
+                    ).into());
+                }
+
+                let mut typed_bindings = Vec::with_capacity(bindings.len());
+                for (b_pat, b_type) in bindings.iter().zip(payload_types.iter()) {
+                    let tb = self.check_pattern(b_pat, b_type)?;
+                    typed_bindings.push(tb);
+                }
+
+                Ok(TypedPattern::Variant {
+                    enum_name: target_enum,
+                    variant: variant.clone(),
+                    tag,
+                    bindings: typed_bindings,
+                    location: location.clone(),
+                })
+            }
+        }
     }
 
     pub fn check_expression(&mut self, expr: &Expression) -> Result<TypedExpression> {

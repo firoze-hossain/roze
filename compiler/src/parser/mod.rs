@@ -806,6 +806,20 @@ impl Parser {
             while self.check(&Token::Newline) {
                 self.advance();
             }
+
+            let guard = if self.check(&Token::If) {
+                self.advance(); // Skip 'if'
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                Some(Box::new(self.parse_expression()?))
+            } else {
+                None
+            };
+
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
             if !self.check(&Token::FatArrow) {
                 return Err(self.error(format!("Expected '=>' after pattern in match arm, found {}", self.current().token)));
             }
@@ -822,6 +836,7 @@ impl Parser {
 
             arms.push(MatchArm {
                 pattern,
+                guard,
                 body: Box::new(body),
                 location: arm_loc,
             });
@@ -1261,10 +1276,26 @@ impl Parser {
             Token::Number(n) => {
                 let n = n.clone();
                 self.advance();
-                Ok(Pattern::Literal {
-                    expr: Box::new(Expression::Number { value: n, location: location.clone() }),
-                    location,
-                })
+                let start_expr = Box::new(Expression::Number { value: n, location: location.clone() });
+                if self.check(&Token::DotDot) || self.check(&Token::DotDotEquals) {
+                    let inclusive = self.check(&Token::DotDotEquals);
+                    self.advance(); // consume '..' or '..='
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+                    let end_expr = match &self.current().token {
+                        Token::Number(end_n) => {
+                            let end_n = end_n.clone();
+                            let end_loc = Location::new(self.current().line, self.current().column);
+                            self.advance();
+                            Box::new(Expression::Number { value: end_n, location: end_loc })
+                        }
+                        other => return Err(self.error(format!("Expected number at end of range pattern, found {}", other))),
+                    };
+                    Ok(Pattern::Range { start: start_expr, end: end_expr, inclusive, location })
+                } else {
+                    Ok(Pattern::Literal { expr: start_expr, location })
+                }
             }
             Token::String(s) => {
                 let s = s.clone();
@@ -1288,10 +1319,117 @@ impl Parser {
                     location,
                 })
             }
+            Token::LeftParen => {
+                self.advance(); // consume '('
+                let mut elements = Vec::new();
+                while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                    while self.check(&Token::Newline) { self.advance(); }
+                    if self.check(&Token::RightParen) { break; }
+                    elements.push(self.parse_pattern()?);
+                    while self.check(&Token::Newline) { self.advance(); }
+                    if self.check(&Token::Comma) {
+                        self.advance();
+                    } else if !self.check(&Token::RightParen) {
+                        return Err(self.error("Expected ',' or ')' in tuple pattern"));
+                    }
+                }
+                if !self.check(&Token::RightParen) {
+                    return Err(self.error("Expected ')' to close tuple pattern"));
+                }
+                self.advance(); // consume ')'
+                Ok(Pattern::Tuple { elements, location })
+            }
+            Token::LeftBracket => {
+                self.advance(); // consume '['
+                let mut prefix = Vec::new();
+                let mut slice_rest: Option<Box<Pattern>> = None;
+                let mut suffix = Vec::new();
+
+                while !self.check(&Token::RightBracket) && !self.check(&Token::EOF) {
+                    while self.check(&Token::Newline) { self.advance(); }
+                    if self.check(&Token::RightBracket) { break; }
+
+                    if self.check(&Token::DotDot) {
+                        self.advance(); // consume '..'
+                        while self.check(&Token::Newline) { self.advance(); }
+                        let rest_pat = if self.check(&Token::Comma) || self.check(&Token::RightBracket) {
+                            Box::new(Pattern::Wildcard { location: Location::new(self.current().line, self.current().column) })
+                        } else {
+                            Box::new(self.parse_pattern()?)
+                        };
+                        slice_rest = Some(rest_pat);
+                    } else if slice_rest.is_some() {
+                        suffix.push(self.parse_pattern()?);
+                    } else {
+                        prefix.push(self.parse_pattern()?);
+                    }
+
+                    while self.check(&Token::Newline) { self.advance(); }
+                    if self.check(&Token::Comma) {
+                        self.advance();
+                    } else if !self.check(&Token::RightBracket) {
+                        return Err(self.error("Expected ',' or ']' in slice pattern"));
+                    }
+                }
+                if !self.check(&Token::RightBracket) {
+                    return Err(self.error("Expected ']' to close slice pattern"));
+                }
+                self.advance(); // consume ']'
+                Ok(Pattern::Slice { prefix, slice_rest, suffix, location })
+            }
             Token::Identifier(first_name) => {
                 let first_name = first_name.clone();
                 self.advance();
 
+                // 1. Struct field destructuring: ClassName { field1, field2: pat2, ... }
+                if self.check(&Token::LeftBrace) {
+                    self.advance(); // consume '{'
+                    let mut fields = Vec::new();
+                    while !self.check(&Token::RightBrace) && !self.check(&Token::EOF) {
+                        while self.check(&Token::Newline) { self.advance(); }
+                        if self.check(&Token::RightBrace) { break; }
+
+                        let field_name = match &self.current().token {
+                            Token::Identifier(f) => {
+                                let f = f.clone();
+                                self.advance();
+                                f
+                            }
+                            other => return Err(self.error(format!("Expected field name in struct pattern, found {}", other))),
+                        };
+
+                        while self.check(&Token::Newline) { self.advance(); }
+                        let field_pat = if self.check(&Token::Colon) {
+                            self.advance(); // consume ':'
+                            while self.check(&Token::Newline) { self.advance(); }
+                            self.parse_pattern()?
+                        } else {
+                            Pattern::Variable {
+                                name: field_name.clone(),
+                                location: Location::new(self.current().line, self.current().column),
+                            }
+                        };
+                        fields.push((field_name, field_pat));
+
+                        while self.check(&Token::Newline) { self.advance(); }
+                        if self.check(&Token::Comma) {
+                            self.advance();
+                        } else if !self.check(&Token::RightBrace) {
+                            return Err(self.error("Expected ',' or '}' in struct pattern"));
+                        }
+                    }
+                    if !self.check(&Token::RightBrace) {
+                        return Err(self.error("Expected '}' to close struct pattern"));
+                    }
+                    self.advance(); // consume '}'
+                    return Ok(Pattern::Struct {
+                        class_name: first_name,
+                        fields,
+                        location,
+                    });
+                }
+
+                // 2. Enum Variant: EnumName::Variant(...) or Variant(...)
                 let (enum_name, variant_name) = if self.check(&Token::ColonColon) {
                     self.advance(); // Skip '::'
                     match &self.current().token {
@@ -1316,19 +1454,8 @@ impl Parser {
                         if self.check(&Token::RightParen) {
                             break;
                         }
-                        let b = match &self.current().token {
-                            Token::Identifier(id) => {
-                                let id = id.clone();
-                                self.advance();
-                                id
-                            }
-                            Token::Underscore => {
-                                self.advance();
-                                "_".to_string()
-                            }
-                            other => return Err(self.error(format!("Expected variable name in pattern bindings, found {}", other))),
-                        };
-                        bindings.push(b);
+                        let p = self.parse_pattern()?;
+                        bindings.push(p);
 
                         while self.check(&Token::Newline) {
                             self.advance();

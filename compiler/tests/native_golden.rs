@@ -2931,6 +2931,32 @@ fn native_trait_bounds_and_associated_types() {
     assert!(out.contains("trait bounds and associated types verified!"));
 }
 
+#[test]
+fn native_pattern_matching_deep_destructuring_and_guards() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("pattern_matching_deep.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read pattern_matching_deep.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("pattern_matching_deep_test", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    assert!(out.contains("=== 1. Struct Patterns & Guards ==="));
+    assert!(out.contains("Point on diagonal:\n10"));
+    assert!(out.contains("Point x > y:\n25\n5"));
+    assert!(out.contains("Point other:\n3\n18"));
+    assert!(out.contains("=== 2. Range Patterns & Guards ==="));
+    assert!(out.contains("Perfect Score!\nGrade A\nGrade B\nGrade C\nNeeds Improvement"));
+    assert!(out.contains("=== 3. Nested Enums ==="));
+    assert!(out.contains("Container holds Red\nContainer holds other color\nContainer holds Red and Blue pair\nContainer is empty"));
+    assert!(out.contains("=== 4. Slice Patterns ==="));
+    assert!(out.contains("Slice is empty\nSlice head:\n42\nSlice tail length:\n2"));
+    assert!(out.contains("=== 5. Tuple Patterns ==="));
+    assert!(out.contains("Tuple identical:\n7\nTuple pair:\n10\n20"));
+    assert!(out.contains("M1-T02 Pattern Matching Fully Verified!"));
+}
+
+
 
 
 

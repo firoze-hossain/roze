@@ -62,7 +62,7 @@ Operator        = "+"  | "-"  | "*"  | "/"  | "%"
                 | "==" | "!=" | "<"  | "<=" | ">"  | ">="
                 | "&&" | "||" | "!"  | "?"
                 | "="  | "+=" | "-=" | "*=" | "/=" | "%="
-                | "->" | "=>" ;
+                | "->" | "=>" | ".." | "..=" ;
 
 Punctuation     = "(" | ")" | "{" | "}" | "[" | "]"
                 | ";" | "," | ":" | "." | "::" ;
@@ -173,10 +173,25 @@ WhileStatement  = "while" Expression Block ;
 ForStatement    = "for" [ Statement ] ";" [ Expression ] ";" [ Expression ] Block ;
 
 MatchStatement  = "match" Expression "{" { MatchArm } "}" ;
-MatchArm        = Pattern "=>" ( Block | Statement | Expression [ ";" ] ) ;
-Pattern         = Identifier [ "::" Identifier [ "(" [ PatternList ] ")" ] ]
+MatchArm        = Pattern [ "if" Expression ] "=>" ( Block | Statement | Expression [ ";" ] ) ;
+Pattern         = RangePattern
+                | EnumPattern
+                | StructPattern
+                | TuplePattern
+                | SlicePattern
                 | Literal
+                | Identifier
                 | "_" ;
+
+RangePattern    = Expression ( ".." | "..=" ) Expression ;
+EnumPattern     = [ Identifier "::" ] Identifier [ "(" [ PatternList ] ")" ] ;
+StructPattern   = Identifier "{" [ FieldPatternList ] "}" ;
+FieldPatternList = FieldPattern { "," FieldPattern } ;
+FieldPattern    = Identifier [ ":" Pattern ] ;
+TuplePattern    = "(" [ PatternList ] ")" ;
+SlicePattern    = "[" [ SlicePatternElements ] "]" ;
+SlicePatternElements = PatternList [ "," ".." [ Identifier ] [ "," PatternList ] ]
+                     | ".." [ Identifier ] [ "," PatternList ] ;
 PatternList     = Pattern { "," Pattern } ;
 
 ReturnStatement = "return" [ Expression ] ";" ;

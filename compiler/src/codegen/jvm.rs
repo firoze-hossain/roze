@@ -2019,6 +2019,9 @@ impl JavaSourceGenerator {
                         java_type_name(return_type), escape_java_identifier(name), params_sig.join(", ")
                     ));
                     self.generate_statement(&mut source, body, 2, return_type, false)?;
+                    if return_type != &Type::Void && !Self::statement_always_returns(body) {
+                        source.push_str(&format!("        throw new RuntimeException(\"Missing return statement in function '{}'\");\n", name));
+                    }
                     source.push_str("    }\n");
                 }
             }
@@ -2221,6 +2224,9 @@ impl JavaSourceGenerator {
                     java_type_name(return_type), escape_java_identifier(m_name), params_sig.join(", ")
                 ));
                 self.generate_statement(source, body, 2, return_type, false)?;
+                if return_type != &Type::Void && !Self::statement_always_returns(body) {
+                    source.push_str(&format!("        throw new RuntimeException(\"Missing return statement in method '{}'\");\n", m_name));
+                }
                 source.push_str("    }\n");
             }
         }
@@ -2421,6 +2427,318 @@ impl JavaSourceGenerator {
         }
     }
 
+    fn generate_match_arm_check(
+        &self,
+        source: &mut String,
+        pattern: &TypedPattern,
+        target_var: &str,
+        indent: usize,
+        guard: Option<&TypedExpression>,
+        body: &TypedStatement,
+        return_type: &Type,
+        is_closure: bool,
+        matched_flag: &str,
+    ) -> Result<()> {
+        let indent_str = "    ".repeat(indent);
+        match pattern {
+            TypedPattern::Wildcard { .. } => {
+                source.push_str(&format!("{}if (!{}) {{\n", indent_str, matched_flag));
+                if let Some(g) = guard {
+                    source.push_str(&format!("{}    if (", indent_str));
+                    self.generate_expression(source, g)?;
+                    source.push_str(") {\n");
+                    source.push_str(&format!("{}        {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 2, return_type, is_closure)?;
+                    source.push_str(&format!("{}    }}\n", indent_str));
+                } else {
+                    source.push_str(&format!("{}    {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 1, return_type, is_closure)?;
+                }
+                source.push_str(&format!("{}}}\n", indent_str));
+            }
+            TypedPattern::Variable { name, type_, .. } => {
+                source.push_str(&format!("{}if (!{}) {{\n", indent_str, matched_flag));
+                if name != "_" {
+                    source.push_str(&format!(
+                        "{}    {} {} = ({}) {};\n",
+                        indent_str, java_type_name(type_), escape_java_identifier(name), java_type_name(type_), target_var
+                    ));
+                }
+                if let Some(g) = guard {
+                    source.push_str(&format!("{}    if (", indent_str));
+                    self.generate_expression(source, g)?;
+                    source.push_str(") {\n");
+                    source.push_str(&format!("{}        {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 2, return_type, is_closure)?;
+                    source.push_str(&format!("{}    }}\n", indent_str));
+                } else {
+                    source.push_str(&format!("{}    {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 1, return_type, is_closure)?;
+                }
+                source.push_str(&format!("{}}}\n", indent_str));
+            }
+            TypedPattern::Literal { expr: lit, .. } => {
+                source.push_str(&format!("{}if (!{} && java.util.Objects.equals({}, ", indent_str, matched_flag, target_var));
+                self.generate_expression(source, lit)?;
+                source.push_str(")) {\n");
+                if let Some(g) = guard {
+                    source.push_str(&format!("{}    if (", indent_str));
+                    self.generate_expression(source, g)?;
+                    source.push_str(") {\n");
+                    source.push_str(&format!("{}        {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 2, return_type, is_closure)?;
+                    source.push_str(&format!("{}    }}\n", indent_str));
+                } else {
+                    source.push_str(&format!("{}    {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 1, return_type, is_closure)?;
+                }
+                source.push_str(&format!("{}}}\n", indent_str));
+            }
+            TypedPattern::Range { start, end, inclusive, .. } => {
+                let mut start_str = String::new();
+                self.generate_expression(&mut start_str, start)?;
+                let mut end_str = String::new();
+                self.generate_expression(&mut end_str, end)?;
+
+                let op = if *inclusive { "<=" } else { "<" };
+                source.push_str(&format!(
+                    "{}if (!{} && {} instanceof Number && ((Number){}).longValue() >= ((Number){}).longValue() && ((Number){}).longValue() {} ((Number){}).longValue()) {{\n",
+                    indent_str, matched_flag, target_var, target_var, start_str, target_var, op, end_str
+                ));
+                if let Some(g) = guard {
+                    source.push_str(&format!("{}    if (", indent_str));
+                    self.generate_expression(source, g)?;
+                    source.push_str(") {\n");
+                    source.push_str(&format!("{}        {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 2, return_type, is_closure)?;
+                    source.push_str(&format!("{}    }}\n", indent_str));
+                } else {
+                    source.push_str(&format!("{}    {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 1, return_type, is_closure)?;
+                }
+                source.push_str(&format!("{}}}\n", indent_str));
+            }
+            TypedPattern::Struct { class_name, fields, .. } => {
+                let class_esc = escape_java_identifier(class_name);
+                source.push_str(&format!("{}if (!{} && {} instanceof {}) {{\n", indent_str, matched_flag, target_var, class_esc));
+                let inst_var = format!("__inst_{}", self.try_counter.get());
+                self.try_counter.set(self.try_counter.get() + 1);
+                source.push_str(&format!("{}    {} {} = ({}) {};\n", indent_str, class_esc, inst_var, class_esc, target_var));
+
+                let mut sub_conds = Vec::new();
+                let mut sub_bindings = Vec::new();
+                for (f_name, f_pat) in fields {
+                    let f_val = format!("{}.{}", inst_var, escape_java_identifier(f_name));
+                    match f_pat {
+                        TypedPattern::Variable { name, type_, .. } => {
+                            if name != "_" {
+                                sub_bindings.push(format!("{} {} = {};", java_type_name(type_), escape_java_identifier(name), f_val));
+                            }
+                        }
+                        TypedPattern::Literal { expr: lit, .. } => {
+                            let mut lit_str = String::new();
+                            self.generate_expression(&mut lit_str, lit)?;
+                            sub_conds.push(format!("java.util.Objects.equals({}, {})", f_val, lit_str));
+                        }
+                        _ => {}
+                    }
+                }
+
+                let sub_cond_str = if sub_conds.is_empty() {
+                    "true".to_string()
+                } else {
+                    sub_conds.join(" && ")
+                };
+
+                source.push_str(&format!("{}    if ({}) {{\n", indent_str, sub_cond_str));
+                for b in sub_bindings {
+                    source.push_str(&format!("{}        {}\n", indent_str, b));
+                }
+                if let Some(g) = guard {
+                    source.push_str(&format!("{}        if (", indent_str));
+                    self.generate_expression(source, g)?;
+                    source.push_str(") {\n");
+                    source.push_str(&format!("{}            {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 3, return_type, is_closure)?;
+                    source.push_str(&format!("{}        }}\n", indent_str));
+                } else {
+                    source.push_str(&format!("{}        {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 2, return_type, is_closure)?;
+                }
+                source.push_str(&format!("{}    }}\n", indent_str));
+                source.push_str(&format!("{}}}\n", indent_str));
+            }
+            TypedPattern::Slice { prefix, slice_rest, suffix, .. } => {
+                let min_len = prefix.len() + suffix.len();
+                let len_check = if slice_rest.is_some() {
+                    format!("((java.util.List) {}).size() >= {}", target_var, min_len)
+                } else {
+                    format!("((java.util.List) {}).size() == {}", target_var, min_len)
+                };
+
+                source.push_str(&format!(
+                    "{}if (!{} && {} instanceof java.util.List && {}) {{\n",
+                    indent_str, matched_flag, target_var, len_check
+                ));
+                let list_var = format!("__list_{}", self.try_counter.get());
+                self.try_counter.set(self.try_counter.get() + 1);
+                source.push_str(&format!("{}    java.util.List {} = (java.util.List) {};\n", indent_str, list_var, target_var));
+
+                for (i, p) in prefix.iter().enumerate() {
+                    if let TypedPattern::Variable { name, type_, .. } = p {
+                        if name != "_" {
+                            source.push_str(&format!(
+                                "{}    {} {} = ({}) {}.get({});\n",
+                                indent_str, java_type_name(type_), escape_java_identifier(name), java_type_name(type_), list_var, i
+                            ));
+                        }
+                    }
+                }
+
+                if let Some(rest_pat) = slice_rest {
+                    if let TypedPattern::Variable { name, .. } = &**rest_pat {
+                        if name != "_" {
+                            let suff_len = suffix.len();
+                            source.push_str(&format!(
+                                "{}    java.util.List {} = new java.util.ArrayList({}.subList({}, {}.size() - {}));\n",
+                                indent_str, escape_java_identifier(name), list_var, prefix.len(), list_var, suff_len
+                            ));
+                        }
+                    }
+                }
+
+                if let Some(g) = guard {
+                    source.push_str(&format!("{}    if (", indent_str));
+                    self.generate_expression(source, g)?;
+                    source.push_str(") {\n");
+                    source.push_str(&format!("{}        {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 2, return_type, is_closure)?;
+                    source.push_str(&format!("{}    }}\n", indent_str));
+                } else {
+                    source.push_str(&format!("{}    {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 1, return_type, is_closure)?;
+                }
+                source.push_str(&format!("{}}}\n", indent_str));
+            }
+            TypedPattern::Tuple { elements, .. } => {
+                source.push_str(&format!(
+                    "{}if (!{} && {} instanceof java.util.List && ((java.util.List) {}).size() == {}) {{\n",
+                    indent_str, matched_flag, target_var, target_var, elements.len()
+                ));
+                let list_var = format!("__tuple_{}", self.try_counter.get());
+                self.try_counter.set(self.try_counter.get() + 1);
+                source.push_str(&format!("{}    java.util.List {} = (java.util.List) {};\n", indent_str, list_var, target_var));
+
+                for (i, elem) in elements.iter().enumerate() {
+                    if let TypedPattern::Variable { name, type_, .. } = elem {
+                        if name != "_" {
+                            source.push_str(&format!(
+                                "{}    {} {} = ({}) {}.get({});\n",
+                                indent_str, java_type_name(type_), escape_java_identifier(name), java_type_name(type_), list_var, i
+                            ));
+                        }
+                    }
+                }
+
+                if let Some(g) = guard {
+                    source.push_str(&format!("{}    if (", indent_str));
+                    self.generate_expression(source, g)?;
+                    source.push_str(") {\n");
+                    source.push_str(&format!("{}        {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 2, return_type, is_closure)?;
+                    source.push_str(&format!("{}    }}\n", indent_str));
+                } else {
+                    source.push_str(&format!("{}    {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 1, return_type, is_closure)?;
+                }
+                source.push_str(&format!("{}}}\n", indent_str));
+            }
+            TypedPattern::Variant { enum_name, variant, bindings, .. } => {
+                let variant_class = format!("{}.{}", escape_java_identifier(enum_name), escape_java_identifier(variant));
+                source.push_str(&format!("{}if (!{} && {} instanceof {}) {{\n", indent_str, matched_flag, target_var, variant_class));
+
+                let arm_var = format!("__arm_val_{}", self.try_counter.get());
+                self.try_counter.set(self.try_counter.get() + 1);
+                source.push_str(&format!(
+                    "{}    {} {} = ({}) {};\n",
+                    indent_str, variant_class, arm_var, variant_class, target_var
+                ));
+
+                let mut nested_conds = Vec::new();
+                let mut nested_bindings = Vec::new();
+
+                for (i, b) in bindings.iter().enumerate() {
+                    let field_access = format!("{}._{}", arm_var, i);
+                    match b {
+                        TypedPattern::Variable { name, type_, .. } => {
+                            if name != "_" {
+                                nested_bindings.push(format!("{} {} = {};", java_type_name(type_), escape_java_identifier(name), field_access));
+                            }
+                        }
+                        TypedPattern::Literal { expr: lit, .. } => {
+                            let mut lit_str = String::new();
+                            self.generate_expression(&mut lit_str, lit)?;
+                            nested_conds.push(format!("java.util.Objects.equals({}, {})", field_access, lit_str));
+                        }
+                        TypedPattern::Variant { enum_name: sub_e, variant: sub_v, bindings: sub_b, .. } => {
+                            let sub_cls = format!("{}.{}", escape_java_identifier(sub_e), escape_java_identifier(sub_v));
+                            nested_conds.push(format!("{} instanceof {}", field_access, sub_cls));
+                            let sub_inst = format!("__sub_{}_{}", arm_var, i);
+                            nested_bindings.push(format!("{} {} = ({}) {};", sub_cls, sub_inst, sub_cls, field_access));
+                            for (j, sb) in sub_b.iter().enumerate() {
+                                if let TypedPattern::Variable { name: sb_name, type_: sb_type, .. } = sb {
+                                    if sb_name != "_" {
+                                        nested_bindings.push(format!("{} {} = {}._{};", java_type_name(sb_type), escape_java_identifier(sb_name), sub_inst, j));
+                                    }
+                                }
+                            }
+                        }
+                        TypedPattern::Struct { class_name: s_cls, fields: s_fields, .. } => {
+                            let s_esc = escape_java_identifier(s_cls);
+                            nested_conds.push(format!("{} instanceof {}", field_access, s_esc));
+                            let s_inst = format!("__st_{}_{}", arm_var, i);
+                            nested_bindings.push(format!("{} {} = ({}) {};", s_esc, s_inst, s_esc, field_access));
+                            for (f_name, f_pat) in s_fields {
+                                if let TypedPattern::Variable { name: fv_name, type_: fv_type, .. } = f_pat {
+                                    if fv_name != "_" {
+                                        nested_bindings.push(format!("{} {} = {}.{};", java_type_name(fv_type), escape_java_identifier(fv_name), s_inst, escape_java_identifier(f_name)));
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                let nested_cond_str = if nested_conds.is_empty() {
+                    "true".to_string()
+                } else {
+                    nested_conds.join(" && ")
+                };
+
+                source.push_str(&format!("{}    if ({}) {{\n", indent_str, nested_cond_str));
+                for b in nested_bindings {
+                    source.push_str(&format!("{}        {}\n", indent_str, b));
+                }
+
+                if let Some(g) = guard {
+                    source.push_str(&format!("{}        if (", indent_str));
+                    self.generate_expression(source, g)?;
+                    source.push_str(") {\n");
+                    source.push_str(&format!("{}            {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 3, return_type, is_closure)?;
+                    source.push_str(&format!("{}        }}\n", indent_str));
+                } else {
+                    source.push_str(&format!("{}        {} = true;\n", indent_str, matched_flag));
+                    self.generate_statement(source, body, indent + 2, return_type, is_closure)?;
+                }
+                source.push_str(&format!("{}    }}\n", indent_str));
+                source.push_str(&format!("{}}}\n", indent_str));
+            }
+        }
+        Ok(())
+    }
+
     fn generate_statement(&self, source: &mut String, stmt: &TypedStatement, indent: usize, return_type: &Type, is_closure: bool) -> Result<()> {
         let indent_str = "    ".repeat(indent);
 
@@ -2504,72 +2822,39 @@ impl JavaSourceGenerator {
                 let id = self.try_counter.get();
                 self.try_counter.set(id + 1);
                 let target_var = format!("__match_val_{}", id);
+                let matched_flag = format!("__matched_{}", id);
 
                 source.push_str(&format!("{}Object {} = ", indent_str, target_var));
                 self.generate_expression(source, &expr)?;
                 source.push_str(";\n");
+                source.push_str(&format!("{}boolean {} = false;\n", indent_str, matched_flag));
 
-                let mut is_first = true;
                 for arm in arms {
-                    source.push_str(&indent_str);
-                    if !is_first {
-                        source.push_str("else ");
-                    }
-                    is_first = false;
-
-                    match &arm.pattern {
-                        TypedPattern::Wildcard { .. } => {
-                            source.push_str("{\n");
-                            self.generate_statement(source, &arm.body, indent + 1, return_type, is_closure)?;
-                            source.push_str(&format!("{}}}\n", indent_str));
-                        }
-                        TypedPattern::Variable { name, type_, .. } => {
-                            source.push_str("{\n");
-                            source.push_str(&format!(
-                                "{}    {} {} = ({}) {};\n",
-                                indent_str, java_type_name(type_), escape_java_identifier(name), java_type_name(type_), target_var
-                            ));
-                            self.generate_statement(source, &arm.body, indent + 1, return_type, is_closure)?;
-                            source.push_str(&format!("{}}}\n", indent_str));
-                        }
-                        TypedPattern::Literal { expr: lit, .. } => {
-                            source.push_str(&format!("if (java.util.Objects.equals({}, ", target_var));
-                            self.generate_expression(source, lit)?;
-                            source.push_str(")) {\n");
-                            self.generate_statement(source, &arm.body, indent + 1, return_type, is_closure)?;
-                            source.push_str(&format!("{}}}\n", indent_str));
-                        }
-                        TypedPattern::Variant { enum_name, variant, bindings, .. } => {
-                            let variant_class = format!("{}.{}", escape_java_identifier(enum_name), escape_java_identifier(variant));
-                            source.push_str(&format!("if ({} instanceof {}) {{\n", target_var, variant_class));
-
-                            if !bindings.is_empty() {
-                                let arm_var = format!("__arm_val_{}", self.try_counter.get());
-                                self.try_counter.set(self.try_counter.get() + 1);
-                                source.push_str(&format!(
-                                    "{}    {} {} = ({}) {};\n",
-                                    indent_str, variant_class, arm_var, variant_class, target_var
-                                ));
-                                for (i, (b_name, b_type)) in bindings.iter().enumerate() {
-                                    if b_name != "_" {
-                                        source.push_str(&format!(
-                                            "{}    {} {} = {}._{};\n",
-                                            indent_str, java_type_name(b_type), escape_java_identifier(b_name), arm_var, i
-                                        ));
-                                    }
-                                }
-                            }
-                            self.generate_statement(source, &arm.body, indent + 1, return_type, is_closure)?;
-                            source.push_str(&format!("{}}}\n", indent_str));
-                        }
-                    }
+                    self.generate_match_arm_check(
+                        source,
+                        &arm.pattern,
+                        &target_var,
+                        indent,
+                        arm.guard.as_ref(),
+                        &arm.body,
+                        return_type,
+                        is_closure,
+                        &matched_flag,
+                    )?;
                 }
 
-                let has_catchall = arms.iter().any(|arm| matches!(arm.pattern, TypedPattern::Wildcard { .. } | TypedPattern::Variable { .. }));
-                if !has_catchall && !arms.is_empty() {
-                    source.push_str(&format!("{}else {{\n", indent_str));
-                    source.push_str(&format!("{}    throw new RuntimeException(\"Pattern matching failed: no arm matched \" + {});\n", indent_str, target_var));
-                    source.push_str(&format!("{}}}\n", indent_str));
+                let all_arms_return = !arms.is_empty() && arms.iter().all(|arm| Self::statement_always_returns(&arm.body));
+                if all_arms_return {
+                    source.push_str(&format!("{}throw new RuntimeException(\"Pattern matching failed: no arm matched \" + {});\n", indent_str, target_var));
+                } else {
+                    let has_unconditional_catchall = arms.iter().any(|arm| {
+                        arm.guard.is_none() && matches!(arm.pattern, TypedPattern::Wildcard { .. } | TypedPattern::Variable { .. })
+                    });
+                    if !has_unconditional_catchall && !arms.is_empty() {
+                        source.push_str(&format!("{}if (!{}) {{\n", indent_str, matched_flag));
+                        source.push_str(&format!("{}    throw new RuntimeException(\"Pattern matching failed: no arm matched \" + {});\n", indent_str, target_var));
+                        source.push_str(&format!("{}}}\n", indent_str));
+                    }
                 }
             }
             TypedStatement::FieldAssign { object, field, value, .. } => {

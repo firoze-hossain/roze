@@ -38,6 +38,7 @@ pub struct TypedFunctionParam {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum TypedStatement {
     Let {
         name: String,
@@ -149,6 +150,7 @@ pub enum TypedStatement {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TypedTraitMethod {
     pub name: String,
     pub params: Vec<TypedFunctionParam>,
@@ -160,6 +162,7 @@ pub struct TypedTraitMethod {
 #[allow(dead_code)]
 pub struct TypedMatchArm {
     pub pattern: TypedPattern,
+    pub guard: Option<TypedExpression>,
     pub body: Box<TypedStatement>,
     pub location: Location,
 }
@@ -171,7 +174,28 @@ pub enum TypedPattern {
         enum_name: String,
         variant: String,
         tag: usize,
-        bindings: Vec<(String, Type)>,
+        bindings: Vec<TypedPattern>,
+        location: Location,
+    },
+    Struct {
+        class_name: String,
+        fields: Vec<(String, TypedPattern)>,
+        location: Location,
+    },
+    Tuple {
+        elements: Vec<TypedPattern>,
+        location: Location,
+    },
+    Slice {
+        prefix: Vec<TypedPattern>,
+        slice_rest: Option<Box<TypedPattern>>,
+        suffix: Vec<TypedPattern>,
+        location: Location,
+    },
+    Range {
+        start: TypedExpression,
+        end: TypedExpression,
+        inclusive: bool,
         location: Location,
     },
     Wildcard {

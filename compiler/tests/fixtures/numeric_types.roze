@@ -1,0 +1,121 @@
+func main() {
+    // 1. Primitive Declarations & Suffixed Literals
+    let a_i8: i8 = 42i8;
+    let a_u8: u8 = 200u8;
+    let a_i16: i16 = 1000i16;
+    let a_u16: u16 = 50000u16;
+    let a_i32: i32 = 100000i32;
+    let a_u32: u32 = 200000u32;
+    let a_i64: i64 = 999999i64;
+    let a_u64: u64 = 888888u64;
+    let a_isize: isize = 10isize;
+    let a_usize: usize = 20usize;
+    let a_char: char = 'R';
+
+    println(a_i8);
+    println(a_u8);
+    println(a_i16);
+    println(a_u16);
+    println(a_i32);
+    println(a_u32);
+    println(a_i64);
+    println(a_u64);
+    println(a_isize);
+    println(a_usize);
+    println(a_char);
+
+    // 2. Character escape sequences
+    let ch_esc: char = 'Z';
+    println(ch_esc);
+
+    // 3. Explicit Type Conversions
+    println(i8(300));
+    println(u8(300));
+    println(i16(70000));
+    println(u16(70000));
+    println(i32(100));
+    println(u32(100));
+    println(i64(55));
+    println(u64(55));
+    println(isize(77));
+    println(usize(77));
+    println(char(65));
+
+    // 4. Type Bounds
+    println(i8_min());
+    println(i8_max());
+    println(u8_min());
+    println(u8_max());
+    println(i16_min());
+    println(i16_max());
+    println(u16_min());
+    println(u16_max());
+    println(i32_min());
+    println(i32_max());
+    println(u32_min());
+    println(u32_max());
+    println(u64_min());
+    println(u64_max());
+    println(usize_min());
+    println(usize_max());
+
+    // 5. Wrapping Arithmetic
+    let w1: u8 = 250u8;
+    println(w1.wrapping_add(10u8));
+    let w2: u8 = 5u8;
+    println(w2.wrapping_sub(10u8));
+    let w3: u8 = 100u8;
+    println(w3.wrapping_mul(3u8));
+    let w4: i8 = 120i8;
+    println(w4.wrapping_add(20i8));
+    let w5: i8 = -120i8;
+    println(w5.wrapping_sub(20i8));
+    let w6: i16 = 32000i16;
+    println(w6.wrapping_add(1000i16));
+    let w7: u16 = 65530u16;
+    println(w7.wrapping_add(10u16));
+    let w8: u32 = 4294967290u32;
+    println(w8.wrapping_add(10u32));
+    let w9: u64 = 18446744073709551610u64;
+    println(w9.wrapping_add(10u64));
+
+    // 6. Saturating Arithmetic
+    let s1: u8 = 250u8;
+    println(s1.saturating_add(20u8));
+    let s2: u8 = 5u8;
+    println(s2.saturating_sub(20u8));
+    let s3: u8 = 50u8;
+    println(s3.saturating_mul(10u8));
+    let s4: i8 = 120i8;
+    println(s4.saturating_add(20i8));
+    let s5: i8 = -120i8;
+    println(s5.saturating_sub(20i8));
+    let s6: i8 = 50i8;
+    println(s6.saturating_mul(10i8));
+    let s7: i16 = 32000i16;
+    println(s7.saturating_add(1000i16));
+    let s8: u16 = 100u16;
+    println(s8.saturating_sub(200u16));
+    let s9: u32 = 4294967290u32;
+    println(s9.saturating_add(20u32));
+    let s10: u64 = 18446744073709551610u64;
+    println(s10.saturating_add(20u64));
+
+    // 7. 128-bit Primitives
+    let x128: i128 = 1234567890123456789i128;
+    println(x128);
+    let y128: u128 = 9876543210987654321u128;
+    println(y128);
+    println(i128_min());
+    println(i128_max());
+    println(u128_min());
+    println(u128_max());
+    let i128_sat: i128 = i128_max().saturating_add(100i128);
+    println(i128_sat);
+    let u128_sat: u128 = u128_max().saturating_add(100u128);
+    println(u128_sat);
+    let i128_wrap: i128 = i128_max().wrapping_add(1i128);
+    println(i128_wrap);
+    let u128_wrap: u128 = u128_max().wrapping_add(1u128);
+    println(u128_wrap);
+}

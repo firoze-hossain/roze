@@ -101,7 +101,64 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
+        if let Some(c) = self.current_char {
+            if c == 'i' || c == 'u' || c == 'f' {
+                let mut chars_clone = self.chars.clone();
+                let mut s = String::new();
+                s.push(c);
+                while let Some(&next_ch) = chars_clone.peek() {
+                    if next_ch.is_alphanumeric() {
+                        s.push(next_ch);
+                        chars_clone.next();
+                    } else {
+                        break;
+                    }
+                }
+                match s.as_str() {
+                    "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "i128" | "u128"
+                    | "isize" | "usize" | "f32" | "f64" => {
+                        for _ in 0..s.len() {
+                            if let Some(ch) = self.current_char {
+                                number.push(ch);
+                                self.advance();
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         number
+    }
+
+    fn read_char(&mut self) -> char {
+        self.advance(); // Skip opening '\''
+        let ch = match self.current_char {
+            Some('\\') => {
+                self.advance();
+                let escaped = match self.current_char {
+                    Some('n') => '\n',
+                    Some('t') => '\t',
+                    Some('r') => '\r',
+                    Some('0') => '\0',
+                    Some('\'') => '\'',
+                    Some('\\') => '\\',
+                    Some(c) => c,
+                    None => '\0',
+                };
+                self.advance();
+                escaped
+            }
+            Some(c) => {
+                self.advance();
+                c
+            }
+            None => '\0',
+        };
+        if self.current_char == Some('\'') {
+            self.advance(); // Skip closing '\''
+        }
+        ch
     }
 
     fn read_identifier(&mut self) -> String {
@@ -260,6 +317,10 @@ impl<'a> Lexer<'a> {
                 '"' => {
                     let string = self.read_string();
                     Token::String(string)
+                }
+                '\'' => {
+                    let ch = self.read_char();
+                    Token::Char(ch)
                 }
                 _ => {
                     if c.is_digit(10) {

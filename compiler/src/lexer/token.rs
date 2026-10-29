@@ -36,6 +36,7 @@ pub enum Token {
     Identifier(String),
     String(String),
     Number(String),
+    Char(char),
 
     // Operators
     Plus,       // +
@@ -113,6 +114,7 @@ impl fmt::Display for Token {
             Token::Identifier(id) => write!(f, "{}", id),
             Token::String(s) => write!(f, "\"{}\"", s),
             Token::Number(n) => write!(f, "{}", n),
+            Token::Char(c) => write!(f, "'{}'", c),
             Token::Plus => write!(f, "+"),
             Token::Minus => write!(f, "-"),
             Token::Star => write!(f, "*"),

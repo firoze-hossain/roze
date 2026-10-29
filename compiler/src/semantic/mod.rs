@@ -63,8 +63,69 @@ pub enum Type {
     },
     /// An unsigned 8-bit integer type (`u8`).
     U8,
+    I8,
+    I16,
+    U16,
+    I32,
+    U32,
+    I64,
+    U64,
+    I128,
+    U128,
+    Isize,
+    Usize,
+    F32,
+    F64,
+    Char,
     /// An unsafe raw pointer type (`*raw T`).
     RawPointer(Box<Type>),
+}
+
+impl Type {
+    pub fn is_integer(&self) -> bool {
+        matches!(
+            self,
+            Type::Int
+                | Type::I8
+                | Type::U8
+                | Type::I16
+                | Type::U16
+                | Type::I32
+                | Type::U32
+                | Type::I64
+                | Type::U64
+                | Type::I128
+                | Type::U128
+                | Type::Isize
+                | Type::Usize
+        )
+    }
+
+    pub fn is_unsigned(&self) -> bool {
+        matches!(
+            self,
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::U128 | Type::Usize
+        )
+    }
+
+    pub fn is_float(&self) -> bool {
+        matches!(self, Type::Float | Type::F32 | Type::F64)
+    }
+
+    pub fn is_numeric(&self) -> bool {
+        self.is_integer() || self.is_float()
+    }
+}
+
+pub fn parse_numeric_literal(s: &str) -> (&str, Option<&str>) {
+    for suffix in &[
+        "isize", "usize", "i128", "u128", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64", "i8", "u8"
+    ] {
+        if s.ends_with(suffix) {
+            return (&s[..s.len() - suffix.len()], Some(suffix));
+        }
+    }
+    (s, None)
 }
 
 pub fn split_type_args(s: &str) -> Vec<String> {
@@ -114,6 +175,20 @@ fn type_mangle_name(ty: &Type) -> String {
         Type::Generic { base, type_args } => specialized_name(base, type_args),
         Type::Function { .. } => "fn".to_string(),
         Type::U8 => "u8".to_string(),
+        Type::I8 => "i8".to_string(),
+        Type::I16 => "i16".to_string(),
+        Type::U16 => "u16".to_string(),
+        Type::I32 => "i32".to_string(),
+        Type::U32 => "u32".to_string(),
+        Type::I64 => "i64".to_string(),
+        Type::U64 => "u64".to_string(),
+        Type::I128 => "i128".to_string(),
+        Type::U128 => "u128".to_string(),
+        Type::Isize => "isize".to_string(),
+        Type::Usize => "usize".to_string(),
+        Type::F32 => "f32".to_string(),
+        Type::F64 => "f64".to_string(),
+        Type::Char => "char".to_string(),
         Type::RawPointer(inner) => format!("ptr_{}", type_mangle_name(inner)),
     }
 }
@@ -155,6 +230,20 @@ impl Type {
             "bool" => Type::Bool,
             "void" => Type::Void,
             "u8" => Type::U8,
+            "i8" => Type::I8,
+            "i16" => Type::I16,
+            "u16" => Type::U16,
+            "i32" => Type::I32,
+            "u32" => Type::U32,
+            "i64" => Type::I64,
+            "u64" => Type::U64,
+            "i128" => Type::I128,
+            "u128" => Type::U128,
+            "isize" => Type::Isize,
+            "usize" => Type::Usize,
+            "f32" => Type::F32,
+            "f64" => Type::F64,
+            "char" => Type::Char,
             "list" | "List" => Type::List,
             "map" | "Map" => Type::Map,
             "option" | "Option" => Type::Option,
@@ -179,12 +268,26 @@ impl Type {
     pub fn to_java(&self) -> String {
         match self {
             Type::Int => "int".to_string(),
+            Type::I8 => "byte".to_string(),
+            Type::U8 => "int".to_string(),
+            Type::I16 => "short".to_string(),
+            Type::U16 => "int".to_string(),
+            Type::I32 => "int".to_string(),
+            Type::U32 => "long".to_string(),
+            Type::I64 => "long".to_string(),
+            Type::U64 => "long".to_string(),
+            Type::I128 => "java.math.BigInteger".to_string(),
+            Type::U128 => "java.math.BigInteger".to_string(),
+            Type::Isize => "long".to_string(),
+            Type::Usize => "long".to_string(),
             Type::Float => "double".to_string(),
+            Type::F32 => "float".to_string(),
+            Type::F64 => "double".to_string(),
+            Type::Char => "char".to_string(),
             Type::String => "String".to_string(),
             Type::Bool => "boolean".to_string(),
             Type::Void => "void".to_string(),
             Type::Unknown => "Object".to_string(),
-            Type::U8 => "int".to_string(),
             Type::RawPointer(_) => "long".to_string(),
             Type::List => "java.util.List".to_string(),
             Type::Map => "java.util.Map".to_string(),
@@ -239,12 +342,26 @@ impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Int => write!(f, "int"),
+            Type::I8 => write!(f, "i8"),
+            Type::U8 => write!(f, "u8"),
+            Type::I16 => write!(f, "i16"),
+            Type::U16 => write!(f, "u16"),
+            Type::I32 => write!(f, "i32"),
+            Type::U32 => write!(f, "u32"),
+            Type::I64 => write!(f, "i64"),
+            Type::U64 => write!(f, "u64"),
+            Type::I128 => write!(f, "i128"),
+            Type::U128 => write!(f, "u128"),
+            Type::Isize => write!(f, "isize"),
+            Type::Usize => write!(f, "usize"),
             Type::Float => write!(f, "float"),
+            Type::F32 => write!(f, "f32"),
+            Type::F64 => write!(f, "f64"),
+            Type::Char => write!(f, "char"),
             Type::String => write!(f, "string"),
             Type::Bool => write!(f, "bool"),
             Type::Void => write!(f, "void"),
             Type::Unknown => write!(f, "<unknown>"),
-            Type::U8 => write!(f, "u8"),
             Type::RawPointer(inner) => write!(f, "*raw {}", inner),
             Type::List => write!(f, "list"),
             Type::Map => write!(f, "map"),
@@ -278,10 +395,16 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
     }
     match (expected, actual) {
         (Type::Unknown, _) | (_, Type::Unknown) => true,
-        (Type::Float, Type::Int) => true,
+        (Type::Int, Type::I64) | (Type::I64, Type::Int) => true,
+        (Type::Float, Type::F64) | (Type::F64, Type::Float) => true,
+        (exp, act) if exp.is_float() && act.is_float() => true,
+        (exp, act) if exp.is_float() && act.is_integer() => true,
+        (exp, act) if exp.is_integer() && act.is_integer() => true,
         (Type::RawPointer(_), Type::RawPointer(_)) => true,
-        (Type::RawPointer(_), Type::Int) | (Type::Int, Type::RawPointer(_)) => true,
-        (Type::U8, Type::Int) | (Type::Int, Type::U8) => true,
+        (Type::RawPointer(_), ty) if ty.is_integer() => true,
+        (ty, Type::RawPointer(_)) if ty.is_integer() => true,
+        (Type::Char, Type::Char) => true,
+        (Type::Char, ty) | (ty, Type::Char) if ty.is_integer() => true,
         // List <-> List<T>
         (Type::List, Type::Generic { base, .. }) if base == "List" || base == "list" => true,
         (Type::Generic { base, .. }, Type::List) if base == "List" || base == "list" => true,
@@ -791,6 +914,64 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("qemu_exit", vec![Type::Int], Type::Void),
         ("serial_print", vec![Type::String], Type::Void),
         ("serial_putchar", vec![Type::Int], Type::Void),
+
+        // ---- Fixed-Width Numeric Suite (M2-T01) ----
+        // Type conversion constructors
+        ("i8", vec![Type::Unknown], Type::I8),
+        ("u8", vec![Type::Unknown], Type::U8),
+        ("i16", vec![Type::Unknown], Type::I16),
+        ("u16", vec![Type::Unknown], Type::U16),
+        ("i32", vec![Type::Unknown], Type::I32),
+        ("u32", vec![Type::Unknown], Type::U32),
+        ("i64", vec![Type::Unknown], Type::I64),
+        ("u64", vec![Type::Unknown], Type::U64),
+        ("i128", vec![Type::Unknown], Type::I128),
+        ("u128", vec![Type::Unknown], Type::U128),
+        ("isize", vec![Type::Unknown], Type::Isize),
+        ("usize", vec![Type::Unknown], Type::Usize),
+        ("f32", vec![Type::Unknown], Type::F32),
+        ("f64", vec![Type::Unknown], Type::F64),
+        ("char", vec![Type::Unknown], Type::Char),
+        ("int", vec![Type::Unknown], Type::Int),
+        ("float", vec![Type::Unknown], Type::Float),
+
+        // Bounds constants/intrinsics
+        ("i8_min", vec![], Type::I8),
+        ("i8_max", vec![], Type::I8),
+        ("u8_min", vec![], Type::U8),
+        ("u8_max", vec![], Type::U8),
+        ("i16_min", vec![], Type::I16),
+        ("i16_max", vec![], Type::I16),
+        ("u16_min", vec![], Type::U16),
+        ("u16_max", vec![], Type::U16),
+        ("i32_min", vec![], Type::I32),
+        ("i32_max", vec![], Type::I32),
+        ("u32_min", vec![], Type::U32),
+        ("u32_max", vec![], Type::U32),
+        ("i64_min", vec![], Type::I64),
+        ("i64_max", vec![], Type::I64),
+        ("u64_min", vec![], Type::U64),
+        ("u64_max", vec![], Type::U64),
+        ("i128_min", vec![], Type::I128),
+        ("i128_max", vec![], Type::I128),
+        ("u128_min", vec![], Type::U128),
+        ("u128_max", vec![], Type::U128),
+        ("isize_min", vec![], Type::Isize),
+        ("isize_max", vec![], Type::Isize),
+        ("usize_min", vec![], Type::Usize),
+        ("usize_max", vec![], Type::Usize),
+        ("f32_min", vec![], Type::F32),
+        ("f32_max", vec![], Type::F32),
+        ("f64_min", vec![], Type::F64),
+        ("f64_max", vec![], Type::F64),
+
+        // Wrapping & Saturating arithmetic intrinsics
+        ("wrapping_add", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("wrapping_sub", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("wrapping_mul", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("saturating_add", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("saturating_sub", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("saturating_mul", vec![Type::Unknown, Type::Unknown], Type::Unknown),
     ]
 }
 
@@ -997,6 +1178,7 @@ fn substitute_statement(stmt: &Statement, map: &HashMap<String, String>) -> Stat
 fn substitute_expression(expr: &Expression, map: &HashMap<String, String>) -> Expression {
     match expr {
         Expression::Number { value, location } => Expression::Number { value: value.clone(), location: location.clone() },
+        Expression::Char { value, location } => Expression::Char { value: *value, location: location.clone() },
         Expression::String { value, location } => Expression::String { value: value.clone(), location: location.clone() },
         Expression::Identifier { name, location } => Expression::Identifier { name: name.clone(), location: location.clone() },
         Expression::Boolean { value, location } => Expression::Boolean { value: *value, location: location.clone() },
@@ -1163,12 +1345,18 @@ pub struct TypeChecker {
 /// behavior this had before Float existed, just now also extended to
 /// recognize Float on either side.
 fn numeric_binary_result_type(left: &Type, right: &Type) -> Option<Type> {
+    if left == right && (left.is_numeric() || *left == Type::Char) {
+        return Some(left.clone());
+    }
     match (left, right) {
-        (Type::Int, Type::Int) => Some(Type::Int),
-        (Type::Float, Type::Float) => Some(Type::Float),
-        (Type::Float, Type::Int) | (Type::Int, Type::Float) => Some(Type::Float),
+        (Type::Int, Type::I64) | (Type::I64, Type::Int) => Some(Type::I64),
+        (Type::Float, Type::F64) | (Type::F64, Type::Float) => Some(Type::F64),
+        (other, Type::Int) | (Type::Int, other) if other.is_numeric() => Some(other.clone()),
+        (Type::Float | Type::F64, other) | (other, Type::Float | Type::F64) if other.is_numeric() => Some(Type::F64),
+        (Type::F32, other) | (other, Type::F32) if other.is_integer() => Some(Type::F32),
+        (other, _) if other.is_integer() => Some(other.clone()),
         (Type::Unknown, Type::Unknown) => Some(Type::Int),
-        (Type::Unknown, other) | (other, Type::Unknown) if matches!(other, Type::Int | Type::Float) => Some(other.clone()),
+        (Type::Unknown, other) | (other, Type::Unknown) if other.is_numeric() => Some(other.clone()),
         _ => None,
     }
 }
@@ -1211,10 +1399,12 @@ impl TypeChecker {
 
     pub fn compute_type_type_layout(&self, ty: &Type) -> Result<(usize, usize)> {
         match ty {
-            Type::Int => Ok((8, 8)),
-            Type::Float => Ok((8, 8)),
+            Type::I8 | Type::U8 => Ok((1, 1)),
+            Type::I16 | Type::U16 => Ok((2, 2)),
+            Type::I32 | Type::U32 | Type::F32 | Type::Char => Ok((4, 4)),
+            Type::Int | Type::I64 | Type::U64 | Type::Isize | Type::Usize | Type::Float | Type::F64 => Ok((8, 8)),
+            Type::I128 | Type::U128 => Ok((16, 16)),
             Type::Bool => Ok((1, 1)),
-            Type::U8 => Ok((1, 1)),
             Type::String => Ok((8, 8)),
             Type::RawPointer(_) => Ok((8, 8)),
             Type::Void => Ok((0, 1)),
@@ -1229,10 +1419,12 @@ impl TypeChecker {
 
     pub fn compute_type_layout(&self, ty_name: &str) -> Result<(usize, usize)> {
         match ty_name {
-            "int" | "i64" => Ok((8, 8)),
-            "float" | "f64" => Ok((8, 8)),
+            "i8" | "u8" => Ok((1, 1)),
+            "i16" | "u16" => Ok((2, 2)),
+            "i32" | "u32" | "f32" | "char" => Ok((4, 4)),
+            "int" | "i64" | "u64" | "isize" | "usize" | "float" | "f64" => Ok((8, 8)),
+            "i128" | "u128" => Ok((16, 16)),
             "bool" => Ok((1, 1)),
-            "u8" => Ok((1, 1)),
             "string" => Ok((8, 8)),
             "rawpointer" => Ok((8, 8)),
             "void" => Ok((0, 1)),
@@ -2796,9 +2988,40 @@ impl TypeChecker {
 
     pub fn check_expression(&mut self, expr: &Expression) -> Result<TypedExpression> {
         match expr {
-            Expression::Number { value, location } => Ok(TypedExpression {
-                kind: TypedExpressionKind::Number(value.clone()),
-                type_: if value.contains('.') { Type::Float } else { Type::Int },
+            Expression::Number { value, location } => {
+                let (_, suffix_opt) = parse_numeric_literal(value);
+                let ty = if let Some(suffix) = suffix_opt {
+                    match suffix {
+                        "i8" => Type::I8,
+                        "u8" => Type::U8,
+                        "i16" => Type::I16,
+                        "u16" => Type::U16,
+                        "i32" => Type::I32,
+                        "u32" => Type::U32,
+                        "i64" => Type::I64,
+                        "u64" => Type::U64,
+                        "i128" => Type::I128,
+                        "u128" => Type::U128,
+                        "isize" => Type::Isize,
+                        "usize" => Type::Usize,
+                        "f32" => Type::F32,
+                        "f64" => Type::F64,
+                        _ => Type::Int,
+                    }
+                } else if value.contains('.') {
+                    Type::Float
+                } else {
+                    Type::Int
+                };
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::Number(value.clone()),
+                    type_: ty,
+                    location: location.clone(),
+                })
+            }
+            Expression::Char { value, location } => Ok(TypedExpression {
+                kind: TypedExpressionKind::Char(*value),
+                type_: Type::Char,
                 location: location.clone(),
             }),
             Expression::String { value, location } => Ok(TypedExpression {
@@ -3027,6 +3250,9 @@ impl TypeChecker {
                                 location.line,
                                 location.column,
                             ))?
+                    } else if (name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" ||
+                               name == "saturating_add" || name == "saturating_sub" || name == "saturating_mul") && typed_arguments.len() == 2 {
+                        typed_arguments[0].type_.clone()
                     } else if let Some(gen_fn) = self.generic_functions.get(name).cloned() {
                         let concrete_type_args = self.infer_func_type_args(&gen_fn, &typed_arguments, location)?;
                         let spec_name = self.instantiate_generic_function(name, &concrete_type_args)?;
@@ -3919,6 +4145,30 @@ impl TypeChecker {
                             type_: ret_ty,
                             location: location.clone(),
                         })
+                    }
+                    other if other.is_integer() => {
+                        match method.as_str() {
+                            "wrapping_add" | "wrapping_sub" | "wrapping_mul"
+                            | "saturating_add" | "saturating_sub" | "saturating_mul" if typed_args.len() == 1 => {
+                                let mut all_args = Vec::with_capacity(2);
+                                all_args.push(typed_obj);
+                                all_args.extend(typed_args);
+                                Ok(TypedExpression {
+                                    kind: TypedExpressionKind::Call {
+                                        function: method.clone(),
+                                        arguments: all_args,
+                                    },
+                                    type_: other.clone(),
+                                    location: location.clone(),
+                                })
+                            }
+                            _ => {
+                                return Err(RozeError::type_error(
+                                    format!("Cannot call method '{}' on type '{}'", method, other),
+                                    location.line, location.column,
+                                ).into());
+                            }
+                        }
                     }
                     other => {
                         return Err(RozeError::type_error(

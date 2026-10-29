@@ -11,7 +11,7 @@ use std::rc::Rc;
 use anyhow::Result;
 use crate::error::RozeError;
 use crate::parser::ast::*;
-use crate::semantic::TypeChecker;
+use crate::semantic::{parse_numeric_literal, TypeChecker};
 
 const MAX_STEPS: usize = 100_000;
 
@@ -170,18 +170,20 @@ impl<'a> ComptimeEvaluator<'a> {
     pub fn eval_expr(&mut self, expr: &Expression) -> Result<ComptimeValue> {
         match expr {
             Expression::Number { value, .. } => {
-                if value.contains('.') {
-                    let f: f64 = value.parse().map_err(|_| {
+                let (raw, _) = parse_numeric_literal(value);
+                if raw.contains('.') {
+                    let f: f64 = raw.parse().map_err(|_| {
                         RozeError::type_error(format!("Invalid float literal '{}'", value), 0, 0)
                     })?;
                     Ok(ComptimeValue::Float(f))
                 } else {
-                    let i: i64 = value.parse().map_err(|_| {
+                    let i: i64 = raw.parse().map_err(|_| {
                         RozeError::type_error(format!("Invalid integer literal '{}'", value), 0, 0)
                     })?;
                     Ok(ComptimeValue::Int(i))
                 }
             }
+            Expression::Char { value, .. } => Ok(ComptimeValue::Int(*value as u32 as i64)),
             Expression::String { value, .. } => Ok(ComptimeValue::String(value.clone())),
             Expression::Boolean { value, .. } => Ok(ComptimeValue::Bool(*value)),
             Expression::Null { .. } => Ok(ComptimeValue::Null),

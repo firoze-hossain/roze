@@ -22,16 +22,76 @@
 
 ## 2. Type System
 
-### 2.1 Primitive Types
+### 2.1 Primitive & Numeric Types
+Roze features a comprehensive, fixed-width numeric suite with explicit signedness, bit-width guarantees, and character representation matching Rust and modern low-level systems languages:
+
 | Type | Representation | Description |
 | :--- | :--- | :--- |
-| `int` | 64-bit signed integer | Default integer type (`i64`) |
-| `float` | 64-bit IEEE 754 | Double-precision floating point (`f64`) |
+| `i8` | 8-bit signed integer | Value range: `[-128, 127]` |
+| `u8` | 8-bit unsigned integer | Value range: `[0, 255]`, raw byte |
+| `i16` | 16-bit signed integer | Value range: `[-32,768, 32,767]` |
+| `u16` | 16-bit unsigned integer | Value range: `[0, 65,535]` |
+| `i32` | 32-bit signed integer | Value range: `[-2,147,483,648, 2,147,483,647]` |
+| `u32` | 32-bit unsigned integer | Value range: `[0, 4,294,967,295]` |
+| `i64` / `int` | 64-bit signed integer | Value range: `[-9,223,372,036,854,775,808, 9,223,372,036,854,775,807]`. Default integer type. |
+| `u64` | 64-bit unsigned integer | Value range: `[0, 18,446,744,073,709,551,615]` |
+| `i128` | 128-bit signed integer | Value range: `[-2^127, 2^127 - 1]` |
+| `u128` | 128-bit unsigned integer | Value range: `[0, 2^128 - 1]` |
+| `isize` | Pointer-width signed int | 64-bit signed offset on 64-bit targets |
+| `usize` | Pointer-width unsigned int | 64-bit unsigned pointer index on 64-bit targets |
+| `f32` | 32-bit IEEE 754 | Single-precision floating point |
+| `f64` / `float` | 64-bit IEEE 754 | Double-precision floating point. Default float type. |
+| `char` | 32-bit Unicode scalar | Character literal (`'a'`, `'\n'`, `'\t'`, `'\\'`, `'\''`) |
 | `bool` | 1-bit boolean | `true` or `false` |
 | `string` | UTF-8 ARC string | Immutable refcounted string buffer |
 | `void` | Unit type | Function without return value |
-| `u8` | 8-bit unsigned byte | Raw byte representation |
 | `rawpointer` | 64-bit address | Unmanaged memory address |
+
+#### Numeric Literals with Type Suffixes
+Literals can be explicitly annotated with their target primitive type using suffixes:
+```roze
+let b: u8 = 255u8;
+let s: i16 = -1000i16;
+let w: u32 = 4000000000u32;
+let big: i128 = 170141183460469231731687303715884105727i128;
+let pi32: f32 = 3.14159f32;
+let ch: char = 'R';
+```
+
+#### Explicit Type Conversions & Casting
+Explicit conversions between numeric types are invoked using type constructor syntax:
+```roze
+let x: int = 120;
+let y: u8 = u8(x);
+let z: f64 = f64(y);
+let c: char = char(65); // 'A'
+let code: int = int(c); // 65
+```
+
+#### Numeric Type Bounds Intrinsics
+Type minimum and maximum limits are accessible via built-in bound intrinsics:
+- `i8_min()`, `i8_max()`, `u8_min()`, `u8_max()`
+- `i16_min()`, `i16_max()`, `u16_min()`, `u16_max()`
+- `i32_min()`, `i32_max()`, `u32_min()`, `u32_max()`
+- `i64_min()`, `i64_max()`, `u64_min()`, `u64_max()`
+- `i128_min()`, `i128_max()`, `u128_min()`, `u128_max()`
+- `isize_min()`, `isize_max()`, `usize_min()`, `usize_max()`
+- `f32_min()`, `f32_max()`, `f64_min()`, `f64_max()`
+
+#### Wrapping and Saturating Arithmetic
+For systems programming, cryptography, and game development where overflow semantics must be explicitly controlled, Roze provides standard wrapping and saturating operations:
+```roze
+// Wrapping arithmetic (two's complement wrap-around)
+let max_u8: u8 = 255u8;
+let wrapped: u8 = max_u8.wrapping_add(1u8); // 0u8
+let wrapped_sub: u8 = (0u8).wrapping_sub(1u8); // 255u8
+
+// Saturating arithmetic (clamps at type boundaries)
+let clamped_add: u8 = (250u8).saturating_add(20u8); // 255u8
+let clamped_sub: u8 = (5u8).saturating_sub(10u8); // 0u8
+let clamped_mul: i8 = (100i8).saturating_mul(2i8); // 127i8
+```
+Both method syntax (`a.wrapping_add(b)`) and procedural syntax (`wrapping_add(a, b)`) are supported across all fixed-width integer types (`i8` through `u128`, `isize`, `usize`).
 
 ### 2.2 Algebraic Data Types (Enums)
 Enums represent discriminated unions with payload variants:

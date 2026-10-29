@@ -270,7 +270,7 @@ s1_rows = [
         ("M2-T01", 8), ("Month 2", 4), ("Sprint 3 (W05-W06)", 8), "Core Types", "Full Fixed-Width Numeric Suite",
         "Introduce complete primitive numeric types: i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, f32, f64, isize, usize, and char with wrapping/saturating arithmetic.",
         "Complete parity with Rust numeric primitives and Java 25 wrapper classes with unsigned support.",
-        "OS, Systems, Security, AI/ML, Games", "5 Days", ("Critical", 14), ("Planned", 12)
+        "OS, Systems, Security, AI/ML, Games", "5 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M2-T02", 8), ("Month 2", 4), ("Sprint 3 (W05-W06)", 8), "Hardware Acceleration", "SIMD Vector Intrinsics Engine",

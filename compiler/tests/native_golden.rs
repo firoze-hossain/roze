@@ -3237,5 +3237,87 @@ true
     assert_eq!(out.trim_end(), expected);
 }
 
+#[test]
+fn native_numeric_types_and_char_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("numeric_types.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read numeric_types.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("numeric_types_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    let expected = "\
+42
+200
+1000
+50000
+100000
+200000
+999999
+888888
+10
+20
+R
+Z
+44
+44
+4464
+4464
+100
+100
+55
+55
+77
+77
+A
+-128
+127
+0
+255
+-32768
+32767
+0
+65535
+-2147483648
+2147483647
+0
+4294967295
+0
+18446744073709551615
+0
+18446744073709551615
+4
+251
+44
+-116
+116
+-32536
+4
+4
+4
+255
+0
+255
+127
+-128
+127
+32767
+0
+4294967295
+18446744073709551615
+1234567890123456789
+9876543210987654321
+-170141183460469231731687303715884105728
+170141183460469231731687303715884105727
+0
+340282366920938463463374607431768211455
+170141183460469231731687303715884105727
+340282366920938463463374607431768211455
+-170141183460469231731687303715884105728
+0";
+    assert_eq!(out.trim_end(), expected);
+}
+
 
 

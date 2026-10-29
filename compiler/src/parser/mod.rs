@@ -1349,6 +1349,14 @@ impl Parser {
                     location,
                 })
             }
+            Token::Char(c) => {
+                let c = *c;
+                self.advance();
+                Ok(Pattern::Literal {
+                    expr: Box::new(Expression::Char { value: c, location: location.clone() }),
+                    location,
+                })
+            }
             Token::True => {
                 self.advance();
                 Ok(Pattern::Literal {
@@ -2134,6 +2142,13 @@ impl Parser {
                 self.advance();
                 Ok(Expression::Number {
                     value: n,
+                    location,
+                })
+            }
+            Token::Char(c) => {
+                self.advance();
+                Ok(Expression::Char {
+                    value: c,
                     location,
                 })
             }

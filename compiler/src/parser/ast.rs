@@ -268,6 +268,10 @@ pub enum Expression {
         value: String,
         location: Location,
     },
+    Char {
+        value: char,
+        location: Location,
+    },
     String {
         value: String,
         location: Location,

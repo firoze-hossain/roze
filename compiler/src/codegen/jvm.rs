@@ -2523,6 +2523,268 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     private static void __roze_serial_putchar(long ch) { System.out.print((char)ch); }
 "#;
 
+const NUMERIC_HELPER_METHODS: &str = r#"
+    private static java.math.BigInteger __roze_to_i128(Object v) {
+        if (v instanceof java.math.BigInteger) return (java.math.BigInteger)v;
+        if (v instanceof Number) return java.math.BigInteger.valueOf(((Number)v).longValue());
+        return new java.math.BigInteger(String.valueOf(v));
+    }
+    private static java.math.BigInteger __roze_to_u128(Object v) {
+        if (v instanceof java.math.BigInteger) return (java.math.BigInteger)v;
+        if (v instanceof Number) {
+            long l = ((Number)v).longValue();
+            if (l >= 0) return java.math.BigInteger.valueOf(l);
+            return new java.math.BigInteger(Long.toUnsignedString(l));
+        }
+        return new java.math.BigInteger(String.valueOf(v));
+    }
+
+    // i8
+    private static byte __roze_wrapping_add_i8(byte a, byte b) { return (byte)(a + b); }
+    private static byte __roze_wrapping_sub_i8(byte a, byte b) { return (byte)(a - b); }
+    private static byte __roze_wrapping_mul_i8(byte a, byte b) { return (byte)(a * b); }
+    private static byte __roze_saturating_add_i8(byte a, byte b) {
+        int r = a + b;
+        if (r > 127) return 127;
+        if (r < -128) return -128;
+        return (byte)r;
+    }
+    private static byte __roze_saturating_sub_i8(byte a, byte b) {
+        int r = a - b;
+        if (r > 127) return 127;
+        if (r < -128) return -128;
+        return (byte)r;
+    }
+    private static byte __roze_saturating_mul_i8(byte a, byte b) {
+        int r = a * b;
+        if (r > 127) return 127;
+        if (r < -128) return -128;
+        return (byte)r;
+    }
+
+    // u8
+    private static int __roze_wrapping_add_u8(int a, int b) { return (a + b) & 0xFF; }
+    private static int __roze_wrapping_sub_u8(int a, int b) { return (a - b) & 0xFF; }
+    private static int __roze_wrapping_mul_u8(int a, int b) { return (a * b) & 0xFF; }
+    private static int __roze_saturating_add_u8(int a, int b) {
+        int r = (a & 0xFF) + (b & 0xFF);
+        return r > 255 ? 255 : r;
+    }
+    private static int __roze_saturating_sub_u8(int a, int b) {
+        int r = (a & 0xFF) - (b & 0xFF);
+        return r < 0 ? 0 : r;
+    }
+    private static int __roze_saturating_mul_u8(int a, int b) {
+        int r = (a & 0xFF) * (b & 0xFF);
+        return r > 255 ? 255 : r;
+    }
+
+    // i16
+    private static short __roze_wrapping_add_i16(short a, short b) { return (short)(a + b); }
+    private static short __roze_wrapping_sub_i16(short a, short b) { return (short)(a - b); }
+    private static short __roze_wrapping_mul_i16(short a, short b) { return (short)(a * b); }
+    private static short __roze_saturating_add_i16(short a, short b) {
+        int r = a + b;
+        if (r > 32767) return 32767;
+        if (r < -32768) return -32768;
+        return (short)r;
+    }
+    private static short __roze_saturating_sub_i16(short a, short b) {
+        int r = a - b;
+        if (r > 32767) return 32767;
+        if (r < -32768) return -32768;
+        return (short)r;
+    }
+    private static short __roze_saturating_mul_i16(short a, short b) {
+        int r = a * b;
+        if (r > 32767) return 32767;
+        if (r < -32768) return -32768;
+        return (short)r;
+    }
+
+    // u16
+    private static int __roze_wrapping_add_u16(int a, int b) { return (a + b) & 0xFFFF; }
+    private static int __roze_wrapping_sub_u16(int a, int b) { return (a - b) & 0xFFFF; }
+    private static int __roze_wrapping_mul_u16(int a, int b) { return (a * b) & 0xFFFF; }
+    private static int __roze_saturating_add_u16(int a, int b) {
+        int r = (a & 0xFFFF) + (b & 0xFFFF);
+        return r > 65535 ? 65535 : r;
+    }
+    private static int __roze_saturating_sub_u16(int a, int b) {
+        int r = (a & 0xFFFF) - (b & 0xFFFF);
+        return r < 0 ? 0 : r;
+    }
+    private static int __roze_saturating_mul_u16(int a, int b) {
+        int r = (a & 0xFFFF) * (b & 0xFFFF);
+        return r > 65535 ? 65535 : r;
+    }
+
+    // i32
+    private static int __roze_wrapping_add_i32(int a, int b) { return a + b; }
+    private static int __roze_wrapping_sub_i32(int a, int b) { return a - b; }
+    private static int __roze_wrapping_mul_i32(int a, int b) { return a * b; }
+    private static int __roze_saturating_add_i32(int a, int b) {
+        long r = (long)a + (long)b;
+        if (r > Integer.MAX_VALUE) return Integer.MAX_VALUE;
+        if (r < Integer.MIN_VALUE) return Integer.MIN_VALUE;
+        return (int)r;
+    }
+    private static int __roze_saturating_sub_i32(int a, int b) {
+        long r = (long)a - (long)b;
+        if (r > Integer.MAX_VALUE) return Integer.MAX_VALUE;
+        if (r < Integer.MIN_VALUE) return Integer.MIN_VALUE;
+        return (int)r;
+    }
+    private static int __roze_saturating_mul_i32(int a, int b) {
+        long r = (long)a * (long)b;
+        if (r > Integer.MAX_VALUE) return Integer.MAX_VALUE;
+        if (r < Integer.MIN_VALUE) return Integer.MIN_VALUE;
+        return (int)r;
+    }
+
+    // u32
+    private static long __roze_wrapping_add_u32(long a, long b) { return (a + b) & 0xFFFFFFFFL; }
+    private static long __roze_wrapping_sub_u32(long a, long b) { return (a - b) & 0xFFFFFFFFL; }
+    private static long __roze_wrapping_mul_u32(long a, long b) { return (a * b) & 0xFFFFFFFFL; }
+    private static long __roze_saturating_add_u32(long a, long b) {
+        long r = (a & 0xFFFFFFFFL) + (b & 0xFFFFFFFFL);
+        return r > 0xFFFFFFFFL ? 0xFFFFFFFFL : r;
+    }
+    private static long __roze_saturating_sub_u32(long a, long b) {
+        long r = (a & 0xFFFFFFFFL) - (b & 0xFFFFFFFFL);
+        return r < 0 ? 0L : r;
+    }
+    private static long __roze_saturating_mul_u32(long a, long b) {
+        java.math.BigInteger r = java.math.BigInteger.valueOf(a & 0xFFFFFFFFL).multiply(java.math.BigInteger.valueOf(b & 0xFFFFFFFFL));
+        java.math.BigInteger max = java.math.BigInteger.valueOf(0xFFFFFFFFL);
+        return r.compareTo(max) > 0 ? 0xFFFFFFFFL : r.longValue();
+    }
+
+    // i64 / int / isize
+    private static long __roze_wrapping_add_i64(long a, long b) { return a + b; }
+    private static long __roze_wrapping_sub_i64(long a, long b) { return a - b; }
+    private static long __roze_wrapping_mul_i64(long a, long b) { return a * b; }
+    private static long __roze_saturating_add_i64(long a, long b) {
+        java.math.BigInteger r = java.math.BigInteger.valueOf(a).add(java.math.BigInteger.valueOf(b));
+        java.math.BigInteger max = java.math.BigInteger.valueOf(Long.MAX_VALUE);
+        java.math.BigInteger min = java.math.BigInteger.valueOf(Long.MIN_VALUE);
+        if (r.compareTo(max) > 0) return Long.MAX_VALUE;
+        if (r.compareTo(min) < 0) return Long.MIN_VALUE;
+        return r.longValue();
+    }
+    private static long __roze_saturating_sub_i64(long a, long b) {
+        java.math.BigInteger r = java.math.BigInteger.valueOf(a).subtract(java.math.BigInteger.valueOf(b));
+        java.math.BigInteger max = java.math.BigInteger.valueOf(Long.MAX_VALUE);
+        java.math.BigInteger min = java.math.BigInteger.valueOf(Long.MIN_VALUE);
+        if (r.compareTo(max) > 0) return Long.MAX_VALUE;
+        if (r.compareTo(min) < 0) return Long.MIN_VALUE;
+        return r.longValue();
+    }
+    private static long __roze_saturating_mul_i64(long a, long b) {
+        java.math.BigInteger r = java.math.BigInteger.valueOf(a).multiply(java.math.BigInteger.valueOf(b));
+        java.math.BigInteger max = java.math.BigInteger.valueOf(Long.MAX_VALUE);
+        java.math.BigInteger min = java.math.BigInteger.valueOf(Long.MIN_VALUE);
+        if (r.compareTo(max) > 0) return Long.MAX_VALUE;
+        if (r.compareTo(min) < 0) return Long.MIN_VALUE;
+        return r.longValue();
+    }
+
+    // u64 / usize
+    private static long __roze_wrapping_add_u64(long a, long b) { return a + b; }
+    private static long __roze_wrapping_sub_u64(long a, long b) { return a - b; }
+    private static long __roze_wrapping_mul_u64(long a, long b) { return a * b; }
+    private static long __roze_saturating_add_u64(long a, long b) {
+        java.math.BigInteger ua = new java.math.BigInteger(Long.toUnsignedString(a));
+        java.math.BigInteger ub = new java.math.BigInteger(Long.toUnsignedString(b));
+        java.math.BigInteger sum = ua.add(ub);
+        java.math.BigInteger max = java.math.BigInteger.valueOf(2).pow(64).subtract(java.math.BigInteger.ONE);
+        return sum.compareTo(max) >= 0 ? -1L : sum.longValue();
+    }
+    private static long __roze_saturating_sub_u64(long a, long b) {
+        java.math.BigInteger ua = new java.math.BigInteger(Long.toUnsignedString(a));
+        java.math.BigInteger ub = new java.math.BigInteger(Long.toUnsignedString(b));
+        if (ua.compareTo(ub) <= 0) return 0L;
+        return ua.subtract(ub).longValue();
+    }
+    private static long __roze_saturating_mul_u64(long a, long b) {
+        java.math.BigInteger ua = new java.math.BigInteger(Long.toUnsignedString(a));
+        java.math.BigInteger ub = new java.math.BigInteger(Long.toUnsignedString(b));
+        java.math.BigInteger prod = ua.multiply(ub);
+        java.math.BigInteger max = java.math.BigInteger.valueOf(2).pow(64).subtract(java.math.BigInteger.ONE);
+        return prod.compareTo(max) >= 0 ? -1L : prod.longValue();
+    }
+
+    // i128
+    private static final java.math.BigInteger __ROZE_I128_MIN = new java.math.BigInteger("-170141183460469231731687303715884105728");
+    private static final java.math.BigInteger __ROZE_I128_MAX = new java.math.BigInteger("170141183460469231731687303715884105727");
+    private static final java.math.BigInteger __ROZE_U128_MAX = new java.math.BigInteger("340282366920938463463374607431768211455");
+    private static final java.math.BigInteger __ROZE_2_POW_128 = java.math.BigInteger.valueOf(2).pow(128);
+
+    private static java.math.BigInteger __roze_wrapping_add_i128(java.math.BigInteger a, java.math.BigInteger b) {
+        java.math.BigInteger r = a.add(b).remainder(__ROZE_2_POW_128);
+        if (r.compareTo(__ROZE_I128_MAX) > 0) r = r.subtract(__ROZE_2_POW_128);
+        else if (r.compareTo(__ROZE_I128_MIN) < 0) r = r.add(__ROZE_2_POW_128);
+        return r;
+    }
+    private static java.math.BigInteger __roze_wrapping_sub_i128(java.math.BigInteger a, java.math.BigInteger b) {
+        java.math.BigInteger r = a.subtract(b).remainder(__ROZE_2_POW_128);
+        if (r.compareTo(__ROZE_I128_MAX) > 0) r = r.subtract(__ROZE_2_POW_128);
+        else if (r.compareTo(__ROZE_I128_MIN) < 0) r = r.add(__ROZE_2_POW_128);
+        return r;
+    }
+    private static java.math.BigInteger __roze_wrapping_mul_i128(java.math.BigInteger a, java.math.BigInteger b) {
+        java.math.BigInteger r = a.multiply(b).remainder(__ROZE_2_POW_128);
+        if (r.compareTo(__ROZE_I128_MAX) > 0) r = r.subtract(__ROZE_2_POW_128);
+        else if (r.compareTo(__ROZE_I128_MIN) < 0) r = r.add(__ROZE_2_POW_128);
+        return r;
+    }
+    private static java.math.BigInteger __roze_saturating_add_i128(java.math.BigInteger a, java.math.BigInteger b) {
+        java.math.BigInteger r = a.add(b);
+        if (r.compareTo(__ROZE_I128_MAX) > 0) return __ROZE_I128_MAX;
+        if (r.compareTo(__ROZE_I128_MIN) < 0) return __ROZE_I128_MIN;
+        return r;
+    }
+    private static java.math.BigInteger __roze_saturating_sub_i128(java.math.BigInteger a, java.math.BigInteger b) {
+        java.math.BigInteger r = a.subtract(b);
+        if (r.compareTo(__ROZE_I128_MAX) > 0) return __ROZE_I128_MAX;
+        if (r.compareTo(__ROZE_I128_MIN) < 0) return __ROZE_I128_MIN;
+        return r;
+    }
+    private static java.math.BigInteger __roze_saturating_mul_i128(java.math.BigInteger a, java.math.BigInteger b) {
+        java.math.BigInteger r = a.multiply(b);
+        if (r.compareTo(__ROZE_I128_MAX) > 0) return __ROZE_I128_MAX;
+        if (r.compareTo(__ROZE_I128_MIN) < 0) return __ROZE_I128_MIN;
+        return r;
+    }
+
+    // u128
+    private static java.math.BigInteger __roze_wrapping_add_u128(java.math.BigInteger a, java.math.BigInteger b) {
+        return a.add(b).mod(__ROZE_2_POW_128);
+    }
+    private static java.math.BigInteger __roze_wrapping_sub_u128(java.math.BigInteger a, java.math.BigInteger b) {
+        return a.subtract(b).mod(__ROZE_2_POW_128);
+    }
+    private static java.math.BigInteger __roze_wrapping_mul_u128(java.math.BigInteger a, java.math.BigInteger b) {
+        return a.multiply(b).mod(__ROZE_2_POW_128);
+    }
+    private static java.math.BigInteger __roze_saturating_add_u128(java.math.BigInteger a, java.math.BigInteger b) {
+        java.math.BigInteger r = a.add(b);
+        return r.compareTo(__ROZE_U128_MAX) > 0 ? __ROZE_U128_MAX : r;
+    }
+    private static java.math.BigInteger __roze_saturating_sub_u128(java.math.BigInteger a, java.math.BigInteger b) {
+        if (a.compareTo(b) <= 0) return java.math.BigInteger.ZERO;
+        return a.subtract(b);
+    }
+    private static java.math.BigInteger __roze_saturating_mul_u128(java.math.BigInteger a, java.math.BigInteger b) {
+        java.math.BigInteger r = a.multiply(b);
+        return r.compareTo(__ROZE_U128_MAX) > 0 ? __ROZE_U128_MAX : r;
+    }
+    private static java.math.BigInteger __roze_i128_min() { return __ROZE_I128_MIN; }
+    private static java.math.BigInteger __roze_i128_max() { return __ROZE_I128_MAX; }
+    private static java.math.BigInteger __roze_u128_min() { return java.math.BigInteger.ZERO; }
+    private static java.math.BigInteger __roze_u128_max() { return __ROZE_U128_MAX; }
+"#;
+
 /// Returns the Java return type for a built-in Core (string/math)
 /// intrinsic, or None if `name` isn't one. Keep this in sync with
 /// `semantic::builtin_signatures`.
@@ -2742,6 +3004,40 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "multiboot2_get_info_ptr" => Some("long"),
         "outb" | "qemu_exit" | "serial_print" | "serial_putchar" => Some("void"),
 
+        // Fixed-Width Numeric Suite (M2-T01)
+        "i8" => Some("byte"),
+        "u8" => Some("int"),
+        "i16" => Some("short"),
+        "u16" => Some("int"),
+        "i32" => Some("int"),
+        "u32" => Some("long"),
+        "i64" => Some("long"),
+        "u64" => Some("long"),
+        "i128" => Some("java.math.BigInteger"),
+        "u128" => Some("java.math.BigInteger"),
+        "isize" => Some("long"),
+        "usize" => Some("long"),
+        "f32" => Some("float"),
+        "f64" => Some("double"),
+        "char" => Some("char"),
+        "int" => Some("int"),
+        "float" => Some("double"),
+
+        "i8_min" | "i8_max" => Some("byte"),
+        "u8_min" | "u8_max" => Some("int"),
+        "i16_min" | "i16_max" => Some("short"),
+        "u16_min" | "u16_max" => Some("int"),
+        "i32_min" | "i32_max" => Some("int"),
+        "u32_min" | "u32_max" => Some("long"),
+        "i64_min" | "i64_max" => Some("long"),
+        "u64_min" | "u64_max" => Some("long"),
+        "i128_min" | "i128_max" => Some("java.math.BigInteger"),
+        "u128_min" | "u128_max" => Some("java.math.BigInteger"),
+        "isize_min" | "isize_max" => Some("long"),
+        "usize_min" | "usize_max" => Some("long"),
+        "f32_min" | "f32_max" => Some("float"),
+        "f64_min" | "f64_max" => Some("double"),
+
         _ => None,
     }
 }
@@ -2845,7 +3141,19 @@ fn java_type_name(ty: &Type) -> String {
 fn java_unbox(ty: &Type, expr_str: &str) -> String {
     match ty {
         Type::Int => format!("((Number) {}).intValue()", expr_str),
+        Type::I8 => format!("((Number) {}).byteValue()", expr_str),
+        Type::U8 => format!("(((Number) {}).intValue() & 0xFF)", expr_str),
+        Type::I16 => format!("((Number) {}).shortValue()", expr_str),
+        Type::U16 => format!("(((Number) {}).intValue() & 0xFFFF)", expr_str),
+        Type::I32 => format!("((Number) {}).intValue()", expr_str),
+        Type::U32 => format!("(((Number) {}).longValue() & 0xFFFFFFFFL)", expr_str),
+        Type::I64 | Type::U64 | Type::Isize | Type::Usize => format!("((Number) {}).longValue()", expr_str),
+        Type::I128 => format!("__roze_to_i128({})", expr_str),
+        Type::U128 => format!("__roze_to_u128({})", expr_str),
         Type::Float => format!("((Number) {}).doubleValue()", expr_str),
+        Type::F32 => format!("((Number) {}).floatValue()", expr_str),
+        Type::F64 => format!("((Number) {}).doubleValue()", expr_str),
+        Type::Char => format!("((Character) {})", expr_str),
         Type::Bool => format!("((Boolean) {})", expr_str),
         Type::String => format!("((String) {})", expr_str),
         Type::Class(name) | Type::Trait(name) => format!("(({}) {})", escape_java_identifier(name), expr_str),
@@ -3013,6 +3321,7 @@ impl JavaSourceGenerator {
         source.push_str(OPTION_RESULT_HELPER_METHODS);
         source.push_str(CONCURRENCY_HELPER_METHODS);
         source.push_str(DIRECT_MEMORY_HELPER_METHODS);
+        source.push_str(NUMERIC_HELPER_METHODS);
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);
@@ -3960,7 +4269,34 @@ impl JavaSourceGenerator {
             return Ok(());
         }
         if arguments.len() == 1 {
-            return self.generate_expression(source, &arguments[0]);
+            let arg = &arguments[0];
+            match &arg.type_ {
+                Type::U64 | Type::Usize => {
+                    source.push_str("Long.toUnsignedString(");
+                    self.generate_expression(source, arg)?;
+                    source.push(')');
+                    return Ok(());
+                }
+                Type::U32 => {
+                    source.push_str("Long.toString(((long)(");
+                    self.generate_expression(source, arg)?;
+                    source.push_str(")) & 0xFFFFFFFFL)");
+                    return Ok(());
+                }
+                Type::U16 => {
+                    source.push_str("Integer.toString(((int)(");
+                    self.generate_expression(source, arg)?;
+                    source.push_str(")) & 0xFFFF)");
+                    return Ok(());
+                }
+                Type::U8 => {
+                    source.push_str("Integer.toString(((int)(");
+                    self.generate_expression(source, arg)?;
+                    source.push_str(")) & 0xFF)");
+                    return Ok(());
+                }
+                _ => return self.generate_expression(source, arg),
+            }
         }
         // println with several arguments concatenates them, so
         // `println(a, b)` behaves like `println(a + b)`.
@@ -3980,12 +4316,57 @@ impl JavaSourceGenerator {
             TypedExpressionKind::String(value) => {
                 source.push_str(&format!("\"{}\"", escape_for_java_string_literal(value)));
             }
+            TypedExpressionKind::Char(c) => {
+                match *c {
+                    '\'' => source.push_str("'\\''"),
+                    '\\' => source.push_str("'\\\\'"),
+                    '\n' => source.push_str("'\\n'"),
+                    '\t' => source.push_str("'\\t'"),
+                    '\r' => source.push_str("'\\r'"),
+                    '\0' => source.push_str("'\\0'"),
+                    ch if ch.is_ascii_graphic() || ch == ' ' => source.push_str(&format!("'{}'", ch)),
+                    ch => source.push_str(&format!("(char) {}", ch as u32)),
+                }
+            }
             TypedExpressionKind::Number(value) => {
-                if !value.contains('.') && (value.parse::<i64>().is_ok() && value.parse::<i32>().is_err()) {
-                    source.push_str(value);
-                    source.push('L');
-                } else {
-                    source.push_str(value);
+                let (raw, _) = crate::semantic::parse_numeric_literal(value);
+                match &expr.type_ {
+                    Type::I8 => source.push_str(&format!("((byte) {})", raw)),
+                    Type::U8 => source.push_str(&format!("((int) {})", raw)),
+                    Type::I16 => source.push_str(&format!("((short) {})", raw)),
+                    Type::U16 => source.push_str(&format!("((int) {})", raw)),
+                    Type::I32 => source.push_str(&format!("((int) {})", raw)),
+                    Type::U32 => source.push_str(&format!("{}L", raw)),
+                    Type::I64 | Type::U64 | Type::Isize | Type::Usize => {
+                        if let Ok(v) = raw.parse::<u64>() {
+                            if v > i64::MAX as u64 {
+                                source.push_str(&format!("Long.parseUnsignedLong(\"{}\")", raw));
+                            } else {
+                                source.push_str(&format!("{}L", raw));
+                            }
+                        } else {
+                            source.push_str(&format!("{}L", raw));
+                        }
+                    }
+                    Type::I128 | Type::U128 => {
+                        source.push_str(&format!("new java.math.BigInteger(\"{}\")", raw));
+                    }
+                    Type::F32 => source.push_str(&format!("{}f", raw)),
+                    Type::Float | Type::F64 => {
+                        if !raw.contains('.') {
+                            source.push_str(&format!("{}.0", raw));
+                        } else {
+                            source.push_str(raw);
+                        }
+                    }
+                    _ => {
+                        if !raw.contains('.') && (raw.parse::<i64>().is_ok() && raw.parse::<i32>().is_err()) {
+                            source.push_str(raw);
+                            source.push('L');
+                        } else {
+                            source.push_str(raw);
+                        }
+                    }
                 }
             }
             TypedExpressionKind::Identifier(name) => {
@@ -4043,7 +4424,148 @@ impl JavaSourceGenerator {
                 source.push_str(&format!(".{}", escape_java_identifier(field)));
             }
             TypedExpressionKind::Binary { left, operator, right } => {
-                let is_primitive = |t: &Type| matches!(t, Type::Int | Type::Bool);
+                let is_i128 = left.type_ == Type::I128 || left.type_ == Type::U128 || right.type_ == Type::I128 || right.type_ == Type::U128;
+                if is_i128 {
+                    match operator {
+                        BinaryOperator::Add => {
+                            self.generate_expression(source, left)?;
+                            source.push_str(".add(");
+                            self.generate_expression(source, right)?;
+                            source.push(')');
+                        }
+                        BinaryOperator::Subtract => {
+                            self.generate_expression(source, left)?;
+                            source.push_str(".subtract(");
+                            self.generate_expression(source, right)?;
+                            source.push(')');
+                        }
+                        BinaryOperator::Multiply => {
+                            self.generate_expression(source, left)?;
+                            source.push_str(".multiply(");
+                            self.generate_expression(source, right)?;
+                            source.push(')');
+                        }
+                        BinaryOperator::Divide => {
+                            self.generate_expression(source, left)?;
+                            source.push_str(".divide(");
+                            self.generate_expression(source, right)?;
+                            source.push(')');
+                        }
+                        BinaryOperator::Modulo => {
+                            self.generate_expression(source, left)?;
+                            source.push_str(".remainder(");
+                            self.generate_expression(source, right)?;
+                            source.push(')');
+                        }
+                        BinaryOperator::Equal => {
+                            source.push_str("java.util.Objects.equals(");
+                            self.generate_expression(source, left)?;
+                            source.push_str(", ");
+                            self.generate_expression(source, right)?;
+                            source.push(')');
+                        }
+                        BinaryOperator::NotEqual => {
+                            source.push_str("!java.util.Objects.equals(");
+                            self.generate_expression(source, left)?;
+                            source.push_str(", ");
+                            self.generate_expression(source, right)?;
+                            source.push(')');
+                        }
+                        BinaryOperator::LessThan => {
+                            source.push('(');
+                            self.generate_expression(source, left)?;
+                            source.push_str(".compareTo(");
+                            self.generate_expression(source, right)?;
+                            source.push_str(") < 0)");
+                        }
+                        BinaryOperator::LessEqual => {
+                            source.push('(');
+                            self.generate_expression(source, left)?;
+                            source.push_str(".compareTo(");
+                            self.generate_expression(source, right)?;
+                            source.push_str(") <= 0)");
+                        }
+                        BinaryOperator::GreaterThan => {
+                            source.push('(');
+                            self.generate_expression(source, left)?;
+                            source.push_str(".compareTo(");
+                            self.generate_expression(source, right)?;
+                            source.push_str(") > 0)");
+                        }
+                        BinaryOperator::GreaterEqual => {
+                            source.push('(');
+                            self.generate_expression(source, left)?;
+                            source.push_str(".compareTo(");
+                            self.generate_expression(source, right)?;
+                            source.push_str(") >= 0)");
+                        }
+                        BinaryOperator::And | BinaryOperator::Or => {}
+                    }
+                    return Ok(());
+                }
+
+                let is_u64 = left.type_ == Type::U64 || left.type_ == Type::Usize;
+                if is_u64 {
+                    match operator {
+                        BinaryOperator::Divide => {
+                            source.push_str("Long.divideUnsigned(");
+                            self.generate_expression(source, left)?;
+                            source.push_str(", ");
+                            self.generate_expression(source, right)?;
+                            source.push(')');
+                            return Ok(());
+                        }
+                        BinaryOperator::Modulo => {
+                            source.push_str("Long.remainderUnsigned(");
+                            self.generate_expression(source, left)?;
+                            source.push_str(", ");
+                            self.generate_expression(source, right)?;
+                            source.push(')');
+                            return Ok(());
+                        }
+                        BinaryOperator::LessThan => {
+                            source.push_str("(Long.compareUnsigned(");
+                            self.generate_expression(source, left)?;
+                            source.push_str(", ");
+                            self.generate_expression(source, right)?;
+                            source.push_str(") < 0)");
+                            return Ok(());
+                        }
+                        BinaryOperator::LessEqual => {
+                            source.push_str("(Long.compareUnsigned(");
+                            self.generate_expression(source, left)?;
+                            source.push_str(", ");
+                            self.generate_expression(source, right)?;
+                            source.push_str(") <= 0)");
+                            return Ok(());
+                        }
+                        BinaryOperator::GreaterThan => {
+                            source.push_str("(Long.compareUnsigned(");
+                            self.generate_expression(source, left)?;
+                            source.push_str(", ");
+                            self.generate_expression(source, right)?;
+                            source.push_str(") > 0)");
+                            return Ok(());
+                        }
+                        BinaryOperator::GreaterEqual => {
+                            source.push_str("(Long.compareUnsigned(");
+                            self.generate_expression(source, left)?;
+                            source.push_str(", ");
+                            self.generate_expression(source, right)?;
+                            source.push_str(") >= 0)");
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+
+                let is_primitive = |t: &Type| matches!(t,
+                    Type::Int | Type::Bool | Type::Float | Type::Char |
+                    Type::I8 | Type::U8 | Type::I16 | Type::U16 |
+                    Type::I32 | Type::U32 | Type::I64 | Type::U64 |
+                    Type::Isize | Type::Usize | Type::F32 | Type::F64 |
+                    Type::RawPointer(_)
+                );
 
                 let use_equals_method = matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual)
                     && (!is_primitive(&left.type_) || !is_primitive(&right.type_));
@@ -4095,6 +4617,12 @@ impl JavaSourceGenerator {
                 }
             }
             TypedExpressionKind::Unary { operator, operand } => {
+                if (operand.type_ == Type::I128 || operand.type_ == Type::U128) && matches!(operator, UnaryOperator::Negate) {
+                    source.push('(');
+                    self.generate_expression(source, operand)?;
+                    source.push_str(").negate()");
+                    return Ok(());
+                }
                 let op = match operator {
                     UnaryOperator::Negate => "-",
                     UnaryOperator::Not => "!",
@@ -4313,6 +4841,127 @@ impl JavaSourceGenerator {
                 source.push_str("((Object)(");
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str(") instanceof String)");
+            }
+
+            // ---- Fixed-Width Conversions ----
+            "i8" if arguments.len() == 1 => {
+                source.push_str("((byte) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "u8" if arguments.len() == 1 => {
+                source.push_str("(((int) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")) & 0xFF)");
+            }
+            "i16" if arguments.len() == 1 => {
+                source.push_str("((short) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "u16" if arguments.len() == 1 => {
+                source.push_str("(((int) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")) & 0xFFFF)");
+            }
+            "i32" if arguments.len() == 1 => {
+                source.push_str("((int) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "u32" if arguments.len() == 1 => {
+                source.push_str("(((long) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")) & 0xFFFFFFFFL)");
+            }
+            "i64" | "isize" if arguments.len() == 1 => {
+                source.push_str("((long) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "u64" | "usize" if arguments.len() == 1 => {
+                source.push_str("((long) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "i128" if arguments.len() == 1 => {
+                source.push_str("__roze_to_i128(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "u128" if arguments.len() == 1 => {
+                source.push_str("__roze_to_u128(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "f32" if arguments.len() == 1 => {
+                source.push_str("((float) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "f64" | "float" if arguments.len() == 1 => {
+                source.push_str("((double) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "char" if arguments.len() == 1 => {
+                source.push_str("((char) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "int" if arguments.len() == 1 => {
+                source.push_str("((int) (");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+
+            // ---- Fixed-Width Bounds ----
+            "i8_min" if arguments.is_empty() => source.push_str("((byte) -128)"),
+            "i8_max" if arguments.is_empty() => source.push_str("((byte) 127)"),
+            "u8_min" if arguments.is_empty() => source.push_str("0"),
+            "u8_max" if arguments.is_empty() => source.push_str("255"),
+            "i16_min" if arguments.is_empty() => source.push_str("((short) -32768)"),
+            "i16_max" if arguments.is_empty() => source.push_str("((short) 32767)"),
+            "u16_min" if arguments.is_empty() => source.push_str("0"),
+            "u16_max" if arguments.is_empty() => source.push_str("65535"),
+            "i32_min" if arguments.is_empty() => source.push_str("Integer.MIN_VALUE"),
+            "i32_max" if arguments.is_empty() => source.push_str("Integer.MAX_VALUE"),
+            "u32_min" if arguments.is_empty() => source.push_str("0L"),
+            "u32_max" if arguments.is_empty() => source.push_str("4294967295L"),
+            "i64_min" | "isize_min" if arguments.is_empty() => source.push_str("Long.MIN_VALUE"),
+            "i64_max" | "isize_max" if arguments.is_empty() => source.push_str("Long.MAX_VALUE"),
+            "u64_min" | "usize_min" if arguments.is_empty() => source.push_str("0L"),
+            "u64_max" | "usize_max" if arguments.is_empty() => source.push_str("-1L"),
+            "i128_min" if arguments.is_empty() => source.push_str("__roze_i128_min()"),
+            "i128_max" if arguments.is_empty() => source.push_str("__roze_i128_max()"),
+            "u128_min" if arguments.is_empty() => source.push_str("__roze_u128_min()"),
+            "u128_max" if arguments.is_empty() => source.push_str("__roze_u128_max()"),
+            "f32_min" if arguments.is_empty() => source.push_str("(-Float.MAX_VALUE)"),
+            "f32_max" if arguments.is_empty() => source.push_str("Float.MAX_VALUE"),
+            "f64_min" if arguments.is_empty() => source.push_str("(-Double.MAX_VALUE)"),
+            "f64_max" if arguments.is_empty() => source.push_str("Double.MAX_VALUE"),
+
+            // ---- Wrapping & Saturating Arithmetic ----
+            "wrapping_add" | "wrapping_sub" | "wrapping_mul"
+            | "saturating_add" | "saturating_sub" | "saturating_mul" if arguments.len() == 2 => {
+                let suffix = match &arguments[0].type_ {
+                    Type::I8 => "i8",
+                    Type::U8 => "u8",
+                    Type::I16 => "i16",
+                    Type::U16 => "u16",
+                    Type::I32 => "i32",
+                    Type::U32 => "u32",
+                    Type::I64 | Type::Int | Type::Isize => "i64",
+                    Type::U64 | Type::Usize => "u64",
+                    Type::I128 => "i128",
+                    Type::U128 => "u128",
+                    _ => "i64",
+                };
+                source.push_str(&format!("__roze_{}_{}(", name, suffix));
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
             }
 
             // ---- Collections: List ----

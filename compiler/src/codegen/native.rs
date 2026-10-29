@@ -217,6 +217,7 @@ fn collect_closures_and_refs_from_expr(
         }
         TypedExpressionKind::String(_)
         | TypedExpressionKind::Number(_)
+        | TypedExpressionKind::Char(_)
         | TypedExpressionKind::Identifier(_)
         | TypedExpressionKind::Boolean(_)
         | TypedExpressionKind::Null => {}
@@ -1125,7 +1126,8 @@ fn expression_is_borrowed(expr: &TypedExpression) -> bool {
 
 fn require_supported_type(ty: &Type, _location: &Location, _context: &str) -> Result<()> {
     match ty {
-        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result | Type::Enum(_) | Type::Function { .. } | Type::Generic { .. } | Type::Trait(_) | Type::U8 | Type::RawPointer(_) => Ok(()),
+        Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result | Type::Enum(_) | Type::Function { .. } | Type::Generic { .. } | Type::Trait(_) | Type::U8 | Type::RawPointer(_)
+        | Type::I8 | Type::I16 | Type::U16 | Type::I32 | Type::U32 | Type::I64 | Type::U64 | Type::I128 | Type::U128 | Type::Isize | Type::Usize | Type::F32 | Type::F64 | Type::Char => Ok(()),
     }
 }
 
@@ -1136,7 +1138,11 @@ fn require_supported_type(ty: &Type, _location: &Location, _context: &str) -> Re
 /// integer register; only a genuine IEEE-754 double needs its own
 /// register class).
 fn cranelift_type_for(ty: &Type) -> types::Type {
-    if *ty == Type::Float { types::F64 } else { VALUE_TYPE }
+    match ty {
+        Type::Float | Type::F64 => types::F64,
+        Type::F32 => types::F32,
+        _ => VALUE_TYPE,
+    }
 }
 
 /// The FuncIds for the small ARC runtime backing `string` values,
@@ -3410,6 +3416,220 @@ fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
     })
 }
 
+#[derive(Clone, Copy)]
+pub struct NumericRuntime {
+    pub i128_from_str: FuncId,
+    pub u128_from_str: FuncId,
+    pub i128_from_i64: FuncId,
+    pub u128_from_u64: FuncId,
+    pub i128_to_i64: FuncId,
+    pub u128_to_u64: FuncId,
+    pub i128_retain: FuncId,
+    pub i128_release: FuncId,
+    pub u128_retain: FuncId,
+    pub u128_release: FuncId,
+    pub i128_print: FuncId,
+    pub u128_print: FuncId,
+    pub i128_min: FuncId,
+    pub i128_max: FuncId,
+    pub u128_min: FuncId,
+    pub u128_max: FuncId,
+
+    pub i128_wrapping_add: FuncId,
+    pub i128_wrapping_sub: FuncId,
+    pub i128_wrapping_mul: FuncId,
+    pub i128_saturating_add: FuncId,
+    pub i128_saturating_sub: FuncId,
+    pub i128_saturating_mul: FuncId,
+    pub i128_sdiv: FuncId,
+    pub i128_srem: FuncId,
+    pub i128_cmp: FuncId,
+
+    pub u128_wrapping_add: FuncId,
+    pub u128_wrapping_sub: FuncId,
+    pub u128_wrapping_mul: FuncId,
+    pub u128_saturating_add: FuncId,
+    pub u128_saturating_sub: FuncId,
+    pub u128_saturating_mul: FuncId,
+    pub u128_udiv: FuncId,
+    pub u128_urem: FuncId,
+    pub u128_cmp: FuncId,
+
+    pub wrapping_add_i8: FuncId,
+    pub wrapping_sub_i8: FuncId,
+    pub wrapping_mul_i8: FuncId,
+    pub saturating_add_i8: FuncId,
+    pub saturating_sub_i8: FuncId,
+    pub saturating_mul_i8: FuncId,
+
+    pub wrapping_add_u8: FuncId,
+    pub wrapping_sub_u8: FuncId,
+    pub wrapping_mul_u8: FuncId,
+    pub saturating_add_u8: FuncId,
+    pub saturating_sub_u8: FuncId,
+    pub saturating_mul_u8: FuncId,
+
+    pub wrapping_add_i16: FuncId,
+    pub wrapping_sub_i16: FuncId,
+    pub wrapping_mul_i16: FuncId,
+    pub saturating_add_i16: FuncId,
+    pub saturating_sub_i16: FuncId,
+    pub saturating_mul_i16: FuncId,
+
+    pub wrapping_add_u16: FuncId,
+    pub wrapping_sub_u16: FuncId,
+    pub wrapping_mul_u16: FuncId,
+    pub saturating_add_u16: FuncId,
+    pub saturating_sub_u16: FuncId,
+    pub saturating_mul_u16: FuncId,
+
+    pub wrapping_add_i32: FuncId,
+    pub wrapping_sub_i32: FuncId,
+    pub wrapping_mul_i32: FuncId,
+    pub saturating_add_i32: FuncId,
+    pub saturating_sub_i32: FuncId,
+    pub saturating_mul_i32: FuncId,
+
+    pub wrapping_add_u32: FuncId,
+    pub wrapping_sub_u32: FuncId,
+    pub wrapping_mul_u32: FuncId,
+    pub saturating_add_u32: FuncId,
+    pub saturating_sub_u32: FuncId,
+    pub saturating_mul_u32: FuncId,
+
+    pub wrapping_add_i64: FuncId,
+    pub wrapping_sub_i64: FuncId,
+    pub wrapping_mul_i64: FuncId,
+    pub saturating_add_i64: FuncId,
+    pub saturating_sub_i64: FuncId,
+    pub saturating_mul_i64: FuncId,
+
+    pub wrapping_add_u64: FuncId,
+    pub wrapping_sub_u64: FuncId,
+    pub wrapping_mul_u64: FuncId,
+    pub saturating_add_u64: FuncId,
+    pub saturating_sub_u64: FuncId,
+    pub saturating_mul_u64: FuncId,
+}
+
+fn declare_numeric_runtime(module: &mut ObjectModule) -> Result<NumericRuntime> {
+    let mut i64_to_i64 = module.make_signature();
+    i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_to_void = module.make_signature();
+    i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut void_to_i64 = module.make_signature();
+    void_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut i64_i64_to_i64 = module.make_signature();
+    i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    macro_rules! decl {
+        ($name:expr, $sig:expr) => {
+            module.declare_function($name, Linkage::Import, &$sig).map_err(|e| anyhow!(e.to_string()))?
+        };
+    }
+
+    Ok(NumericRuntime {
+        i128_from_str: decl!("__roze_i128_from_str", i64_to_i64),
+        u128_from_str: decl!("__roze_u128_from_str", i64_to_i64),
+        i128_from_i64: decl!("__roze_i128_from_i64", i64_to_i64),
+        u128_from_u64: decl!("__roze_u128_from_u64", i64_to_i64),
+        i128_to_i64: decl!("__roze_i128_to_i64", i64_to_i64),
+        u128_to_u64: decl!("__roze_u128_to_u64", i64_to_i64),
+        i128_retain: decl!("__roze_i128_retain", i64_to_void),
+        i128_release: decl!("__roze_i128_release", i64_to_void),
+        u128_retain: decl!("__roze_u128_retain", i64_to_void),
+        u128_release: decl!("__roze_u128_release", i64_to_void),
+        i128_print: decl!("__roze_i128_print", i64_to_void),
+        u128_print: decl!("__roze_u128_print", i64_to_void),
+        i128_min: decl!("__roze_i128_min", void_to_i64),
+        i128_max: decl!("__roze_i128_max", void_to_i64),
+        u128_min: decl!("__roze_u128_min", void_to_i64),
+        u128_max: decl!("__roze_u128_max", void_to_i64),
+
+        i128_wrapping_add: decl!("__roze_i128_wrapping_add", i64_i64_to_i64),
+        i128_wrapping_sub: decl!("__roze_i128_wrapping_sub", i64_i64_to_i64),
+        i128_wrapping_mul: decl!("__roze_i128_wrapping_mul", i64_i64_to_i64),
+        i128_saturating_add: decl!("__roze_i128_saturating_add", i64_i64_to_i64),
+        i128_saturating_sub: decl!("__roze_i128_saturating_sub", i64_i64_to_i64),
+        i128_saturating_mul: decl!("__roze_i128_saturating_mul", i64_i64_to_i64),
+        i128_sdiv: decl!("__roze_i128_sdiv", i64_i64_to_i64),
+        i128_srem: decl!("__roze_i128_srem", i64_i64_to_i64),
+        i128_cmp: decl!("__roze_i128_cmp", i64_i64_to_i64),
+
+        u128_wrapping_add: decl!("__roze_u128_wrapping_add", i64_i64_to_i64),
+        u128_wrapping_sub: decl!("__roze_u128_wrapping_sub", i64_i64_to_i64),
+        u128_wrapping_mul: decl!("__roze_u128_wrapping_mul", i64_i64_to_i64),
+        u128_saturating_add: decl!("__roze_u128_saturating_add", i64_i64_to_i64),
+        u128_saturating_sub: decl!("__roze_u128_saturating_sub", i64_i64_to_i64),
+        u128_saturating_mul: decl!("__roze_u128_saturating_mul", i64_i64_to_i64),
+        u128_udiv: decl!("__roze_u128_udiv", i64_i64_to_i64),
+        u128_urem: decl!("__roze_u128_urem", i64_i64_to_i64),
+        u128_cmp: decl!("__roze_u128_cmp", i64_i64_to_i64),
+
+        wrapping_add_i8: decl!("__roze_wrapping_add_i8", i64_i64_to_i64),
+        wrapping_sub_i8: decl!("__roze_wrapping_sub_i8", i64_i64_to_i64),
+        wrapping_mul_i8: decl!("__roze_wrapping_mul_i8", i64_i64_to_i64),
+        saturating_add_i8: decl!("__roze_saturating_add_i8", i64_i64_to_i64),
+        saturating_sub_i8: decl!("__roze_saturating_sub_i8", i64_i64_to_i64),
+        saturating_mul_i8: decl!("__roze_saturating_mul_i8", i64_i64_to_i64),
+
+        wrapping_add_u8: decl!("__roze_wrapping_add_u8", i64_i64_to_i64),
+        wrapping_sub_u8: decl!("__roze_wrapping_sub_u8", i64_i64_to_i64),
+        wrapping_mul_u8: decl!("__roze_wrapping_mul_u8", i64_i64_to_i64),
+        saturating_add_u8: decl!("__roze_saturating_add_u8", i64_i64_to_i64),
+        saturating_sub_u8: decl!("__roze_saturating_sub_u8", i64_i64_to_i64),
+        saturating_mul_u8: decl!("__roze_saturating_mul_u8", i64_i64_to_i64),
+
+        wrapping_add_i16: decl!("__roze_wrapping_add_i16", i64_i64_to_i64),
+        wrapping_sub_i16: decl!("__roze_wrapping_sub_i16", i64_i64_to_i64),
+        wrapping_mul_i16: decl!("__roze_wrapping_mul_i16", i64_i64_to_i64),
+        saturating_add_i16: decl!("__roze_saturating_add_i16", i64_i64_to_i64),
+        saturating_sub_i16: decl!("__roze_saturating_sub_i16", i64_i64_to_i64),
+        saturating_mul_i16: decl!("__roze_saturating_mul_i16", i64_i64_to_i64),
+
+        wrapping_add_u16: decl!("__roze_wrapping_add_u16", i64_i64_to_i64),
+        wrapping_sub_u16: decl!("__roze_wrapping_sub_u16", i64_i64_to_i64),
+        wrapping_mul_u16: decl!("__roze_wrapping_mul_u16", i64_i64_to_i64),
+        saturating_add_u16: decl!("__roze_saturating_add_u16", i64_i64_to_i64),
+        saturating_sub_u16: decl!("__roze_saturating_sub_u16", i64_i64_to_i64),
+        saturating_mul_u16: decl!("__roze_saturating_mul_u16", i64_i64_to_i64),
+
+        wrapping_add_i32: decl!("__roze_wrapping_add_i32", i64_i64_to_i64),
+        wrapping_sub_i32: decl!("__roze_wrapping_sub_i32", i64_i64_to_i64),
+        wrapping_mul_i32: decl!("__roze_wrapping_mul_i32", i64_i64_to_i64),
+        saturating_add_i32: decl!("__roze_saturating_add_i32", i64_i64_to_i64),
+        saturating_sub_i32: decl!("__roze_saturating_sub_i32", i64_i64_to_i64),
+        saturating_mul_i32: decl!("__roze_saturating_mul_i32", i64_i64_to_i64),
+
+        wrapping_add_u32: decl!("__roze_wrapping_add_u32", i64_i64_to_i64),
+        wrapping_sub_u32: decl!("__roze_wrapping_sub_u32", i64_i64_to_i64),
+        wrapping_mul_u32: decl!("__roze_wrapping_mul_u32", i64_i64_to_i64),
+        saturating_add_u32: decl!("__roze_saturating_add_u32", i64_i64_to_i64),
+        saturating_sub_u32: decl!("__roze_saturating_sub_u32", i64_i64_to_i64),
+        saturating_mul_u32: decl!("__roze_saturating_mul_u32", i64_i64_to_i64),
+
+        wrapping_add_i64: decl!("__roze_wrapping_add_i64", i64_i64_to_i64),
+        wrapping_sub_i64: decl!("__roze_wrapping_sub_i64", i64_i64_to_i64),
+        wrapping_mul_i64: decl!("__roze_wrapping_mul_i64", i64_i64_to_i64),
+        saturating_add_i64: decl!("__roze_saturating_add_i64", i64_i64_to_i64),
+        saturating_sub_i64: decl!("__roze_saturating_sub_i64", i64_i64_to_i64),
+        saturating_mul_i64: decl!("__roze_saturating_mul_i64", i64_i64_to_i64),
+
+        wrapping_add_u64: decl!("__roze_wrapping_add_u64", i64_i64_to_i64),
+        wrapping_sub_u64: decl!("__roze_wrapping_sub_u64", i64_i64_to_i64),
+        wrapping_mul_u64: decl!("__roze_wrapping_mul_u64", i64_i64_to_i64),
+        saturating_add_u64: decl!("__roze_saturating_add_u64", i64_i64_to_i64),
+        saturating_sub_u64: decl!("__roze_saturating_sub_u64", i64_i64_to_i64),
+        saturating_mul_u64: decl!("__roze_saturating_mul_u64", i64_i64_to_i64),
+    })
+}
+
 /// A native class instance is a pointer to a heap block:
 ///
 ///   [0..8)          i64  refcount
@@ -3742,6 +3962,8 @@ struct NativeGenerator<'a> {
     malloc_id: FuncId,
     fmt_int: DataId,
     fmt_str: DataId,
+    fmt_char: DataId,
+    fmt_uint: DataId,
     true_str: DataId,
     false_str: DataId,
     strings: StringRuntime,
@@ -3751,6 +3973,7 @@ struct NativeGenerator<'a> {
     raw_memory: RawMemoryRuntime,
     vga: VgaRuntime,
     kernel: KernelRuntime,
+    numerics: NumericRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -3822,6 +4045,8 @@ impl<'a> NativeGenerator<'a> {
 
         let fmt_int = Self::declare_c_string(module, "__roze_fmt_int", b"%lld\n")?;
         let fmt_str = Self::declare_c_string(module, "__roze_fmt_str", b"%s\n")?;
+        let fmt_char = Self::declare_c_string(module, "__roze_fmt_char", b"%c\n")?;
+        let fmt_uint = Self::declare_c_string(module, "__roze_fmt_uint", b"%llu\n")?;
         let true_str = Self::declare_c_string(module, "__roze_true_str", b"true")?;
         let false_str = Self::declare_c_string(module, "__roze_false_str", b"false")?;
 
@@ -3832,6 +4057,7 @@ impl<'a> NativeGenerator<'a> {
         let raw_memory = declare_raw_memory_runtime(module, is_freestanding)?;
         let vga = declare_vga_runtime(module)?;
         let kernel = declare_kernel_runtime(module)?;
+        let numerics = declare_numeric_runtime(module)?;
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
@@ -3852,6 +4078,8 @@ impl<'a> NativeGenerator<'a> {
             malloc_id,
             fmt_int,
             fmt_str,
+            fmt_char,
+            fmt_uint,
             true_str,
             false_str,
             strings,
@@ -3861,6 +4089,7 @@ impl<'a> NativeGenerator<'a> {
             raw_memory,
             vga,
             kernel,
+            numerics,
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
@@ -4190,6 +4419,8 @@ impl<'a> NativeGenerator<'a> {
                     malloc_id: self.malloc_id,
                     fmt_int: self.fmt_int,
                     fmt_str: self.fmt_str,
+                    fmt_char: self.fmt_char,
+                    fmt_uint: self.fmt_uint,
                     true_str: self.true_str,
                     false_str: self.false_str,
                     string_retain_id: self.strings.retain_id,
@@ -4220,6 +4451,7 @@ impl<'a> NativeGenerator<'a> {
                     is_freestanding: self.is_freestanding,
                     vga: &self.vga,
                     kernel: &self.kernel,
+                    numerics: &self.numerics,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
@@ -4307,6 +4539,8 @@ impl<'a> NativeGenerator<'a> {
                                 malloc_id: self.malloc_id,
                                 fmt_int: self.fmt_int,
                                 fmt_str: self.fmt_str,
+                                fmt_char: self.fmt_char,
+                                fmt_uint: self.fmt_uint,
                                 true_str: self.true_str,
                                 false_str: self.false_str,
                                 string_retain_id: self.strings.retain_id,
@@ -4337,6 +4571,7 @@ impl<'a> NativeGenerator<'a> {
                                 is_freestanding: self.is_freestanding,
                                 vga: &self.vga,
                                 kernel: &self.kernel,
+                                numerics: &self.numerics,
                                 classes: &self.classes,
                                 class_retain_id: self.class_retain_id,
                                 literal_counter: &mut self.literal_counter,
@@ -4412,6 +4647,8 @@ impl<'a> NativeGenerator<'a> {
                         malloc_id: self.malloc_id,
                         fmt_int: self.fmt_int,
                         fmt_str: self.fmt_str,
+                        fmt_char: self.fmt_char,
+                        fmt_uint: self.fmt_uint,
                         true_str: self.true_str,
                         false_str: self.false_str,
                         string_retain_id: self.strings.retain_id,
@@ -4442,6 +4679,7 @@ impl<'a> NativeGenerator<'a> {
                         is_freestanding: self.is_freestanding,
                         vga: &self.vga,
                         kernel: &self.kernel,
+                        numerics: &self.numerics,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
@@ -4560,6 +4798,8 @@ struct FunctionCompiler<'a, 'b> {
     malloc_id: FuncId,
     fmt_int: DataId,
     fmt_str: DataId,
+    fmt_char: DataId,
+    fmt_uint: DataId,
     true_str: DataId,
     false_str: DataId,
     string_retain_id: FuncId,
@@ -4590,6 +4830,7 @@ struct FunctionCompiler<'a, 'b> {
     is_freestanding: bool,
     vga: &'a VgaRuntime,
     kernel: &'a KernelRuntime,
+    numerics: &'a NumericRuntime,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -4623,8 +4864,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     /// this conversion, not just type-check as if it happened. A no-op
     /// (returns `val` unchanged) whenever the types already match.
     fn coerce_for_target_type(&mut self, val: Value, actual: &Type, target: &Type) -> Value {
-        if *target == Type::Float && (*actual == Type::Int || *actual == Type::Unknown || self.builder.func.dfg.value_type(val) == VALUE_TYPE) {
+        if (*target == Type::Float || *target == Type::F64) && (*actual == Type::Int || *actual == Type::Unknown || self.builder.func.dfg.value_type(val) == VALUE_TYPE) {
             self.builder.ins().fcvt_from_sint(types::F64, val)
+        } else if *target == Type::F32 && (*actual == Type::Int || *actual == Type::Unknown || self.builder.func.dfg.value_type(val) == VALUE_TYPE) {
+            self.builder.ins().fcvt_from_sint(types::F32, val)
+        } else if (*target == Type::Float || *target == Type::F64) && *actual == Type::F32 {
+            self.builder.ins().fpromote(types::F64, val)
+        } else if *target == Type::F32 && (*actual == Type::Float || *actual == Type::F64) {
+            self.builder.ins().fdemote(types::F32, val)
         } else {
             val
         }
@@ -4661,7 +4908,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn release_frame(&mut self, frame_index: usize) -> Result<()> {
         let arc_vars: Vec<(Variable, Type)> = self.scopes[frame_index]
             .values()
-            .filter(|(_, ty)| matches!(ty, Type::String | Type::List | Type::Map | Type::Class(_) | Type::Generic { .. }))
+            .filter(|(_, ty)| matches!(ty, Type::String | Type::List | Type::Map | Type::Class(_) | Type::Generic { .. } | Type::I128 | Type::U128))
             .cloned()
             .collect();
         for (var, ty) in arc_vars {
@@ -4764,6 +5011,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 Ok(())
             }
             Type::Generic { .. } => self.emit_class_retain(val),
+            Type::I128 => {
+                let func_ref = self.module.declare_func_in_func(self.numerics.i128_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::U128 => {
+                let func_ref = self.module.declare_func_in_func(self.numerics.u128_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -4898,6 +5155,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     let release_ref = self.module.declare_func_in_func(info.release_id, self.builder.func);
                     self.builder.ins().call(release_ref, &[val]);
                 }
+                Ok(())
+            }
+            Type::I128 => {
+                let release_ref = self.module.declare_func_in_func(self.numerics.i128_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::U128 => {
+                let release_ref = self.module.declare_func_in_func(self.numerics.u128_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
             _ => Ok(()),
@@ -5679,13 +5946,42 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn compile_expression(&mut self, expr: &TypedExpression) -> Result<Value> {
         match &expr.kind {
             TypedExpressionKind::Number(s) => {
-                if expr.type_ == Type::Float {
-                    let n: f64 = s.parse().map_err(|_| anyhow!("invalid float literal '{}'", s))?;
-                    Ok(self.builder.ins().f64const(n))
-                } else {
-                    let n: i64 = s.parse().map_err(|_| anyhow!("invalid integer literal '{}'", s))?;
-                    Ok(self.builder.ins().iconst(VALUE_TYPE, n))
+                let (raw, _) = crate::semantic::parse_numeric_literal(s);
+                match &expr.type_ {
+                    Type::F32 => {
+                        let n: f32 = raw.parse().map_err(|_| anyhow!("invalid f32 literal '{}'", s))?;
+                        Ok(self.builder.ins().f32const(n))
+                    }
+                    Type::Float | Type::F64 => {
+                        let n: f64 = raw.parse().map_err(|_| anyhow!("invalid float literal '{}'", s))?;
+                        Ok(self.builder.ins().f64const(n))
+                    }
+                    Type::I128 => {
+                        let str_val = self.compile_string_literal(raw)?;
+                        let func_ref = self.module.declare_func_in_func(self.numerics.i128_from_str, self.builder.func);
+                        let call = self.builder.ins().call(func_ref, &[str_val]);
+                        self.emit_string_release(str_val)?;
+                        Ok(self.builder.inst_results(call)[0])
+                    }
+                    Type::U128 => {
+                        let str_val = self.compile_string_literal(raw)?;
+                        let func_ref = self.module.declare_func_in_func(self.numerics.u128_from_str, self.builder.func);
+                        let call = self.builder.ins().call(func_ref, &[str_val]);
+                        self.emit_string_release(str_val)?;
+                        Ok(self.builder.inst_results(call)[0])
+                    }
+                    Type::U64 | Type::Usize | Type::U32 | Type::U16 | Type::U8 => {
+                        let n: u64 = raw.parse().map_err(|_| anyhow!("invalid unsigned literal '{}'", s))?;
+                        Ok(self.builder.ins().iconst(VALUE_TYPE, n as i64))
+                    }
+                    _ => {
+                        let n: i64 = raw.parse().map_err(|_| anyhow!("invalid integer literal '{}'", s))?;
+                        Ok(self.builder.ins().iconst(VALUE_TYPE, n))
+                    }
                 }
+            }
+            TypedExpressionKind::Char(c) => {
+                Ok(self.builder.ins().iconst(VALUE_TYPE, *c as u32 as i64))
             }
             TypedExpressionKind::Boolean(b) => {
                 Ok(self.builder.ins().iconst(VALUE_TYPE, if *b { 1 } else { 0 }))
@@ -5699,7 +5995,18 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             TypedExpressionKind::Unary { operator, operand } => {
                 let val = self.compile_expression(operand)?;
                 match operator {
-                    UnaryOperator::Negate if operand.type_ == Type::Float => Ok(self.builder.ins().fneg(val)),
+                    UnaryOperator::Negate if operand.type_ == Type::F32 => Ok(self.builder.ins().fneg(val)),
+                    UnaryOperator::Negate if operand.type_ == Type::Float || operand.type_ == Type::F64 => Ok(self.builder.ins().fneg(val)),
+                    UnaryOperator::Negate if operand.type_ == Type::I128 => {
+                        let zero = self.builder.ins().iconst(VALUE_TYPE, 0);
+                        let func_ref_zero = self.module.declare_func_in_func(self.numerics.i128_from_i64, self.builder.func);
+                        let call_zero = self.builder.ins().call(func_ref_zero, &[zero]);
+                        let zero_i128 = self.builder.inst_results(call_zero)[0];
+                        let func_ref = self.module.declare_func_in_func(self.numerics.i128_wrapping_sub, self.builder.func);
+                        let call = self.builder.ins().call(func_ref, &[zero_i128, val]);
+                        self.emit_release_for_type(&Type::I128, zero_i128)?;
+                        Ok(self.builder.inst_results(call)[0])
+                    }
                     UnaryOperator::Negate => Ok(self.builder.ins().ineg(val)),
                     UnaryOperator::Not => {
                         let zero = self.builder.ins().iconst(VALUE_TYPE, 0);
@@ -5964,12 +6271,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
 
         let is_string_op = left.type_ == Type::String && right.type_ == Type::String;
-        // A numeric op is "float" if either side resolved to Float --
-        // matches the exact promotion direction the type checker
-        // already decided in numeric_binary_result_type (mixed int/
-        // float promotes to float), so codegen and type-checking never
-        // disagree about which representation a given expression uses.
-        let is_float_op = !is_string_op && (left.type_ == Type::Float || right.type_ == Type::Float);
+        let is_float_op = !is_string_op && (left.type_.is_float() || right.type_.is_float());
 
         let l = self.compile_expression(left)?;
         let r = self.compile_expression(right)?;
@@ -5985,14 +6287,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 }
                 other => return Err(anyhow!("'{:?}' isn't supported between strings on the native backend", other)),
             };
-            // l/r were only *read* here (bytes copied or compared),
-            // never stored anywhere lasting. An existing binding
-            // (Identifier) still owns its own reference and will
-            // release it elsewhere (its own scope exit) -- but a fresh
-            // temporary (a nested concat, a call result) has nothing
-            // else that will ever release it, so it must happen here,
-            // or it leaks. Releasing a literal is always safe too:
-            // it's immortal, so this is a no-op for it specifically.
             if !expression_is_borrowed(left) {
                 self.emit_string_release(l)?;
             }
@@ -6002,16 +6296,84 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             return Ok(result);
         }
 
+        if left.type_ == Type::I128 || right.type_ == Type::I128 {
+            let fid = match operator {
+                BinaryOperator::Add => self.numerics.i128_wrapping_add,
+                BinaryOperator::Subtract => self.numerics.i128_wrapping_sub,
+                BinaryOperator::Multiply => self.numerics.i128_wrapping_mul,
+                BinaryOperator::Divide => self.numerics.i128_sdiv,
+                BinaryOperator::Modulo => self.numerics.i128_srem,
+                BinaryOperator::Equal | BinaryOperator::NotEqual |
+                BinaryOperator::LessThan | BinaryOperator::LessEqual |
+                BinaryOperator::GreaterThan | BinaryOperator::GreaterEqual => {
+                    let func_ref = self.module.declare_func_in_func(self.numerics.i128_cmp, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[l, r]);
+                    let cmp_res = self.builder.inst_results(call)[0];
+                    let zero = self.builder.ins().iconst(VALUE_TYPE, 0);
+                    return Ok(match operator {
+                        BinaryOperator::Equal => self.compile_cmp(IntCC::Equal, cmp_res, zero),
+                        BinaryOperator::NotEqual => self.compile_cmp(IntCC::NotEqual, cmp_res, zero),
+                        BinaryOperator::LessThan => self.compile_cmp(IntCC::SignedLessThan, cmp_res, zero),
+                        BinaryOperator::LessEqual => self.compile_cmp(IntCC::SignedLessThanOrEqual, cmp_res, zero),
+                        BinaryOperator::GreaterThan => self.compile_cmp(IntCC::SignedGreaterThan, cmp_res, zero),
+                        BinaryOperator::GreaterEqual => self.compile_cmp(IntCC::SignedGreaterThanOrEqual, cmp_res, zero),
+                        _ => unreachable!(),
+                    });
+                }
+                _ => return Err(anyhow!("Unsupported operator for i128")),
+            };
+            let func_ref = self.module.declare_func_in_func(fid, self.builder.func);
+            let call = self.builder.ins().call(func_ref, &[l, r]);
+            return Ok(self.builder.inst_results(call)[0]);
+        }
+
+        if left.type_ == Type::U128 || right.type_ == Type::U128 {
+            let fid = match operator {
+                BinaryOperator::Add => self.numerics.u128_wrapping_add,
+                BinaryOperator::Subtract => self.numerics.u128_wrapping_sub,
+                BinaryOperator::Multiply => self.numerics.u128_wrapping_mul,
+                BinaryOperator::Divide => self.numerics.u128_udiv,
+                BinaryOperator::Modulo => self.numerics.u128_urem,
+                BinaryOperator::Equal | BinaryOperator::NotEqual |
+                BinaryOperator::LessThan | BinaryOperator::LessEqual |
+                BinaryOperator::GreaterThan | BinaryOperator::GreaterEqual => {
+                    let func_ref = self.module.declare_func_in_func(self.numerics.u128_cmp, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[l, r]);
+                    let cmp_res = self.builder.inst_results(call)[0];
+                    let zero = self.builder.ins().iconst(VALUE_TYPE, 0);
+                    return Ok(match operator {
+                        BinaryOperator::Equal => self.compile_cmp(IntCC::Equal, cmp_res, zero),
+                        BinaryOperator::NotEqual => self.compile_cmp(IntCC::NotEqual, cmp_res, zero),
+                        BinaryOperator::LessThan => self.compile_cmp(IntCC::SignedLessThan, cmp_res, zero),
+                        BinaryOperator::LessEqual => self.compile_cmp(IntCC::SignedLessThanOrEqual, cmp_res, zero),
+                        BinaryOperator::GreaterThan => self.compile_cmp(IntCC::SignedGreaterThan, cmp_res, zero),
+                        BinaryOperator::GreaterEqual => self.compile_cmp(IntCC::SignedGreaterThanOrEqual, cmp_res, zero),
+                        _ => unreachable!(),
+                    });
+                }
+                _ => return Err(anyhow!("Unsupported operator for u128")),
+            };
+            let func_ref = self.module.declare_func_in_func(fid, self.builder.func);
+            let call = self.builder.ins().call(func_ref, &[l, r]);
+            return Ok(self.builder.inst_results(call)[0]);
+        }
+
         if is_float_op {
-            // A mixed int/float pair needs the int side explicitly
-            // converted -- Cranelift has no implicit numeric promotion
-            // the way the C/Java/Roze source-level semantics do, so
-            // this has to happen here, once per operand, rather than
-            // anywhere the value was originally produced (an Int-typed
-            // value stays a plain i64 everywhere else it's used).
-            let lf = if left.type_ == Type::Float { l } else { self.builder.ins().fcvt_from_sint(types::F64, l) };
-            let rf = if right.type_ == Type::Float { r } else { self.builder.ins().fcvt_from_sint(types::F64, r) };
-            return Ok(match operator {
+            let lf = if left.type_ == Type::Float || left.type_ == Type::F64 {
+                l
+            } else if left.type_ == Type::F32 {
+                self.builder.ins().fpromote(types::F64, l)
+            } else {
+                self.builder.ins().fcvt_from_sint(types::F64, l)
+            };
+            let rf = if right.type_ == Type::Float || right.type_ == Type::F64 {
+                r
+            } else if right.type_ == Type::F32 {
+                self.builder.ins().fpromote(types::F64, r)
+            } else {
+                self.builder.ins().fcvt_from_sint(types::F64, r)
+            };
+            let res_f64 = match operator {
                 BinaryOperator::Add => self.builder.ins().fadd(lf, rf),
                 BinaryOperator::Subtract => self.builder.ins().fsub(lf, rf),
                 BinaryOperator::Multiply => self.builder.ins().fmul(lf, rf),
@@ -6019,12 +6381,35 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 BinaryOperator::Modulo => {
                     return Err(anyhow!("Modulo on floating-point values is not currently supported in native backend"));
                 }
-                BinaryOperator::Equal => self.compile_fcmp(FloatCC::Equal, lf, rf),
-                BinaryOperator::NotEqual => self.compile_fcmp(FloatCC::NotEqual, lf, rf),
-                BinaryOperator::LessThan => self.compile_fcmp(FloatCC::LessThan, lf, rf),
-                BinaryOperator::GreaterThan => self.compile_fcmp(FloatCC::GreaterThan, lf, rf),
-                BinaryOperator::LessEqual => self.compile_fcmp(FloatCC::LessThanOrEqual, lf, rf),
-                BinaryOperator::GreaterEqual => self.compile_fcmp(FloatCC::GreaterThanOrEqual, lf, rf),
+                BinaryOperator::Equal => return Ok(self.compile_fcmp(FloatCC::Equal, lf, rf)),
+                BinaryOperator::NotEqual => return Ok(self.compile_fcmp(FloatCC::NotEqual, lf, rf)),
+                BinaryOperator::LessThan => return Ok(self.compile_fcmp(FloatCC::LessThan, lf, rf)),
+                BinaryOperator::GreaterThan => return Ok(self.compile_fcmp(FloatCC::GreaterThan, lf, rf)),
+                BinaryOperator::LessEqual => return Ok(self.compile_fcmp(FloatCC::LessThanOrEqual, lf, rf)),
+                BinaryOperator::GreaterEqual => return Ok(self.compile_fcmp(FloatCC::GreaterThanOrEqual, lf, rf)),
+                BinaryOperator::And | BinaryOperator::Or => unreachable!("handled above"),
+            };
+            if left.type_ == Type::F32 && right.type_ == Type::F32 {
+                return Ok(self.builder.ins().fdemote(types::F32, res_f64));
+            } else {
+                return Ok(res_f64);
+            }
+        }
+
+        let is_unsigned = left.type_.is_unsigned() || right.type_.is_unsigned();
+        if is_unsigned {
+            return Ok(match operator {
+                BinaryOperator::Add => self.builder.ins().iadd(l, r),
+                BinaryOperator::Subtract => self.builder.ins().isub(l, r),
+                BinaryOperator::Multiply => self.builder.ins().imul(l, r),
+                BinaryOperator::Divide => self.builder.ins().udiv(l, r),
+                BinaryOperator::Modulo => self.builder.ins().urem(l, r),
+                BinaryOperator::Equal => self.compile_cmp(IntCC::Equal, l, r),
+                BinaryOperator::NotEqual => self.compile_cmp(IntCC::NotEqual, l, r),
+                BinaryOperator::LessThan => self.compile_cmp(IntCC::UnsignedLessThan, l, r),
+                BinaryOperator::GreaterThan => self.compile_cmp(IntCC::UnsignedGreaterThan, l, r),
+                BinaryOperator::LessEqual => self.compile_cmp(IntCC::UnsignedLessThanOrEqual, l, r),
+                BinaryOperator::GreaterEqual => self.compile_cmp(IntCC::UnsignedGreaterThanOrEqual, l, r),
                 BinaryOperator::And | BinaryOperator::Or => unreachable!("handled above"),
             });
         }
@@ -6881,6 +7266,249 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[arg]);
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
+
+            // ---- Fixed-Width Conversions ----
+            "i8" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                let v_i64 = if arguments[0].type_ == Type::F32 || arguments[0].type_ == Type::Float || arguments[0].type_ == Type::F64 {
+                    self.builder.ins().fcvt_to_sint(VALUE_TYPE, v)
+                } else {
+                    v
+                };
+                let trunc = self.builder.ins().ireduce(types::I8, v_i64);
+                return Ok(self.builder.ins().sextend(VALUE_TYPE, trunc));
+            }
+            "u8" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                let v_i64 = if arguments[0].type_ == Type::F32 || arguments[0].type_ == Type::Float || arguments[0].type_ == Type::F64 {
+                    self.builder.ins().fcvt_to_sint(VALUE_TYPE, v)
+                } else {
+                    v
+                };
+                return Ok(self.builder.ins().band_imm(v_i64, 0xFF));
+            }
+            "i16" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                let v_i64 = if arguments[0].type_ == Type::F32 || arguments[0].type_ == Type::Float || arguments[0].type_ == Type::F64 {
+                    self.builder.ins().fcvt_to_sint(VALUE_TYPE, v)
+                } else {
+                    v
+                };
+                let trunc = self.builder.ins().ireduce(types::I16, v_i64);
+                return Ok(self.builder.ins().sextend(VALUE_TYPE, trunc));
+            }
+            "u16" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                let v_i64 = if arguments[0].type_ == Type::F32 || arguments[0].type_ == Type::Float || arguments[0].type_ == Type::F64 {
+                    self.builder.ins().fcvt_to_sint(VALUE_TYPE, v)
+                } else {
+                    v
+                };
+                return Ok(self.builder.ins().band_imm(v_i64, 0xFFFF));
+            }
+            "i32" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                let v_i64 = if arguments[0].type_ == Type::F32 || arguments[0].type_ == Type::Float || arguments[0].type_ == Type::F64 {
+                    self.builder.ins().fcvt_to_sint(VALUE_TYPE, v)
+                } else {
+                    v
+                };
+                let trunc = self.builder.ins().ireduce(types::I32, v_i64);
+                return Ok(self.builder.ins().sextend(VALUE_TYPE, trunc));
+            }
+            "u32" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                let v_i64 = if arguments[0].type_ == Type::F32 || arguments[0].type_ == Type::Float || arguments[0].type_ == Type::F64 {
+                    self.builder.ins().fcvt_to_sint(VALUE_TYPE, v)
+                } else {
+                    v
+                };
+                return Ok(self.builder.ins().band_imm(v_i64, 0xFFFFFFFF));
+            }
+            "i64" | "u64" | "isize" | "usize" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                if arguments[0].type_ == Type::F32 || arguments[0].type_ == Type::Float || arguments[0].type_ == Type::F64 {
+                    return Ok(self.builder.ins().fcvt_to_sint(VALUE_TYPE, v));
+                } else if arguments[0].type_ == Type::I128 {
+                    let func_ref = self.module.declare_func_in_func(self.numerics.i128_to_i64, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[v]);
+                    return Ok(self.builder.inst_results(call)[0]);
+                } else if arguments[0].type_ == Type::U128 {
+                    let func_ref = self.module.declare_func_in_func(self.numerics.u128_to_u64, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[v]);
+                    return Ok(self.builder.inst_results(call)[0]);
+                } else {
+                    return Ok(v);
+                }
+            }
+            "i128" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.numerics.i128_from_i64, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[v]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "u128" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.numerics.u128_from_u64, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[v]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "f32" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                if arguments[0].type_ == Type::Float || arguments[0].type_ == Type::F64 {
+                    return Ok(self.builder.ins().fdemote(types::F32, v));
+                } else if arguments[0].type_ == Type::F32 {
+                    return Ok(v);
+                } else {
+                    return Ok(self.builder.ins().fcvt_from_sint(types::F32, v));
+                }
+            }
+            "f64" | "float" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                if arguments[0].type_ == Type::F32 {
+                    return Ok(self.builder.ins().fpromote(types::F64, v));
+                } else if arguments[0].type_ == Type::Float || arguments[0].type_ == Type::F64 {
+                    return Ok(v);
+                } else {
+                    return Ok(self.builder.ins().fcvt_from_sint(types::F64, v));
+                }
+            }
+            "char" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                return Ok(self.builder.ins().band_imm(v, 0x1FFFFF));
+            }
+            "int" if arguments.len() == 1 => {
+                let v = self.compile_expression(&arguments[0])?;
+                if arguments[0].type_ == Type::F32 || arguments[0].type_ == Type::Float || arguments[0].type_ == Type::F64 {
+                    return Ok(self.builder.ins().fcvt_to_sint(VALUE_TYPE, v));
+                } else {
+                    return Ok(v);
+                }
+            }
+
+            // ---- Fixed-Width Bounds ----
+            "i8_min" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, -128)),
+            "i8_max" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, 127)),
+            "u8_min" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, 0)),
+            "u8_max" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, 255)),
+            "i16_min" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, -32768)),
+            "i16_max" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, 32767)),
+            "u16_min" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, 0)),
+            "u16_max" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, 65535)),
+            "i32_min" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, -2147483648)),
+            "i32_max" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, 2147483647)),
+            "u32_min" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, 0)),
+            "u32_max" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, 4294967295)),
+            "i64_min" | "isize_min" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, i64::MIN)),
+            "i64_max" | "isize_max" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, i64::MAX)),
+            "u64_min" | "usize_min" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, 0)),
+            "u64_max" | "usize_max" if arguments.is_empty() => return Ok(self.builder.ins().iconst(VALUE_TYPE, -1)),
+            "i128_min" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.numerics.i128_min, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "i128_max" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.numerics.i128_max, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "u128_min" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.numerics.u128_min, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "u128_max" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.numerics.u128_max, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "f32_min" if arguments.is_empty() => return Ok(self.builder.ins().f32const(f32::MIN)),
+            "f32_max" if arguments.is_empty() => return Ok(self.builder.ins().f32const(f32::MAX)),
+            "f64_min" if arguments.is_empty() => return Ok(self.builder.ins().f64const(f64::MIN)),
+            "f64_max" if arguments.is_empty() => return Ok(self.builder.ins().f64const(f64::MAX)),
+
+            // ---- Wrapping & Saturating Arithmetic ----
+            "wrapping_add" | "wrapping_sub" | "wrapping_mul"
+            | "saturating_add" | "saturating_sub" | "saturating_mul" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let fid = match (&arguments[0].type_, name) {
+                    (Type::I8, "wrapping_add") => self.numerics.wrapping_add_i8,
+                    (Type::I8, "wrapping_sub") => self.numerics.wrapping_sub_i8,
+                    (Type::I8, "wrapping_mul") => self.numerics.wrapping_mul_i8,
+                    (Type::I8, "saturating_add") => self.numerics.saturating_add_i8,
+                    (Type::I8, "saturating_sub") => self.numerics.saturating_sub_i8,
+                    (Type::I8, "saturating_mul") => self.numerics.saturating_mul_i8,
+
+                    (Type::U8, "wrapping_add") => self.numerics.wrapping_add_u8,
+                    (Type::U8, "wrapping_sub") => self.numerics.wrapping_sub_u8,
+                    (Type::U8, "wrapping_mul") => self.numerics.wrapping_mul_u8,
+                    (Type::U8, "saturating_add") => self.numerics.saturating_add_u8,
+                    (Type::U8, "saturating_sub") => self.numerics.saturating_sub_u8,
+                    (Type::U8, "saturating_mul") => self.numerics.saturating_mul_u8,
+
+                    (Type::I16, "wrapping_add") => self.numerics.wrapping_add_i16,
+                    (Type::I16, "wrapping_sub") => self.numerics.wrapping_sub_i16,
+                    (Type::I16, "wrapping_mul") => self.numerics.wrapping_mul_i16,
+                    (Type::I16, "saturating_add") => self.numerics.saturating_add_i16,
+                    (Type::I16, "saturating_sub") => self.numerics.saturating_sub_i16,
+                    (Type::I16, "saturating_mul") => self.numerics.saturating_mul_i16,
+
+                    (Type::U16, "wrapping_add") => self.numerics.wrapping_add_u16,
+                    (Type::U16, "wrapping_sub") => self.numerics.wrapping_sub_u16,
+                    (Type::U16, "wrapping_mul") => self.numerics.wrapping_mul_u16,
+                    (Type::U16, "saturating_add") => self.numerics.saturating_add_u16,
+                    (Type::U16, "saturating_sub") => self.numerics.saturating_sub_u16,
+                    (Type::U16, "saturating_mul") => self.numerics.saturating_mul_u16,
+
+                    (Type::I32, "wrapping_add") => self.numerics.wrapping_add_i32,
+                    (Type::I32, "wrapping_sub") => self.numerics.wrapping_sub_i32,
+                    (Type::I32, "wrapping_mul") => self.numerics.wrapping_mul_i32,
+                    (Type::I32, "saturating_add") => self.numerics.saturating_add_i32,
+                    (Type::I32, "saturating_sub") => self.numerics.saturating_sub_i32,
+                    (Type::I32, "saturating_mul") => self.numerics.saturating_mul_i32,
+
+                    (Type::U32, "wrapping_add") => self.numerics.wrapping_add_u32,
+                    (Type::U32, "wrapping_sub") => self.numerics.wrapping_sub_u32,
+                    (Type::U32, "wrapping_mul") => self.numerics.wrapping_mul_u32,
+                    (Type::U32, "saturating_add") => self.numerics.saturating_add_u32,
+                    (Type::U32, "saturating_sub") => self.numerics.saturating_sub_u32,
+                    (Type::U32, "saturating_mul") => self.numerics.saturating_mul_u32,
+
+                    (Type::I128, "wrapping_add") => self.numerics.i128_wrapping_add,
+                    (Type::I128, "wrapping_sub") => self.numerics.i128_wrapping_sub,
+                    (Type::I128, "wrapping_mul") => self.numerics.i128_wrapping_mul,
+                    (Type::I128, "saturating_add") => self.numerics.i128_saturating_add,
+                    (Type::I128, "saturating_sub") => self.numerics.i128_saturating_sub,
+                    (Type::I128, "saturating_mul") => self.numerics.i128_saturating_mul,
+
+                    (Type::U128, "wrapping_add") => self.numerics.u128_wrapping_add,
+                    (Type::U128, "wrapping_sub") => self.numerics.u128_wrapping_sub,
+                    (Type::U128, "wrapping_mul") => self.numerics.u128_wrapping_mul,
+                    (Type::U128, "saturating_add") => self.numerics.u128_saturating_add,
+                    (Type::U128, "saturating_sub") => self.numerics.u128_saturating_sub,
+                    (Type::U128, "saturating_mul") => self.numerics.u128_saturating_mul,
+
+                    (Type::U64 | Type::Usize, "wrapping_add") => self.numerics.wrapping_add_u64,
+                    (Type::U64 | Type::Usize, "wrapping_sub") => self.numerics.wrapping_sub_u64,
+                    (Type::U64 | Type::Usize, "wrapping_mul") => self.numerics.wrapping_mul_u64,
+                    (Type::U64 | Type::Usize, "saturating_add") => self.numerics.saturating_add_u64,
+                    (Type::U64 | Type::Usize, "saturating_sub") => self.numerics.saturating_sub_u64,
+                    (Type::U64 | Type::Usize, "saturating_mul") => self.numerics.saturating_mul_u64,
+
+                    (_, "wrapping_add") => self.numerics.wrapping_add_i64,
+                    (_, "wrapping_sub") => self.numerics.wrapping_sub_i64,
+                    (_, "wrapping_mul") => self.numerics.wrapping_mul_i64,
+                    (_, "saturating_add") => self.numerics.saturating_add_i64,
+                    (_, "saturating_sub") => self.numerics.saturating_sub_i64,
+                    (_, "saturating_mul") => self.numerics.saturating_mul_i64,
+                    _ => unreachable!(),
+                };
+                let func_ref = self.module.declare_func_in_func(fid, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
             _ => {}
         }
 
@@ -6971,13 +7599,19 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     self.builder.ins().call(func_ref, &[val_i64]);
                     return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
                 }
-                Type::Int | Type::U8 | Type::RawPointer(_) | Type::Unknown => {
+                Type::Char => {
+                    let val = self.compile_expression(arg)?;
+                    let func_ref = self.module.declare_func_in_func(self.vga.write_char_id, self.builder.func);
+                    self.builder.ins().call(func_ref, &[val]);
+                    return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+                }
+                Type::Int | Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::Isize | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Usize | Type::RawPointer(_) | Type::Unknown => {
                     let val = self.compile_expression(arg)?;
                     let func_ref = self.module.declare_func_in_func(self.vga.print_int_id, self.builder.func);
                     self.builder.ins().call(func_ref, &[val]);
                     return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
                 }
-                Type::Float => {
+                Type::Float | Type::F32 | Type::F64 => {
                     let val = self.compile_expression(arg)?;
                     let int_val = self.builder.ins().fcvt_to_sint(VALUE_TYPE, val);
                     let func_ref = self.module.declare_func_in_func(self.vga.print_int_id, self.builder.func);
@@ -7014,13 +7648,38 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let selected_ptr = self.builder.ins().select(val, true_ptr, false_ptr);
                 self.emit_printf(self.fmt_str, selected_ptr)
             }
-            Type::Int | Type::U8 | Type::RawPointer(_) | Type::Unknown => {
+            Type::Char => {
+                let val = self.compile_expression(arg)?;
+                self.emit_printf(self.fmt_char, val)
+            }
+            Type::Int | Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::Isize | Type::RawPointer(_) | Type::Unknown => {
                 let val = self.compile_expression(arg)?;
                 self.emit_printf(self.fmt_int, val)
             }
-            Type::Float => {
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Usize => {
+                let val = self.compile_expression(arg)?;
+                self.emit_printf(self.fmt_uint, val)
+            }
+            Type::F32 => {
+                let val = self.compile_expression(arg)?;
+                let val_f64 = self.builder.ins().fpromote(types::F64, val);
+                self.emit_printf_float(val_f64)
+            }
+            Type::Float | Type::F64 => {
                 let val = self.compile_expression(arg)?;
                 self.emit_printf_float(val)
+            }
+            Type::I128 => {
+                let val = self.compile_expression(arg)?;
+                let func_ref = self.module.declare_func_in_func(self.numerics.i128_print, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
+            }
+            Type::U128 => {
+                let val = self.compile_expression(arg)?;
+                let func_ref = self.module.declare_func_in_func(self.numerics.u128_print, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
             }
             Type::Function { .. } => {
                 let _val = self.compile_expression(arg)?;

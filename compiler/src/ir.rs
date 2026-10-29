@@ -233,6 +233,7 @@ pub struct TypedExpression {
 #[derive(Debug, Clone)]
 pub enum TypedExpressionKind {
     Number(String),
+    Char(char),
     String(String),
     Identifier(String),
     Boolean(bool),

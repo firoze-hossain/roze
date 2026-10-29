@@ -1838,3 +1838,519 @@ __attribute__((weak)) int64_t string_contains(const char* s, const char* sub) { 
 __attribute__((weak)) int64_t string_starts_with(const char* s, const char* p) { (void)s; (void)p; return 0; }
 __attribute__((weak)) int64_t string_ends_with(const char* s, const char* suffx) { (void)s; (void)suffx; return 0; }
 __attribute__((weak)) void* http_request(const char* m, const char* u, void* h, const char* b) { (void)m; (void)u; (void)h; (void)b; return NULL; }
+
+// =============================================================
+// Fixed-Width Numeric Suite (M2-T01) Runtime
+// =============================================================
+
+typedef struct {
+    int64_t refcount;
+    __int128 val;
+} RozeI128;
+
+typedef struct {
+    int64_t refcount;
+    unsigned __int128 val;
+} RozeU128;
+
+int64_t __roze_i128_from_str(const char* s) {
+    RozeI128* obj = (RozeI128*)malloc(sizeof(RozeI128));
+    if (!obj) return 0;
+    obj->refcount = 1;
+    __int128 val = 0;
+    int neg = 0;
+    if (s) {
+        if (*s == '-') { neg = 1; s++; }
+        while (*s >= '0' && *s <= '9') {
+            val = val * 10 + (*s - '0');
+            s++;
+        }
+        if (neg) val = -val;
+    }
+    obj->val = val;
+    return (int64_t)obj;
+}
+
+int64_t __roze_u128_from_str(const char* s) {
+    RozeU128* obj = (RozeU128*)malloc(sizeof(RozeU128));
+    if (!obj) return 0;
+    obj->refcount = 1;
+    unsigned __int128 val = 0;
+    if (s) {
+        while (*s >= '0' && *s <= '9') {
+            val = val * 10 + (*s - '0');
+            s++;
+        }
+    }
+    obj->val = val;
+    return (int64_t)obj;
+}
+
+int64_t __roze_i128_from_i64(int64_t v) {
+    RozeI128* obj = (RozeI128*)malloc(sizeof(RozeI128));
+    if (!obj) return 0;
+    obj->refcount = 1;
+    obj->val = (__int128)v;
+    return (int64_t)obj;
+}
+
+int64_t __roze_u128_from_u64(uint64_t v) {
+    RozeU128* obj = (RozeU128*)malloc(sizeof(RozeU128));
+    if (!obj) return 0;
+    obj->refcount = 1;
+    obj->val = (unsigned __int128)v;
+    return (int64_t)obj;
+}
+
+int64_t __roze_i128_to_i64(int64_t h) {
+    if (!h) return 0;
+    return (int64_t)((RozeI128*)h)->val;
+}
+
+int64_t __roze_u128_to_u64(int64_t h) {
+    if (!h) return 0;
+    return (int64_t)((RozeU128*)h)->val;
+}
+
+void __roze_i128_retain(int64_t h) {
+    if (h) {
+        RozeI128* obj = (RozeI128*)h;
+        obj->refcount++;
+    }
+}
+
+void __roze_i128_release(int64_t h) {
+    if (h) {
+        RozeI128* obj = (RozeI128*)h;
+        if (--obj->refcount <= 0) {
+            free(obj);
+        }
+    }
+}
+
+void __roze_u128_retain(int64_t h) {
+    if (h) {
+        RozeU128* obj = (RozeU128*)h;
+        obj->refcount++;
+    }
+}
+
+void __roze_u128_release(int64_t h) {
+    if (h) {
+        RozeU128* obj = (RozeU128*)h;
+        if (--obj->refcount <= 0) {
+            free(obj);
+        }
+    }
+}
+
+void __roze_i128_print(int64_t h) {
+    if (!h) { puts("0"); return; }
+    RozeI128* obj = (RozeI128*)h;
+    __int128 val = obj->val;
+    if (val == 0) { puts("0"); return; }
+    char buf[64];
+    int idx = 63;
+    buf[idx--] = '\0';
+    int neg = 0;
+    unsigned __int128 uval;
+    if (val < 0) {
+        neg = 1;
+        uval = (unsigned __int128)(-(val + 1)) + 1;
+    } else {
+        uval = (unsigned __int128)val;
+    }
+    while (uval > 0) {
+        buf[idx--] = (char)('0' + (uval % 10));
+        uval /= 10;
+    }
+    if (neg) buf[idx--] = '-';
+    puts(&buf[idx + 1]);
+}
+
+void __roze_u128_print(int64_t h) {
+    if (!h) { puts("0"); return; }
+    RozeU128* obj = (RozeU128*)h;
+    unsigned __int128 uval = obj->val;
+    if (uval == 0) { puts("0"); return; }
+    char buf[64];
+    int idx = 63;
+    buf[idx--] = '\0';
+    while (uval > 0) {
+        buf[idx--] = (char)('0' + (uval % 10));
+        uval /= 10;
+    }
+    puts(&buf[idx + 1]);
+}
+
+int64_t __roze_i128_min(void) {
+    RozeI128* obj = (RozeI128*)malloc(sizeof(RozeI128));
+    obj->refcount = 1;
+    obj->val = ((__int128)1) << 127;
+    return (int64_t)obj;
+}
+
+int64_t __roze_i128_max(void) {
+    RozeI128* obj = (RozeI128*)malloc(sizeof(RozeI128));
+    obj->refcount = 1;
+    obj->val = ~(((__int128)1) << 127);
+    return (int64_t)obj;
+}
+
+int64_t __roze_u128_min(void) {
+    RozeU128* obj = (RozeU128*)malloc(sizeof(RozeU128));
+    obj->refcount = 1;
+    obj->val = 0;
+    return (int64_t)obj;
+}
+
+int64_t __roze_u128_max(void) {
+    RozeU128* obj = (RozeU128*)malloc(sizeof(RozeU128));
+    obj->refcount = 1;
+    obj->val = ~((unsigned __int128)0);
+    return (int64_t)obj;
+}
+
+int64_t __roze_i128_wrapping_add(int64_t a, int64_t b) {
+    __int128 va = a ? ((RozeI128*)a)->val : 0;
+    __int128 vb = b ? ((RozeI128*)b)->val : 0;
+    RozeI128* res = (RozeI128*)malloc(sizeof(RozeI128));
+    res->refcount = 1;
+    res->val = (__int128)((unsigned __int128)va + (unsigned __int128)vb);
+    return (int64_t)res;
+}
+
+int64_t __roze_i128_wrapping_sub(int64_t a, int64_t b) {
+    __int128 va = a ? ((RozeI128*)a)->val : 0;
+    __int128 vb = b ? ((RozeI128*)b)->val : 0;
+    RozeI128* res = (RozeI128*)malloc(sizeof(RozeI128));
+    res->refcount = 1;
+    res->val = (__int128)((unsigned __int128)va - (unsigned __int128)vb);
+    return (int64_t)res;
+}
+
+int64_t __roze_i128_wrapping_mul(int64_t a, int64_t b) {
+    __int128 va = a ? ((RozeI128*)a)->val : 0;
+    __int128 vb = b ? ((RozeI128*)b)->val : 0;
+    RozeI128* res = (RozeI128*)malloc(sizeof(RozeI128));
+    res->refcount = 1;
+    res->val = (__int128)((unsigned __int128)va * (unsigned __int128)vb);
+    return (int64_t)res;
+}
+
+int64_t __roze_i128_saturating_add(int64_t a, int64_t b) {
+    __int128 va = a ? ((RozeI128*)a)->val : 0;
+    __int128 vb = b ? ((RozeI128*)b)->val : 0;
+    RozeI128* res = (RozeI128*)malloc(sizeof(RozeI128));
+    res->refcount = 1;
+    __int128 min_val = ((__int128)1) << 127;
+    __int128 max_val = ~(((__int128)1) << 127);
+    if (vb > 0 && va > max_val - vb) res->val = max_val;
+    else if (vb < 0 && va < min_val - vb) res->val = min_val;
+    else res->val = va + vb;
+    return (int64_t)res;
+}
+
+int64_t __roze_i128_saturating_sub(int64_t a, int64_t b) {
+    __int128 va = a ? ((RozeI128*)a)->val : 0;
+    __int128 vb = b ? ((RozeI128*)b)->val : 0;
+    RozeI128* res = (RozeI128*)malloc(sizeof(RozeI128));
+    res->refcount = 1;
+    __int128 min_val = ((__int128)1) << 127;
+    __int128 max_val = ~(((__int128)1) << 127);
+    if (vb < 0 && va > max_val + vb) res->val = max_val;
+    else if (vb > 0 && va < min_val + vb) res->val = min_val;
+    else res->val = va - vb;
+    return (int64_t)res;
+}
+
+int64_t __roze_i128_saturating_mul(int64_t a, int64_t b) {
+    __int128 va = a ? ((RozeI128*)a)->val : 0;
+    __int128 vb = b ? ((RozeI128*)b)->val : 0;
+    RozeI128* res = (RozeI128*)malloc(sizeof(RozeI128));
+    res->refcount = 1;
+    __int128 min_val = ((__int128)1) << 127;
+    __int128 max_val = ~(((__int128)1) << 127);
+    if (va == 0 || vb == 0) {
+        res->val = 0;
+    } else if (va > 0) {
+        if (vb > 0) {
+            res->val = (va > max_val / vb) ? max_val : va * vb;
+        } else {
+            res->val = (vb < min_val / va) ? min_val : va * vb;
+        }
+    } else {
+        if (vb > 0) {
+            res->val = (va < min_val / vb) ? min_val : va * vb;
+        } else {
+            res->val = (va < max_val / vb) ? max_val : va * vb;
+        }
+    }
+    return (int64_t)res;
+}
+
+int64_t __roze_u128_wrapping_add(int64_t a, int64_t b) {
+    unsigned __int128 va = a ? ((RozeU128*)a)->val : 0;
+    unsigned __int128 vb = b ? ((RozeU128*)b)->val : 0;
+    RozeU128* res = (RozeU128*)malloc(sizeof(RozeU128));
+    res->refcount = 1;
+    res->val = va + vb;
+    return (int64_t)res;
+}
+
+int64_t __roze_u128_wrapping_sub(int64_t a, int64_t b) {
+    unsigned __int128 va = a ? ((RozeU128*)a)->val : 0;
+    unsigned __int128 vb = b ? ((RozeU128*)b)->val : 0;
+    RozeU128* res = (RozeU128*)malloc(sizeof(RozeU128));
+    res->refcount = 1;
+    res->val = va - vb;
+    return (int64_t)res;
+}
+
+int64_t __roze_u128_wrapping_mul(int64_t a, int64_t b) {
+    unsigned __int128 va = a ? ((RozeU128*)a)->val : 0;
+    unsigned __int128 vb = b ? ((RozeU128*)b)->val : 0;
+    RozeU128* res = (RozeU128*)malloc(sizeof(RozeU128));
+    res->refcount = 1;
+    res->val = va * vb;
+    return (int64_t)res;
+}
+
+int64_t __roze_u128_saturating_add(int64_t a, int64_t b) {
+    unsigned __int128 va = a ? ((RozeU128*)a)->val : 0;
+    unsigned __int128 vb = b ? ((RozeU128*)b)->val : 0;
+    RozeU128* res = (RozeU128*)malloc(sizeof(RozeU128));
+    res->refcount = 1;
+    unsigned __int128 sum = va + vb;
+    res->val = (sum < va) ? ~((unsigned __int128)0) : sum;
+    return (int64_t)res;
+}
+
+int64_t __roze_u128_saturating_sub(int64_t a, int64_t b) {
+    unsigned __int128 va = a ? ((RozeU128*)a)->val : 0;
+    unsigned __int128 vb = b ? ((RozeU128*)b)->val : 0;
+    RozeU128* res = (RozeU128*)malloc(sizeof(RozeU128));
+    res->refcount = 1;
+    res->val = (va < vb) ? 0 : va - vb;
+    return (int64_t)res;
+}
+
+int64_t __roze_u128_saturating_mul(int64_t a, int64_t b) {
+    unsigned __int128 va = a ? ((RozeU128*)a)->val : 0;
+    unsigned __int128 vb = b ? ((RozeU128*)b)->val : 0;
+    RozeU128* res = (RozeU128*)malloc(sizeof(RozeU128));
+    res->refcount = 1;
+    if (va == 0 || vb == 0) {
+        res->val = 0;
+    } else {
+        unsigned __int128 max_val = ~((unsigned __int128)0);
+        res->val = (va > max_val / vb) ? max_val : va * vb;
+    }
+    return (int64_t)res;
+}
+
+int64_t __roze_i128_sdiv(int64_t a, int64_t b) {
+    __int128 va = a ? ((RozeI128*)a)->val : 0;
+    __int128 vb = b ? ((RozeI128*)b)->val : 0;
+    RozeI128* res = (RozeI128*)malloc(sizeof(RozeI128));
+    res->refcount = 1;
+    res->val = vb != 0 ? (va / vb) : 0;
+    return (int64_t)res;
+}
+
+int64_t __roze_i128_srem(int64_t a, int64_t b) {
+    __int128 va = a ? ((RozeI128*)a)->val : 0;
+    __int128 vb = b ? ((RozeI128*)b)->val : 0;
+    RozeI128* res = (RozeI128*)malloc(sizeof(RozeI128));
+    res->refcount = 1;
+    res->val = vb != 0 ? (va % vb) : 0;
+    return (int64_t)res;
+}
+
+int64_t __roze_i128_cmp(int64_t a, int64_t b) {
+    __int128 va = a ? ((RozeI128*)a)->val : 0;
+    __int128 vb = b ? ((RozeI128*)b)->val : 0;
+    if (va < vb) return -1;
+    if (va > vb) return 1;
+    return 0;
+}
+
+int64_t __roze_u128_udiv(int64_t a, int64_t b) {
+    unsigned __int128 va = a ? ((RozeU128*)a)->val : 0;
+    unsigned __int128 vb = b ? ((RozeU128*)b)->val : 0;
+    RozeU128* res = (RozeU128*)malloc(sizeof(RozeU128));
+    res->refcount = 1;
+    res->val = vb != 0 ? (va / vb) : 0;
+    return (int64_t)res;
+}
+
+int64_t __roze_u128_urem(int64_t a, int64_t b) {
+    unsigned __int128 va = a ? ((RozeU128*)a)->val : 0;
+    unsigned __int128 vb = b ? ((RozeU128*)b)->val : 0;
+    RozeU128* res = (RozeU128*)malloc(sizeof(RozeU128));
+    res->refcount = 1;
+    res->val = vb != 0 ? (va % vb) : 0;
+    return (int64_t)res;
+}
+
+int64_t __roze_u128_cmp(int64_t a, int64_t b) {
+    unsigned __int128 va = a ? ((RozeU128*)a)->val : 0;
+    unsigned __int128 vb = b ? ((RozeU128*)b)->val : 0;
+    if (va < vb) return -1;
+    if (va > vb) return 1;
+    return 0;
+}
+
+// Fixed-width integer wrapping & saturating arithmetic
+int64_t __roze_wrapping_add_i8(int64_t a, int64_t b) { return (int8_t)((uint8_t)a + (uint8_t)b); }
+int64_t __roze_wrapping_sub_i8(int64_t a, int64_t b) { return (int8_t)((uint8_t)a - (uint8_t)b); }
+int64_t __roze_wrapping_mul_i8(int64_t a, int64_t b) { return (int8_t)((uint8_t)a * (uint8_t)b); }
+int64_t __roze_saturating_add_i8(int64_t a, int64_t b) {
+    int64_t res = (int8_t)a + (int8_t)b;
+    if (res > 127) return 127;
+    if (res < -128) return -128;
+    return res;
+}
+int64_t __roze_saturating_sub_i8(int64_t a, int64_t b) {
+    int64_t res = (int8_t)a - (int8_t)b;
+    if (res > 127) return 127;
+    if (res < -128) return -128;
+    return res;
+}
+int64_t __roze_saturating_mul_i8(int64_t a, int64_t b) {
+    int64_t res = (int8_t)a * (int8_t)b;
+    if (res > 127) return 127;
+    if (res < -128) return -128;
+    return res;
+}
+
+int64_t __roze_wrapping_add_u8(int64_t a, int64_t b) { return (uint8_t)((uint8_t)a + (uint8_t)b); }
+int64_t __roze_wrapping_sub_u8(int64_t a, int64_t b) { return (uint8_t)((uint8_t)a - (uint8_t)b); }
+int64_t __roze_wrapping_mul_u8(int64_t a, int64_t b) { return (uint8_t)((uint8_t)a * (uint8_t)b); }
+int64_t __roze_saturating_add_u8(int64_t a, int64_t b) {
+    uint64_t res = (uint8_t)a + (uint8_t)b;
+    return res > 255 ? 255 : res;
+}
+int64_t __roze_saturating_sub_u8(int64_t a, int64_t b) {
+    return ((uint8_t)a < (uint8_t)b) ? 0 : (uint8_t)a - (uint8_t)b;
+}
+int64_t __roze_saturating_mul_u8(int64_t a, int64_t b) {
+    uint64_t res = (uint64_t)(uint8_t)a * (uint64_t)(uint8_t)b;
+    return res > 255 ? 255 : res;
+}
+
+int64_t __roze_wrapping_add_i16(int64_t a, int64_t b) { return (int16_t)((uint16_t)a + (uint16_t)b); }
+int64_t __roze_wrapping_sub_i16(int64_t a, int64_t b) { return (int16_t)((uint16_t)a - (uint16_t)b); }
+int64_t __roze_wrapping_mul_i16(int64_t a, int64_t b) { return (int16_t)((uint16_t)a * (uint16_t)b); }
+int64_t __roze_saturating_add_i16(int64_t a, int64_t b) {
+    int64_t res = (int16_t)a + (int16_t)b;
+    if (res > 32767) return 32767;
+    if (res < -32768) return -32768;
+    return res;
+}
+int64_t __roze_saturating_sub_i16(int64_t a, int64_t b) {
+    int64_t res = (int16_t)a - (int16_t)b;
+    if (res > 32767) return 32767;
+    if (res < -32768) return -32768;
+    return res;
+}
+int64_t __roze_saturating_mul_i16(int64_t a, int64_t b) {
+    int64_t res = (int16_t)a * (int16_t)b;
+    if (res > 32767) return 32767;
+    if (res < -32768) return -32768;
+    return res;
+}
+
+int64_t __roze_wrapping_add_u16(int64_t a, int64_t b) { return (uint16_t)((uint16_t)a + (uint16_t)b); }
+int64_t __roze_wrapping_sub_u16(int64_t a, int64_t b) { return (uint16_t)((uint16_t)a - (uint16_t)b); }
+int64_t __roze_wrapping_mul_u16(int64_t a, int64_t b) { return (uint16_t)((uint16_t)a * (uint16_t)b); }
+int64_t __roze_saturating_add_u16(int64_t a, int64_t b) {
+    uint64_t res = (uint16_t)a + (uint16_t)b;
+    return res > 65535 ? 65535 : res;
+}
+int64_t __roze_saturating_sub_u16(int64_t a, int64_t b) {
+    return ((uint16_t)a < (uint16_t)b) ? 0 : (uint16_t)a - (uint16_t)b;
+}
+int64_t __roze_saturating_mul_u16(int64_t a, int64_t b) {
+    uint64_t res = (uint64_t)(uint16_t)a * (uint64_t)(uint16_t)b;
+    return res > 65535 ? 65535 : res;
+}
+
+int64_t __roze_wrapping_add_i32(int64_t a, int64_t b) { return (int32_t)((uint32_t)a + (uint32_t)b); }
+int64_t __roze_wrapping_sub_i32(int64_t a, int64_t b) { return (int32_t)((uint32_t)a - (uint32_t)b); }
+int64_t __roze_wrapping_mul_i32(int64_t a, int64_t b) { return (int32_t)((uint32_t)a * (uint32_t)b); }
+int64_t __roze_saturating_add_i32(int64_t a, int64_t b) {
+    int64_t res = (int32_t)a + (int32_t)b;
+    if (res > 2147483647LL) return 2147483647LL;
+    if (res < -2147483648LL) return -2147483648LL;
+    return res;
+}
+int64_t __roze_saturating_sub_i32(int64_t a, int64_t b) {
+    int64_t res = (int32_t)a - (int32_t)b;
+    if (res > 2147483647LL) return 2147483647LL;
+    if (res < -2147483648LL) return -2147483648LL;
+    return res;
+}
+int64_t __roze_saturating_mul_i32(int64_t a, int64_t b) {
+    int64_t res = (int64_t)(int32_t)a * (int64_t)(int32_t)b;
+    if (res > 2147483647LL) return 2147483647LL;
+    if (res < -2147483648LL) return -2147483648LL;
+    return res;
+}
+
+int64_t __roze_wrapping_add_u32(int64_t a, int64_t b) { return (uint32_t)((uint32_t)a + (uint32_t)b); }
+int64_t __roze_wrapping_sub_u32(int64_t a, int64_t b) { return (uint32_t)((uint32_t)a - (uint32_t)b); }
+int64_t __roze_wrapping_mul_u32(int64_t a, int64_t b) { return (uint32_t)((uint32_t)a * (uint32_t)b); }
+int64_t __roze_saturating_add_u32(int64_t a, int64_t b) {
+    uint64_t res = (uint64_t)(uint32_t)a + (uint64_t)(uint32_t)b;
+    return res > 4294967295ULL ? 4294967295ULL : res;
+}
+int64_t __roze_saturating_sub_u32(int64_t a, int64_t b) {
+    return ((uint32_t)a < (uint32_t)b) ? 0 : (uint32_t)a - (uint32_t)b;
+}
+int64_t __roze_saturating_mul_u32(int64_t a, int64_t b) {
+    uint64_t res = (uint64_t)(uint32_t)a * (uint64_t)(uint32_t)b;
+    return res > 4294967295ULL ? 4294967295ULL : res;
+}
+
+int64_t __roze_wrapping_add_i64(int64_t a, int64_t b) { return (int64_t)((uint64_t)a + (uint64_t)b); }
+int64_t __roze_wrapping_sub_i64(int64_t a, int64_t b) { return (int64_t)((uint64_t)a - (uint64_t)b); }
+int64_t __roze_wrapping_mul_i64(int64_t a, int64_t b) { return (int64_t)((uint64_t)a * (uint64_t)b); }
+int64_t __roze_saturating_add_i64(int64_t a, int64_t b) {
+    __int128 res = (__int128)a + (__int128)b;
+    if (res > 9223372036854775807LL) return 9223372036854775807LL;
+    if (res < (-9223372036854775807LL - 1)) return (-9223372036854775807LL - 1);
+    return (int64_t)res;
+}
+int64_t __roze_saturating_sub_i64(int64_t a, int64_t b) {
+    __int128 res = (__int128)a - (__int128)b;
+    if (res > 9223372036854775807LL) return 9223372036854775807LL;
+    if (res < (-9223372036854775807LL - 1)) return (-9223372036854775807LL - 1);
+    return (int64_t)res;
+}
+int64_t __roze_saturating_mul_i64(int64_t a, int64_t b) {
+    __int128 res = (__int128)a * (__int128)b;
+    if (res > 9223372036854775807LL) return 9223372036854775807LL;
+    if (res < (-9223372036854775807LL - 1)) return (-9223372036854775807LL - 1);
+    return (int64_t)res;
+}
+
+int64_t __roze_wrapping_add_u64(int64_t a, int64_t b) { return (int64_t)((uint64_t)a + (uint64_t)b); }
+int64_t __roze_wrapping_sub_u64(int64_t a, int64_t b) { return (int64_t)((uint64_t)a - (uint64_t)b); }
+int64_t __roze_wrapping_mul_u64(int64_t a, int64_t b) { return (int64_t)((uint64_t)a * (uint64_t)b); }
+int64_t __roze_saturating_add_u64(int64_t a, int64_t b) {
+    uint64_t ua = (uint64_t)a, ub = (uint64_t)b;
+    uint64_t res = ua + ub;
+    return (res < ua) ? ~0ULL : res;
+}
+int64_t __roze_saturating_sub_u64(int64_t a, int64_t b) {
+    uint64_t ua = (uint64_t)a, ub = (uint64_t)b;
+    return (ua < ub) ? 0ULL : ua - ub;
+}
+int64_t __roze_saturating_mul_u64(int64_t a, int64_t b) {
+    if (a == 0 || b == 0) return 0;
+    uint64_t ua = (uint64_t)a, ub = (uint64_t)b;
+    if (ua > ~0ULL / ub) return ~0ULL;
+    return (int64_t)(ua * ub);
+}
+

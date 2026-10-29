@@ -276,7 +276,7 @@ s1_rows = [
         ("M2-T02", 8), ("Month 2", 4), ("Sprint 3 (W05-W06)", 8), "Hardware Acceleration", "SIMD Vector Intrinsics Engine",
         "Hardware SIMD types: Vec4f, Vec8f, Vec4i, Vec16u8 with AVX-512, AVX2, and ARM NEON code generation for 8x-16x vector processing acceleration.",
         "Matches Java 25 Vector API (incubator) and Rust core::simd.",
-        "AI/ML Tensors, Game Physics, Video/Audio", "7 Days", ("High", 14), ("Planned", 12)
+        "AI/ML Tensors, Game Physics, Video/Audio", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M2-T03", 8), ("Month 2", 4), ("Sprint 3 (W05-W06)", 8), "Standard Collections", "Advanced High-Performance Collections",

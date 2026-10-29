@@ -15,6 +15,8 @@
 #include <unistd.h>
 #include <sched.h>
 #include <errno.h>
+#include <math.h>
+#include <string.h>
 
 #define ROZE_MAGIC_THREAD 0x544852445F4D4147ULL // "THRD_MAG"
 #define ROZE_MAGIC_FIBER  0x464942525F4D4147ULL // "FIBR_MAG"
@@ -2353,4 +2355,676 @@ int64_t __roze_saturating_mul_u64(int64_t a, int64_t b) {
     if (ua > ~0ULL / ub) return ~0ULL;
     return (int64_t)(ua * ub);
 }
+
+// ============================================================================
+// Hardware SIMD Vector Types & Intrinsics Engine (M2-T02)
+// Vector operations leveraging GCC/Clang vector extensions with automatic
+// AVX-512, AVX2, SSE and ARM NEON code generation.
+// ============================================================================
+
+typedef float __attribute__((vector_size(16))) v4sf;
+typedef float __attribute__((vector_size(32))) v8sf;
+typedef int32_t __attribute__((vector_size(16))) v4si;
+typedef uint8_t __attribute__((vector_size(16))) v16u8;
+
+typedef struct RozeVec4f {
+    int64_t refcount;
+    v4sf data;
+} RozeVec4f;
+
+typedef struct RozeVec8f {
+    int64_t refcount;
+    v8sf data;
+} RozeVec8f;
+
+typedef struct RozeVec4i {
+    int64_t refcount;
+    v4si data;
+} RozeVec4i;
+
+typedef struct RozeVec16u8 {
+    int64_t refcount;
+    v16u8 data;
+} RozeVec16u8;
+
+static void __roze_print_single_float(float x) {
+    if (x == (long)x) {
+        printf("%ld.0", (long)x);
+    } else {
+        printf("%g", x);
+    }
+}
+
+// ---- RozeVec4f ----
+RozeVec4f* __roze_vec4f_new(float x, float y, float z, float w) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    v->data = (v4sf){x, y, z, w};
+    return v;
+}
+
+RozeVec4f* __roze_vec4f_splat(float val) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    v->data = (v4sf){val, val, val, val};
+    return v;
+}
+
+RozeVec4f* __roze_vec4f_zero(void) {
+    return __roze_vec4f_splat(0.0f);
+}
+
+void __roze_vec4f_retain(RozeVec4f* v) {
+    if (v) { v->refcount++; }
+}
+
+void __roze_vec4f_release(RozeVec4f* v) {
+    if (v && --v->refcount <= 0) {
+        free(v);
+    }
+}
+
+RozeVec4f* __roze_vec4f_add(RozeVec4f* a, RozeVec4f* b) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    v->data = a->data + b->data;
+    return v;
+}
+
+RozeVec4f* __roze_vec4f_sub(RozeVec4f* a, RozeVec4f* b) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    v->data = a->data - b->data;
+    return v;
+}
+
+RozeVec4f* __roze_vec4f_mul(RozeVec4f* a, RozeVec4f* b) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    v->data = a->data * b->data;
+    return v;
+}
+
+RozeVec4f* __roze_vec4f_div(RozeVec4f* a, RozeVec4f* b) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    v->data = a->data / b->data;
+    return v;
+}
+
+float __roze_vec4f_dot(RozeVec4f* a, RozeVec4f* b) {
+    v4sf p = a->data * b->data;
+    return p[0] + p[1] + p[2] + p[3];
+}
+
+float __roze_vec4f_sum(RozeVec4f* a) {
+    return a->data[0] + a->data[1] + a->data[2] + a->data[3];
+}
+
+RozeVec4f* __roze_vec4f_min(RozeVec4f* a, RozeVec4f* b) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    v->data = (v4sf){
+        a->data[0] < b->data[0] ? a->data[0] : b->data[0],
+        a->data[1] < b->data[1] ? a->data[1] : b->data[1],
+        a->data[2] < b->data[2] ? a->data[2] : b->data[2],
+        a->data[3] < b->data[3] ? a->data[3] : b->data[3]
+    };
+    return v;
+}
+
+RozeVec4f* __roze_vec4f_max(RozeVec4f* a, RozeVec4f* b) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    v->data = (v4sf){
+        a->data[0] > b->data[0] ? a->data[0] : b->data[0],
+        a->data[1] > b->data[1] ? a->data[1] : b->data[1],
+        a->data[2] > b->data[2] ? a->data[2] : b->data[2],
+        a->data[3] > b->data[3] ? a->data[3] : b->data[3]
+    };
+    return v;
+}
+
+RozeVec4f* __roze_vec4f_sqrt(RozeVec4f* a) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    v->data = (v4sf){sqrtf(a->data[0]), sqrtf(a->data[1]), sqrtf(a->data[2]), sqrtf(a->data[3])};
+    return v;
+}
+
+RozeVec4f* __roze_vec4f_abs(RozeVec4f* a) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    v->data = (v4sf){fabsf(a->data[0]), fabsf(a->data[1]), fabsf(a->data[2]), fabsf(a->data[3])};
+    return v;
+}
+
+RozeVec4f* __roze_vec4f_fma(RozeVec4f* a, RozeVec4f* b, RozeVec4f* c) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    v->data = (a->data * b->data) + c->data;
+    return v;
+}
+
+float __roze_vec4f_get(RozeVec4f* a, int64_t idx) {
+    if (idx < 0 || idx >= 4) return 0.0f;
+    return a->data[idx];
+}
+
+RozeVec4f* __roze_vec4f_set(RozeVec4f* a, int64_t idx, float val) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    v->data = a->data;
+    if (idx >= 0 && idx < 4) {
+        v->data[idx] = val;
+    }
+    return v;
+}
+
+RozeVec4f* __roze_vec4f_load(float* ptr) {
+    RozeVec4f* v = (RozeVec4f*)malloc(sizeof(RozeVec4f));
+    v->refcount = 1;
+    memcpy(&v->data, ptr, sizeof(v4sf));
+    return v;
+}
+
+void __roze_vec4f_store(float* ptr, RozeVec4f* a) {
+    if (ptr && a) {
+        memcpy(ptr, &a->data, sizeof(v4sf));
+    }
+}
+
+void __roze_vec4f_print(RozeVec4f* a) {
+    if (!a) { printf("null\n"); return; }
+    printf("Vec4f(");
+    for (int i = 0; i < 4; i++) {
+        __roze_print_single_float(a->data[i]);
+        if (i < 3) printf(", ");
+    }
+    printf(")\n");
+}
+
+int64_t __roze_vec4f_eq(RozeVec4f* a, RozeVec4f* b) {
+    if (a == b) return 1;
+    if (!a || !b) return 0;
+    for (int i = 0; i < 4; i++) {
+        if (a->data[i] != b->data[i]) return 0;
+    }
+    return 1;
+}
+
+// ---- RozeVec8f ----
+RozeVec8f* __roze_vec8f_new(float f0, float f1, float f2, float f3, float f4, float f5, float f6, float f7) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    v->data = (v8sf){f0, f1, f2, f3, f4, f5, f6, f7};
+    return v;
+}
+
+RozeVec8f* __roze_vec8f_splat(float val) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    v->data = (v8sf){val, val, val, val, val, val, val, val};
+    return v;
+}
+
+RozeVec8f* __roze_vec8f_zero(void) {
+    return __roze_vec8f_splat(0.0f);
+}
+
+void __roze_vec8f_retain(RozeVec8f* v) {
+    if (v) { v->refcount++; }
+}
+
+void __roze_vec8f_release(RozeVec8f* v) {
+    if (v && --v->refcount <= 0) {
+        free(v);
+    }
+}
+
+RozeVec8f* __roze_vec8f_add(RozeVec8f* a, RozeVec8f* b) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    v->data = a->data + b->data;
+    return v;
+}
+
+RozeVec8f* __roze_vec8f_sub(RozeVec8f* a, RozeVec8f* b) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    v->data = a->data - b->data;
+    return v;
+}
+
+RozeVec8f* __roze_vec8f_mul(RozeVec8f* a, RozeVec8f* b) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    v->data = a->data * b->data;
+    return v;
+}
+
+RozeVec8f* __roze_vec8f_div(RozeVec8f* a, RozeVec8f* b) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    v->data = a->data / b->data;
+    return v;
+}
+
+float __roze_vec8f_dot(RozeVec8f* a, RozeVec8f* b) {
+    v8sf p = a->data * b->data;
+    return p[0] + p[1] + p[2] + p[3] + p[4] + p[5] + p[6] + p[7];
+}
+
+float __roze_vec8f_sum(RozeVec8f* a) {
+    return a->data[0] + a->data[1] + a->data[2] + a->data[3] + a->data[4] + a->data[5] + a->data[6] + a->data[7];
+}
+
+RozeVec8f* __roze_vec8f_min(RozeVec8f* a, RozeVec8f* b) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    v->data = (v8sf){
+        a->data[0] < b->data[0] ? a->data[0] : b->data[0],
+        a->data[1] < b->data[1] ? a->data[1] : b->data[1],
+        a->data[2] < b->data[2] ? a->data[2] : b->data[2],
+        a->data[3] < b->data[3] ? a->data[3] : b->data[3],
+        a->data[4] < b->data[4] ? a->data[4] : b->data[4],
+        a->data[5] < b->data[5] ? a->data[5] : b->data[5],
+        a->data[6] < b->data[6] ? a->data[6] : b->data[6],
+        a->data[7] < b->data[7] ? a->data[7] : b->data[7]
+    };
+    return v;
+}
+
+RozeVec8f* __roze_vec8f_max(RozeVec8f* a, RozeVec8f* b) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    v->data = (v8sf){
+        a->data[0] > b->data[0] ? a->data[0] : b->data[0],
+        a->data[1] > b->data[1] ? a->data[1] : b->data[1],
+        a->data[2] > b->data[2] ? a->data[2] : b->data[2],
+        a->data[3] > b->data[3] ? a->data[3] : b->data[3],
+        a->data[4] > b->data[4] ? a->data[4] : b->data[4],
+        a->data[5] > b->data[5] ? a->data[5] : b->data[5],
+        a->data[6] > b->data[6] ? a->data[6] : b->data[6],
+        a->data[7] > b->data[7] ? a->data[7] : b->data[7]
+    };
+    return v;
+}
+
+RozeVec8f* __roze_vec8f_sqrt(RozeVec8f* a) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    v->data = (v8sf){
+        sqrtf(a->data[0]), sqrtf(a->data[1]), sqrtf(a->data[2]), sqrtf(a->data[3]),
+        sqrtf(a->data[4]), sqrtf(a->data[5]), sqrtf(a->data[6]), sqrtf(a->data[7])
+    };
+    return v;
+}
+
+RozeVec8f* __roze_vec8f_abs(RozeVec8f* a) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    v->data = (v8sf){
+        fabsf(a->data[0]), fabsf(a->data[1]), fabsf(a->data[2]), fabsf(a->data[3]),
+        fabsf(a->data[4]), fabsf(a->data[5]), fabsf(a->data[6]), fabsf(a->data[7])
+    };
+    return v;
+}
+
+RozeVec8f* __roze_vec8f_fma(RozeVec8f* a, RozeVec8f* b, RozeVec8f* c) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    v->data = (a->data * b->data) + c->data;
+    return v;
+}
+
+float __roze_vec8f_get(RozeVec8f* a, int64_t idx) {
+    if (idx < 0 || idx >= 8) return 0.0f;
+    return a->data[idx];
+}
+
+RozeVec8f* __roze_vec8f_set(RozeVec8f* a, int64_t idx, float val) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    v->data = a->data;
+    if (idx >= 0 && idx < 8) {
+        v->data[idx] = val;
+    }
+    return v;
+}
+
+RozeVec8f* __roze_vec8f_load(float* ptr) {
+    RozeVec8f* v = (RozeVec8f*)malloc(sizeof(RozeVec8f));
+    v->refcount = 1;
+    memcpy(&v->data, ptr, sizeof(v8sf));
+    return v;
+}
+
+void __roze_vec8f_store(float* ptr, RozeVec8f* a) {
+    if (ptr && a) {
+        memcpy(ptr, &a->data, sizeof(v8sf));
+    }
+}
+
+void __roze_vec8f_print(RozeVec8f* a) {
+    if (!a) { printf("null\n"); return; }
+    printf("Vec8f(");
+    for (int i = 0; i < 8; i++) {
+        __roze_print_single_float(a->data[i]);
+        if (i < 7) printf(", ");
+    }
+    printf(")\n");
+}
+
+int64_t __roze_vec8f_eq(RozeVec8f* a, RozeVec8f* b) {
+    if (a == b) return 1;
+    if (!a || !b) return 0;
+    for (int i = 0; i < 8; i++) {
+        if (a->data[i] != b->data[i]) return 0;
+    }
+    return 1;
+}
+
+// ---- RozeVec4i ----
+RozeVec4i* __roze_vec4i_new(int64_t a, int64_t b, int64_t c, int64_t d) {
+    RozeVec4i* v = (RozeVec4i*)malloc(sizeof(RozeVec4i));
+    v->refcount = 1;
+    v->data = (v4si){(int32_t)a, (int32_t)b, (int32_t)c, (int32_t)d};
+    return v;
+}
+
+RozeVec4i* __roze_vec4i_splat(int64_t val) {
+    RozeVec4i* v = (RozeVec4i*)malloc(sizeof(RozeVec4i));
+    v->refcount = 1;
+    int32_t iv = (int32_t)val;
+    v->data = (v4si){iv, iv, iv, iv};
+    return v;
+}
+
+RozeVec4i* __roze_vec4i_zero(void) {
+    return __roze_vec4i_splat(0);
+}
+
+void __roze_vec4i_retain(RozeVec4i* v) {
+    if (v) { v->refcount++; }
+}
+
+void __roze_vec4i_release(RozeVec4i* v) {
+    if (v && --v->refcount <= 0) {
+        free(v);
+    }
+}
+
+RozeVec4i* __roze_vec4i_add(RozeVec4i* a, RozeVec4i* b) {
+    RozeVec4i* v = (RozeVec4i*)malloc(sizeof(RozeVec4i));
+    v->refcount = 1;
+    v->data = a->data + b->data;
+    return v;
+}
+
+RozeVec4i* __roze_vec4i_sub(RozeVec4i* a, RozeVec4i* b) {
+    RozeVec4i* v = (RozeVec4i*)malloc(sizeof(RozeVec4i));
+    v->refcount = 1;
+    v->data = a->data - b->data;
+    return v;
+}
+
+RozeVec4i* __roze_vec4i_mul(RozeVec4i* a, RozeVec4i* b) {
+    RozeVec4i* v = (RozeVec4i*)malloc(sizeof(RozeVec4i));
+    v->refcount = 1;
+    v->data = a->data * b->data;
+    return v;
+}
+
+RozeVec4i* __roze_vec4i_div(RozeVec4i* a, RozeVec4i* b) {
+    RozeVec4i* v = (RozeVec4i*)malloc(sizeof(RozeVec4i));
+    v->refcount = 1;
+    v->data = (v4si){
+        b->data[0] != 0 ? a->data[0] / b->data[0] : 0,
+        b->data[1] != 0 ? a->data[1] / b->data[1] : 0,
+        b->data[2] != 0 ? a->data[2] / b->data[2] : 0,
+        b->data[3] != 0 ? a->data[3] / b->data[3] : 0
+    };
+    return v;
+}
+
+int64_t __roze_vec4i_sum(RozeVec4i* a) {
+    return (int64_t)a->data[0] + a->data[1] + a->data[2] + a->data[3];
+}
+
+RozeVec4i* __roze_vec4i_min(RozeVec4i* a, RozeVec4i* b) {
+    RozeVec4i* v = (RozeVec4i*)malloc(sizeof(RozeVec4i));
+    v->refcount = 1;
+    v->data = (v4si){
+        a->data[0] < b->data[0] ? a->data[0] : b->data[0],
+        a->data[1] < b->data[1] ? a->data[1] : b->data[1],
+        a->data[2] < b->data[2] ? a->data[2] : b->data[2],
+        a->data[3] < b->data[3] ? a->data[3] : b->data[3]
+    };
+    return v;
+}
+
+RozeVec4i* __roze_vec4i_max(RozeVec4i* a, RozeVec4i* b) {
+    RozeVec4i* v = (RozeVec4i*)malloc(sizeof(RozeVec4i));
+    v->refcount = 1;
+    v->data = (v4si){
+        a->data[0] > b->data[0] ? a->data[0] : b->data[0],
+        a->data[1] > b->data[1] ? a->data[1] : b->data[1],
+        a->data[2] > b->data[2] ? a->data[2] : b->data[2],
+        a->data[3] > b->data[3] ? a->data[3] : b->data[3]
+    };
+    return v;
+}
+
+RozeVec4i* __roze_vec4i_abs(RozeVec4i* a) {
+    RozeVec4i* v = (RozeVec4i*)malloc(sizeof(RozeVec4i));
+    v->refcount = 1;
+    v->data = (v4si){abs(a->data[0]), abs(a->data[1]), abs(a->data[2]), abs(a->data[3])};
+    return v;
+}
+
+int64_t __roze_vec4i_get(RozeVec4i* a, int64_t idx) {
+    if (idx < 0 || idx >= 4) return 0;
+    return a->data[idx];
+}
+
+RozeVec4i* __roze_vec4i_set(RozeVec4i* a, int64_t idx, int64_t val) {
+    RozeVec4i* v = (RozeVec4i*)malloc(sizeof(RozeVec4i));
+    v->refcount = 1;
+    v->data = a->data;
+    if (idx >= 0 && idx < 4) {
+        v->data[idx] = (int32_t)val;
+    }
+    return v;
+}
+
+RozeVec4i* __roze_vec4i_load(int32_t* ptr) {
+    RozeVec4i* v = (RozeVec4i*)malloc(sizeof(RozeVec4i));
+    v->refcount = 1;
+    memcpy(&v->data, ptr, sizeof(v4si));
+    return v;
+}
+
+void __roze_vec4i_store(int32_t* ptr, RozeVec4i* a) {
+    if (ptr && a) {
+        memcpy(ptr, &a->data, sizeof(v4si));
+    }
+}
+
+void __roze_vec4i_print(RozeVec4i* a) {
+    if (!a) { printf("null\n"); return; }
+    printf("Vec4i(%d, %d, %d, %d)\n", a->data[0], a->data[1], a->data[2], a->data[3]);
+}
+
+int64_t __roze_vec4i_eq(RozeVec4i* a, RozeVec4i* b) {
+    if (a == b) return 1;
+    if (!a || !b) return 0;
+    for (int i = 0; i < 4; i++) {
+        if (a->data[i] != b->data[i]) return 0;
+    }
+    return 1;
+}
+
+// ---- RozeVec16u8 ----
+RozeVec16u8* __roze_vec16u8_new(
+    int64_t u0, int64_t u1, int64_t u2, int64_t u3,
+    int64_t u4, int64_t u5, int64_t u6, int64_t u7,
+    int64_t u8, int64_t u9, int64_t u10, int64_t u11,
+    int64_t u12, int64_t u13, int64_t u14, int64_t u15
+) {
+    RozeVec16u8* v = (RozeVec16u8*)malloc(sizeof(RozeVec16u8));
+    v->refcount = 1;
+    v->data = (v16u8){
+        (uint8_t)u0, (uint8_t)u1, (uint8_t)u2, (uint8_t)u3,
+        (uint8_t)u4, (uint8_t)u5, (uint8_t)u6, (uint8_t)u7,
+        (uint8_t)u8, (uint8_t)u9, (uint8_t)u10, (uint8_t)u11,
+        (uint8_t)u12, (uint8_t)u13, (uint8_t)u14, (uint8_t)u15
+    };
+    return v;
+}
+
+RozeVec16u8* __roze_vec16u8_splat(int64_t val) {
+    RozeVec16u8* v = (RozeVec16u8*)malloc(sizeof(RozeVec16u8));
+    v->refcount = 1;
+    uint8_t b = (uint8_t)val;
+    v->data = (v16u8){
+        b, b, b, b, b, b, b, b,
+        b, b, b, b, b, b, b, b
+    };
+    return v;
+}
+
+RozeVec16u8* __roze_vec16u8_zero(void) {
+    return __roze_vec16u8_splat(0);
+}
+
+void __roze_vec16u8_retain(RozeVec16u8* v) {
+    if (v) { v->refcount++; }
+}
+
+void __roze_vec16u8_release(RozeVec16u8* v) {
+    if (v && --v->refcount <= 0) {
+        free(v);
+    }
+}
+
+RozeVec16u8* __roze_vec16u8_add(RozeVec16u8* a, RozeVec16u8* b) {
+    RozeVec16u8* v = (RozeVec16u8*)malloc(sizeof(RozeVec16u8));
+    v->refcount = 1;
+    v->data = a->data + b->data;
+    return v;
+}
+
+RozeVec16u8* __roze_vec16u8_sub(RozeVec16u8* a, RozeVec16u8* b) {
+    RozeVec16u8* v = (RozeVec16u8*)malloc(sizeof(RozeVec16u8));
+    v->refcount = 1;
+    v->data = a->data - b->data;
+    return v;
+}
+
+RozeVec16u8* __roze_vec16u8_mul(RozeVec16u8* a, RozeVec16u8* b) {
+    RozeVec16u8* v = (RozeVec16u8*)malloc(sizeof(RozeVec16u8));
+    v->refcount = 1;
+    v->data = a->data * b->data;
+    return v;
+}
+
+RozeVec16u8* __roze_vec16u8_div(RozeVec16u8* a, RozeVec16u8* b) {
+    RozeVec16u8* v = (RozeVec16u8*)malloc(sizeof(RozeVec16u8));
+    v->refcount = 1;
+    for (int i = 0; i < 16; i++) {
+        v->data[i] = b->data[i] != 0 ? (a->data[i] / b->data[i]) : 0;
+    }
+    return v;
+}
+
+RozeVec16u8* __roze_vec16u8_saturating_add(RozeVec16u8* a, RozeVec16u8* b) {
+    RozeVec16u8* v = (RozeVec16u8*)malloc(sizeof(RozeVec16u8));
+    v->refcount = 1;
+    for (int i = 0; i < 16; i++) {
+        uint32_t r = (uint32_t)a->data[i] + (uint32_t)b->data[i];
+        v->data[i] = (uint8_t)(r > 255 ? 255 : r);
+    }
+    return v;
+}
+
+RozeVec16u8* __roze_vec16u8_saturating_sub(RozeVec16u8* a, RozeVec16u8* b) {
+    RozeVec16u8* v = (RozeVec16u8*)malloc(sizeof(RozeVec16u8));
+    v->refcount = 1;
+    for (int i = 0; i < 16; i++) {
+        v->data[i] = (a->data[i] < b->data[i]) ? 0 : (a->data[i] - b->data[i]);
+    }
+    return v;
+}
+
+int64_t __roze_vec16u8_sum(RozeVec16u8* a) {
+    int64_t s = 0;
+    for (int i = 0; i < 16; i++) {
+        s += a->data[i];
+    }
+    return s;
+}
+
+RozeVec16u8* __roze_vec16u8_min(RozeVec16u8* a, RozeVec16u8* b) {
+    RozeVec16u8* v = (RozeVec16u8*)malloc(sizeof(RozeVec16u8));
+    v->refcount = 1;
+    for (int i = 0; i < 16; i++) {
+        v->data[i] = a->data[i] < b->data[i] ? a->data[i] : b->data[i];
+    }
+    return v;
+}
+
+RozeVec16u8* __roze_vec16u8_max(RozeVec16u8* a, RozeVec16u8* b) {
+    RozeVec16u8* v = (RozeVec16u8*)malloc(sizeof(RozeVec16u8));
+    v->refcount = 1;
+    for (int i = 0; i < 16; i++) {
+        v->data[i] = a->data[i] > b->data[i] ? a->data[i] : b->data[i];
+    }
+    return v;
+}
+
+int64_t __roze_vec16u8_get(RozeVec16u8* a, int64_t idx) {
+    if (idx < 0 || idx >= 16) return 0;
+    return a->data[idx];
+}
+
+RozeVec16u8* __roze_vec16u8_set(RozeVec16u8* a, int64_t idx, int64_t val) {
+    RozeVec16u8* v = (RozeVec16u8*)malloc(sizeof(RozeVec16u8));
+    v->refcount = 1;
+    v->data = a->data;
+    if (idx >= 0 && idx < 16) {
+        v->data[idx] = (uint8_t)val;
+    }
+    return v;
+}
+
+RozeVec16u8* __roze_vec16u8_load(uint8_t* ptr) {
+    RozeVec16u8* v = (RozeVec16u8*)malloc(sizeof(RozeVec16u8));
+    v->refcount = 1;
+    memcpy(&v->data, ptr, sizeof(v16u8));
+    return v;
+}
+
+void __roze_vec16u8_store(uint8_t* ptr, RozeVec16u8* a) {
+    if (ptr && a) {
+        memcpy(ptr, &a->data, sizeof(v16u8));
+    }
+}
+
+void __roze_vec16u8_print(RozeVec16u8* a) {
+    if (!a) { printf("null\n"); return; }
+    printf("Vec16u8(");
+    for (int i = 0; i < 16; i++) {
+        printf("%u", (unsigned int)a->data[i]);
+        if (i < 15) printf(", ");
+    }
+    printf(")\n");
+}
+
+int64_t __roze_vec16u8_eq(RozeVec16u8* a, RozeVec16u8* b) {
+    if (a == b) return 1;
+    if (!a || !b) return 0;
+    return memcmp(&a->data, &b->data, 16) == 0 ? 1 : 0;
+}
+
 

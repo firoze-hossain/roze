@@ -2785,6 +2785,378 @@ const NUMERIC_HELPER_METHODS: &str = r#"
     private static java.math.BigInteger __roze_u128_max() { return __ROZE_U128_MAX; }
 "#;
 
+const SIMD_HELPER_METHODS: &str = r#"
+    private static RozeVec4f __roze_vec4f_load(long ptr) {
+        float f0 = Float.intBitsToFloat((int)__roze_ptr_read(ptr));
+        float f1 = Float.intBitsToFloat((int)__roze_ptr_read_at(ptr, 4));
+        float f2 = Float.intBitsToFloat((int)__roze_ptr_read_at(ptr, 8));
+        float f3 = Float.intBitsToFloat((int)__roze_ptr_read_at(ptr, 12));
+        return new RozeVec4f(f0, f1, f2, f3);
+    }
+    private static void __roze_vec4f_store(long ptr, RozeVec4f v) {
+        if (v == null) return;
+        __roze_ptr_write_at(ptr, 0, Float.floatToRawIntBits(v.f0));
+        __roze_ptr_write_at(ptr, 4, Float.floatToRawIntBits(v.f1));
+        __roze_ptr_write_at(ptr, 8, Float.floatToRawIntBits(v.f2));
+        __roze_ptr_write_at(ptr, 12, Float.floatToRawIntBits(v.f3));
+    }
+
+    private static RozeVec8f __roze_vec8f_load(long ptr) {
+        float[] a = new float[8];
+        for (int i = 0; i < 8; i++) a[i] = Float.intBitsToFloat((int)__roze_ptr_read_at(ptr, i * 4));
+        return new RozeVec8f(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
+    }
+    private static void __roze_vec8f_store(long ptr, RozeVec8f v) {
+        if (v == null) return;
+        for (int i = 0; i < 8; i++) __roze_ptr_write_at(ptr, i * 4, Float.floatToRawIntBits(v.get(i)));
+    }
+
+    private static RozeVec4i __roze_vec4i_load(long ptr) {
+        return new RozeVec4i(
+            (int)__roze_ptr_read_at(ptr, 0),
+            (int)__roze_ptr_read_at(ptr, 4),
+            (int)__roze_ptr_read_at(ptr, 8),
+            (int)__roze_ptr_read_at(ptr, 12)
+        );
+    }
+    private static void __roze_vec4i_store(long ptr, RozeVec4i v) {
+        if (v == null) return;
+        __roze_ptr_write_at(ptr, 0, v.i0);
+        __roze_ptr_write_at(ptr, 4, v.i1);
+        __roze_ptr_write_at(ptr, 8, v.i2);
+        __roze_ptr_write_at(ptr, 12, v.i3);
+    }
+
+    private static RozeVec16u8 __roze_vec16u8_load(long ptr) {
+        RozeVec16u8 v = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) v.data[i] = (byte)__roze_ptr_read_u8(ptr + i);
+        return v;
+    }
+    private static void __roze_vec16u8_store(long ptr, RozeVec16u8 v) {
+        if (v == null) return;
+        for (int i = 0; i < 16; i++) __roze_ptr_write_u8(ptr + i, v.data[i] & 0xFF);
+    }
+"#;
+
+const SIMD_HELPER_CLASSES: &str = r#"
+class RozeVec4f {
+    public float f0, f1, f2, f3;
+    public RozeVec4f(float f0, float f1, float f2, float f3) {
+        this.f0 = f0; this.f1 = f1; this.f2 = f2; this.f3 = f3;
+    }
+    public static RozeVec4f splat(float v) { return new RozeVec4f(v, v, v, v); }
+    public static RozeVec4f zero() { return new RozeVec4f(0f, 0f, 0f, 0f); }
+    public RozeVec4f add(RozeVec4f b) { return new RozeVec4f(f0 + b.f0, f1 + b.f1, f2 + b.f2, f3 + b.f3); }
+    public RozeVec4f add(float v) { return new RozeVec4f(f0 + v, f1 + v, f2 + v, f3 + v); }
+    public RozeVec4f sub(RozeVec4f b) { return new RozeVec4f(f0 - b.f0, f1 - b.f1, f2 - b.f2, f3 - b.f3); }
+    public RozeVec4f sub(float v) { return new RozeVec4f(f0 - v, f1 - v, f2 - v, f3 - v); }
+    public RozeVec4f mul(RozeVec4f b) { return new RozeVec4f(f0 * b.f0, f1 * b.f1, f2 * b.f2, f3 * b.f3); }
+    public RozeVec4f mul(float v) { return new RozeVec4f(f0 * v, f1 * v, f2 * v, f3 * v); }
+    public RozeVec4f div(RozeVec4f b) { return new RozeVec4f(f0 / b.f0, f1 / b.f1, f2 / b.f2, f3 / b.f3); }
+    public RozeVec4f div(float v) { return new RozeVec4f(f0 / v, f1 / v, f2 / v, f3 / v); }
+    public float dot(RozeVec4f b) { return (f0 * b.f0) + (f1 * b.f1) + (f2 * b.f2) + (f3 * b.f3); }
+    public float sum() { return f0 + f1 + f2 + f3; }
+    public RozeVec4f min(RozeVec4f b) { return new RozeVec4f(Math.min(f0, b.f0), Math.min(f1, b.f1), Math.min(f2, b.f2), Math.min(f3, b.f3)); }
+    public RozeVec4f max(RozeVec4f b) { return new RozeVec4f(Math.max(f0, b.f0), Math.max(f1, b.f1), Math.max(f2, b.f2), Math.max(f3, b.f3)); }
+    public RozeVec4f sqrt() { return new RozeVec4f((float)Math.sqrt(f0), (float)Math.sqrt(f1), (float)Math.sqrt(f2), (float)Math.sqrt(f3)); }
+    public RozeVec4f abs() { return new RozeVec4f(Math.abs(f0), Math.abs(f1), Math.abs(f2), Math.abs(f3)); }
+    public RozeVec4f fma(RozeVec4f b, RozeVec4f c) { return new RozeVec4f((f0 * b.f0) + c.f0, (f1 * b.f1) + c.f1, (f2 * b.f2) + c.f2, (f3 * b.f3) + c.f3); }
+    public float get(long idx) {
+        int i = (int)idx;
+        if (i == 0) return f0;
+        if (i == 1) return f1;
+        if (i == 2) return f2;
+        if (i == 3) return f3;
+        return 0f;
+    }
+    public RozeVec4f set(long idx, float v) {
+        float a0 = f0, a1 = f1, a2 = f2, a3 = f3;
+        int i = (int)idx;
+        if (i == 0) a0 = v;
+        else if (i == 1) a1 = v;
+        else if (i == 2) a2 = v;
+        else if (i == 3) a3 = v;
+        return new RozeVec4f(a0, a1, a2, a3);
+    }
+    @Override
+    public boolean equals(Object o) {
+        if (!(o instanceof RozeVec4f)) return false;
+        RozeVec4f b = (RozeVec4f)o;
+        return f0 == b.f0 && f1 == b.f1 && f2 == b.f2 && f3 == b.f3;
+    }
+    @Override
+    public String toString() {
+        return "Vec4f(" + fmtFloat(f0) + ", " + fmtFloat(f1) + ", " + fmtFloat(f2) + ", " + fmtFloat(f3) + ")";
+    }
+    private static String fmtFloat(float x) {
+        if (x == (long)x) return ((long)x) + ".0";
+        return String.valueOf(x);
+    }
+}
+
+class RozeVec8f {
+    public float f0, f1, f2, f3, f4, f5, f6, f7;
+    public RozeVec8f(float f0, float f1, float f2, float f3, float f4, float f5, float f6, float f7) {
+        this.f0 = f0; this.f1 = f1; this.f2 = f2; this.f3 = f3;
+        this.f4 = f4; this.f5 = f5; this.f6 = f6; this.f7 = f7;
+    }
+    public static RozeVec8f splat(float v) { return new RozeVec8f(v, v, v, v, v, v, v, v); }
+    public static RozeVec8f zero() { return new RozeVec8f(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f); }
+    public RozeVec8f add(RozeVec8f b) {
+        return new RozeVec8f(f0 + b.f0, f1 + b.f1, f2 + b.f2, f3 + b.f3, f4 + b.f4, f5 + b.f5, f6 + b.f6, f7 + b.f7);
+    }
+    public RozeVec8f add(float v) {
+        return new RozeVec8f(f0 + v, f1 + v, f2 + v, f3 + v, f4 + v, f5 + v, f6 + v, f7 + v);
+    }
+    public RozeVec8f sub(RozeVec8f b) {
+        return new RozeVec8f(f0 - b.f0, f1 - b.f1, f2 - b.f2, f3 - b.f3, f4 - b.f4, f5 - b.f5, f6 - b.f6, f7 - b.f7);
+    }
+    public RozeVec8f sub(float v) {
+        return new RozeVec8f(f0 - v, f1 - v, f2 - v, f3 - v, f4 - v, f5 - v, f6 - v, f7 - v);
+    }
+    public RozeVec8f mul(RozeVec8f b) {
+        return new RozeVec8f(f0 * b.f0, f1 * b.f1, f2 * b.f2, f3 * b.f3, f4 * b.f4, f5 * b.f5, f6 * b.f6, f7 * b.f7);
+    }
+    public RozeVec8f mul(float v) {
+        return new RozeVec8f(f0 * v, f1 * v, f2 * v, f3 * v, f4 * v, f5 * v, f6 * v, f7 * v);
+    }
+    public RozeVec8f div(RozeVec8f b) {
+        return new RozeVec8f(f0 / b.f0, f1 / b.f1, f2 / b.f2, f3 / b.f3, f4 / b.f4, f5 / b.f5, f6 / b.f6, f7 / b.f7);
+    }
+    public RozeVec8f div(float v) {
+        return new RozeVec8f(f0 / v, f1 / v, f2 / v, f3 / v, f4 / v, f5 / v, f6 / v, f7 / v);
+    }
+    public float dot(RozeVec8f b) {
+        return (f0 * b.f0) + (f1 * b.f1) + (f2 * b.f2) + (f3 * b.f3) + (f4 * b.f4) + (f5 * b.f5) + (f6 * b.f6) + (f7 * b.f7);
+    }
+    public float sum() {
+        return f0 + f1 + f2 + f3 + f4 + f5 + f6 + f7;
+    }
+    public RozeVec8f min(RozeVec8f b) {
+        return new RozeVec8f(Math.min(f0, b.f0), Math.min(f1, b.f1), Math.min(f2, b.f2), Math.min(f3, b.f3),
+                             Math.min(f4, b.f4), Math.min(f5, b.f5), Math.min(f6, b.f6), Math.min(f7, b.f7));
+    }
+    public RozeVec8f max(RozeVec8f b) {
+        return new RozeVec8f(Math.max(f0, b.f0), Math.max(f1, b.f1), Math.max(f2, b.f2), Math.max(f3, b.f3),
+                             Math.max(f4, b.f4), Math.max(f5, b.f5), Math.max(f6, b.f6), Math.max(f7, b.f7));
+    }
+    public RozeVec8f sqrt() {
+        return new RozeVec8f((float)Math.sqrt(f0), (float)Math.sqrt(f1), (float)Math.sqrt(f2), (float)Math.sqrt(f3),
+                             (float)Math.sqrt(f4), (float)Math.sqrt(f5), (float)Math.sqrt(f6), (float)Math.sqrt(f7));
+    }
+    public RozeVec8f abs() {
+        return new RozeVec8f(Math.abs(f0), Math.abs(f1), Math.abs(f2), Math.abs(f3),
+                             Math.abs(f4), Math.abs(f5), Math.abs(f6), Math.abs(f7));
+    }
+    public RozeVec8f fma(RozeVec8f b, RozeVec8f c) {
+        return new RozeVec8f((f0 * b.f0) + c.f0, (f1 * b.f1) + c.f1, (f2 * b.f2) + c.f2, (f3 * b.f3) + c.f3,
+                             (f4 * b.f4) + c.f4, (f5 * b.f5) + c.f5, (f6 * b.f6) + c.f6, (f7 * b.f7) + c.f7);
+    }
+    public float get(long idx) {
+        int i = (int)idx;
+        switch (i) {
+            case 0: return f0;
+            case 1: return f1;
+            case 2: return f2;
+            case 3: return f3;
+            case 4: return f4;
+            case 5: return f5;
+            case 6: return f6;
+            case 7: return f7;
+            default: return 0f;
+        }
+    }
+    public RozeVec8f set(long idx, float v) {
+        float[] a = new float[]{f0, f1, f2, f3, f4, f5, f6, f7};
+        int i = (int)idx;
+        if (i >= 0 && i < 8) a[i] = v;
+        return new RozeVec8f(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
+    }
+    @Override
+    public boolean equals(Object o) {
+        if (!(o instanceof RozeVec8f)) return false;
+        RozeVec8f b = (RozeVec8f)o;
+        return f0 == b.f0 && f1 == b.f1 && f2 == b.f2 && f3 == b.f3 &&
+               f4 == b.f4 && f5 == b.f5 && f6 == b.f6 && f7 == b.f7;
+    }
+    @Override
+    public String toString() {
+        return "Vec8f(" + fmtFloat(f0) + ", " + fmtFloat(f1) + ", " + fmtFloat(f2) + ", " + fmtFloat(f3) + ", " +
+                          fmtFloat(f4) + ", " + fmtFloat(f5) + ", " + fmtFloat(f6) + ", " + fmtFloat(f7) + ")";
+    }
+    private static String fmtFloat(float x) {
+        if (x == (long)x) return ((long)x) + ".0";
+        return String.valueOf(x);
+    }
+}
+
+class RozeVec4i {
+    public int i0, i1, i2, i3;
+    public RozeVec4i(int i0, int i1, int i2, int i3) {
+        this.i0 = i0; this.i1 = i1; this.i2 = i2; this.i3 = i3;
+    }
+    public static RozeVec4i splat(int v) { return new RozeVec4i(v, v, v, v); }
+    public static RozeVec4i zero() { return new RozeVec4i(0, 0, 0, 0); }
+    public RozeVec4i add(RozeVec4i b) { return new RozeVec4i(i0 + b.i0, i1 + b.i1, i2 + b.i2, i3 + b.i3); }
+    public RozeVec4i add(int v) { return new RozeVec4i(i0 + v, i1 + v, i2 + v, i3 + v); }
+    public RozeVec4i sub(RozeVec4i b) { return new RozeVec4i(i0 - b.i0, i1 - b.i1, i2 - b.i2, i3 - b.i3); }
+    public RozeVec4i sub(int v) { return new RozeVec4i(i0 - v, i1 - v, i2 - v, i3 - v); }
+    public RozeVec4i mul(RozeVec4i b) { return new RozeVec4i(i0 * b.i0, i1 * b.i1, i2 * b.i2, i3 * b.i3); }
+    public RozeVec4i mul(int v) { return new RozeVec4i(i0 * v, i1 * v, i2 * v, i3 * v); }
+    public RozeVec4i div(RozeVec4i b) { return new RozeVec4i(b.i0 != 0 ? i0 / b.i0 : 0, b.i1 != 0 ? i1 / b.i1 : 0, b.i2 != 0 ? i2 / b.i2 : 0, b.i3 != 0 ? i3 / b.i3 : 0); }
+    public RozeVec4i div(int v) { return new RozeVec4i(v != 0 ? i0 / v : 0, v != 0 ? i1 / v : 0, v != 0 ? i2 / v : 0, v != 0 ? i3 / v : 0); }
+    public int sum() { return i0 + i1 + i2 + i3; }
+    public RozeVec4i min(RozeVec4i b) { return new RozeVec4i(Math.min(i0, b.i0), Math.min(i1, b.i1), Math.min(i2, b.i2), Math.min(i3, b.i3)); }
+    public RozeVec4i max(RozeVec4i b) { return new RozeVec4i(Math.max(i0, b.i0), Math.max(i1, b.i1), Math.max(i2, b.i2), Math.max(i3, b.i3)); }
+    public RozeVec4i abs() { return new RozeVec4i(Math.abs(i0), Math.abs(i1), Math.abs(i2), Math.abs(i3)); }
+    public int get(long idx) {
+        int i = (int)idx;
+        if (i == 0) return i0;
+        if (i == 1) return i1;
+        if (i == 2) return i2;
+        if (i == 3) return i3;
+        return 0;
+    }
+    public RozeVec4i set(long idx, int v) {
+        int a0 = i0, a1 = i1, a2 = i2, a3 = i3;
+        int i = (int)idx;
+        if (i == 0) a0 = v;
+        else if (i == 1) a1 = v;
+        else if (i == 2) a2 = v;
+        else if (i == 3) a3 = v;
+        return new RozeVec4i(a0, a1, a2, a3);
+    }
+    @Override
+    public boolean equals(Object o) {
+        if (!(o instanceof RozeVec4i)) return false;
+        RozeVec4i b = (RozeVec4i)o;
+        return i0 == b.i0 && i1 == b.i1 && i2 == b.i2 && i3 == b.i3;
+    }
+    @Override
+    public String toString() {
+        return "Vec4i(" + i0 + ", " + i1 + ", " + i2 + ", " + i3 + ")";
+    }
+}
+
+class RozeVec16u8 {
+    public byte[] data = new byte[16];
+    public RozeVec16u8(int... bytes) {
+        for (int i = 0; i < Math.min(bytes.length, 16); i++) {
+            this.data[i] = (byte)bytes[i];
+        }
+    }
+    public static RozeVec16u8 splat(int v) {
+        RozeVec16u8 res = new RozeVec16u8();
+        byte b = (byte)v;
+        for (int i = 0; i < 16; i++) res.data[i] = b;
+        return res;
+    }
+    public static RozeVec16u8 zero() { return new RozeVec16u8(); }
+    public RozeVec16u8 add(RozeVec16u8 b) {
+        RozeVec16u8 res = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) res.data[i] = (byte)(data[i] + b.data[i]);
+        return res;
+    }
+    public RozeVec16u8 add(int v) {
+        RozeVec16u8 res = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) res.data[i] = (byte)(data[i] + v);
+        return res;
+    }
+    public RozeVec16u8 sub(RozeVec16u8 b) {
+        RozeVec16u8 res = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) res.data[i] = (byte)(data[i] - b.data[i]);
+        return res;
+    }
+    public RozeVec16u8 sub(int v) {
+        RozeVec16u8 res = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) res.data[i] = (byte)(data[i] - v);
+        return res;
+    }
+    public RozeVec16u8 mul(RozeVec16u8 b) {
+        RozeVec16u8 res = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) res.data[i] = (byte)(data[i] * b.data[i]);
+        return res;
+    }
+    public RozeVec16u8 mul(int v) {
+        RozeVec16u8 res = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) res.data[i] = (byte)(data[i] * v);
+        return res;
+    }
+    public RozeVec16u8 div(RozeVec16u8 b) {
+        RozeVec16u8 res = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) {
+            int denom = b.data[i] & 0xFF;
+            res.data[i] = (byte)(denom != 0 ? ((data[i] & 0xFF) / denom) : 0);
+        }
+        return res;
+    }
+    public RozeVec16u8 div(int v) {
+        RozeVec16u8 res = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) res.data[i] = (byte)(v != 0 ? ((data[i] & 0xFF) / v) : 0);
+        return res;
+    }
+    public RozeVec16u8 saturating_add(RozeVec16u8 b) {
+        RozeVec16u8 res = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) {
+            int r = (data[i] & 0xFF) + (b.data[i] & 0xFF);
+            res.data[i] = (byte)(r > 255 ? 255 : r);
+        }
+        return res;
+    }
+    public RozeVec16u8 saturating_sub(RozeVec16u8 b) {
+        RozeVec16u8 res = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) {
+            int r = (data[i] & 0xFF) - (b.data[i] & 0xFF);
+            res.data[i] = (byte)(r < 0 ? 0 : r);
+        }
+        return res;
+    }
+    public long sum() {
+        long s = 0;
+        for (int i = 0; i < 16; i++) s += (data[i] & 0xFF);
+        return s;
+    }
+    public RozeVec16u8 min(RozeVec16u8 b) {
+        RozeVec16u8 res = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) res.data[i] = (byte)Math.min(data[i] & 0xFF, b.data[i] & 0xFF);
+        return res;
+    }
+    public RozeVec16u8 max(RozeVec16u8 b) {
+        RozeVec16u8 res = new RozeVec16u8();
+        for (int i = 0; i < 16; i++) res.data[i] = (byte)Math.max(data[i] & 0xFF, b.data[i] & 0xFF);
+        return res;
+    }
+    public int get(long idx) {
+        int i = (int)idx;
+        if (i >= 0 && i < 16) return data[i] & 0xFF;
+        return 0;
+    }
+    public RozeVec16u8 set(long idx, int val) {
+        RozeVec16u8 res = new RozeVec16u8();
+        System.arraycopy(data, 0, res.data, 0, 16);
+        int i = (int)idx;
+        if (i >= 0 && i < 16) res.data[i] = (byte)val;
+        return res;
+    }
+    @Override
+    public boolean equals(Object o) {
+        if (!(o instanceof RozeVec16u8)) return false;
+        RozeVec16u8 b = (RozeVec16u8)o;
+        return java.util.Arrays.equals(data, b.data);
+    }
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("Vec16u8(");
+        for (int i = 0; i < 16; i++) {
+            sb.append(data[i] & 0xFF);
+            if (i < 15) sb.append(", ");
+        }
+        sb.append(")");
+        return sb.toString();
+    }
+}
+"#;
+
 /// Returns the Java return type for a built-in Core (string/math)
 /// intrinsic, or None if `name` isn't one. Keep this in sync with
 /// `semantic::builtin_signatures`.
@@ -3037,6 +3409,24 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "usize_min" | "usize_max" => Some("long"),
         "f32_min" | "f32_max" => Some("float"),
         "f64_min" | "f64_max" => Some("double"),
+
+        // Hardware SIMD Vector Types (M2-T02)
+        "Vec4f" | "vec4f" | "Vec4f_splat" | "vec4f_splat" | "Vec4f_zero" | "vec4f_zero" | "vec4f_add" | "vec4f_sub" | "vec4f_mul" | "vec4f_div" | "vec4f_min" | "vec4f_max" | "vec4f_sqrt" | "vec4f_abs" | "vec4f_fma" | "vec4f_set" | "vec4f_load" => Some("RozeVec4f"),
+        "vec4f_dot" | "vec4f_sum" | "vec4f_get" => Some("float"),
+        "vec4f_store" => Some("void"),
+
+        "Vec8f" | "vec8f" | "Vec8f_splat" | "vec8f_splat" | "Vec8f_zero" | "vec8f_zero" | "vec8f_add" | "vec8f_sub" | "vec8f_mul" | "vec8f_div" | "vec8f_min" | "vec8f_max" | "vec8f_sqrt" | "vec8f_abs" | "vec8f_fma" | "vec8f_set" | "vec8f_load" => Some("RozeVec8f"),
+        "vec8f_dot" | "vec8f_sum" | "vec8f_get" => Some("float"),
+        "vec8f_store" => Some("void"),
+
+        "Vec4i" | "vec4i" | "Vec4i_splat" | "vec4i_splat" | "Vec4i_zero" | "vec4i_zero" | "vec4i_add" | "vec4i_sub" | "vec4i_mul" | "vec4i_div" | "vec4i_min" | "vec4i_max" | "vec4i_abs" | "vec4i_set" | "vec4i_load" => Some("RozeVec4i"),
+        "vec4i_sum" | "vec4i_get" => Some("int"),
+        "vec4i_store" => Some("void"),
+
+        "Vec16u8" | "vec16u8" | "Vec16u8_splat" | "vec16u8_splat" | "Vec16u8_zero" | "vec16u8_zero" | "vec16u8_add" | "vec16u8_sub" | "vec16u8_mul" | "vec16u8_saturating_add" | "vec16u8_saturating_sub" | "vec16u8_min" | "vec16u8_max" | "vec16u8_set" | "vec16u8_load" => Some("RozeVec16u8"),
+        "vec16u8_sum" => Some("long"),
+        "vec16u8_get" => Some("int"),
+        "vec16u8_store" => Some("void"),
 
         _ => None,
     }
@@ -3322,10 +3712,12 @@ impl JavaSourceGenerator {
         source.push_str(CONCURRENCY_HELPER_METHODS);
         source.push_str(DIRECT_MEMORY_HELPER_METHODS);
         source.push_str(NUMERIC_HELPER_METHODS);
+        source.push_str(SIMD_HELPER_METHODS);
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);
         source.push_str(CONCURRENCY_HELPER_CLASSES);
+        source.push_str(SIMD_HELPER_CLASSES);
 
         for stmt in &self.program.statements {
             match stmt {
@@ -4424,6 +4816,63 @@ impl JavaSourceGenerator {
                 source.push_str(&format!(".{}", escape_java_identifier(field)));
             }
             TypedExpressionKind::Binary { left, operator, right } => {
+                let is_simd = left.type_.is_simd_vector() || right.type_.is_simd_vector();
+                if is_simd {
+                    let vec_type = if left.type_.is_simd_vector() { &left.type_ } else { &right.type_ };
+                    let (class_name, cast) = match vec_type {
+                        Type::Vec4f => ("RozeVec4f", "(float)("),
+                        Type::Vec8f => ("RozeVec8f", "(float)("),
+                        Type::Vec4i => ("RozeVec4i", "(int)("),
+                        Type::Vec16u8 => ("RozeVec16u8", "(int)("),
+                        _ => unreachable!(),
+                    };
+
+                    match operator {
+                        BinaryOperator::Add | BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Divide => {
+                            let method = match operator {
+                                BinaryOperator::Add => "add",
+                                BinaryOperator::Subtract => "sub",
+                                BinaryOperator::Multiply => "mul",
+                                BinaryOperator::Divide => "div",
+                                _ => unreachable!(),
+                            };
+                            if !left.type_.is_simd_vector() {
+                                source.push_str(&format!("{}.splat({}", class_name, cast));
+                                self.generate_expression(source, left)?;
+                                source.push_str(&format!(")).{}(", method));
+                                self.generate_expression(source, right)?;
+                                source.push(')');
+                            } else if !right.type_.is_simd_vector() {
+                                self.generate_expression(source, left)?;
+                                source.push_str(&format!(".{}({}", method, cast));
+                                self.generate_expression(source, right)?;
+                                source.push_str("))");
+                            } else {
+                                self.generate_expression(source, left)?;
+                                source.push_str(&format!(".{}(", method));
+                                self.generate_expression(source, right)?;
+                                source.push(')');
+                            }
+                        }
+                        BinaryOperator::Equal => {
+                            source.push_str("java.util.Objects.equals(");
+                            self.generate_expression(source, left)?;
+                            source.push_str(", ");
+                            self.generate_expression(source, right)?;
+                            source.push(')');
+                        }
+                        BinaryOperator::NotEqual => {
+                            source.push_str("!java.util.Objects.equals(");
+                            self.generate_expression(source, left)?;
+                            source.push_str(", ");
+                            self.generate_expression(source, right)?;
+                            source.push(')');
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
                 let is_i128 = left.type_ == Type::I128 || left.type_ == Type::U128 || right.type_ == Type::I128 || right.type_ == Type::U128;
                 if is_i128 {
                     match operator {
@@ -4958,6 +5407,437 @@ impl JavaSourceGenerator {
                     _ => "i64",
                 };
                 source.push_str(&format!("__roze_{}_{}(", name, suffix));
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+
+            // ---- Hardware SIMD Vector Intrinsics (M2-T02) ----
+            // Vec4f
+            "Vec4f" | "vec4f" => {
+                if arguments.is_empty() {
+                    source.push_str("RozeVec4f.zero()");
+                } else if arguments.len() == 1 {
+                    source.push_str("RozeVec4f.splat((float)(");
+                    self.generate_expression(source, &arguments[0])?;
+                    source.push_str("))");
+                } else if arguments.len() == 4 {
+                    source.push_str("new RozeVec4f(");
+                    for (i, arg) in arguments.iter().enumerate() {
+                        if i > 0 { source.push_str(", "); }
+                        source.push_str("(float)(");
+                        self.generate_expression(source, arg)?;
+                        source.push(')');
+                    }
+                    source.push(')');
+                }
+            }
+            "Vec4f_splat" | "vec4f_splat" if arguments.len() == 1 => {
+                source.push_str("RozeVec4f.splat((float)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "Vec4f_zero" | "vec4f_zero" if arguments.is_empty() => {
+                source.push_str("RozeVec4f.zero()");
+            }
+            "vec4f_add" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".add(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4f_sub" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".sub(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4f_mul" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".mul(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4f_div" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".div(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4f_dot" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".dot(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4f_sum" if arguments.len() == 1 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".sum()");
+            }
+            "vec4f_min" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".min(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4f_max" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".max(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4f_sqrt" if arguments.len() == 1 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".sqrt()");
+            }
+            "vec4f_abs" if arguments.len() == 1 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".abs()");
+            }
+            "vec4f_fma" if arguments.len() == 3 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".fma(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "vec4f_get" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".get(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4f_set" if arguments.len() == 3 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".set(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", (float)(");
+                self.generate_expression(source, &arguments[2])?;
+                source.push_str("))");
+            }
+            "vec4f_load" if arguments.len() == 1 => {
+                source.push_str("__roze_vec4f_load(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "vec4f_store" if arguments.len() == 2 => {
+                source.push_str("__roze_vec4f_store(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+
+            // Vec8f
+            "Vec8f" | "vec8f" => {
+                if arguments.is_empty() {
+                    source.push_str("RozeVec8f.zero()");
+                } else if arguments.len() == 1 {
+                    source.push_str("RozeVec8f.splat((float)(");
+                    self.generate_expression(source, &arguments[0])?;
+                    source.push_str("))");
+                } else if arguments.len() == 8 {
+                    source.push_str("new RozeVec8f(");
+                    for (i, arg) in arguments.iter().enumerate() {
+                        if i > 0 { source.push_str(", "); }
+                        source.push_str("(float)(");
+                        self.generate_expression(source, arg)?;
+                        source.push(')');
+                    }
+                    source.push(')');
+                }
+            }
+            "Vec8f_splat" | "vec8f_splat" if arguments.len() == 1 => {
+                source.push_str("RozeVec8f.splat((float)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "Vec8f_zero" | "vec8f_zero" if arguments.is_empty() => {
+                source.push_str("RozeVec8f.zero()");
+            }
+            "vec8f_add" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".add(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec8f_sub" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".sub(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec8f_mul" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".mul(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec8f_div" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".div(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec8f_dot" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".dot(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec8f_sum" if arguments.len() == 1 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".sum()");
+            }
+            "vec8f_min" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".min(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec8f_max" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".max(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec8f_sqrt" if arguments.len() == 1 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".sqrt()");
+            }
+            "vec8f_abs" if arguments.len() == 1 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".abs()");
+            }
+            "vec8f_fma" if arguments.len() == 3 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".fma(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "vec8f_get" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".get(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec8f_set" if arguments.len() == 3 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".set(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", (float)(");
+                self.generate_expression(source, &arguments[2])?;
+                source.push_str("))");
+            }
+            "vec8f_load" if arguments.len() == 1 => {
+                source.push_str("__roze_vec8f_load(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "vec8f_store" if arguments.len() == 2 => {
+                source.push_str("__roze_vec8f_store(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+
+            // Vec4i
+            "Vec4i" | "vec4i" => {
+                if arguments.is_empty() {
+                    source.push_str("RozeVec4i.zero()");
+                } else if arguments.len() == 1 {
+                    source.push_str("RozeVec4i.splat((int)(");
+                    self.generate_expression(source, &arguments[0])?;
+                    source.push_str("))");
+                } else if arguments.len() == 4 {
+                    source.push_str("new RozeVec4i(");
+                    for (i, arg) in arguments.iter().enumerate() {
+                        if i > 0 { source.push_str(", "); }
+                        source.push_str("(int)(");
+                        self.generate_expression(source, arg)?;
+                        source.push(')');
+                    }
+                    source.push(')');
+                }
+            }
+            "Vec4i_splat" | "vec4i_splat" if arguments.len() == 1 => {
+                source.push_str("RozeVec4i.splat((int)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "Vec4i_zero" | "vec4i_zero" if arguments.is_empty() => {
+                source.push_str("RozeVec4i.zero()");
+            }
+            "vec4i_add" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".add(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4i_sub" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".sub(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4i_mul" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".mul(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4i_div" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".div(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4i_sum" if arguments.len() == 1 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".sum()");
+            }
+            "vec4i_min" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".min(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4i_max" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".max(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4i_abs" if arguments.len() == 1 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".abs()");
+            }
+            "vec4i_get" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".get(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec4i_set" if arguments.len() == 3 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".set(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", (int)(");
+                self.generate_expression(source, &arguments[2])?;
+                source.push_str("))");
+            }
+            "vec4i_load" if arguments.len() == 1 => {
+                source.push_str("__roze_vec4i_load(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "vec4i_store" if arguments.len() == 2 => {
+                source.push_str("__roze_vec4i_store(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+
+            // Vec16u8
+            "Vec16u8" | "vec16u8" => {
+                if arguments.is_empty() {
+                    source.push_str("RozeVec16u8.zero()");
+                } else if arguments.len() == 1 {
+                    source.push_str("RozeVec16u8.splat((int)(");
+                    self.generate_expression(source, &arguments[0])?;
+                    source.push_str("))");
+                } else if arguments.len() == 16 {
+                    source.push_str("new RozeVec16u8(");
+                    for (i, arg) in arguments.iter().enumerate() {
+                        if i > 0 { source.push_str(", "); }
+                        source.push_str("(int)(");
+                        self.generate_expression(source, arg)?;
+                        source.push(')');
+                    }
+                    source.push(')');
+                }
+            }
+            "Vec16u8_splat" | "vec16u8_splat" if arguments.len() == 1 => {
+                source.push_str("RozeVec16u8.splat((int)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "Vec16u8_zero" | "vec16u8_zero" if arguments.is_empty() => {
+                source.push_str("RozeVec16u8.zero()");
+            }
+            "vec16u8_add" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".add(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec16u8_sub" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".sub(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec16u8_mul" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".mul(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec16u8_saturating_add" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".saturating_add(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec16u8_saturating_sub" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".saturating_sub(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec16u8_sum" if arguments.len() == 1 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".sum()");
+            }
+            "vec16u8_min" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".min(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec16u8_max" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".max(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec16u8_get" if arguments.len() == 2 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".get(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "vec16u8_set" if arguments.len() == 3 => {
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(".set(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", (int)(");
+                self.generate_expression(source, &arguments[2])?;
+                source.push_str("))");
+            }
+            "vec16u8_load" if arguments.len() == 1 => {
+                source.push_str("__roze_vec16u8_load(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "vec16u8_store" if arguments.len() == 2 => {
+                source.push_str("__roze_vec16u8_store(");
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str(", ");
                 self.generate_expression(source, &arguments[1])?;

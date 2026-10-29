@@ -93,7 +93,64 @@ let clamped_mul: i8 = (100i8).saturating_mul(2i8); // 127i8
 ```
 Both method syntax (`a.wrapping_add(b)`) and procedural syntax (`wrapping_add(a, b)`) are supported across all fixed-width integer types (`i8` through `u128`, `isize`, `usize`).
 
-### 2.2 Algebraic Data Types (Enums)
+### 2.2 Hardware Acceleration: SIMD Vector Intrinsics Engine
+Roze includes first-class hardware SIMD vector types and an intrinsics execution engine offering 8x–16x data-parallel acceleration for AI/ML tensor workloads, game physics, audio/video processing, and high-performance computing:
+
+| SIMD Type | Width | Lane Layout | Target Instruction Sets |
+| :--- | :--- | :--- | :--- |
+| `Vec4f` | 128-bit | 4x 32-bit single-precision floats (`f32`) | SSE4.1, AVX2, ARM NEON |
+| `Vec8f` | 256-bit | 8x 32-bit single-precision floats (`f32`) | AVX, AVX2, AVX-512, ARM SVE/NEON |
+| `Vec4i` | 128-bit | 4x 32-bit signed integers (`i32`) | SSE4.1, AVX2, ARM NEON |
+| `Vec16u8` | 128-bit | 16x 8-bit unsigned bytes (`u8`) | SSSE3, AVX2, ARM NEON |
+
+#### Construction & Splatting
+Vectors can be constructed component-wise, splatted from scalars, or zero-initialized:
+```roze
+// Component-wise construction
+let v4 = Vec4f(1.0, 2.0, 3.0, 4.0);
+let v8 = Vec8f(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0);
+let vi = Vec4i(10, 20, 30, 40);
+let vu = Vec16u8_splat(200);
+
+// Splatting and zeroing
+let splat4 = Vec4f_splat(3.5);
+let zero4 = Vec4f_zero();
+```
+
+#### Vector Arithmetic & Operators
+Standard operators (`+`, `-`, `*`, `/`) work symmetrically for vector-vector and vector-scalar operations:
+```roze
+let v_sum = v1 + v2;
+let v_diff = v2 - v1;
+let v_prod = v1 * v2;
+let v_quot = v1 / v2;
+
+// Vector-scalar broadcasting
+let v_scaled = v1 * 2.0;
+let v_offset = v1 + 10.0;
+```
+
+#### Vector Math Intrinsics
+Hardware-accelerated mathematical intrinsics:
+- **Dot Product & Reduction**: `v1.dot(v2)` (dot product scalar), `v1.sum()` (horizontal sum reduction)
+- **Component-wise Min/Max**: `v1.min(v2)`, `v1.max(v2)`
+- **Square Root & Absolute Value**: `v.sqrt()`, `v.abs()`
+- **Fused Multiply-Add (FMA)**: `a.fma(b, c)` computing `(a * b) + c` in a single hardware instruction
+- **Saturating Arithmetic on `Vec16u8`**: `vu1.saturating_add(vu2)`, `vu1.saturating_sub(vu2)` clamping to `[0, 255]`
+- **Lane Access**: `v.get(idx)`, `v.set(idx, val)` (pure, returns modified vector)
+
+#### Direct Memory Load & Store
+Unmanaged pointer interactions for zero-copy bulk tensor memory streaming:
+```roze
+unsafe {
+    let ptr = alloc(64);
+    vec4f_store(ptr, v1);
+    let loaded: Vec4f = vec4f_load(ptr);
+    free(ptr);
+}
+```
+
+### 2.3 Algebraic Data Types (Enums)
 Enums represent discriminated unions with payload variants:
 ```roze
 enum Color {

@@ -77,11 +77,20 @@ pub enum Type {
     F32,
     F64,
     Char,
+    /// Hardware SIMD vector types (M2-T02)
+    Vec4f,
+    Vec8f,
+    Vec4i,
+    Vec16u8,
     /// An unsafe raw pointer type (`*raw T`).
     RawPointer(Box<Type>),
 }
 
 impl Type {
+    pub fn is_simd_vector(&self) -> bool {
+        matches!(self, Type::Vec4f | Type::Vec8f | Type::Vec4i | Type::Vec16u8)
+    }
+
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
@@ -189,6 +198,10 @@ fn type_mangle_name(ty: &Type) -> String {
         Type::F32 => "f32".to_string(),
         Type::F64 => "f64".to_string(),
         Type::Char => "char".to_string(),
+        Type::Vec4f => "vec4f".to_string(),
+        Type::Vec8f => "vec8f".to_string(),
+        Type::Vec4i => "vec4i".to_string(),
+        Type::Vec16u8 => "vec16u8".to_string(),
         Type::RawPointer(inner) => format!("ptr_{}", type_mangle_name(inner)),
     }
 }
@@ -244,6 +257,10 @@ impl Type {
             "f32" => Type::F32,
             "f64" => Type::F64,
             "char" => Type::Char,
+            "vec4f" | "Vec4f" => Type::Vec4f,
+            "vec8f" | "Vec8f" => Type::Vec8f,
+            "vec4i" | "Vec4i" => Type::Vec4i,
+            "vec16u8" | "Vec16u8" => Type::Vec16u8,
             "list" | "List" => Type::List,
             "map" | "Map" => Type::Map,
             "option" | "Option" => Type::Option,
@@ -284,6 +301,10 @@ impl Type {
             Type::F32 => "float".to_string(),
             Type::F64 => "double".to_string(),
             Type::Char => "char".to_string(),
+            Type::Vec4f => "RozeVec4f".to_string(),
+            Type::Vec8f => "RozeVec8f".to_string(),
+            Type::Vec4i => "RozeVec4i".to_string(),
+            Type::Vec16u8 => "RozeVec16u8".to_string(),
             Type::String => "String".to_string(),
             Type::Bool => "boolean".to_string(),
             Type::Void => "void".to_string(),
@@ -358,6 +379,10 @@ impl std::fmt::Display for Type {
             Type::F32 => write!(f, "f32"),
             Type::F64 => write!(f, "f64"),
             Type::Char => write!(f, "char"),
+            Type::Vec4f => write!(f, "Vec4f"),
+            Type::Vec8f => write!(f, "Vec8f"),
+            Type::Vec4i => write!(f, "Vec4i"),
+            Type::Vec16u8 => write!(f, "Vec16u8"),
             Type::String => write!(f, "string"),
             Type::Bool => write!(f, "bool"),
             Type::Void => write!(f, "void"),
@@ -972,6 +997,89 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("saturating_add", vec![Type::Unknown, Type::Unknown], Type::Unknown),
         ("saturating_sub", vec![Type::Unknown, Type::Unknown], Type::Unknown),
         ("saturating_mul", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+
+        // ---- Hardware SIMD Vector Intrinsics Engine (M2-T02) ----
+        // Vec4f
+        ("Vec4f", vec![], Type::Vec4f),
+        ("Vec4f_splat", vec![Type::Unknown], Type::Vec4f),
+        ("vec4f_splat", vec![Type::Unknown], Type::Vec4f),
+        ("Vec4f_zero", vec![], Type::Vec4f),
+        ("vec4f_zero", vec![], Type::Vec4f),
+        ("vec4f_add", vec![Type::Vec4f, Type::Vec4f], Type::Vec4f),
+        ("vec4f_sub", vec![Type::Vec4f, Type::Vec4f], Type::Vec4f),
+        ("vec4f_mul", vec![Type::Vec4f, Type::Vec4f], Type::Vec4f),
+        ("vec4f_div", vec![Type::Vec4f, Type::Vec4f], Type::Vec4f),
+        ("vec4f_dot", vec![Type::Vec4f, Type::Vec4f], Type::F32),
+        ("vec4f_sum", vec![Type::Vec4f], Type::F32),
+        ("vec4f_min", vec![Type::Vec4f, Type::Vec4f], Type::Vec4f),
+        ("vec4f_max", vec![Type::Vec4f, Type::Vec4f], Type::Vec4f),
+        ("vec4f_sqrt", vec![Type::Vec4f], Type::Vec4f),
+        ("vec4f_abs", vec![Type::Vec4f], Type::Vec4f),
+        ("vec4f_fma", vec![Type::Vec4f, Type::Vec4f, Type::Vec4f], Type::Vec4f),
+        ("vec4f_get", vec![Type::Vec4f, Type::Unknown], Type::F32),
+        ("vec4f_set", vec![Type::Vec4f, Type::Unknown, Type::Unknown], Type::Vec4f),
+        ("vec4f_load", vec![Type::Unknown], Type::Vec4f),
+        ("vec4f_store", vec![Type::Unknown, Type::Vec4f], Type::Void),
+
+        // Vec8f
+        ("Vec8f", vec![], Type::Vec8f),
+        ("Vec8f_splat", vec![Type::Unknown], Type::Vec8f),
+        ("vec8f_splat", vec![Type::Unknown], Type::Vec8f),
+        ("Vec8f_zero", vec![], Type::Vec8f),
+        ("vec8f_zero", vec![], Type::Vec8f),
+        ("vec8f_add", vec![Type::Vec8f, Type::Vec8f], Type::Vec8f),
+        ("vec8f_sub", vec![Type::Vec8f, Type::Vec8f], Type::Vec8f),
+        ("vec8f_mul", vec![Type::Vec8f, Type::Vec8f], Type::Vec8f),
+        ("vec8f_div", vec![Type::Vec8f, Type::Vec8f], Type::Vec8f),
+        ("vec8f_dot", vec![Type::Vec8f, Type::Vec8f], Type::F32),
+        ("vec8f_sum", vec![Type::Vec8f], Type::F32),
+        ("vec8f_min", vec![Type::Vec8f, Type::Vec8f], Type::Vec8f),
+        ("vec8f_max", vec![Type::Vec8f, Type::Vec8f], Type::Vec8f),
+        ("vec8f_sqrt", vec![Type::Vec8f], Type::Vec8f),
+        ("vec8f_abs", vec![Type::Vec8f], Type::Vec8f),
+        ("vec8f_fma", vec![Type::Vec8f, Type::Vec8f, Type::Vec8f], Type::Vec8f),
+        ("vec8f_get", vec![Type::Vec8f, Type::Unknown], Type::F32),
+        ("vec8f_set", vec![Type::Vec8f, Type::Unknown, Type::Unknown], Type::Vec8f),
+        ("vec8f_load", vec![Type::Unknown], Type::Vec8f),
+        ("vec8f_store", vec![Type::Unknown, Type::Vec8f], Type::Void),
+
+        // Vec4i
+        ("Vec4i", vec![], Type::Vec4i),
+        ("Vec4i_splat", vec![Type::Unknown], Type::Vec4i),
+        ("vec4i_splat", vec![Type::Unknown], Type::Vec4i),
+        ("Vec4i_zero", vec![], Type::Vec4i),
+        ("vec4i_zero", vec![], Type::Vec4i),
+        ("vec4i_add", vec![Type::Vec4i, Type::Vec4i], Type::Vec4i),
+        ("vec4i_sub", vec![Type::Vec4i, Type::Vec4i], Type::Vec4i),
+        ("vec4i_mul", vec![Type::Vec4i, Type::Vec4i], Type::Vec4i),
+        ("vec4i_div", vec![Type::Vec4i, Type::Vec4i], Type::Vec4i),
+        ("vec4i_sum", vec![Type::Vec4i], Type::I32),
+        ("vec4i_min", vec![Type::Vec4i, Type::Vec4i], Type::Vec4i),
+        ("vec4i_max", vec![Type::Vec4i, Type::Vec4i], Type::Vec4i),
+        ("vec4i_abs", vec![Type::Vec4i], Type::Vec4i),
+        ("vec4i_get", vec![Type::Vec4i, Type::Unknown], Type::I32),
+        ("vec4i_set", vec![Type::Vec4i, Type::Unknown, Type::Unknown], Type::Vec4i),
+        ("vec4i_load", vec![Type::Unknown], Type::Vec4i),
+        ("vec4i_store", vec![Type::Unknown, Type::Vec4i], Type::Void),
+
+        // Vec16u8
+        ("Vec16u8", vec![], Type::Vec16u8),
+        ("Vec16u8_splat", vec![Type::Unknown], Type::Vec16u8),
+        ("vec16u8_splat", vec![Type::Unknown], Type::Vec16u8),
+        ("Vec16u8_zero", vec![], Type::Vec16u8),
+        ("vec16u8_zero", vec![], Type::Vec16u8),
+        ("vec16u8_add", vec![Type::Vec16u8, Type::Vec16u8], Type::Vec16u8),
+        ("vec16u8_sub", vec![Type::Vec16u8, Type::Vec16u8], Type::Vec16u8),
+        ("vec16u8_mul", vec![Type::Vec16u8, Type::Vec16u8], Type::Vec16u8),
+        ("vec16u8_saturating_add", vec![Type::Vec16u8, Type::Vec16u8], Type::Vec16u8),
+        ("vec16u8_saturating_sub", vec![Type::Vec16u8, Type::Vec16u8], Type::Vec16u8),
+        ("vec16u8_sum", vec![Type::Vec16u8], Type::Int),
+        ("vec16u8_min", vec![Type::Vec16u8, Type::Vec16u8], Type::Vec16u8),
+        ("vec16u8_max", vec![Type::Vec16u8, Type::Vec16u8], Type::Vec16u8),
+        ("vec16u8_get", vec![Type::Vec16u8, Type::Unknown], Type::U8),
+        ("vec16u8_set", vec![Type::Vec16u8, Type::Unknown, Type::Unknown], Type::Vec16u8),
+        ("vec16u8_load", vec![Type::Unknown], Type::Vec16u8),
+        ("vec16u8_store", vec![Type::Unknown, Type::Vec16u8], Type::Void),
     ]
 }
 
@@ -1404,6 +1512,8 @@ impl TypeChecker {
             Type::I32 | Type::U32 | Type::F32 | Type::Char => Ok((4, 4)),
             Type::Int | Type::I64 | Type::U64 | Type::Isize | Type::Usize | Type::Float | Type::F64 => Ok((8, 8)),
             Type::I128 | Type::U128 => Ok((16, 16)),
+            Type::Vec4f | Type::Vec4i | Type::Vec16u8 => Ok((16, 16)),
+            Type::Vec8f => Ok((32, 32)),
             Type::Bool => Ok((1, 1)),
             Type::String => Ok((8, 8)),
             Type::RawPointer(_) => Ok((8, 8)),
@@ -1424,6 +1534,8 @@ impl TypeChecker {
             "i32" | "u32" | "f32" | "char" => Ok((4, 4)),
             "int" | "i64" | "u64" | "isize" | "usize" | "float" | "f64" => Ok((8, 8)),
             "i128" | "u128" => Ok((16, 16)),
+            "Vec4f" | "vec4f" | "Vec4i" | "vec4i" | "Vec16u8" | "vec16u8" => Ok((16, 16)),
+            "Vec8f" | "vec8f" => Ok((32, 32)),
             "bool" => Ok((1, 1)),
             "string" => Ok((8, 8)),
             "rawpointer" => Ok((8, 8)),
@@ -3106,7 +3218,11 @@ impl TypeChecker {
 
                 let result_type = match operator {
                     BinaryOperator::Add => {
-                        if let Some(numeric_type) = numeric_binary_result_type(left_type, right_type) {
+                        if left_type.is_simd_vector() {
+                            left_type.clone()
+                        } else if right_type.is_simd_vector() {
+                            right_type.clone()
+                        } else if let Some(numeric_type) = numeric_binary_result_type(left_type, right_type) {
                             numeric_type
                         } else if *left_type == Type::String || *right_type == Type::String {
                             Type::String
@@ -3124,7 +3240,11 @@ impl TypeChecker {
                         }
                     }
                     BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => {
-                        if let Some(numeric_type) = numeric_binary_result_type(left_type, right_type) {
+                        if left_type.is_simd_vector() {
+                            left_type.clone()
+                        } else if right_type.is_simd_vector() {
+                            right_type.clone()
+                        } else if let Some(numeric_type) = numeric_binary_result_type(left_type, right_type) {
                             numeric_type
                         } else {
                             return Err(RozeError::type_error(
@@ -3253,6 +3373,14 @@ impl TypeChecker {
                     } else if (name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" ||
                                name == "saturating_add" || name == "saturating_sub" || name == "saturating_mul") && typed_arguments.len() == 2 {
                         typed_arguments[0].type_.clone()
+                    } else if name == "Vec4f" || name == "vec4f" {
+                        Type::Vec4f
+                    } else if name == "Vec8f" || name == "vec8f" {
+                        Type::Vec8f
+                    } else if name == "Vec4i" || name == "vec4i" {
+                        Type::Vec4i
+                    } else if name == "Vec16u8" || name == "vec16u8" {
+                        Type::Vec16u8
                     } else if let Some(gen_fn) = self.generic_functions.get(name).cloned() {
                         let concrete_type_args = self.infer_func_type_args(&gen_fn, &typed_arguments, location)?;
                         let spec_name = self.instantiate_generic_function(name, &concrete_type_args)?;
@@ -4169,6 +4297,48 @@ impl TypeChecker {
                                 ).into());
                             }
                         }
+                    }
+                    other if other.is_simd_vector() => {
+                        let prefix = match other {
+                            Type::Vec4f => "vec4f",
+                            Type::Vec8f => "vec8f",
+                            Type::Vec4i => "vec4i",
+                            Type::Vec16u8 => "vec16u8",
+                            _ => unreachable!(),
+                        };
+                        let (fn_name, ret_ty) = match (other, method.as_str()) {
+                            (_, "add" | "sub" | "mul" | "div" | "min" | "max") => (format!("{}_{}", prefix, method), other.clone()),
+                            (Type::Vec4f | Type::Vec8f, "dot" | "sum") => (format!("{}_{}", prefix, method), Type::F32),
+                            (Type::Vec4i, "sum") => ("vec4i_sum".to_string(), Type::I32),
+                            (Type::Vec16u8, "sum") => ("vec16u8_sum".to_string(), Type::Int),
+                            (_, "sqrt" | "abs") => (format!("{}_{}", prefix, method), other.clone()),
+                            (Type::Vec4f | Type::Vec8f, "fma") => (format!("{}_{}", prefix, method), other.clone()),
+                            (Type::Vec16u8, "saturating_add" | "saturating_sub") => (format!("{}_{}", prefix, method), other.clone()),
+                            (Type::Vec4f | Type::Vec8f, "get") => (format!("{}_{}", prefix, method), Type::F32),
+                            (Type::Vec4i, "get") => ("vec4i_get".to_string(), Type::I32),
+                            (Type::Vec16u8, "get") => ("vec16u8_get".to_string(), Type::U8),
+                            (_, "set") => (format!("{}_{}", prefix, method), other.clone()),
+                            (_, "store") => (format!("{}_{}", prefix, method), Type::Void),
+                            _ => {
+                                return Err(RozeError::type_error(
+                                    format!("Cannot call method '{}' on type '{}'", method, other),
+                                    location.line, location.column,
+                                ).into());
+                            }
+                        };
+
+                        let mut all_args = Vec::with_capacity(1 + typed_args.len());
+                        all_args.push(typed_obj);
+                        all_args.extend(typed_args);
+
+                        Ok(TypedExpression {
+                            kind: TypedExpressionKind::Call {
+                                function: fn_name,
+                                arguments: all_args,
+                            },
+                            type_: ret_ty,
+                            location: location.clone(),
+                        })
                     }
                     other => {
                         return Err(RozeError::type_error(

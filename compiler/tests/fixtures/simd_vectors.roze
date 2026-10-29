@@ -1,0 +1,115 @@
+func main() {
+    // 1. Vec4f basic operations
+    let v1 = Vec4f(1.0, 2.0, 3.0, 4.0);
+    let v2 = Vec4f(5.0, 6.0, 7.0, 8.0);
+    println(v1);
+    println(v2);
+
+    let v_add = v1 + v2;
+    println(v_add);
+    let v_sub = v2 - v1;
+    println(v_sub);
+    let v_mul = v1 * v2;
+    println(v_mul);
+
+    let v_div1 = Vec4f(8.0, 12.0, 16.0, 20.0);
+    let v_div2 = Vec4f(2.0, 3.0, 4.0, 5.0);
+    println(v_div1 / v_div2);
+
+    // Vector-scalar
+    let v_scale = v1 * 2.0;
+    println(v_scale);
+    let v_offset = v1 + 10.0;
+    println(v_offset);
+
+    // Splat and zero
+    let v_splat = Vec4f_splat(3.5);
+    println(v_splat);
+    let v_zero = Vec4f_zero();
+    println(v_zero);
+
+    // Intrinsics: dot, sum, min, max, sqrt, abs, fma
+    println(v1.dot(v2) == 70.0);
+    println(v1.sum() == 10.0);
+    println(v1.min(v2));
+    println(v1.max(v2));
+    let v_sq = Vec4f(4.0, 9.0, 16.0, 25.0);
+    println(v_sq.sqrt());
+    let v_neg = Vec4f(-1.0, 2.0, -3.0, 4.0);
+    println(v_neg.abs());
+    println(v1.fma(v2, v1));
+
+    // Lane get & set
+    println(v1.get(0) == 1.0);
+    println(v1.get(3) == 4.0);
+    let v1_mod = v1.set(1, 99.0);
+    println(v1_mod);
+
+    // Equality
+    println(v1 == v1);
+    println(v1 == v2);
+    println(v1 != v2);
+
+    // 2. Vec8f basic operations
+    let v8_1 = Vec8f(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0);
+    let v8_2 = Vec8f_splat(2.0);
+    println(v8_1);
+    println(v8_1 + v8_2);
+    println(v8_1 * v8_2);
+    println(v8_1.dot(v8_2) == 72.0);
+    println(v8_1.sum() == 36.0);
+    println(v8_1.get(0) == 1.0);
+    println(v8_1.get(7) == 8.0);
+    println(v8_1.set(0, 10.0));
+
+    // 3. Vec4i operations
+    let vi1 = Vec4i(10, 20, 30, 40);
+    let vi2 = Vec4i(1, 2, 3, 4);
+    println(vi1);
+    println(vi1 + vi2);
+    println(vi1 - vi2);
+    println(vi1 * vi2);
+    println(vi1 / vi2);
+    println(vi1.sum());
+    println(vi1.min(vi2));
+    println(vi1.max(vi2));
+    let vi_neg = Vec4i(-5, 10, -15, 20);
+    println(vi_neg.abs());
+    println(vi1.get(1));
+    println(vi1.set(2, 99));
+
+    // 4. Vec16u8 operations and saturating arithmetic
+    let vu1 = Vec16u8_splat(200);
+    let vu2 = Vec16u8_splat(100);
+    println(vu1);
+    println(vu1 + vu2);
+    println(vu1.saturating_add(vu2));
+    println(vu2.saturating_sub(vu1));
+    println(vu1.min(vu2));
+    println(vu1.max(vu2));
+    println(vu2.sum());
+    println(vu1.get(5));
+    let vu_mod = vu1.set(0, 42);
+    println(vu_mod);
+
+    // 5. Memory load & store
+    unsafe {
+        let ptr = alloc(64);
+        vec4f_store(ptr, v1);
+        let loaded_v4f = vec4f_load(ptr);
+        println(loaded_v4f);
+
+        vec8f_store(ptr, v8_1);
+        let loaded_v8f = vec8f_load(ptr);
+        println(loaded_v8f);
+
+        vec4i_store(ptr, vi1);
+        let loaded_v4i = vec4i_load(ptr);
+        println(loaded_v4i);
+
+        vec16u8_store(ptr, vu1);
+        let loaded_v16u8 = vec16u8_load(ptr);
+        println(loaded_v16u8);
+        free(ptr);
+    }
+}

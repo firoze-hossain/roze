@@ -273,6 +273,7 @@ pub fn compile_to_native(program: TypedProgram, input_file: &str, extra_libs: &[
     fs::write(&temp_concurrency_c, CONCURRENCY_RUNTIME_C)?;
     all_libs.push(temp_concurrency_c.to_string_lossy().to_string());
     all_libs.push("pthread".to_string());
+    all_libs.push("m".to_string());
 
     link_object_file(&obj_path, &output_name, &all_libs)?;
 
@@ -1127,7 +1128,8 @@ fn expression_is_borrowed(expr: &TypedExpression) -> bool {
 fn require_supported_type(ty: &Type, _location: &Location, _context: &str) -> Result<()> {
     match ty {
         Type::Int | Type::Float | Type::Bool | Type::Void | Type::Unknown | Type::String | Type::List | Type::Map | Type::Class(_) | Type::Option | Type::Result | Type::Enum(_) | Type::Function { .. } | Type::Generic { .. } | Type::Trait(_) | Type::U8 | Type::RawPointer(_)
-        | Type::I8 | Type::I16 | Type::U16 | Type::I32 | Type::U32 | Type::I64 | Type::U64 | Type::I128 | Type::U128 | Type::Isize | Type::Usize | Type::F32 | Type::F64 | Type::Char => Ok(()),
+        | Type::I8 | Type::I16 | Type::U16 | Type::I32 | Type::U32 | Type::I64 | Type::U64 | Type::I128 | Type::U128 | Type::Isize | Type::Usize | Type::F32 | Type::F64 | Type::Char
+        | Type::Vec4f | Type::Vec8f | Type::Vec4i | Type::Vec16u8 => Ok(()),
     }
 }
 
@@ -3630,6 +3632,290 @@ fn declare_numeric_runtime(module: &mut ObjectModule) -> Result<NumericRuntime> 
     })
 }
 
+#[derive(Clone, Copy)]
+pub struct SimdRuntime {
+    // Vec4f
+    pub vec4f_new: FuncId,
+    pub vec4f_splat: FuncId,
+    pub vec4f_zero: FuncId,
+    pub vec4f_retain: FuncId,
+    pub vec4f_release: FuncId,
+    pub vec4f_add: FuncId,
+    pub vec4f_sub: FuncId,
+    pub vec4f_mul: FuncId,
+    pub vec4f_div: FuncId,
+    pub vec4f_dot: FuncId,
+    pub vec4f_sum: FuncId,
+    pub vec4f_min: FuncId,
+    pub vec4f_max: FuncId,
+    pub vec4f_sqrt: FuncId,
+    pub vec4f_abs: FuncId,
+    pub vec4f_fma: FuncId,
+    pub vec4f_get: FuncId,
+    pub vec4f_set: FuncId,
+    pub vec4f_load: FuncId,
+    pub vec4f_store: FuncId,
+    pub vec4f_print: FuncId,
+    pub vec4f_eq: FuncId,
+
+    // Vec8f
+    pub vec8f_new: FuncId,
+    pub vec8f_splat: FuncId,
+    pub vec8f_zero: FuncId,
+    pub vec8f_retain: FuncId,
+    pub vec8f_release: FuncId,
+    pub vec8f_add: FuncId,
+    pub vec8f_sub: FuncId,
+    pub vec8f_mul: FuncId,
+    pub vec8f_div: FuncId,
+    pub vec8f_dot: FuncId,
+    pub vec8f_sum: FuncId,
+    pub vec8f_min: FuncId,
+    pub vec8f_max: FuncId,
+    pub vec8f_sqrt: FuncId,
+    pub vec8f_abs: FuncId,
+    pub vec8f_fma: FuncId,
+    pub vec8f_get: FuncId,
+    pub vec8f_set: FuncId,
+    pub vec8f_load: FuncId,
+    pub vec8f_store: FuncId,
+    pub vec8f_print: FuncId,
+    pub vec8f_eq: FuncId,
+
+    // Vec4i
+    pub vec4i_new: FuncId,
+    pub vec4i_splat: FuncId,
+    pub vec4i_zero: FuncId,
+    pub vec4i_retain: FuncId,
+    pub vec4i_release: FuncId,
+    pub vec4i_add: FuncId,
+    pub vec4i_sub: FuncId,
+    pub vec4i_mul: FuncId,
+    pub vec4i_div: FuncId,
+    pub vec4i_sum: FuncId,
+    pub vec4i_min: FuncId,
+    pub vec4i_max: FuncId,
+    pub vec4i_abs: FuncId,
+    pub vec4i_get: FuncId,
+    pub vec4i_set: FuncId,
+    pub vec4i_load: FuncId,
+    pub vec4i_store: FuncId,
+    pub vec4i_print: FuncId,
+    pub vec4i_eq: FuncId,
+
+    // Vec16u8
+    pub vec16u8_new: FuncId,
+    pub vec16u8_splat: FuncId,
+    pub vec16u8_zero: FuncId,
+    pub vec16u8_retain: FuncId,
+    pub vec16u8_release: FuncId,
+    pub vec16u8_add: FuncId,
+    pub vec16u8_sub: FuncId,
+    pub vec16u8_mul: FuncId,
+    pub vec16u8_div: FuncId,
+    pub vec16u8_saturating_add: FuncId,
+    pub vec16u8_saturating_sub: FuncId,
+    pub vec16u8_sum: FuncId,
+    pub vec16u8_min: FuncId,
+    pub vec16u8_max: FuncId,
+    pub vec16u8_get: FuncId,
+    pub vec16u8_set: FuncId,
+    pub vec16u8_load: FuncId,
+    pub vec16u8_store: FuncId,
+    pub vec16u8_print: FuncId,
+    pub vec16u8_eq: FuncId,
+}
+
+fn declare_simd_runtime(module: &mut ObjectModule) -> Result<SimdRuntime> {
+    macro_rules! decl {
+        ($name:expr, $sig:expr) => {
+            module.declare_function($name, Linkage::Import, &$sig).map_err(|e| anyhow!(e.to_string()))?
+        };
+    }
+
+    let mut sig_void_to_ptr = module.make_signature();
+    sig_void_to_ptr.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_ptr_to_void = module.make_signature();
+    sig_ptr_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_ptr_ptr_to_void = module.make_signature();
+    sig_ptr_ptr_to_void.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_ptr_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_ptr_to_ptr = module.make_signature();
+    sig_ptr_to_ptr.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_to_ptr.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_ptr_ptr_to_ptr = module.make_signature();
+    sig_ptr_ptr_to_ptr.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_ptr_to_ptr.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_ptr_to_ptr.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_ptr_ptr_to_i64 = module.make_signature();
+    sig_ptr_ptr_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_ptr_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_ptr_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_ptr_ptr_ptr_to_ptr = module.make_signature();
+    sig_ptr_ptr_ptr_to_ptr.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_ptr_ptr_to_ptr.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_ptr_ptr_to_ptr.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_ptr_ptr_to_ptr.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_f32_to_ptr = module.make_signature();
+    sig_f32_to_ptr.params.push(AbiParam::new(types::F32));
+    sig_f32_to_ptr.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_to_ptr = module.make_signature();
+    sig_i64_to_ptr.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_to_ptr.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_ptr_to_f32 = module.make_signature();
+    sig_ptr_to_f32.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_to_f32.returns.push(AbiParam::new(types::F32));
+
+    let mut sig_ptr_ptr_to_f32 = module.make_signature();
+    sig_ptr_ptr_to_f32.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_ptr_to_f32.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_ptr_to_f32.returns.push(AbiParam::new(types::F32));
+
+    let mut sig_ptr_to_i64 = module.make_signature();
+    sig_ptr_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_ptr_i64_to_f32 = module.make_signature();
+    sig_ptr_i64_to_f32.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_i64_to_f32.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_i64_to_f32.returns.push(AbiParam::new(types::F32));
+
+    let mut sig_ptr_i64_to_i64 = module.make_signature();
+    sig_ptr_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_ptr_i64_f32_to_ptr = module.make_signature();
+    sig_ptr_i64_f32_to_ptr.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_i64_f32_to_ptr.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_i64_f32_to_ptr.params.push(AbiParam::new(types::F32));
+    sig_ptr_i64_f32_to_ptr.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_ptr_i64_i64_to_ptr = module.make_signature();
+    sig_ptr_i64_i64_to_ptr.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_i64_i64_to_ptr.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_i64_i64_to_ptr.params.push(AbiParam::new(VALUE_TYPE));
+    sig_ptr_i64_i64_to_ptr.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_vec4f_new = module.make_signature();
+    for _ in 0..4 { sig_vec4f_new.params.push(AbiParam::new(types::F32)); }
+    sig_vec4f_new.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_vec8f_new = module.make_signature();
+    for _ in 0..8 { sig_vec8f_new.params.push(AbiParam::new(types::F32)); }
+    sig_vec8f_new.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_vec4i_new = module.make_signature();
+    for _ in 0..4 { sig_vec4i_new.params.push(AbiParam::new(VALUE_TYPE)); }
+    sig_vec4i_new.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_vec16u8_new = module.make_signature();
+    for _ in 0..16 { sig_vec16u8_new.params.push(AbiParam::new(VALUE_TYPE)); }
+    sig_vec16u8_new.returns.push(AbiParam::new(VALUE_TYPE));
+
+    Ok(SimdRuntime {
+        // Vec4f
+        vec4f_new: decl!("__roze_vec4f_new", sig_vec4f_new),
+        vec4f_splat: decl!("__roze_vec4f_splat", sig_f32_to_ptr),
+        vec4f_zero: decl!("__roze_vec4f_zero", sig_void_to_ptr),
+        vec4f_retain: decl!("__roze_vec4f_retain", sig_ptr_to_void),
+        vec4f_release: decl!("__roze_vec4f_release", sig_ptr_to_void),
+        vec4f_add: decl!("__roze_vec4f_add", sig_ptr_ptr_to_ptr),
+        vec4f_sub: decl!("__roze_vec4f_sub", sig_ptr_ptr_to_ptr),
+        vec4f_mul: decl!("__roze_vec4f_mul", sig_ptr_ptr_to_ptr),
+        vec4f_div: decl!("__roze_vec4f_div", sig_ptr_ptr_to_ptr),
+        vec4f_dot: decl!("__roze_vec4f_dot", sig_ptr_ptr_to_f32),
+        vec4f_sum: decl!("__roze_vec4f_sum", sig_ptr_to_f32),
+        vec4f_min: decl!("__roze_vec4f_min", sig_ptr_ptr_to_ptr),
+        vec4f_max: decl!("__roze_vec4f_max", sig_ptr_ptr_to_ptr),
+        vec4f_sqrt: decl!("__roze_vec4f_sqrt", sig_ptr_to_ptr),
+        vec4f_abs: decl!("__roze_vec4f_abs", sig_ptr_to_ptr),
+        vec4f_fma: decl!("__roze_vec4f_fma", sig_ptr_ptr_ptr_to_ptr),
+        vec4f_get: decl!("__roze_vec4f_get", sig_ptr_i64_to_f32),
+        vec4f_set: decl!("__roze_vec4f_set", sig_ptr_i64_f32_to_ptr),
+        vec4f_load: decl!("__roze_vec4f_load", sig_i64_to_ptr),
+        vec4f_store: decl!("__roze_vec4f_store", sig_ptr_ptr_to_void),
+        vec4f_print: decl!("__roze_vec4f_print", sig_ptr_to_void),
+        vec4f_eq: decl!("__roze_vec4f_eq", sig_ptr_ptr_to_i64),
+
+        // Vec8f
+        vec8f_new: decl!("__roze_vec8f_new", sig_vec8f_new),
+        vec8f_splat: decl!("__roze_vec8f_splat", sig_f32_to_ptr),
+        vec8f_zero: decl!("__roze_vec8f_zero", sig_void_to_ptr),
+        vec8f_retain: decl!("__roze_vec8f_retain", sig_ptr_to_void),
+        vec8f_release: decl!("__roze_vec8f_release", sig_ptr_to_void),
+        vec8f_add: decl!("__roze_vec8f_add", sig_ptr_ptr_to_ptr),
+        vec8f_sub: decl!("__roze_vec8f_sub", sig_ptr_ptr_to_ptr),
+        vec8f_mul: decl!("__roze_vec8f_mul", sig_ptr_ptr_to_ptr),
+        vec8f_div: decl!("__roze_vec8f_div", sig_ptr_ptr_to_ptr),
+        vec8f_dot: decl!("__roze_vec8f_dot", sig_ptr_ptr_to_f32),
+        vec8f_sum: decl!("__roze_vec8f_sum", sig_ptr_to_f32),
+        vec8f_min: decl!("__roze_vec8f_min", sig_ptr_ptr_to_ptr),
+        vec8f_max: decl!("__roze_vec8f_max", sig_ptr_ptr_to_ptr),
+        vec8f_sqrt: decl!("__roze_vec8f_sqrt", sig_ptr_to_ptr),
+        vec8f_abs: decl!("__roze_vec8f_abs", sig_ptr_to_ptr),
+        vec8f_fma: decl!("__roze_vec8f_fma", sig_ptr_ptr_ptr_to_ptr),
+        vec8f_get: decl!("__roze_vec8f_get", sig_ptr_i64_to_f32),
+        vec8f_set: decl!("__roze_vec8f_set", sig_ptr_i64_f32_to_ptr),
+        vec8f_load: decl!("__roze_vec8f_load", sig_i64_to_ptr),
+        vec8f_store: decl!("__roze_vec8f_store", sig_ptr_ptr_to_void),
+        vec8f_print: decl!("__roze_vec8f_print", sig_ptr_to_void),
+        vec8f_eq: decl!("__roze_vec8f_eq", sig_ptr_ptr_to_i64),
+
+        // Vec4i
+        vec4i_new: decl!("__roze_vec4i_new", sig_vec4i_new),
+        vec4i_splat: decl!("__roze_vec4i_splat", sig_i64_to_ptr),
+        vec4i_zero: decl!("__roze_vec4i_zero", sig_void_to_ptr),
+        vec4i_retain: decl!("__roze_vec4i_retain", sig_ptr_to_void),
+        vec4i_release: decl!("__roze_vec4i_release", sig_ptr_to_void),
+        vec4i_add: decl!("__roze_vec4i_add", sig_ptr_ptr_to_ptr),
+        vec4i_sub: decl!("__roze_vec4i_sub", sig_ptr_ptr_to_ptr),
+        vec4i_mul: decl!("__roze_vec4i_mul", sig_ptr_ptr_to_ptr),
+        vec4i_div: decl!("__roze_vec4i_div", sig_ptr_ptr_to_ptr),
+        vec4i_sum: decl!("__roze_vec4i_sum", sig_ptr_to_i64),
+        vec4i_min: decl!("__roze_vec4i_min", sig_ptr_ptr_to_ptr),
+        vec4i_max: decl!("__roze_vec4i_max", sig_ptr_ptr_to_ptr),
+        vec4i_abs: decl!("__roze_vec4i_abs", sig_ptr_to_ptr),
+        vec4i_get: decl!("__roze_vec4i_get", sig_ptr_i64_to_i64),
+        vec4i_set: decl!("__roze_vec4i_set", sig_ptr_i64_i64_to_ptr),
+        vec4i_load: decl!("__roze_vec4i_load", sig_i64_to_ptr),
+        vec4i_store: decl!("__roze_vec4i_store", sig_ptr_ptr_to_void),
+        vec4i_print: decl!("__roze_vec4i_print", sig_ptr_to_void),
+        vec4i_eq: decl!("__roze_vec4i_eq", sig_ptr_ptr_to_i64),
+
+        // Vec16u8
+        vec16u8_new: decl!("__roze_vec16u8_new", sig_vec16u8_new),
+        vec16u8_splat: decl!("__roze_vec16u8_splat", sig_i64_to_ptr),
+        vec16u8_zero: decl!("__roze_vec16u8_zero", sig_void_to_ptr),
+        vec16u8_retain: decl!("__roze_vec16u8_retain", sig_ptr_to_void),
+        vec16u8_release: decl!("__roze_vec16u8_release", sig_ptr_to_void),
+        vec16u8_add: decl!("__roze_vec16u8_add", sig_ptr_ptr_to_ptr),
+        vec16u8_sub: decl!("__roze_vec16u8_sub", sig_ptr_ptr_to_ptr),
+        vec16u8_mul: decl!("__roze_vec16u8_mul", sig_ptr_ptr_to_ptr),
+        vec16u8_div: decl!("__roze_vec16u8_div", sig_ptr_ptr_to_ptr),
+        vec16u8_saturating_add: decl!("__roze_vec16u8_saturating_add", sig_ptr_ptr_to_ptr),
+        vec16u8_saturating_sub: decl!("__roze_vec16u8_saturating_sub", sig_ptr_ptr_to_ptr),
+        vec16u8_sum: decl!("__roze_vec16u8_sum", sig_ptr_to_i64),
+        vec16u8_min: decl!("__roze_vec16u8_min", sig_ptr_ptr_to_ptr),
+        vec16u8_max: decl!("__roze_vec16u8_max", sig_ptr_ptr_to_ptr),
+        vec16u8_get: decl!("__roze_vec16u8_get", sig_ptr_i64_to_i64),
+        vec16u8_set: decl!("__roze_vec16u8_set", sig_ptr_i64_i64_to_ptr),
+        vec16u8_load: decl!("__roze_vec16u8_load", sig_i64_to_ptr),
+        vec16u8_store: decl!("__roze_vec16u8_store", sig_ptr_ptr_to_void),
+        vec16u8_print: decl!("__roze_vec16u8_print", sig_ptr_to_void),
+        vec16u8_eq: decl!("__roze_vec16u8_eq", sig_ptr_ptr_to_i64),
+    })
+}
+
 /// A native class instance is a pointer to a heap block:
 ///
 ///   [0..8)          i64  refcount
@@ -3974,6 +4260,7 @@ struct NativeGenerator<'a> {
     vga: VgaRuntime,
     kernel: KernelRuntime,
     numerics: NumericRuntime,
+    simd: SimdRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -4058,6 +4345,7 @@ impl<'a> NativeGenerator<'a> {
         let vga = declare_vga_runtime(module)?;
         let kernel = declare_kernel_runtime(module)?;
         let numerics = declare_numeric_runtime(module)?;
+        let simd = declare_simd_runtime(module)?;
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
@@ -4090,6 +4378,7 @@ impl<'a> NativeGenerator<'a> {
             vga,
             kernel,
             numerics,
+            simd,
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
@@ -4452,6 +4741,7 @@ impl<'a> NativeGenerator<'a> {
                     vga: &self.vga,
                     kernel: &self.kernel,
                     numerics: &self.numerics,
+                    simd: &self.simd,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
@@ -4572,6 +4862,7 @@ impl<'a> NativeGenerator<'a> {
                                 vga: &self.vga,
                                 kernel: &self.kernel,
                                 numerics: &self.numerics,
+                                simd: &self.simd,
                                 classes: &self.classes,
                                 class_retain_id: self.class_retain_id,
                                 literal_counter: &mut self.literal_counter,
@@ -4680,6 +4971,7 @@ impl<'a> NativeGenerator<'a> {
                         vga: &self.vga,
                         kernel: &self.kernel,
                         numerics: &self.numerics,
+                        simd: &self.simd,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
@@ -4831,6 +5123,7 @@ struct FunctionCompiler<'a, 'b> {
     vga: &'a VgaRuntime,
     kernel: &'a KernelRuntime,
     numerics: &'a NumericRuntime,
+    simd: &'a SimdRuntime,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -4908,7 +5201,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn release_frame(&mut self, frame_index: usize) -> Result<()> {
         let arc_vars: Vec<(Variable, Type)> = self.scopes[frame_index]
             .values()
-            .filter(|(_, ty)| matches!(ty, Type::String | Type::List | Type::Map | Type::Class(_) | Type::Generic { .. } | Type::I128 | Type::U128))
+            .filter(|(_, ty)| matches!(ty, Type::String | Type::List | Type::Map | Type::Class(_) | Type::Generic { .. } | Type::I128 | Type::U128 | Type::Vec4f | Type::Vec8f | Type::Vec4i | Type::Vec16u8))
             .cloned()
             .collect();
         for (var, ty) in arc_vars {
@@ -5018,6 +5311,26 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             Type::U128 => {
                 let func_ref = self.module.declare_func_in_func(self.numerics.u128_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Vec4f => {
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Vec8f => {
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Vec4i => {
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Vec16u8 => {
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_retain, self.builder.func);
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
             }
@@ -5164,6 +5477,26 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             Type::U128 => {
                 let release_ref = self.module.declare_func_in_func(self.numerics.u128_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Vec4f => {
+                let release_ref = self.module.declare_func_in_func(self.simd.vec4f_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Vec8f => {
+                let release_ref = self.module.declare_func_in_func(self.simd.vec8f_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Vec4i => {
+                let release_ref = self.module.declare_func_in_func(self.simd.vec4i_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Vec16u8 => {
+                let release_ref = self.module.declare_func_in_func(self.simd.vec16u8_release, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
@@ -6358,6 +6691,120 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             return Ok(self.builder.inst_results(call)[0]);
         }
 
+        if left.type_.is_simd_vector() || right.type_.is_simd_vector() {
+            let vec_type = if left.type_.is_simd_vector() { &left.type_ } else { &right.type_ };
+            match operator {
+                BinaryOperator::Add | BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Divide => {
+                    let (lhs_val, rhs_val, lhs_is_temp, rhs_is_temp) = if !left.type_.is_simd_vector() {
+                        let splat_fid = match right.type_ {
+                            Type::Vec4f => self.simd.vec4f_splat,
+                            Type::Vec8f => self.simd.vec8f_splat,
+                            Type::Vec4i => self.simd.vec4i_splat,
+                            Type::Vec16u8 => self.simd.vec16u8_splat,
+                            _ => unreachable!(),
+                        };
+                        let splat_arg = match right.type_ {
+                            Type::Vec4f | Type::Vec8f => {
+                                if left.type_ == Type::F32 { l }
+                                else if left.type_ == Type::Float || left.type_ == Type::F64 { self.builder.ins().fdemote(types::F32, l) }
+                                else { self.builder.ins().fcvt_from_sint(types::F32, l) }
+                            }
+                            _ => l,
+                        };
+                        let splat_ref = self.module.declare_func_in_func(splat_fid, self.builder.func);
+                        let splat_call = self.builder.ins().call(splat_ref, &[splat_arg]);
+                        (self.builder.inst_results(splat_call)[0], r, true, false)
+                    } else if !right.type_.is_simd_vector() {
+                        let splat_fid = match left.type_ {
+                            Type::Vec4f => self.simd.vec4f_splat,
+                            Type::Vec8f => self.simd.vec8f_splat,
+                            Type::Vec4i => self.simd.vec4i_splat,
+                            Type::Vec16u8 => self.simd.vec16u8_splat,
+                            _ => unreachable!(),
+                        };
+                        let splat_arg = match left.type_ {
+                            Type::Vec4f | Type::Vec8f => {
+                                if right.type_ == Type::F32 { r }
+                                else if right.type_ == Type::Float || right.type_ == Type::F64 { self.builder.ins().fdemote(types::F32, r) }
+                                else { self.builder.ins().fcvt_from_sint(types::F32, r) }
+                            }
+                            _ => r,
+                        };
+                        let splat_ref = self.module.declare_func_in_func(splat_fid, self.builder.func);
+                        let splat_call = self.builder.ins().call(splat_ref, &[splat_arg]);
+                        (l, self.builder.inst_results(splat_call)[0], false, true)
+                    } else {
+                        (l, r, false, false)
+                    };
+
+                    let fid = match (vec_type, operator) {
+                        (Type::Vec4f, BinaryOperator::Add) => self.simd.vec4f_add,
+                        (Type::Vec4f, BinaryOperator::Subtract) => self.simd.vec4f_sub,
+                        (Type::Vec4f, BinaryOperator::Multiply) => self.simd.vec4f_mul,
+                        (Type::Vec4f, BinaryOperator::Divide) => self.simd.vec4f_div,
+
+                        (Type::Vec8f, BinaryOperator::Add) => self.simd.vec8f_add,
+                        (Type::Vec8f, BinaryOperator::Subtract) => self.simd.vec8f_sub,
+                        (Type::Vec8f, BinaryOperator::Multiply) => self.simd.vec8f_mul,
+                        (Type::Vec8f, BinaryOperator::Divide) => self.simd.vec8f_div,
+
+                        (Type::Vec4i, BinaryOperator::Add) => self.simd.vec4i_add,
+                        (Type::Vec4i, BinaryOperator::Subtract) => self.simd.vec4i_sub,
+                        (Type::Vec4i, BinaryOperator::Multiply) => self.simd.vec4i_mul,
+                        (Type::Vec4i, BinaryOperator::Divide) => self.simd.vec4i_div,
+
+                        (Type::Vec16u8, BinaryOperator::Add) => self.simd.vec16u8_add,
+                        (Type::Vec16u8, BinaryOperator::Subtract) => self.simd.vec16u8_sub,
+                        (Type::Vec16u8, BinaryOperator::Multiply) => self.simd.vec16u8_mul,
+                        (Type::Vec16u8, BinaryOperator::Divide) => self.simd.vec16u8_div,
+                        _ => unreachable!(),
+                    };
+                    let func_ref = self.module.declare_func_in_func(fid, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[lhs_val, rhs_val]);
+                    let result = self.builder.inst_results(call)[0];
+                    if lhs_is_temp {
+                        self.emit_release_for_type(vec_type, lhs_val)?;
+                    }
+                    if rhs_is_temp {
+                        self.emit_release_for_type(vec_type, rhs_val)?;
+                    }
+                    if !expression_is_borrowed(left) {
+                        self.emit_release_for_type(&left.type_, l)?;
+                    }
+                    if !expression_is_borrowed(right) {
+                        self.emit_release_for_type(&right.type_, r)?;
+                    }
+                    return Ok(result);
+                }
+                BinaryOperator::Equal | BinaryOperator::NotEqual => {
+                    let fid = match vec_type {
+                        Type::Vec4f => self.simd.vec4f_eq,
+                        Type::Vec8f => self.simd.vec8f_eq,
+                        Type::Vec4i => self.simd.vec4i_eq,
+                        Type::Vec16u8 => self.simd.vec16u8_eq,
+                        _ => unreachable!(),
+                    };
+                    let func_ref = self.module.declare_func_in_func(fid, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[l, r]);
+                    let eq_res = self.builder.inst_results(call)[0];
+                    let zero = self.builder.ins().iconst(VALUE_TYPE, 0);
+                    let result = match operator {
+                        BinaryOperator::Equal => self.compile_cmp(IntCC::NotEqual, eq_res, zero),
+                        BinaryOperator::NotEqual => self.compile_cmp(IntCC::Equal, eq_res, zero),
+                        _ => unreachable!(),
+                    };
+                    if !expression_is_borrowed(left) {
+                        self.emit_release_for_type(&left.type_, l)?;
+                    }
+                    if !expression_is_borrowed(right) {
+                        self.emit_release_for_type(&right.type_, r)?;
+                    }
+                    return Ok(result);
+                }
+                _ => return Err(anyhow!("Unsupported operator for SIMD vector")),
+            }
+        }
+
         if is_float_op {
             let lf = if left.type_ == Type::Float || left.type_ == Type::F64 {
                 l
@@ -6457,6 +6904,17 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.builder.switch_to_block(merge_block);
         self.builder.seal_block(merge_block);
         Ok(self.builder.block_params(merge_block)[0])
+    }
+
+    fn compile_to_f32(&mut self, expr: &TypedExpression) -> Result<Value> {
+        let val = self.compile_expression(expr)?;
+        if expr.type_ == Type::F32 {
+            Ok(val)
+        } else if expr.type_ == Type::Float || expr.type_ == Type::F64 {
+            Ok(self.builder.ins().fdemote(types::F32, val))
+        } else {
+            Ok(self.builder.ins().fcvt_from_sint(types::F32, val))
+        }
     }
 
     fn compile_call(&mut self, name: &str, arguments: &[TypedExpression], return_type: &Type, location: &Location) -> Result<Value> {
@@ -7509,6 +7967,600 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let call = self.builder.ins().call(func_ref, &[a, b]);
                 return Ok(self.builder.inst_results(call)[0]);
             }
+
+            // ---- Hardware SIMD Vector Types (M2-T02) ----
+            // Vec4f
+            "Vec4f" | "vec4f" => {
+                if arguments.is_empty() {
+                    let func_ref = self.module.declare_func_in_func(self.simd.vec4f_zero, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[]);
+                    return Ok(self.builder.inst_results(call)[0]);
+                } else if arguments.len() == 1 {
+                    let val = self.compile_to_f32(&arguments[0])?;
+                    let func_ref = self.module.declare_func_in_func(self.simd.vec4f_splat, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[val]);
+                    return Ok(self.builder.inst_results(call)[0]);
+                } else if arguments.len() == 4 {
+                    let a0 = self.compile_to_f32(&arguments[0])?;
+                    let a1 = self.compile_to_f32(&arguments[1])?;
+                    let a2 = self.compile_to_f32(&arguments[2])?;
+                    let a3 = self.compile_to_f32(&arguments[3])?;
+                    let func_ref = self.module.declare_func_in_func(self.simd.vec4f_new, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[a0, a1, a2, a3]);
+                    return Ok(self.builder.inst_results(call)[0]);
+                }
+            }
+            "Vec4f_splat" | "vec4f_splat" if arguments.len() == 1 => {
+                let val = self.compile_to_f32(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_splat, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "Vec4f_zero" | "vec4f_zero" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_zero, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_add" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_add, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_sub" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_sub, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_mul" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_mul, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_div" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_div, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_dot" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_dot, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_sum" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_sum, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_min" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_min, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_max" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_max, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_sqrt" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_sqrt, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_abs" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_abs, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_fma" if arguments.len() == 3 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let c = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_fma, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b, c]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                self.release_if_fresh(&arguments[2], c)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_get" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let idx = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_get, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, idx]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_set" if arguments.len() == 3 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let idx = self.compile_expression(&arguments[1])?;
+                let val = self.compile_to_f32(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_set, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, idx, val]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_load" if arguments.len() == 1 => {
+                let ptr = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_load, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ptr]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4f_store" if arguments.len() == 2 => {
+                let ptr = self.compile_expression(&arguments[0])?;
+                let vec = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_store, self.builder.func);
+                self.builder.ins().call(func_ref, &[ptr, vec]);
+                self.release_if_fresh(&arguments[1], vec)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+
+            // Vec8f
+            "Vec8f" | "vec8f" => {
+                if arguments.is_empty() {
+                    let func_ref = self.module.declare_func_in_func(self.simd.vec8f_zero, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[]);
+                    return Ok(self.builder.inst_results(call)[0]);
+                } else if arguments.len() == 1 {
+                    let val = self.compile_to_f32(&arguments[0])?;
+                    let func_ref = self.module.declare_func_in_func(self.simd.vec8f_splat, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[val]);
+                    return Ok(self.builder.inst_results(call)[0]);
+                } else if arguments.len() == 8 {
+                    let mut vals = Vec::with_capacity(8);
+                    for arg in arguments {
+                        vals.push(self.compile_to_f32(arg)?);
+                    }
+                    let func_ref = self.module.declare_func_in_func(self.simd.vec8f_new, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &vals);
+                    return Ok(self.builder.inst_results(call)[0]);
+                }
+            }
+            "Vec8f_splat" | "vec8f_splat" if arguments.len() == 1 => {
+                let val = self.compile_to_f32(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_splat, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "Vec8f_zero" | "vec8f_zero" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_zero, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_add" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_add, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_sub" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_sub, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_mul" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_mul, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_div" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_div, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_dot" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_dot, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_sum" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_sum, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_min" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_min, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_max" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_max, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_sqrt" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_sqrt, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_abs" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_abs, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_fma" if arguments.len() == 3 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let c = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_fma, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b, c]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                self.release_if_fresh(&arguments[2], c)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_get" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let idx = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_get, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, idx]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_set" if arguments.len() == 3 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let idx = self.compile_expression(&arguments[1])?;
+                let val = self.compile_to_f32(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_set, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, idx, val]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_load" if arguments.len() == 1 => {
+                let ptr = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_load, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ptr]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec8f_store" if arguments.len() == 2 => {
+                let ptr = self.compile_expression(&arguments[0])?;
+                let vec = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_store, self.builder.func);
+                self.builder.ins().call(func_ref, &[ptr, vec]);
+                self.release_if_fresh(&arguments[1], vec)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+
+            // Vec4i
+            "Vec4i" | "vec4i" => {
+                if arguments.is_empty() {
+                    let func_ref = self.module.declare_func_in_func(self.simd.vec4i_zero, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[]);
+                    return Ok(self.builder.inst_results(call)[0]);
+                } else if arguments.len() == 1 {
+                    let val = self.compile_expression(&arguments[0])?;
+                    let func_ref = self.module.declare_func_in_func(self.simd.vec4i_splat, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[val]);
+                    return Ok(self.builder.inst_results(call)[0]);
+                } else if arguments.len() == 4 {
+                    let a0 = self.compile_expression(&arguments[0])?;
+                    let a1 = self.compile_expression(&arguments[1])?;
+                    let a2 = self.compile_expression(&arguments[2])?;
+                    let a3 = self.compile_expression(&arguments[3])?;
+                    let func_ref = self.module.declare_func_in_func(self.simd.vec4i_new, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[a0, a1, a2, a3]);
+                    return Ok(self.builder.inst_results(call)[0]);
+                }
+            }
+            "Vec4i_splat" | "vec4i_splat" if arguments.len() == 1 => {
+                let val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_splat, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "Vec4i_zero" | "vec4i_zero" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_zero, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4i_add" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_add, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4i_sub" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_sub, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4i_mul" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_mul, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4i_div" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_div, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4i_sum" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_sum, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4i_min" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_min, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4i_max" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_max, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4i_abs" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_abs, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4i_get" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let idx = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_get, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, idx]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4i_set" if arguments.len() == 3 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let idx = self.compile_expression(&arguments[1])?;
+                let val = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_set, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, idx, val]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4i_load" if arguments.len() == 1 => {
+                let ptr = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_load, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ptr]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec4i_store" if arguments.len() == 2 => {
+                let ptr = self.compile_expression(&arguments[0])?;
+                let vec = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_store, self.builder.func);
+                self.builder.ins().call(func_ref, &[ptr, vec]);
+                self.release_if_fresh(&arguments[1], vec)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+
+            // Vec16u8
+            "Vec16u8" | "vec16u8" => {
+                if arguments.is_empty() {
+                    let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_zero, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[]);
+                    return Ok(self.builder.inst_results(call)[0]);
+                } else if arguments.len() == 1 {
+                    let val = self.compile_expression(&arguments[0])?;
+                    let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_splat, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &[val]);
+                    return Ok(self.builder.inst_results(call)[0]);
+                } else if arguments.len() == 16 {
+                    let mut vals = Vec::with_capacity(16);
+                    for arg in arguments {
+                        vals.push(self.compile_expression(arg)?);
+                    }
+                    let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_new, self.builder.func);
+                    let call = self.builder.ins().call(func_ref, &vals);
+                    return Ok(self.builder.inst_results(call)[0]);
+                }
+            }
+            "Vec16u8_splat" | "vec16u8_splat" if arguments.len() == 1 => {
+                let val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_splat, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "Vec16u8_zero" | "vec16u8_zero" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_zero, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_add" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_add, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_sub" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_sub, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_mul" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_mul, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_div" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_div, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_saturating_add" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_saturating_add, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_saturating_sub" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_saturating_sub, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_sum" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_sum, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_min" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_min, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_max" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_max, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, b]);
+                self.release_if_fresh(&arguments[0], a)?;
+                self.release_if_fresh(&arguments[1], b)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_get" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let idx = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_get, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, idx]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_set" if arguments.len() == 3 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let idx = self.compile_expression(&arguments[1])?;
+                let val = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_set, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a, idx, val]);
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_load" if arguments.len() == 1 => {
+                let ptr = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_load, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ptr]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "vec16u8_store" if arguments.len() == 2 => {
+                let ptr = self.compile_expression(&arguments[0])?;
+                let vec = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_store, self.builder.func);
+                self.builder.ins().call(func_ref, &[ptr, vec]);
+                self.release_if_fresh(&arguments[1], vec)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
             _ => {}
         }
 
@@ -7679,6 +8731,42 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let val = self.compile_expression(arg)?;
                 let func_ref = self.module.declare_func_in_func(self.numerics.u128_print, self.builder.func);
                 self.builder.ins().call(func_ref, &[val]);
+                Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
+            }
+            Type::Vec4f => {
+                let val = self.compile_expression(arg)?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4f_print, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                if !expression_is_borrowed(arg) {
+                    self.emit_release_for_type(&Type::Vec4f, val)?;
+                }
+                Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
+            }
+            Type::Vec8f => {
+                let val = self.compile_expression(arg)?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec8f_print, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                if !expression_is_borrowed(arg) {
+                    self.emit_release_for_type(&Type::Vec8f, val)?;
+                }
+                Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
+            }
+            Type::Vec4i => {
+                let val = self.compile_expression(arg)?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec4i_print, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                if !expression_is_borrowed(arg) {
+                    self.emit_release_for_type(&Type::Vec4i, val)?;
+                }
+                Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
+            }
+            Type::Vec16u8 => {
+                let val = self.compile_expression(arg)?;
+                let func_ref = self.module.declare_func_in_func(self.simd.vec16u8_print, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                if !expression_is_borrowed(arg) {
+                    self.emit_release_for_type(&Type::Vec16u8, val)?;
+                }
                 Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
             }
             Type::Function { .. } => {

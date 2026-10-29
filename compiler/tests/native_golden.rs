@@ -3597,6 +3597,275 @@ fn no_leak_in_pluggable_allocators_and_smart_pointers() {
     assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
 }
 
+#[test]
+fn test_freestanding_zero_heap_mode() {
+    let dir = scratch_dir("freestanding_zero_heap");
+    let source = r#"
+import "freestanding";
+
+func main() {
+    let heap_on = freestanding_is_heap_enabled();
+    let heap_cap = freestanding_get_heap_capacity();
+    println("Zero Heap Test");
+}
+"#;
+    let file_name = "zero_heap_kernel.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .arg("--no-heap")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("zero_heap_kernel");
+    assert!(kernel_bin.exists());
+
+    // Verify .bss section size is small (no 1MB BSS heap pool)
+    let readelf_s = Command::new("readelf")
+        .arg("-S")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run readelf -S");
+    assert!(readelf_s.status.success());
+    let s_out = String::from_utf8_lossy(&readelf_s.stdout);
+    assert!(s_out.contains(".bss"), "expected .bss section in readelf output");
+
+    // Zero undefined symbols
+    let nm_u = Command::new("nm")
+        .arg("-u")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run nm -u");
+    assert!(nm_u.status.success());
+    let u_out = String::from_utf8_lossy(&nm_u.stdout).trim().to_string();
+    assert!(u_out.is_empty(), "expected zero undefined symbols, got: {}", u_out);
+}
+
+#[test]
+fn test_freestanding_zero_heap_rejection() {
+    let dir = scratch_dir("freestanding_no_heap_rejection");
+    let source = r#"
+class Task {
+    id: int,
+}
+
+func main() {
+    let t = new Task(1);
+}
+"#;
+    let file_name = "heap_rejection.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .arg("--no-heap")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        !build_output.status.success(),
+        "expected build to fail with --no-heap when using dynamic classes"
+    );
+    let stderr = String::from_utf8_lossy(&build_output.stderr);
+    assert!(
+        stderr.contains("Dynamic heap allocation ('new Task') is disabled in zero-heap bare-metal mode"),
+        "unexpected stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn test_freestanding_isr_disables_float_registers() {
+    let dir = scratch_dir("freestanding_isr_float");
+    let source = r#"
+func isr_timer(tick: int) -> float {
+    return 3.14;
+}
+
+func main() {
+}
+"#;
+    let file_name = "isr_float.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        !build_output.status.success(),
+        "expected build to fail when ISR handler uses float return type"
+    );
+    let stderr = String::from_utf8_lossy(&build_output.stderr);
+    assert!(
+        stderr.contains("Floating-point and SIMD vector registers are disabled in ISR 'isr_timer'"),
+        "unexpected stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn test_freestanding_no_float_flag() {
+    let dir = scratch_dir("freestanding_no_float");
+    let source = r#"
+import "freestanding";
+
+func main() {
+    let f_on = freestanding_is_float_enabled();
+    println("No float test");
+}
+"#;
+    let file_name = "no_float_kernel.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .arg("--disable-float-registers")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("no_float_kernel");
+    assert!(kernel_bin.exists());
+}
+
+#[test]
+fn test_freestanding_custom_entry_flag() {
+    let dir = scratch_dir("freestanding_custom_entry_flag");
+    let source = r#"
+func kernel_boot_entry() {
+    println("Custom entry flag active");
+}
+"#;
+    let file_name = "custom_entry.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .arg("--entry")
+        .arg("kernel_boot_entry")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("custom_entry");
+    assert!(kernel_bin.exists());
+
+    // Verify global symbol `kernel_boot_entry` is exported in symbol table
+    let nm_out = Command::new("nm")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run nm");
+    assert!(nm_out.status.success());
+    let symbols = String::from_utf8_lossy(&nm_out.stdout);
+    assert!(
+        symbols.lines().any(|l| l.contains(" T kernel_boot_entry")),
+        "expected global text symbol kernel_boot_entry in freestanding binary, got:\n{}",
+        symbols
+    );
+}
+
+#[test]
+fn test_freestanding_invalid_linker_script() {
+    let dir = scratch_dir("freestanding_bad_ld");
+    let source = r#"
+func main() {
+    println("Hello");
+}
+"#;
+    let file_name = "bad_ld.roze";
+    std::fs::write(dir.join(file_name), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .arg("-T")
+        .arg("non_existent_script.ld")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(!build_output.status.success());
+    let stderr = String::from_utf8_lossy(&build_output.stderr);
+    assert!(
+        stderr.contains("Custom linker script 'non_existent_script.ld' not found"),
+        "unexpected stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn native_freestanding_kernel_target_suite() {
+    let dir = scratch_dir("native_freestanding_kernel");
+    let fixture_src = std::fs::read_to_string("tests/fixtures/freestanding_kernel.roze").unwrap();
+    let file_name = "kernel_suite.roze";
+    std::fs::write(dir.join(file_name), fixture_src).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("kernel_suite");
+    assert!(kernel_bin.exists());
+
+    let nm_u = Command::new("nm")
+        .arg("-u")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run nm -u");
+    assert!(nm_u.status.success());
+    let u_out = String::from_utf8_lossy(&nm_u.stdout).trim().to_string();
+    assert!(u_out.is_empty(), "expected zero undefined symbols, got:\n{}", u_out);
+}
+
 
 
 

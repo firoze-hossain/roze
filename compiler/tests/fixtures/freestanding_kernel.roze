@@ -1,0 +1,65 @@
+// compiler/tests/fixtures/freestanding_kernel.roze
+//
+// Milestone M2-T05: Bare-Metal Kernel Target (--target freestanding)
+// Zero-libc, zero-heap mode, custom entry point, ISR safety, and hardware query suite.
+
+import "freestanding";
+import "vga";
+
+func check_parity() {
+    println("=== Roze Freestanding Kernel Target Suite ===");
+
+    // 1. Hardware Multiboot2 Protocol Query
+    let magic = multiboot2_get_magic();
+    if magic != 0 {
+        println("Multiboot2 Protocol Detected");
+    }
+
+    // 2. Memory & Heap Capacity Inspection
+    let heap_enabled = freestanding_is_heap_enabled();
+    if heap_enabled {
+        let cap = freestanding_get_heap_capacity();
+        let used = freestanding_get_heap_used();
+        println("Freestanding Heap Active");
+        println(cap > 0);
+        println(used >= 0);
+    } else {
+        println("Freestanding Zero-Heap Active");
+    }
+
+    // 3. Floating-Point Register State Query
+    let float_enabled = freestanding_is_float_enabled();
+    println(float_enabled);
+
+    // 4. Hardware I/O & Drivers
+    outb(1016 + 1, 0); // COM1 interrupt disable
+    let status = inb(1016 + 5);
+    println(status >= 0);
+
+    // 5. VGA Driver Operation
+    vga_clear();
+    vga_set_color(14, 0);
+    vga_print("Roze Kernel Freestanding Target Active\n");
+    vga_write_char(1, 1, 82, 14); // 'R'
+    vga_write_byte(0, 88);        // 'X'
+    vga_set_cursor(2, 0);
+
+    serial_print("COM1 Serial Kernel Diagnostics OK\r\n");
+    serial_putchar(10); // '\n'
+
+    // 6. ISR Pure Integer Arithmetic
+    let isr_ticks = isr_handler(42);
+    println(isr_ticks);
+
+    println("Freestanding Kernel Target Complete");
+}
+
+func isr_handler(irq: int) -> int {
+    let base = irq * 10;
+    let mask = base % 16;
+    return base + mask;
+}
+
+func main() {
+    check_parity();
+}

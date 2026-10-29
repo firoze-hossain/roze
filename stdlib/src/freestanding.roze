@@ -1,0 +1,17 @@
+// stdlib/src/freestanding.roze
+//
+// Roze Bare-Metal Freestanding & Kernel Subsystem API
+// Hardware query intrinsics, zero-heap detection, and system halt.
+
+extern "C" func freestanding_is_heap_enabled() -> bool;
+extern "C" func freestanding_is_float_enabled() -> bool;
+extern "C" func freestanding_get_heap_used() -> int;
+extern "C" func freestanding_get_heap_capacity() -> int;
+extern "C" func freestanding_halt();
+extern "C" func multiboot2_get_magic() -> int;
+extern "C" func multiboot2_get_info_ptr() -> *raw u8;
+extern "C" func serial_print(s: string);
+extern "C" func serial_putchar(ch: int);
+extern "C" func outb(port: int, val: int);
+extern "C" func inb(port: int) -> int;
+extern "C" func qemu_exit(code: int);

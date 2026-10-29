@@ -987,7 +987,7 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("vga_set_cursor", vec![Type::Int, Type::Int], Type::Void),
         ("vga_set_color", vec![Type::Int, Type::Int], Type::Void),
 
-        // ---- Freestanding Kernel & Multiboot2 (ADV-02) ----
+        // ---- Freestanding Kernel & Multiboot2 (ADV-02 & M2-T05) ----
         ("multiboot2_get_magic", vec![], Type::Int),
         ("multiboot2_get_info_ptr", vec![], Type::RawPointer(Box::new(Type::U8))),
         ("outb", vec![Type::Int, Type::Int], Type::Void),
@@ -995,6 +995,11 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("qemu_exit", vec![Type::Int], Type::Void),
         ("serial_print", vec![Type::String], Type::Void),
         ("serial_putchar", vec![Type::Int], Type::Void),
+        ("freestanding_is_heap_enabled", vec![], Type::Bool),
+        ("freestanding_is_float_enabled", vec![], Type::Bool),
+        ("freestanding_get_heap_used", vec![], Type::Int),
+        ("freestanding_get_heap_capacity", vec![], Type::Int),
+        ("freestanding_halt", vec![], Type::Void),
 
         // ---- Fixed-Width Numeric Suite (M2-T01) ----
         // Type conversion constructors
@@ -1657,6 +1662,9 @@ pub struct TypeChecker {
     /// confusing javac error.
     pub in_main: bool,
     pub in_unsafe: bool,
+    pub no_heap: bool,
+    pub disable_float_registers: bool,
+    pub in_isr: bool,
     pub closure_counter: usize,
     pub ast_functions: HashMap<String, Statement>,
     pub errors: Vec<String>,
@@ -1720,6 +1728,9 @@ impl TypeChecker {
             current_return_type: Type::Void,
             in_main: false,
             in_unsafe: false,
+            no_heap: false,
+            disable_float_registers: false,
+            in_isr: false,
             closure_counter: 0,
             ast_functions: HashMap::new(),
             errors: Vec::new(),
@@ -2686,6 +2697,17 @@ impl TypeChecker {
 
                 let resolved_return_type = return_type.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Void);
 
+                let is_isr = name.starts_with("isr_") || name.starts_with("interrupt_");
+                let outer_in_isr = std::mem::replace(&mut self.in_isr, is_isr || self.disable_float_registers);
+
+                if (self.in_isr || self.disable_float_registers) && (resolved_return_type.is_float() || resolved_return_type.is_simd_vector()) {
+                    return Err(RozeError::type_error(
+                        format!("Floating-point and SIMD vector registers are disabled in ISR '{}' (return type cannot be {})", name, resolved_return_type),
+                        location.line,
+                        location.column,
+                    ).with_hint("interrupt service routines must preserve FPU state; use integer or fixed-point arithmetic").into());
+                }
+
                 let outer_function = self.current_function.replace(name.clone());
                 let outer_return_type = std::mem::replace(&mut self.current_return_type, resolved_return_type.clone());
                 let outer_in_main = std::mem::replace(&mut self.in_main, name == "main");
@@ -2694,6 +2716,13 @@ impl TypeChecker {
                 let mut typed_params = Vec::with_capacity(params.len());
                 for param in params {
                     let param_type = param.type_name.as_deref().map(|t| self.resolve_type_name(t)).unwrap_or(Type::Unknown);
+                    if (self.in_isr || self.disable_float_registers) && (param_type.is_float() || param_type.is_simd_vector()) {
+                        return Err(RozeError::type_error(
+                            format!("Floating-point and SIMD vector registers are disabled in ISR '{}' (parameter '{}' cannot be {})", name, param.name, param_type),
+                            location.line,
+                            location.column,
+                        ).with_hint("interrupt service routines must preserve FPU state; use integer or fixed-point arithmetic").into());
+                    }
                     self.symbol_table.define(&param.name, param_type.clone(), location.line, location.column)?;
                     typed_params.push(TypedFunctionParam { name: param.name.clone(), type_: param_type });
                 }
@@ -2705,6 +2734,7 @@ impl TypeChecker {
                 self.current_function = outer_function;
                 self.current_return_type = outer_return_type;
                 self.in_main = outer_in_main;
+                self.in_isr = outer_in_isr;
 
                 Ok(Some(TypedStatement::Function {
                     name: name.clone(),
@@ -3353,6 +3383,13 @@ impl TypeChecker {
                 } else {
                     Type::Int
                 };
+                if (self.in_isr || self.disable_float_registers) && ty.is_float() {
+                    return Err(RozeError::type_error(
+                        "Floating-point literals are disabled in ISR / freestanding no-float mode",
+                        location.line,
+                        location.column,
+                    ).with_hint("floating-point registers are disabled for bare-metal / ISR safety").into());
+                }
                 Ok(TypedExpression {
                     kind: TypedExpressionKind::Number(value.clone()),
                     type_: ty,
@@ -3488,6 +3525,14 @@ impl TypeChecker {
                     BinaryOperator::And | BinaryOperator::Or => Type::Bool,
                 };
 
+                if (self.in_isr || self.disable_float_registers) && (result_type.is_float() || result_type.is_simd_vector()) {
+                    return Err(RozeError::type_error(
+                        "Floating-point and SIMD vector arithmetic is disabled in ISR / freestanding no-float mode",
+                        location.line,
+                        location.column,
+                    ).with_hint("use integer arithmetic or fixed-point math in interrupt handlers").into());
+                }
+
                 Ok(TypedExpression {
                     kind: TypedExpressionKind::Binary {
                         left: Box::new(typed_left),
@@ -3505,6 +3550,22 @@ impl TypeChecker {
                 }
 
                 if let Expression::Identifier { name, .. } = function.as_ref() {
+                    if self.no_heap && matches!(name.as_str(), "alloc" | "alloc_zeroed" | "realloc" | "new_box" | "new_arc") {
+                        return Err(RozeError::type_error(
+                            format!("Dynamic heap allocation ('{}') is disabled in zero-heap bare-metal mode", name),
+                            location.line,
+                            location.column,
+                        ).with_hint("zero-heap bare-metal targets (--no-heap) prohibit dynamic heap allocation").into());
+                    }
+
+                    if (self.in_isr || self.disable_float_registers) && matches!(name.as_str(), "sin" | "cos" | "tan" | "sqrt" | "fma") {
+                        return Err(RozeError::type_error(
+                            format!("Floating-point intrinsic '{}' is disabled in ISR / freestanding no-float mode", name),
+                            location.line,
+                            location.column,
+                        ).with_hint("interrupt service routines must preserve FPU state").into());
+                    }
+
                     if Self::is_unsafe_intrinsic(name) && !self.in_unsafe {
                         return Err(RozeError::type_error(
                             format!("Call to unsafe intrinsic '{}' requires an 'unsafe {{ ... }}' block", name),
@@ -4019,6 +4080,13 @@ impl TypeChecker {
                 }
             }
             Expression::New { class_name, type_args, arguments, location } => {
+                if self.no_heap {
+                    return Err(RozeError::type_error(
+                        format!("Dynamic heap allocation ('new {}') is disabled in zero-heap bare-metal mode", class_name),
+                        location.line,
+                        location.column,
+                    ).with_hint("zero-heap bare-metal targets (--no-heap) prohibit dynamic heap allocation; use static variables, stack, or custom memory buffers").into());
+                }
                 let is_user_class = self.classes.contains_key(class_name) || self.generic_classes.contains_key(class_name);
                 let is_builtin_col = !is_user_class && matches!(
                     class_name.as_str(),
@@ -5041,7 +5109,17 @@ pub fn check_types(program: &Program) -> Result<()> {
 /// Type-checks `program` and returns its fully type-annotated IR (see
 /// `crate::ir`), ready for codegen to consume directly.
 pub fn check_and_lower(program: &Program) -> Result<crate::ir::TypedProgram> {
+    check_and_lower_with_options(program, false, false)
+}
+
+pub fn check_and_lower_with_options(
+    program: &Program,
+    no_heap: bool,
+    disable_float_registers: bool,
+) -> Result<crate::ir::TypedProgram> {
     let mut checker = TypeChecker::new();
+    checker.no_heap = no_heap;
+    checker.disable_float_registers = disable_float_registers;
     let typed_program = checker.check_program(program)?;
 
     if !checker.errors.is_empty() {

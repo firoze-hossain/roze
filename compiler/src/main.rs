@@ -13,7 +13,7 @@ mod ir;
 
 use lexer::tokenize;
 use parser::parse;
-use semantic::check_and_lower;
+use semantic::check_and_lower_with_options;
 use error::RozeError;
 
 #[derive(ClapParser)]
@@ -69,6 +69,12 @@ enum Commands {
         /// Custom entry point symbol (for --target freestanding, defaults to _start)
         #[arg(long = "entry", value_name = "ENTRY")]
         entry: Option<String>,
+        /// Disable dynamic heap allocation (for --target freestanding, true zero-heap bare metal)
+        #[arg(long = "no-heap")]
+        no_heap: bool,
+        /// Disable floating-point and vector registers for ISR handlers and bare metal safety
+        #[arg(long = "disable-float-registers", alias = "no-float")]
+        disable_float_registers: bool,
     },
     /// Run a Roze file
     Run {
@@ -90,6 +96,12 @@ enum Commands {
         /// Custom entry point symbol (for --target freestanding, defaults to _start)
         #[arg(long = "entry", value_name = "ENTRY")]
         entry: Option<String>,
+        /// Disable dynamic heap allocation (for --target freestanding, true zero-heap bare metal)
+        #[arg(long = "no-heap")]
+        no_heap: bool,
+        /// Disable floating-point and vector registers for ISR handlers and bare metal safety
+        #[arg(long = "disable-float-registers", alias = "no-float")]
+        disable_float_registers: bool,
     },
 }
 
@@ -97,11 +109,11 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Build { file, output: _, classpath, target, link, linker_script, entry } => {
-            build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref())
+        Commands::Build { file, output: _, classpath, target, link, linker_script, entry, no_heap, disable_float_registers } => {
+            build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref(), no_heap, disable_float_registers)
         }
-        Commands::Run { file, classpath, target, link, linker_script, entry } => {
-            build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref())
+        Commands::Run { file, classpath, target, link, linker_script, entry, no_heap, disable_float_registers } => {
+            build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref(), no_heap, disable_float_registers)
                 .and_then(|_| run_file(&file, classpath.as_deref(), target))
         }
     };
@@ -125,6 +137,8 @@ fn build_file(
     link_libs: &[String],
     linker_script: Option<&str>,
     entry: Option<&str>,
+    no_heap: bool,
+    disable_float_registers: bool,
 ) -> Result<(), ()> {
     println!("{}", "🌹 Roze Compiler v1.0.0".bright_magenta());
     println!("{} {}", "📁 Compiling:".cyan(), filename);
@@ -175,7 +189,7 @@ fn build_file(
     // Type check, producing the fully type-annotated IR that codegen
     // consumes directly (see ir.rs) -- this is also what guarantees
     // codegen never has to re-derive a type from scratch itself.
-    let typed_program = match check_and_lower(&program) {
+    let typed_program = match check_and_lower_with_options(&program, no_heap, disable_float_registers) {
         Ok(p) => p,
         Err(e) => {
             report_error(&e, filename, &source);
@@ -188,7 +202,14 @@ fn build_file(
     let codegen_result = match target {
         Target::Jvm => codegen::compile_to_java(typed_program, filename, classpath),
         Target::Native => codegen::native::compile_to_native(typed_program, filename, link_libs),
-        Target::Freestanding => codegen::native::compile_to_freestanding(typed_program, filename, linker_script, entry),
+        Target::Freestanding => codegen::native::compile_to_freestanding(
+            typed_program,
+            filename,
+            linker_script,
+            entry,
+            no_heap,
+            disable_float_registers,
+        ),
     };
     if let Err(e) = codegen_result {
         report_error(&e, filename, &source);

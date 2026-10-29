@@ -477,6 +477,30 @@ void qemu_exit(long code) {
     outb_internal(0xf4, (unsigned char)code);
 }
 
+long freestanding_is_heap_enabled(void) {
+#ifdef ROZE_NO_HEAP
+    return 0;
+#else
+    return 1;
+#endif
+}
+
+long freestanding_is_float_enabled(void) {
+#ifdef ROZE_NO_FLOAT
+    return 0;
+#else
+    return 1;
+#endif
+}
+
+void freestanding_halt(void) {
+    for (;;) {
+        #if defined(__x86_64__) || defined(__i386__)
+        __asm__ volatile("cli; hlt");
+        #endif
+    }
+}
+
 // 3. Serial COM1 UART Driver (115200 8N1)
 #define COM1 0x3F8
 
@@ -639,6 +663,29 @@ char *__roze_freestanding_gcvt(double number, int ndigit, char *buf) {
 }
 
 // 4. Freestanding Memory Bump Allocator (Zero libc malloc/free)
+#ifdef ROZE_NO_HEAP
+static unsigned char __roze_freestanding_heap_pool[0];
+static unsigned long __roze_freestanding_heap_offset = 0;
+
+void *__roze_freestanding_alloc(long size) {
+    (void)size;
+    return (void *)0;
+}
+
+void *__roze_freestanding_alloc_zeroed(long size) {
+    (void)size;
+    return (void *)0;
+}
+
+void __roze_freestanding_free(void *ptr) {
+    (void)ptr;
+}
+
+void *__roze_freestanding_realloc(void *ptr, long size) {
+    (void)ptr; (void)size;
+    return (void *)0;
+}
+#else
 static unsigned char __roze_freestanding_heap_pool[1048576]; // 1MB BSS Kernel Heap
 static unsigned long __roze_freestanding_heap_offset = 0;
 
@@ -674,11 +721,28 @@ void *__roze_freestanding_realloc(void *ptr, long size) {
     }
     return new_ptr;
 }
+#endif
 
 void *alloc(long size) { return __roze_freestanding_alloc(size); }
 void *alloc_zeroed(long size) { return __roze_freestanding_alloc_zeroed(size); }
 void free(void *ptr) { __roze_freestanding_free(ptr); }
 void *realloc(void *ptr, long size) { return __roze_freestanding_realloc(ptr, size); }
+
+long freestanding_get_heap_used(void) {
+#ifdef ROZE_NO_HEAP
+    return 0;
+#else
+    return (long)__roze_freestanding_heap_offset;
+#endif
+}
+
+long freestanding_get_heap_capacity(void) {
+#ifdef ROZE_NO_HEAP
+    return 0;
+#else
+    return (long)sizeof(__roze_freestanding_heap_pool);
+#endif
+}
 
 void *memcpy(void *dest, const void *src, unsigned long n) {
     unsigned char *d = (unsigned char *)dest;
@@ -1017,7 +1081,9 @@ pub fn compile_to_freestanding(
     program: TypedProgram,
     input_file: &str,
     linker_script: Option<&str>,
-    _entry: Option<&str>,
+    entry: Option<&str>,
+    no_heap: bool,
+    disable_float_registers: bool,
 ) -> Result<()> {
     let output_name = crate::codegen::class_name_from_path(input_file);
 
@@ -1039,7 +1105,7 @@ pub fn compile_to_freestanding(
             collect_closures_and_refs_from_stmt(stmt, &mut closures, &mut func_refs);
         }
 
-        let mut generator = NativeGenerator::new_freestanding(&mut module)?;
+        let mut generator = NativeGenerator::new_freestanding(&mut module, entry)?;
         generator.declare_all_classes(&program)?;
         generator.declare_all_functions(&program)?;
         generator.declare_all_closures_and_trampolines(&closures, &func_refs, &program)?;
@@ -1060,12 +1126,18 @@ pub fn compile_to_freestanding(
     let temp_freestanding_o = std::env::temp_dir().join(format!("roze_freestanding_{}_{}.o", pid, output_name));
     fs::write(&temp_freestanding_c, FREESTANDING_RUNTIME_C)?;
 
-    let status = Command::new("gcc")
-        .args(["-m64", "-ffreestanding", "-nostdlib", "-fno-builtin", "-fno-stack-protector", "-c"])
-        .arg(&temp_freestanding_c)
+    let mut gcc_cmd = Command::new("gcc");
+    gcc_cmd.args(["-m64", "-ffreestanding", "-nostdlib", "-fno-builtin", "-fno-stack-protector", "-mno-red-zone", "-c"]);
+    if no_heap {
+        gcc_cmd.arg("-DROZE_NO_HEAP");
+    }
+    if disable_float_registers {
+        gcc_cmd.args(["-mno-sse", "-mno-sse2", "-mno-mmx", "-mno-80387", "-DROZE_NO_FLOAT"]);
+    }
+    gcc_cmd.arg(&temp_freestanding_c)
         .arg("-o")
-        .arg(&temp_freestanding_o)
-        .status()
+        .arg(&temp_freestanding_o);
+    let status = gcc_cmd.status()
         .map_err(|e| anyhow!("Failed to compile freestanding runtime via gcc: {}", e))?;
 
     if !status.success() {
@@ -1073,7 +1145,12 @@ pub fn compile_to_freestanding(
     }
 
     let ld_script_path = match linker_script {
-        Some(path) => path.to_string(),
+        Some(path) => {
+            if !std::path::Path::new(path).exists() {
+                return Err(anyhow!("Custom linker script '{}' not found", path));
+            }
+            path.to_string()
+        }
         None => {
             let default_ld = std::env::temp_dir().join(format!("roze_freestanding_{}_{}.ld", pid, output_name));
             fs::write(&default_ld, DEFAULT_FREESTANDING_LINKER_SCRIPT)?;
@@ -1086,7 +1163,7 @@ pub fn compile_to_freestanding(
         &temp_freestanding_o.to_string_lossy(),
         &output_name,
         &ld_script_path,
-        _entry,
+        entry,
     )?;
 
     // Also produce 32-bit ELF version for direct QEMU -kernel loading
@@ -3542,11 +3619,18 @@ pub struct KernelRuntime {
     pub qemu_exit_id: FuncId,
     pub serial_print_id: FuncId,
     pub serial_putchar_id: FuncId,
+    pub is_heap_enabled_id: FuncId,
+    pub is_float_enabled_id: FuncId,
+    pub get_heap_used_id: FuncId,
+    pub get_heap_capacity_id: FuncId,
+    pub halt_id: FuncId,
 }
 
 fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
     let mut void_to_i64 = module.make_signature();
     void_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let void_to_void = module.make_signature();
 
     let mut i64_to_void = module.make_signature();
     i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
@@ -3573,6 +3657,16 @@ fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
         .map_err(|e| anyhow!(e.to_string()))?;
     let serial_putchar_id = module.declare_function("serial_putchar", Linkage::Import, &i64_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
+    let is_heap_enabled_id = module.declare_function("freestanding_is_heap_enabled", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let is_float_enabled_id = module.declare_function("freestanding_is_float_enabled", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let get_heap_used_id = module.declare_function("freestanding_get_heap_used", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let get_heap_capacity_id = module.declare_function("freestanding_get_heap_capacity", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let halt_id = module.declare_function("freestanding_halt", Linkage::Import, &void_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
 
     Ok(KernelRuntime {
         multiboot2_get_magic_id,
@@ -3582,6 +3676,11 @@ fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
         qemu_exit_id,
         serial_print_id,
         serial_putchar_id,
+        is_heap_enabled_id,
+        is_float_enabled_id,
+        get_heap_used_id,
+        get_heap_capacity_id,
+        halt_id,
     })
 }
 
@@ -4863,6 +4962,7 @@ struct NativeGenerator<'a> {
     trait_methods: HashMap<String, usize>,
     extern_functions: HashSet<String>,
     literal_counter: usize,
+    custom_entry: Option<String>,
 }
 
 impl<'a> NativeGenerator<'a> {
@@ -4870,8 +4970,10 @@ impl<'a> NativeGenerator<'a> {
         Self::create(module, false)
     }
 
-    fn new_freestanding(module: &'a mut ObjectModule) -> Result<Self> {
-        Self::create(module, true)
+    fn new_freestanding(module: &'a mut ObjectModule, custom_entry: Option<&str>) -> Result<Self> {
+        let mut gen = Self::create(module, true)?;
+        gen.custom_entry = custom_entry.map(ToString::to_string);
+        Ok(gen)
     }
 
     fn create(module: &'a mut ObjectModule, is_freestanding: bool) -> Result<Self> {
@@ -4984,6 +5086,7 @@ impl<'a> NativeGenerator<'a> {
             trait_methods: HashMap::new(),
             extern_functions: HashSet::new(),
             literal_counter: 0,
+            custom_entry: None,
         })
     }
 
@@ -5156,8 +5259,8 @@ impl<'a> NativeGenerator<'a> {
                     sig.returns.push(AbiParam::new(cranelift_type_for(return_type)));
                 }
 
-                let (func_name, linkage) = if name == "_start" && self.is_freestanding {
-                    ("_start", Linkage::Export)
+                let (func_name, linkage) = if self.is_freestanding && (name == "_start" || self.custom_entry.as_deref() == Some(name)) {
+                    (name.as_str(), Linkage::Export)
                 } else if name == "main" {
                     ("__roze_main", if self.is_freestanding { Linkage::Export } else { Linkage::Local })
                 } else {
@@ -8459,6 +8562,35 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[arg]);
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
+            "freestanding_is_heap_enabled" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.is_heap_enabled_id, self.builder.func);
+                let call_inst = self.builder.ins().call(func_ref, &[]);
+                let results = self.builder.inst_results(call_inst);
+                return Ok(results[0]);
+            }
+            "freestanding_is_float_enabled" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.is_float_enabled_id, self.builder.func);
+                let call_inst = self.builder.ins().call(func_ref, &[]);
+                let results = self.builder.inst_results(call_inst);
+                return Ok(results[0]);
+            }
+            "freestanding_get_heap_used" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.get_heap_used_id, self.builder.func);
+                let call_inst = self.builder.ins().call(func_ref, &[]);
+                let results = self.builder.inst_results(call_inst);
+                return Ok(results[0]);
+            }
+            "freestanding_get_heap_capacity" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.get_heap_capacity_id, self.builder.func);
+                let call_inst = self.builder.ins().call(func_ref, &[]);
+                let results = self.builder.inst_results(call_inst);
+                return Ok(results[0]);
+            }
+            "freestanding_halt" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.halt_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
 
             // ---- Fixed-Width Conversions ----
             "i8" if arguments.len() == 1 => {
@@ -10375,7 +10507,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 }
                 Type::Bool => {
                     let val = self.compile_expression(arg)?;
-                    let val_i64 = self.builder.ins().uextend(VALUE_TYPE, val);
+                    let val_i64 = if self.builder.func.dfg.value_type(val) != VALUE_TYPE {
+                        self.builder.ins().uextend(VALUE_TYPE, val)
+                    } else {
+                        val
+                    };
                     let func_ref = self.module.declare_func_in_func(self.vga.print_bool_id, self.builder.func);
                     self.builder.ins().call(func_ref, &[val_i64]);
                     return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));

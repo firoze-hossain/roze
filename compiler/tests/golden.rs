@@ -1436,6 +1436,18 @@ MEMORY_ALL_PASSED";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
 
+#[test]
+fn freestanding_kernel_target_suite() {
+    let (stdout, stderr, ok) = run_fixture("freestanding_kernel.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== Roze Freestanding Kernel Target Suite ==="));
+    assert!(stdout.contains("Multiboot2 Protocol Detected"));
+    assert!(stdout.contains("Freestanding Heap Active"));
+    assert!(stdout.contains("COM1 Serial Kernel Diagnostics OK"));
+    assert!(stdout.contains("424"));
+    assert!(stdout.contains("Freestanding Kernel Target Complete"));
+}
+
 
 
 

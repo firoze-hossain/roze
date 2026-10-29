@@ -1816,6 +1816,11 @@ __attribute__((weak)) int64_t inb(int64_t port) { (void)port; return 0; }
 __attribute__((weak)) void qemu_exit(int64_t code) { (void)code; }
 __attribute__((weak)) void serial_print(const char* s) { if (s) fputs(s, stdout); }
 __attribute__((weak)) void serial_putchar(int64_t ch) { putchar((int)ch); }
+__attribute__((weak)) int64_t freestanding_is_heap_enabled(void) { return 1; }
+__attribute__((weak)) int64_t freestanding_is_float_enabled(void) { return 1; }
+__attribute__((weak)) int64_t freestanding_get_heap_used(void) { return 0; }
+__attribute__((weak)) int64_t freestanding_get_heap_capacity(void) { return 1048576; }
+__attribute__((weak)) void freestanding_halt(void) { }
 
 // RozeBoot Enterprise Framework Stubs for Hosted Native Target
 __attribute__((weak)) void* db_pool_create(const char* url, int64_t max_conns) { (void)url; (void)max_conns; return NULL; }

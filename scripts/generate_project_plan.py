@@ -294,7 +294,7 @@ s1_rows = [
         ("M2-T05", 8), ("Month 2", 4), ("Sprint 4 (W07-W08)", 8), "Freestanding Systems", "Bare-Metal Kernel Target (--target freestanding)",
         "Zero-libc, zero-heap bare metal target. Custom linker script integration, freestanding runtime entry (_start), and disabling float registers for ISR.",
         "Parity with Rust #![no_std] and Zig freestanding target; produces standalone bootable binaries.",
-        "Operating Systems, Microcontrollers", "7 Days", ("Critical", 14), ("Planned", 12)
+        "Operating Systems, Microcontrollers", "7 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M2-T06", 8), ("Month 2", 4), ("Sprint 4 (W07-W08)", 8), "Kernel Memory", "4-Level Paging & Virtual Memory Manager",

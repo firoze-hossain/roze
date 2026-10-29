@@ -2514,13 +2514,18 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     private static void __roze_vga_set_color(long fg, long bg) {}
 
     // Kernel & Multiboot2 (ADV-02)
-    private static long __roze_multiboot2_get_magic() { return 0x36D76289L; }
+    private static int __roze_multiboot2_get_magic() { return 0x36D76289; }
     private static long __roze_multiboot2_get_info_ptr() { return 0L; }
     private static void __roze_outb(long port, long val) {}
-    private static long __roze_inb(long port) { return 0L; }
+    private static int __roze_inb(long port) { return 0; }
     private static void __roze_qemu_exit(long code) {}
     private static void __roze_serial_print(String s) { System.out.print(s); }
     private static void __roze_serial_putchar(long ch) { System.out.print((char)ch); }
+    private static boolean __roze_freestanding_is_heap_enabled() { return true; }
+    private static boolean __roze_freestanding_is_float_enabled() { return true; }
+    private static int __roze_freestanding_get_heap_used() { return 0; }
+    private static int __roze_freestanding_get_heap_capacity() { return 1048576; }
+    private static void __roze_freestanding_halt() {}
 "#;
 
 const NUMERIC_HELPER_METHODS: &str = r#"
@@ -4168,10 +4173,11 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         // Freestanding VGA Text Driver (ADV-01)
         "vga_clear" | "vga_print" | "vga_write_char" | "vga_write_byte" | "vga_set_cursor" | "vga_set_color" => Some("void"),
 
-        // Freestanding Kernel & Multiboot2 (ADV-02)
-        "multiboot2_get_magic" | "inb" => Some("int"),
+        // Freestanding Kernel & Multiboot2 (ADV-02 & M2-T05)
+        "multiboot2_get_magic" | "inb" | "freestanding_get_heap_used" | "freestanding_get_heap_capacity" => Some("int"),
         "multiboot2_get_info_ptr" => Some("long"),
-        "outb" | "qemu_exit" | "serial_print" | "serial_putchar" => Some("void"),
+        "freestanding_is_heap_enabled" | "freestanding_is_float_enabled" => Some("boolean"),
+        "outb" | "qemu_exit" | "serial_print" | "serial_putchar" | "freestanding_halt" => Some("void"),
 
         // Fixed-Width Numeric Suite (M2-T01)
         "i8" => Some("byte"),
@@ -7936,6 +7942,21 @@ impl JavaSourceGenerator {
                 source.push_str("__roze_serial_putchar(");
                 self.generate_expression(source, &arguments[0])?;
                 source.push(')');
+            }
+            "freestanding_is_heap_enabled" if arguments.is_empty() => {
+                source.push_str("__roze_freestanding_is_heap_enabled()");
+            }
+            "freestanding_is_float_enabled" if arguments.is_empty() => {
+                source.push_str("__roze_freestanding_is_float_enabled()");
+            }
+            "freestanding_get_heap_used" if arguments.is_empty() => {
+                source.push_str("__roze_freestanding_get_heap_used()");
+            }
+            "freestanding_get_heap_capacity" if arguments.is_empty() => {
+                source.push_str("__roze_freestanding_get_heap_capacity()");
+            }
+            "freestanding_halt" if arguments.is_empty() => {
+                source.push_str("__roze_freestanding_halt()");
             }
 
             "println" => {

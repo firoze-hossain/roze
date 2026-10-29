@@ -435,10 +435,51 @@ unsafe {
 ```
 
 ### 3.3 Freestanding Bare-Metal Mode
-With `--target freestanding`, Roze compiles without libc, glibc, JVM, or OS dependencies:
-- Multiboot2 compliant header for GRUB bootloader.
-- Direct port I/O (`inb`, `outb`).
-- VGA text buffer access (`vga_print`, `vga_write_char`, `vga_set_color`).
+With `--target freestanding`, Roze compiles standalone operating system kernels and embedded binaries without libc, glibc, JVM, or OS dependencies (parity with Rust `#![no_std]` and Zig freestanding target):
+
+#### Zero-Libc & Zero-Heap Execution
+- **Zero-Libc**: Generates static ELF64 binaries with 0 dynamic sections and 0 undefined symbols.
+- **Zero-Heap Mode (`--no-heap`)**:
+  - Completely eliminates the 1MB BSS heap pool (`__roze_freestanding_heap_pool`), reducing memory footprint for memory-constrained microcontrollers and early boot stages.
+  - Compile-time rejection of dynamic heap allocations (`new Class()` and `alloc(...)` are disallowed at compile time).
+  - Runtime queries: `freestanding_is_heap_enabled() -> bool` (returns `false` under `--no-heap`) and `freestanding_get_heap_capacity() -> int` (returns `0`).
+
+#### Custom Linker Script Integration (`-T / --linker-script`)
+- Integrates custom GNU linker scripts to define arbitrary memory layouts, physical/virtual address spaces, and section alignments (e.g., loading at 1MB, 2MB, or higher-half kernel addresses).
+- Structured ELF section output:
+  - `.boot`: Multiboot 1 and Multiboot 2 headers with 32-bit protected mode trampoline.
+  - `.text`: 4KB page-aligned kernel code.
+  - `.rodata`: Read-only string literals and constants.
+  - `.data`: Initialized kernel data structures.
+  - `.bss`: Uninitialized zeroed memory.
+
+#### Freestanding Runtime Entry (`_start` & `--entry`)
+- **Default Multiboot Trampoline**:
+  - Multiboot 1 (`0x1BADB002`) and Multiboot 2 (`0xE85250D6`) boot headers compatible with GRUB and QEMU `-kernel`.
+  - Sets up initial 32-bit stack, builds 1GB identity page tables with 2MB huge pages (PML4, PDPT, PD).
+  - Enables PAE (CR4), Long Mode (EFER), and Paging (CR0).
+  - Loads 64-bit GDT (`gdt64`) and executes far jump to 64-bit Long Mode.
+  - Initializes 64-bit segment registers, switches to 64-bit stack (`stack_top`), initializes COM1 UART and VGA text buffer, and calls `main` (`__roze_main`).
+  - Halts with `cli; hlt` upon kernel return.
+- **Direct Custom Entry**:
+  - Defining `func _start()` in Roze overrides the default weak `_start` symbol with `Linkage::Export`.
+  - Specifying `--entry <symbol>` exports `<symbol>` with `Linkage::Export` and instructs the linker to set it as the ELF entry point address.
+
+#### Disabling Float Registers for ISR Handlers
+- **ISR Safety**:
+  - x86_64 hardware interrupts do not preserve FPU/SSE/AVX registers (`xmm0`-`xmm15`) on the interrupt stack. Using float or SIMD operations inside an Interrupt Service Routine (ISR) silently corrupts interrupted thread state.
+  - Roze disables the 128-byte red zone (`-mno-red-zone`) to prevent asynchronous interrupt frames from clobbering temporary stack variables.
+  - Functions named `isr_*` or `interrupt_*` are validated at compile time: any use of `f32`, `f64`, `float`, SIMD vector types (`Vec4f`, `Vec8f`), float literals, or SIMD intrinsics is rejected with a compiler error.
+  - CLI flag `--disable-float-registers` (or `--no-float`): compiles the entire freestanding binary and runtime with `-mno-red-zone -mno-sse -mno-sse2 -mno-mmx -mno-80387 -DROZE_NO_FLOAT`, disabling all float registers.
+  - Query: `freestanding_is_float_enabled() -> bool` returns `false` when float registers are disabled.
+
+#### Built-in Hardware Intrinsics (`import "freestanding";`)
+- `multiboot2_get_magic() -> int`: Returns multiboot protocol magic value (`0x36D76289`).
+- `multiboot2_get_info_ptr() -> *raw u8`: Pointer to multiboot information structure tags.
+- `outb(port: int, val: int)` / `inb(port: int) -> int`: Hardware I/O port read/write.
+- `serial_print(s: string)` / `serial_putchar(ch: int)`: 115200 8N1 COM1 serial UART driver.
+- `freestanding_halt()`: Enters low-power CPU halt state (`cli; hlt`).
+- `qemu_exit(code: int)`: Signals QEMU exit device (`isa-debug-exit`, port `0xf4`).
 
 ### 3.4 Modern Concurrency: M:N Green Threads (Virtual Threads)
 Roze implements a unified high-throughput concurrency runtime with parity to Java 25 Project Loom Virtual Threads and Go goroutines:

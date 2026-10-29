@@ -3157,6 +3157,361 @@ class RozeVec16u8 {
 }
 "#;
 
+// ==================== Collections Helper Classes (M2-T03) ====================
+const COLLECTIONS_HELPER_CLASSES: &str = r#"
+class RozeVecDeque {
+    private final java.util.ArrayDeque<Object> deque;
+
+    public RozeVecDeque() {
+        this.deque = new java.util.ArrayDeque<>();
+    }
+
+    public RozeVecDeque(int capacity) {
+        this.deque = new java.util.ArrayDeque<>(Math.max(capacity, 8));
+    }
+
+    public void pushBack(Object val) { deque.addLast(val); }
+    public void pushFront(Object val) { deque.addFirst(val); }
+    public Object popBack() { return deque.isEmpty() ? null : deque.removeLast(); }
+    public Object popFront() { return deque.isEmpty() ? null : deque.removeFirst(); }
+    public Object front() { return deque.peekFirst(); }
+    public Object back() { return deque.peekLast(); }
+    public Object get(int idx) {
+        if (idx < 0 || idx >= deque.size()) return null;
+        int i = 0;
+        for (Object item : deque) {
+            if (i == idx) return item;
+            i++;
+        }
+        return null;
+    }
+    public void set(int idx, Object val) {
+        if (idx < 0 || idx >= deque.size()) return;
+        java.util.ArrayList<Object> list = new java.util.ArrayList<>(deque);
+        list.set(idx, val);
+        deque.clear();
+        deque.addAll(list);
+    }
+    public long len() { return deque.size(); }
+    public boolean isEmpty() { return deque.isEmpty(); }
+    public void clear() { deque.clear(); }
+
+    @Override
+    public String toString() {
+        return "VecDeque" + deque.toString();
+    }
+}
+
+class RozeBTreeMap {
+    private final java.util.TreeMap<Object, Object> map;
+
+    public RozeBTreeMap() {
+        this.map = new java.util.TreeMap<>();
+    }
+
+    public void insert(Object key, Object value) { map.put(key, value); }
+    public Object get(Object key) { return map.get(key); }
+    public boolean containsKey(Object key) { return map.containsKey(key); }
+    public Object remove(Object key) { return map.remove(key); }
+    public long len() { return map.size(); }
+    public boolean isEmpty() { return map.isEmpty(); }
+    public Object firstKey() { return map.isEmpty() ? null : map.firstKey(); }
+    public Object lastKey() { return map.isEmpty() ? null : map.lastKey(); }
+    public java.util.List<Object> keys() { return new java.util.ArrayList<>(map.keySet()); }
+    public java.util.List<Object> values() { return new java.util.ArrayList<>(map.values()); }
+    public void clear() { map.clear(); }
+
+    @Override
+    public String toString() {
+        return "BTreeMap" + map.toString();
+    }
+}
+
+class RozeBTreeSet {
+    private final java.util.TreeSet<Object> set;
+
+    public RozeBTreeSet() {
+        this.set = new java.util.TreeSet<>();
+    }
+
+    public boolean insert(Object val) { return set.add(val); }
+    public boolean contains(Object val) { return set.contains(val); }
+    public boolean remove(Object val) { return set.remove(val); }
+    public long len() { return set.size(); }
+    public boolean isEmpty() { return set.isEmpty(); }
+    public Object first() { return set.isEmpty() ? null : set.first(); }
+    public Object last() { return set.isEmpty() ? null : set.last(); }
+    public java.util.List<Object> toList() { return new java.util.ArrayList<>(set); }
+    public void clear() { set.clear(); }
+
+    @Override
+    public String toString() {
+        return "BTreeSet" + set.toString();
+    }
+}
+
+class RozeBinaryHeap {
+    private final java.util.PriorityQueue<Object> pq;
+
+    @SuppressWarnings("unchecked")
+    public RozeBinaryHeap() {
+        this.pq = new java.util.PriorityQueue<>((a, b) -> ((Comparable) b).compareTo(a));
+    }
+
+    public void push(Object val) { pq.offer(val); }
+    public Object pop() { return pq.poll(); }
+    public Object peek() { return pq.peek(); }
+    public long len() { return pq.size(); }
+    public boolean isEmpty() { return pq.isEmpty(); }
+    public void clear() { pq.clear(); }
+
+    @Override
+    public String toString() {
+        return "BinaryHeap" + pq.toString();
+    }
+}
+
+class RozeIndexMap {
+    private final java.util.LinkedHashMap<Object, Object> map;
+    private final java.util.ArrayList<Object> keyList;
+
+    public RozeIndexMap() {
+        this.map = new java.util.LinkedHashMap<>();
+        this.keyList = new java.util.ArrayList<>();
+    }
+
+    public void insert(Object key, Object value) {
+        if (!map.containsKey(key)) {
+            keyList.add(key);
+        }
+        map.put(key, value);
+    }
+
+    public Object get(Object key) { return map.get(key); }
+    public Object getIndexKey(int idx) {
+        if (idx < 0 || idx >= keyList.size()) return null;
+        return keyList.get(idx);
+    }
+    public Object getIndexValue(int idx) {
+        if (idx < 0 || idx >= keyList.size()) return null;
+        return map.get(keyList.get(idx));
+    }
+    public boolean containsKey(Object key) { return map.containsKey(key); }
+    public Object remove(Object key) {
+        if (map.containsKey(key)) {
+            keyList.remove(key);
+            return map.remove(key);
+        }
+        return null;
+    }
+    public long len() { return map.size(); }
+    public boolean isEmpty() { return map.isEmpty(); }
+    public java.util.List<Object> keys() { return new java.util.ArrayList<>(keyList); }
+    public java.util.List<Object> values() {
+        java.util.ArrayList<Object> vals = new java.util.ArrayList<>();
+        for (Object k : keyList) vals.add(map.get(k));
+        return vals;
+    }
+    public void clear() { map.clear(); keyList.clear(); }
+
+    @Override
+    public String toString() {
+        return "IndexMap" + map.toString();
+    }
+}
+
+class RozeRingBuffer {
+    private final Object[] buffer;
+    private final int capacity;
+    private int head = 0;
+    private int count = 0;
+
+    public RozeRingBuffer(int capacity) {
+        this.capacity = Math.max(capacity, 1);
+        this.buffer = new Object[this.capacity];
+    }
+
+    public boolean push(Object val) {
+        if (count == capacity) return false;
+        buffer[(head + count) % capacity] = val;
+        count++;
+        return true;
+    }
+
+    public void pushOverwrite(Object val) {
+        if (count == capacity) {
+            buffer[head] = val;
+            head = (head + 1) % capacity;
+        } else {
+            buffer[(head + count) % capacity] = val;
+            count++;
+        }
+    }
+
+    public Object pop() {
+        if (count == 0) return null;
+        Object val = buffer[head];
+        buffer[head] = null;
+        head = (head + 1) % capacity;
+        count--;
+        return val;
+    }
+
+    public Object peek() {
+        if (count == 0) return null;
+        return buffer[head];
+    }
+
+    public long len() { return count; }
+    public long capacity() { return capacity; }
+    public boolean isEmpty() { return count == 0; }
+    public boolean isFull() { return count == capacity; }
+    public void clear() {
+        java.util.Arrays.fill(buffer, null);
+        head = 0;
+        count = 0;
+    }
+
+    @Override
+    public String toString() {
+        return "RingBuffer(cap=" + capacity + ", len=" + count + ")";
+    }
+}
+
+class RozeBitSet {
+    private final java.util.BitSet bs;
+
+    public RozeBitSet() {
+        this.bs = new java.util.BitSet();
+    }
+
+    public RozeBitSet(int nbits) {
+        this.bs = new java.util.BitSet(Math.max(nbits, 1));
+    }
+
+    public void set(int idx) { if (idx >= 0) bs.set(idx); }
+    public void clearBit(int idx) { if (idx >= 0) bs.clear(idx); }
+    public boolean test(int idx) { return idx >= 0 && bs.get(idx); }
+    public void flip(int idx) { if (idx >= 0) bs.flip(idx); }
+    public long countOnes() { return bs.cardinality(); }
+    public long len() { return Math.max(bs.length(), bs.size()); }
+    public boolean isEmpty() { return bs.isEmpty(); }
+    public void unionWith(RozeBitSet other) { bs.or(other.bs); }
+    public void intersectWith(RozeBitSet other) { bs.and(other.bs); }
+    public void differenceWith(RozeBitSet other) { bs.andNot(other.bs); }
+    public void clear() { bs.clear(); }
+
+    @Override
+    public String toString() {
+        return "BitSet" + bs.toString();
+    }
+}
+"#;
+
+const COLLECTIONS_HELPER_METHODS: &str = r#"
+    // VecDeque
+    private static RozeVecDeque vec_deque_new() { return new RozeVecDeque(); }
+    private static RozeVecDeque VecDeque_new() { return new RozeVecDeque(); }
+    private static RozeVecDeque vec_deque_with_capacity(long cap) { return new RozeVecDeque((int)cap); }
+    private static void vec_deque_push_back(Object vd, Object val) { ((RozeVecDeque) vd).pushBack(val); }
+    private static void vec_deque_push_front(Object vd, Object val) { ((RozeVecDeque) vd).pushFront(val); }
+    private static Object vec_deque_pop_back(Object vd) { return ((RozeVecDeque) vd).popBack(); }
+    private static Object vec_deque_pop_front(Object vd) { return ((RozeVecDeque) vd).popFront(); }
+    private static Object vec_deque_front(Object vd) { return ((RozeVecDeque) vd).front(); }
+    private static Object vec_deque_back(Object vd) { return ((RozeVecDeque) vd).back(); }
+    private static Object vec_deque_get(Object vd, long idx) { return ((RozeVecDeque) vd).get((int)idx); }
+    private static void vec_deque_set(Object vd, long idx, Object val) { ((RozeVecDeque) vd).set((int)idx, val); }
+    private static long vec_deque_len(Object vd) { return ((RozeVecDeque) vd).len(); }
+    private static boolean vec_deque_is_empty(Object vd) { return ((RozeVecDeque) vd).isEmpty(); }
+    private static void vec_deque_clear(Object vd) { ((RozeVecDeque) vd).clear(); }
+
+    // BTreeMap
+    private static RozeBTreeMap btree_map_new() { return new RozeBTreeMap(); }
+    private static RozeBTreeMap BTreeMap_new() { return new RozeBTreeMap(); }
+    private static RozeBTreeMap btree_map_new_str() { return new RozeBTreeMap(); }
+    private static void btree_map_insert(Object m, Object k, Object v) { ((RozeBTreeMap) m).insert(k, v); }
+    private static Object btree_map_get(Object m, Object k) { return ((RozeBTreeMap) m).get(k); }
+    private static boolean btree_map_contains_key(Object m, Object k) { return ((RozeBTreeMap) m).containsKey(k); }
+    private static Object btree_map_remove(Object m, Object k) { return ((RozeBTreeMap) m).remove(k); }
+    private static long btree_map_len(Object m) { return ((RozeBTreeMap) m).len(); }
+    private static boolean btree_map_is_empty(Object m) { return ((RozeBTreeMap) m).isEmpty(); }
+    private static Object btree_map_first_key(Object m) { return ((RozeBTreeMap) m).firstKey(); }
+    private static Object btree_map_last_key(Object m) { return ((RozeBTreeMap) m).lastKey(); }
+    private static java.util.List<Object> btree_map_keys(Object m) { return ((RozeBTreeMap) m).keys(); }
+    private static java.util.List<Object> btree_map_values(Object m) { return ((RozeBTreeMap) m).values(); }
+    private static void btree_map_clear(Object m) { ((RozeBTreeMap) m).clear(); }
+
+    // BTreeSet
+    private static RozeBTreeSet btree_set_new() { return new RozeBTreeSet(); }
+    private static RozeBTreeSet BTreeSet_new() { return new RozeBTreeSet(); }
+    private static RozeBTreeSet btree_set_new_str() { return new RozeBTreeSet(); }
+    private static boolean btree_set_insert(Object s, Object val) { return ((RozeBTreeSet) s).insert(val); }
+    private static boolean btree_set_contains(Object s, Object val) { return ((RozeBTreeSet) s).contains(val); }
+    private static boolean btree_set_remove(Object s, Object val) { return ((RozeBTreeSet) s).remove(val); }
+    private static long btree_set_len(Object s) { return ((RozeBTreeSet) s).len(); }
+    private static boolean btree_set_is_empty(Object s) { return ((RozeBTreeSet) s).isEmpty(); }
+    private static Object btree_set_first(Object s) { return ((RozeBTreeSet) s).first(); }
+    private static Object btree_set_last(Object s) { return ((RozeBTreeSet) s).last(); }
+    private static java.util.List<Object> btree_set_to_list(Object s) { return ((RozeBTreeSet) s).toList(); }
+    private static void btree_set_clear(Object s) { ((RozeBTreeSet) s).clear(); }
+
+    // BinaryHeap
+    private static RozeBinaryHeap binary_heap_new() { return new RozeBinaryHeap(); }
+    private static RozeBinaryHeap BinaryHeap_new() { return new RozeBinaryHeap(); }
+    private static void binary_heap_push(Object h, Object val) { ((RozeBinaryHeap) h).push(val); }
+    private static Object binary_heap_pop(Object h) { return ((RozeBinaryHeap) h).pop(); }
+    private static Object binary_heap_peek(Object h) { return ((RozeBinaryHeap) h).peek(); }
+    private static long binary_heap_len(Object h) { return ((RozeBinaryHeap) h).len(); }
+    private static boolean binary_heap_is_empty(Object h) { return ((RozeBinaryHeap) h).isEmpty(); }
+    private static void binary_heap_clear(Object h) { ((RozeBinaryHeap) h).clear(); }
+
+    // IndexMap
+    private static RozeIndexMap index_map_new() { return new RozeIndexMap(); }
+    private static RozeIndexMap IndexMap_new() { return new RozeIndexMap(); }
+    private static RozeIndexMap index_map_new_str() { return new RozeIndexMap(); }
+    private static void index_map_insert(Object m, Object k, Object v) { ((RozeIndexMap) m).insert(k, v); }
+    private static Object index_map_get(Object m, Object k) { return ((RozeIndexMap) m).get(k); }
+    private static Object index_map_get_index_key(Object m, long idx) { return ((RozeIndexMap) m).getIndexKey((int)idx); }
+    private static Object index_map_get_index_value(Object m, long idx) { return ((RozeIndexMap) m).getIndexValue((int)idx); }
+    private static boolean index_map_contains_key(Object m, Object k) { return ((RozeIndexMap) m).containsKey(k); }
+    private static Object index_map_remove(Object m, Object k) { return ((RozeIndexMap) m).remove(k); }
+    private static long index_map_len(Object m) { return ((RozeIndexMap) m).len(); }
+    private static boolean index_map_is_empty(Object m) { return ((RozeIndexMap) m).isEmpty(); }
+    private static java.util.List<Object> index_map_keys(Object m) { return ((RozeIndexMap) m).keys(); }
+    private static java.util.List<Object> index_map_values(Object m) { return ((RozeIndexMap) m).values(); }
+    private static void index_map_clear(Object m) { ((RozeIndexMap) m).clear(); }
+
+    // RingBuffer
+    private static RozeRingBuffer ring_buffer_new(long cap) { return new RozeRingBuffer((int)cap); }
+    private static RozeRingBuffer RingBuffer_new(long cap) { return new RozeRingBuffer((int)cap); }
+    private static boolean ring_buffer_push(Object rb, Object val) { return ((RozeRingBuffer) rb).push(val); }
+    private static void ring_buffer_push_overwrite(Object rb, Object val) { ((RozeRingBuffer) rb).pushOverwrite(val); }
+    private static Object ring_buffer_pop(Object rb) { return ((RozeRingBuffer) rb).pop(); }
+    private static Object ring_buffer_peek(Object rb) { return ((RozeRingBuffer) rb).peek(); }
+    private static long ring_buffer_len(Object rb) { return ((RozeRingBuffer) rb).len(); }
+    private static long ring_buffer_capacity(Object rb) { return ((RozeRingBuffer) rb).capacity(); }
+    private static boolean ring_buffer_is_empty(Object rb) { return ((RozeRingBuffer) rb).isEmpty(); }
+    private static boolean ring_buffer_is_full(Object rb) { return ((RozeRingBuffer) rb).isFull(); }
+    private static void ring_buffer_clear(Object rb) { ((RozeRingBuffer) rb).clear(); }
+
+    // BitSet
+    private static RozeBitSet bit_set_new() { return new RozeBitSet(); }
+    private static RozeBitSet BitSet_new() { return new RozeBitSet(); }
+    private static RozeBitSet bit_set_with_capacity(long cap) { return new RozeBitSet((int)cap); }
+    private static void bit_set_set(Object bs, long idx) { ((RozeBitSet) bs).set((int)idx); }
+    private static void bit_set_clear_bit(Object bs, long idx) { ((RozeBitSet) bs).clearBit((int)idx); }
+    private static boolean bit_set_test(Object bs, long idx) { return ((RozeBitSet) bs).test((int)idx); }
+    private static void bit_set_flip(Object bs, long idx) { ((RozeBitSet) bs).flip((int)idx); }
+    private static long bit_set_count_ones(Object bs) { return ((RozeBitSet) bs).countOnes(); }
+    private static long bit_set_len(Object bs) { return ((RozeBitSet) bs).len(); }
+    private static boolean bit_set_is_empty(Object bs) { return ((RozeBitSet) bs).isEmpty(); }
+    private static void bit_set_union(Object bs, Object other) { ((RozeBitSet) bs).unionWith((RozeBitSet) other); }
+    private static void bit_set_intersect(Object bs, Object other) { ((RozeBitSet) bs).intersectWith((RozeBitSet) other); }
+    private static void bit_set_difference(Object bs, Object other) { ((RozeBitSet) bs).differenceWith((RozeBitSet) other); }
+    private static void bit_set_clear(Object bs) { ((RozeBitSet) bs).clear(); }
+"#;
+
+
 /// Returns the Java return type for a built-in Core (string/math)
 /// intrinsic, or None if `name` isn't one. Keep this in sync with
 /// `semantic::builtin_signatures`.
@@ -3428,6 +3783,58 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "vec16u8_get" => Some("int"),
         "vec16u8_store" => Some("void"),
 
+        // Advanced Standard Collections (M2-T03)
+        // VecDeque
+        "vec_deque_new" | "VecDeque_new" | "vec_deque_with_capacity" => Some("RozeVecDeque"),
+        "vec_deque_push_back" | "vec_deque_push_front" | "vec_deque_set" | "vec_deque_clear" => Some("void"),
+        "vec_deque_pop_back" | "vec_deque_pop_front" | "vec_deque_front" | "vec_deque_back" | "vec_deque_get" => Some(OBJECT_TYPE),
+        "vec_deque_len" => Some("long"),
+        "vec_deque_is_empty" => Some("boolean"),
+
+        // BTreeMap
+        "btree_map_new" | "BTreeMap_new" | "btree_map_new_str" => Some("RozeBTreeMap"),
+        "btree_map_insert" | "btree_map_clear" => Some("void"),
+        "btree_map_get" | "btree_map_remove" | "btree_map_first_key" | "btree_map_last_key" => Some(OBJECT_TYPE),
+        "btree_map_contains_key" | "btree_map_is_empty" => Some("boolean"),
+        "btree_map_len" => Some("long"),
+        "btree_map_keys" | "btree_map_values" => Some("java.util.List"),
+
+        // BTreeSet
+        "btree_set_new" | "BTreeSet_new" | "btree_set_new_str" => Some("RozeBTreeSet"),
+        "btree_set_insert" | "btree_set_contains" | "btree_set_remove" | "btree_set_is_empty" => Some("boolean"),
+        "btree_set_len" => Some("long"),
+        "btree_set_first" | "btree_set_last" => Some(OBJECT_TYPE),
+        "btree_set_to_list" => Some("java.util.List"),
+        "btree_set_clear" => Some("void"),
+
+        // BinaryHeap
+        "binary_heap_new" | "BinaryHeap_new" => Some("RozeBinaryHeap"),
+        "binary_heap_push" | "binary_heap_clear" => Some("void"),
+        "binary_heap_pop" | "binary_heap_peek" => Some(OBJECT_TYPE),
+        "binary_heap_len" => Some("long"),
+        "binary_heap_is_empty" => Some("boolean"),
+
+        // IndexMap
+        "index_map_new" | "IndexMap_new" | "index_map_new_str" => Some("RozeIndexMap"),
+        "index_map_insert" | "index_map_clear" => Some("void"),
+        "index_map_get" | "index_map_get_index_key" | "index_map_get_index_value" | "index_map_remove" => Some(OBJECT_TYPE),
+        "index_map_contains_key" | "index_map_is_empty" => Some("boolean"),
+        "index_map_len" => Some("long"),
+        "index_map_keys" | "index_map_values" => Some("java.util.List"),
+
+        // RingBuffer
+        "ring_buffer_new" | "RingBuffer_new" => Some("RozeRingBuffer"),
+        "ring_buffer_push" | "ring_buffer_is_empty" | "ring_buffer_is_full" => Some("boolean"),
+        "ring_buffer_push_overwrite" | "ring_buffer_clear" => Some("void"),
+        "ring_buffer_pop" | "ring_buffer_peek" => Some(OBJECT_TYPE),
+        "ring_buffer_len" | "ring_buffer_capacity" => Some("long"),
+
+        // BitSet
+        "bit_set_new" | "BitSet_new" | "bit_set_with_capacity" => Some("RozeBitSet"),
+        "bit_set_set" | "bit_set_clear_bit" | "bit_set_flip" | "bit_set_union" | "bit_set_intersect" | "bit_set_difference" | "bit_set_clear" => Some("void"),
+        "bit_set_test" | "bit_set_is_empty" => Some("boolean"),
+        "bit_set_count_ones" | "bit_set_len" => Some("long"),
+
         _ => None,
     }
 }
@@ -3520,6 +3927,20 @@ fn java_type_name(ty: &Type) -> String {
                 "RozeSubtask".to_string()
             } else if base == "CancellationToken" || base == "cancellation_token" || base == "CancelToken" || base == "cancel_token" {
                 "RozeCancellationToken".to_string()
+            } else if base == "VecDeque" || base == "vec_deque" {
+                "RozeVecDeque".to_string()
+            } else if base == "BTreeMap" || base == "btree_map" {
+                "RozeBTreeMap".to_string()
+            } else if base == "BTreeSet" || base == "btree_set" {
+                "RozeBTreeSet".to_string()
+            } else if base == "BinaryHeap" || base == "binary_heap" {
+                "RozeBinaryHeap".to_string()
+            } else if base == "IndexMap" || base == "index_map" {
+                "RozeIndexMap".to_string()
+            } else if base == "RingBuffer" || base == "ring_buffer" {
+                "RozeRingBuffer".to_string()
+            } else if base == "BitSet" || base == "bit_set" {
+                "RozeBitSet".to_string()
             } else {
                 escape_java_identifier(&crate::semantic::specialized_name(base, type_args))
             }
@@ -3713,11 +4134,13 @@ impl JavaSourceGenerator {
         source.push_str(DIRECT_MEMORY_HELPER_METHODS);
         source.push_str(NUMERIC_HELPER_METHODS);
         source.push_str(SIMD_HELPER_METHODS);
+        source.push_str(COLLECTIONS_HELPER_METHODS);
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);
         source.push_str(CONCURRENCY_HELPER_CLASSES);
         source.push_str(SIMD_HELPER_CLASSES);
+        source.push_str(COLLECTIONS_HELPER_CLASSES);
 
         for stmt in &self.program.statements {
             match stmt {
@@ -4775,7 +5198,14 @@ impl JavaSourceGenerator {
                 }
             }
             TypedExpressionKind::Call { function, arguments } => {
-                if (function == "list_get" || function == "map_get" || function == "channel_recv" || function == "recv" || function == "channel_try_recv" || function == "thread_join" || function == "fiber_join" || function == "future_await" || function == "__roze_future_await" || function == "atomic_ptr_load" || function == "atomic_load" || function == "atomic_ptr_swap" || function == "atomic_swap" || function == "subtask_get") && expr.type_ != Type::Unknown {
+                if (function == "list_get" || function == "map_get" || function == "channel_recv" || function == "recv" || function == "channel_try_recv" || function == "thread_join" || function == "fiber_join" || function == "future_await" || function == "__roze_future_await" || function == "atomic_ptr_load" || function == "atomic_load" || function == "atomic_ptr_swap" || function == "atomic_swap" || function == "subtask_get"
+                    || function == "vec_deque_pop_front" || function == "vec_deque_pop_back" || function == "vec_deque_front" || function == "vec_deque_back" || function == "vec_deque_get"
+                    || function == "btree_map_get" || function == "btree_map_first_key" || function == "btree_map_last_key" || function == "btree_map_remove"
+                    || function == "btree_set_first" || function == "btree_set_last"
+                    || function == "binary_heap_pop" || function == "binary_heap_peek"
+                    || function == "index_map_get" || function == "index_map_get_index_key" || function == "index_map_get_index_value" || function == "index_map_remove"
+                    || function == "ring_buffer_pop" || function == "ring_buffer_peek"
+                ) && expr.type_ != Type::Unknown {
                     let mut call_buf = String::new();
                     self.generate_call(&mut call_buf, function, arguments)?;
                     source.push_str(&java_unbox(&expr.type_, &call_buf));

@@ -278,6 +278,13 @@ impl Type {
             "task_group" | "TaskGroup" | "nursery" | "Nursery" => Type::Generic { base: "TaskGroup".to_string(), type_args: vec![] },
             "subtask" | "Subtask" => Type::Generic { base: "Subtask".to_string(), type_args: vec![] },
             "cancellation_token" | "CancellationToken" | "cancel_token" | "CancelToken" => Type::Generic { base: "CancellationToken".to_string(), type_args: vec![] },
+            "vec_deque" | "VecDeque" => Type::Generic { base: "VecDeque".to_string(), type_args: vec![] },
+            "btree_map" | "BTreeMap" => Type::Generic { base: "BTreeMap".to_string(), type_args: vec![] },
+            "btree_set" | "BTreeSet" => Type::Generic { base: "BTreeSet".to_string(), type_args: vec![] },
+            "binary_heap" | "BinaryHeap" => Type::Generic { base: "BinaryHeap".to_string(), type_args: vec![] },
+            "index_map" | "IndexMap" => Type::Generic { base: "IndexMap".to_string(), type_args: vec![] },
+            "ring_buffer" | "RingBuffer" => Type::Generic { base: "RingBuffer".to_string(), type_args: vec![] },
+            "bit_set" | "BitSet" => Type::Generic { base: "BitSet".to_string(), type_args: vec![] },
             _ => Type::Unknown,
         }
     }
@@ -350,6 +357,20 @@ impl Type {
                     "RozeSubtask".to_string()
                 } else if base == "CancellationToken" || base == "cancellation_token" || base == "CancelToken" || base == "cancel_token" {
                     "RozeCancellationToken".to_string()
+                } else if base == "VecDeque" || base == "vec_deque" {
+                    "RozeVecDeque".to_string()
+                } else if base == "BTreeMap" || base == "btree_map" {
+                    "RozeBTreeMap".to_string()
+                } else if base == "BTreeSet" || base == "btree_set" {
+                    "RozeBTreeSet".to_string()
+                } else if base == "BinaryHeap" || base == "binary_heap" {
+                    "RozeBinaryHeap".to_string()
+                } else if base == "IndexMap" || base == "index_map" {
+                    "RozeIndexMap".to_string()
+                } else if base == "RingBuffer" || base == "ring_buffer" {
+                    "RozeRingBuffer".to_string()
+                } else if base == "BitSet" || base == "bit_set" {
+                    "RozeBitSet".to_string()
                 } else {
                     specialized_name(base, type_args)
                 }
@@ -481,6 +502,15 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
         // CancellationToken <-> CancellationToken
         (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
             if (b1 == "CancellationToken" || b1 == "cancellation_token" || b1 == "CancelToken" || b1 == "cancel_token") && (b2 == "CancellationToken" || b2 == "cancellation_token" || b2 == "CancelToken" || b2 == "cancel_token") => true,
+        // Standard Collections
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1.eq_ignore_ascii_case("VecDeque") && b2.eq_ignore_ascii_case("VecDeque"))
+            || (b1.eq_ignore_ascii_case("BTreeMap") && b2.eq_ignore_ascii_case("BTreeMap"))
+            || (b1.eq_ignore_ascii_case("BTreeSet") && b2.eq_ignore_ascii_case("BTreeSet"))
+            || (b1.eq_ignore_ascii_case("BinaryHeap") && b2.eq_ignore_ascii_case("BinaryHeap"))
+            || (b1.eq_ignore_ascii_case("IndexMap") && b2.eq_ignore_ascii_case("IndexMap"))
+            || (b1.eq_ignore_ascii_case("RingBuffer") && b2.eq_ignore_ascii_case("RingBuffer"))
+            || (b1.eq_ignore_ascii_case("BitSet") && b2.eq_ignore_ascii_case("BitSet")) => true,
         // Fiber <-> Thread interoperability
         (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
             if ((b1 == "Fiber" || b1 == "fiber") && (b2 == "Thread" || b2 == "thread"))
@@ -1080,6 +1110,108 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("vec16u8_set", vec![Type::Vec16u8, Type::Unknown, Type::Unknown], Type::Vec16u8),
         ("vec16u8_load", vec![Type::Unknown], Type::Vec16u8),
         ("vec16u8_store", vec![Type::Unknown, Type::Vec16u8], Type::Void),
+
+        // ==================== Collections (M2-T03) ====================
+        // VecDeque
+        ("vec_deque_new", vec![], Type::Generic { base: "VecDeque".to_string(), type_args: vec![] }),
+        ("VecDeque_new", vec![], Type::Generic { base: "VecDeque".to_string(), type_args: vec![] }),
+        ("vec_deque_with_capacity", vec![Type::Int], Type::Generic { base: "VecDeque".to_string(), type_args: vec![] }),
+        ("vec_deque_push_back", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("vec_deque_push_front", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("vec_deque_pop_back", vec![Type::Unknown], Type::Unknown),
+        ("vec_deque_pop_front", vec![Type::Unknown], Type::Unknown),
+        ("vec_deque_front", vec![Type::Unknown], Type::Unknown),
+        ("vec_deque_back", vec![Type::Unknown], Type::Unknown),
+        ("vec_deque_get", vec![Type::Unknown, Type::Int], Type::Unknown),
+        ("vec_deque_set", vec![Type::Unknown, Type::Int, Type::Unknown], Type::Void),
+        ("vec_deque_len", vec![Type::Unknown], Type::Int),
+        ("vec_deque_is_empty", vec![Type::Unknown], Type::Bool),
+        ("vec_deque_clear", vec![Type::Unknown], Type::Void),
+
+        // BTreeMap
+        ("btree_map_new", vec![], Type::Generic { base: "BTreeMap".to_string(), type_args: vec![] }),
+        ("BTreeMap_new", vec![], Type::Generic { base: "BTreeMap".to_string(), type_args: vec![] }),
+        ("btree_map_new_str", vec![], Type::Generic { base: "BTreeMap".to_string(), type_args: vec![] }),
+        ("btree_map_insert", vec![Type::Unknown, Type::Unknown, Type::Unknown], Type::Void),
+        ("btree_map_get", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("btree_map_contains_key", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("btree_map_remove", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("btree_map_len", vec![Type::Unknown], Type::Int),
+        ("btree_map_is_empty", vec![Type::Unknown], Type::Bool),
+        ("btree_map_first_key", vec![Type::Unknown], Type::Unknown),
+        ("btree_map_last_key", vec![Type::Unknown], Type::Unknown),
+        ("btree_map_keys", vec![Type::Unknown], Type::List),
+        ("btree_map_values", vec![Type::Unknown], Type::List),
+        ("btree_map_clear", vec![Type::Unknown], Type::Void),
+
+        // BTreeSet
+        ("btree_set_new", vec![], Type::Generic { base: "BTreeSet".to_string(), type_args: vec![] }),
+        ("BTreeSet_new", vec![], Type::Generic { base: "BTreeSet".to_string(), type_args: vec![] }),
+        ("btree_set_new_str", vec![], Type::Generic { base: "BTreeSet".to_string(), type_args: vec![] }),
+        ("btree_set_insert", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("btree_set_contains", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("btree_set_remove", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("btree_set_len", vec![Type::Unknown], Type::Int),
+        ("btree_set_is_empty", vec![Type::Unknown], Type::Bool),
+        ("btree_set_first", vec![Type::Unknown], Type::Unknown),
+        ("btree_set_last", vec![Type::Unknown], Type::Unknown),
+        ("btree_set_to_list", vec![Type::Unknown], Type::List),
+        ("btree_set_clear", vec![Type::Unknown], Type::Void),
+
+        // BinaryHeap
+        ("binary_heap_new", vec![], Type::Generic { base: "BinaryHeap".to_string(), type_args: vec![] }),
+        ("BinaryHeap_new", vec![], Type::Generic { base: "BinaryHeap".to_string(), type_args: vec![] }),
+        ("binary_heap_push", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("binary_heap_pop", vec![Type::Unknown], Type::Unknown),
+        ("binary_heap_peek", vec![Type::Unknown], Type::Unknown),
+        ("binary_heap_len", vec![Type::Unknown], Type::Int),
+        ("binary_heap_is_empty", vec![Type::Unknown], Type::Bool),
+        ("binary_heap_clear", vec![Type::Unknown], Type::Void),
+
+        // IndexMap
+        ("index_map_new", vec![], Type::Generic { base: "IndexMap".to_string(), type_args: vec![] }),
+        ("IndexMap_new", vec![], Type::Generic { base: "IndexMap".to_string(), type_args: vec![] }),
+        ("index_map_new_str", vec![], Type::Generic { base: "IndexMap".to_string(), type_args: vec![] }),
+        ("index_map_insert", vec![Type::Unknown, Type::Unknown, Type::Unknown], Type::Void),
+        ("index_map_get", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("index_map_get_index_key", vec![Type::Unknown, Type::Int], Type::Unknown),
+        ("index_map_get_index_value", vec![Type::Unknown, Type::Int], Type::Unknown),
+        ("index_map_contains_key", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("index_map_remove", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("index_map_len", vec![Type::Unknown], Type::Int),
+        ("index_map_is_empty", vec![Type::Unknown], Type::Bool),
+        ("index_map_keys", vec![Type::Unknown], Type::List),
+        ("index_map_values", vec![Type::Unknown], Type::List),
+        ("index_map_clear", vec![Type::Unknown], Type::Void),
+
+        // RingBuffer
+        ("ring_buffer_new", vec![Type::Int], Type::Generic { base: "RingBuffer".to_string(), type_args: vec![] }),
+        ("RingBuffer_new", vec![Type::Int], Type::Generic { base: "RingBuffer".to_string(), type_args: vec![] }),
+        ("ring_buffer_push", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("ring_buffer_push_overwrite", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("ring_buffer_pop", vec![Type::Unknown], Type::Unknown),
+        ("ring_buffer_peek", vec![Type::Unknown], Type::Unknown),
+        ("ring_buffer_len", vec![Type::Unknown], Type::Int),
+        ("ring_buffer_capacity", vec![Type::Unknown], Type::Int),
+        ("ring_buffer_is_empty", vec![Type::Unknown], Type::Bool),
+        ("ring_buffer_is_full", vec![Type::Unknown], Type::Bool),
+        ("ring_buffer_clear", vec![Type::Unknown], Type::Void),
+
+        // BitSet
+        ("bit_set_new", vec![], Type::Generic { base: "BitSet".to_string(), type_args: vec![] }),
+        ("BitSet_new", vec![], Type::Generic { base: "BitSet".to_string(), type_args: vec![] }),
+        ("bit_set_with_capacity", vec![Type::Int], Type::Generic { base: "BitSet".to_string(), type_args: vec![] }),
+        ("bit_set_set", vec![Type::Unknown, Type::Int], Type::Void),
+        ("bit_set_clear_bit", vec![Type::Unknown, Type::Int], Type::Void),
+        ("bit_set_test", vec![Type::Unknown, Type::Int], Type::Bool),
+        ("bit_set_flip", vec![Type::Unknown, Type::Int], Type::Void),
+        ("bit_set_count_ones", vec![Type::Unknown], Type::Int),
+        ("bit_set_len", vec![Type::Unknown], Type::Int),
+        ("bit_set_is_empty", vec![Type::Unknown], Type::Bool),
+        ("bit_set_union", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("bit_set_intersect", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("bit_set_difference", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("bit_set_clear", vec![Type::Unknown], Type::Void),
     ]
 }
 
@@ -3575,6 +3707,51 @@ impl TypeChecker {
                             ).into());
                         }
                         typed_arguments[0].type_.clone()
+                    } else if (name == "vec_deque_pop_front" || name == "vec_deque_pop_back" || name == "vec_deque_front" || name == "vec_deque_back") && typed_arguments.len() == 1 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "VecDeque" || base == "vec_deque") && !type_args.is_empty() => type_args[0].clone(),
+                            _ => Type::Unknown,
+                        }
+                    } else if name == "vec_deque_get" && typed_arguments.len() == 2 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "VecDeque" || base == "vec_deque") && !type_args.is_empty() => type_args[0].clone(),
+                            _ => Type::Unknown,
+                        }
+                    } else if (name == "btree_map_get" || name == "btree_map_remove") && typed_arguments.len() == 2 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "BTreeMap" || base == "btree_map") && type_args.len() >= 2 => type_args[1].clone(),
+                            _ => Type::Unknown,
+                        }
+                    } else if (name == "btree_map_first_key" || name == "btree_map_last_key") && typed_arguments.len() == 1 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "BTreeMap" || base == "btree_map") && !type_args.is_empty() => type_args[0].clone(),
+                            _ => Type::Unknown,
+                        }
+                    } else if (name == "btree_set_first" || name == "btree_set_last") && typed_arguments.len() == 1 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "BTreeSet" || base == "btree_set") && !type_args.is_empty() => type_args[0].clone(),
+                            _ => Type::Unknown,
+                        }
+                    } else if (name == "binary_heap_pop" || name == "binary_heap_peek") && typed_arguments.len() == 1 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "BinaryHeap" || base == "binary_heap") && !type_args.is_empty() => type_args[0].clone(),
+                            _ => Type::Unknown,
+                        }
+                    } else if (name == "index_map_get" || name == "index_map_remove" || name == "index_map_get_index_value") && typed_arguments.len() >= 2 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "IndexMap" || base == "index_map") && type_args.len() >= 2 => type_args[1].clone(),
+                            _ => Type::Unknown,
+                        }
+                    } else if name == "index_map_get_index_key" && typed_arguments.len() == 2 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "IndexMap" || base == "index_map") && !type_args.is_empty() => type_args[0].clone(),
+                            _ => Type::Unknown,
+                        }
+                    } else if (name == "ring_buffer_pop" || name == "ring_buffer_peek") && typed_arguments.len() == 1 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "RingBuffer" || base == "ring_buffer") && !type_args.is_empty() => type_args[0].clone(),
+                            _ => Type::Unknown,
+                        }
                     } else if let Some(sig) = self.functions.get(name) {
                         // Validate argument count and each argument's
                         // type against the declared signature -- the
@@ -3721,6 +3898,62 @@ impl TypeChecker {
                 }
             }
             Expression::New { class_name, type_args, arguments, location } => {
+                let is_builtin_col = matches!(
+                    class_name.as_str(),
+                    "VecDeque" | "vec_deque" | "BTreeMap" | "btree_map" | "BTreeSet" | "btree_set"
+                    | "BinaryHeap" | "binary_heap" | "IndexMap" | "index_map" | "RingBuffer" | "ring_buffer"
+                    | "BitSet" | "bit_set"
+                );
+                if is_builtin_col {
+                    let mut concrete_args = Vec::new();
+                    for ta in type_args {
+                        concrete_args.push(self.resolve_type_name(ta));
+                    }
+                    let mut typed_args = Vec::new();
+                    for arg in arguments {
+                        typed_args.push(self.check_expression(arg)?);
+                    }
+                    let (fn_name, base_name) = match class_name.as_str() {
+                        "VecDeque" | "vec_deque" => (if typed_args.is_empty() { "vec_deque_new" } else { "vec_deque_with_capacity" }, "VecDeque"),
+                        "BTreeMap" | "btree_map" => {
+                            if !concrete_args.is_empty() && concrete_args[0] == Type::String {
+                                ("btree_map_new_str", "BTreeMap")
+                            } else {
+                                ("btree_map_new", "BTreeMap")
+                            }
+                        }
+                        "BTreeSet" | "btree_set" => {
+                            if !concrete_args.is_empty() && concrete_args[0] == Type::String {
+                                ("btree_set_new_str", "BTreeSet")
+                            } else {
+                                ("btree_set_new", "BTreeSet")
+                            }
+                        }
+                        "BinaryHeap" | "binary_heap" => ("binary_heap_new", "BinaryHeap"),
+                        "IndexMap" | "index_map" => {
+                            if !concrete_args.is_empty() && concrete_args[0] == Type::String {
+                                ("index_map_new_str", "IndexMap")
+                            } else {
+                                ("index_map_new", "IndexMap")
+                            }
+                        }
+                        "RingBuffer" | "ring_buffer" => ("ring_buffer_new", "RingBuffer"),
+                        "BitSet" | "bit_set" => (if typed_args.is_empty() { "bit_set_new" } else { "bit_set_with_capacity" }, "BitSet"),
+                        _ => unreachable!(),
+                    };
+                    return Ok(TypedExpression {
+                        kind: TypedExpressionKind::Call {
+                            function: fn_name.to_string(),
+                            arguments: typed_args,
+                        },
+                        type_: Type::Generic {
+                            base: base_name.to_string(),
+                            type_args: concrete_args,
+                        },
+                        location: location.clone(),
+                    });
+                }
+
                 let actual_class_name = if self.generic_classes.contains_key(class_name) {
                     let template = self.generic_classes.get(class_name).unwrap().clone();
                     let concrete_type_args = if !type_args.is_empty() {
@@ -4252,6 +4485,88 @@ impl TypeChecker {
                             // CancellationToken
                             ("CancellationToken" | "cancellation_token" | "CancelToken" | "cancel_token", "cancel") => ("cancel_token_cancel", Type::Void),
                             ("CancellationToken" | "cancellation_token" | "CancelToken" | "cancel_token", "is_cancelled") => ("cancel_token_is_cancelled", Type::Bool),
+
+                            // VecDeque
+                            ("VecDeque" | "vec_deque", "push_back") => ("vec_deque_push_back", Type::Void),
+                            ("VecDeque" | "vec_deque", "push_front") => ("vec_deque_push_front", Type::Void),
+                            ("VecDeque" | "vec_deque", "pop_back") => ("vec_deque_pop_back", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("VecDeque" | "vec_deque", "pop_front") => ("vec_deque_pop_front", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("VecDeque" | "vec_deque", "front") => ("vec_deque_front", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("VecDeque" | "vec_deque", "back") => ("vec_deque_back", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("VecDeque" | "vec_deque", "get") => ("vec_deque_get", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("VecDeque" | "vec_deque", "set") => ("vec_deque_set", Type::Void),
+                            ("VecDeque" | "vec_deque", "len" | "length") => ("vec_deque_len", Type::Int),
+                            ("VecDeque" | "vec_deque", "is_empty") => ("vec_deque_is_empty", Type::Bool),
+                            ("VecDeque" | "vec_deque", "clear") => ("vec_deque_clear", Type::Void),
+
+                            // BTreeMap
+                            ("BTreeMap" | "btree_map", "insert") => ("btree_map_insert", Type::Void),
+                            ("BTreeMap" | "btree_map", "get") => ("btree_map_get", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
+                            ("BTreeMap" | "btree_map", "contains_key" | "has") => ("btree_map_contains_key", Type::Bool),
+                            ("BTreeMap" | "btree_map", "remove") => ("btree_map_remove", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
+                            ("BTreeMap" | "btree_map", "len" | "size") => ("btree_map_len", Type::Int),
+                            ("BTreeMap" | "btree_map", "is_empty") => ("btree_map_is_empty", Type::Bool),
+                            ("BTreeMap" | "btree_map", "first_key") => ("btree_map_first_key", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("BTreeMap" | "btree_map", "last_key") => ("btree_map_last_key", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("BTreeMap" | "btree_map", "keys") => ("btree_map_keys", Type::List),
+                            ("BTreeMap" | "btree_map", "values") => ("btree_map_values", Type::List),
+                            ("BTreeMap" | "btree_map", "clear") => ("btree_map_clear", Type::Void),
+
+                            // BTreeSet
+                            ("BTreeSet" | "btree_set", "insert") => ("btree_set_insert", Type::Bool),
+                            ("BTreeSet" | "btree_set", "contains") => ("btree_set_contains", Type::Bool),
+                            ("BTreeSet" | "btree_set", "remove") => ("btree_set_remove", Type::Bool),
+                            ("BTreeSet" | "btree_set", "len" | "size") => ("btree_set_len", Type::Int),
+                            ("BTreeSet" | "btree_set", "is_empty") => ("btree_set_is_empty", Type::Bool),
+                            ("BTreeSet" | "btree_set", "first") => ("btree_set_first", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("BTreeSet" | "btree_set", "last") => ("btree_set_last", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("BTreeSet" | "btree_set", "to_list") => ("btree_set_to_list", Type::List),
+                            ("BTreeSet" | "btree_set", "clear") => ("btree_set_clear", Type::Void),
+
+                            // BinaryHeap
+                            ("BinaryHeap" | "binary_heap", "push") => ("binary_heap_push", Type::Void),
+                            ("BinaryHeap" | "binary_heap", "pop") => ("binary_heap_pop", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("BinaryHeap" | "binary_heap", "peek") => ("binary_heap_peek", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("BinaryHeap" | "binary_heap", "len" | "size") => ("binary_heap_len", Type::Int),
+                            ("BinaryHeap" | "binary_heap", "is_empty") => ("binary_heap_is_empty", Type::Bool),
+                            ("BinaryHeap" | "binary_heap", "clear") => ("binary_heap_clear", Type::Void),
+
+                            // IndexMap
+                            ("IndexMap" | "index_map", "insert") => ("index_map_insert", Type::Void),
+                            ("IndexMap" | "index_map", "get") => ("index_map_get", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
+                            ("IndexMap" | "index_map", "get_index_key") => ("index_map_get_index_key", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("IndexMap" | "index_map", "get_index_value") => ("index_map_get_index_value", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
+                            ("IndexMap" | "index_map", "contains_key" | "has") => ("index_map_contains_key", Type::Bool),
+                            ("IndexMap" | "index_map", "remove") => ("index_map_remove", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
+                            ("IndexMap" | "index_map", "len" | "size") => ("index_map_len", Type::Int),
+                            ("IndexMap" | "index_map", "is_empty") => ("index_map_is_empty", Type::Bool),
+                            ("IndexMap" | "index_map", "keys") => ("index_map_keys", Type::List),
+                            ("IndexMap" | "index_map", "values") => ("index_map_values", Type::List),
+                            ("IndexMap" | "index_map", "clear") => ("index_map_clear", Type::Void),
+
+                            // RingBuffer
+                            ("RingBuffer" | "ring_buffer", "push") => ("ring_buffer_push", Type::Bool),
+                            ("RingBuffer" | "ring_buffer", "push_overwrite") => ("ring_buffer_push_overwrite", Type::Void),
+                            ("RingBuffer" | "ring_buffer", "pop") => ("ring_buffer_pop", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("RingBuffer" | "ring_buffer", "peek") => ("ring_buffer_peek", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("RingBuffer" | "ring_buffer", "len") => ("ring_buffer_len", Type::Int),
+                            ("RingBuffer" | "ring_buffer", "capacity") => ("ring_buffer_capacity", Type::Int),
+                            ("RingBuffer" | "ring_buffer", "is_empty") => ("ring_buffer_is_empty", Type::Bool),
+                            ("RingBuffer" | "ring_buffer", "is_full") => ("ring_buffer_is_full", Type::Bool),
+                            ("RingBuffer" | "ring_buffer", "clear") => ("ring_buffer_clear", Type::Void),
+
+                            // BitSet
+                            ("BitSet" | "bit_set", "set") => ("bit_set_set", Type::Void),
+                            ("BitSet" | "bit_set", "clear_bit") => ("bit_set_clear_bit", Type::Void),
+                            ("BitSet" | "bit_set", "test") => ("bit_set_test", Type::Bool),
+                            ("BitSet" | "bit_set", "flip") => ("bit_set_flip", Type::Void),
+                            ("BitSet" | "bit_set", "count_ones" | "cardinality") => ("bit_set_count_ones", Type::Int),
+                            ("BitSet" | "bit_set", "len" | "size") => ("bit_set_len", Type::Int),
+                            ("BitSet" | "bit_set", "is_empty") => ("bit_set_is_empty", Type::Bool),
+                            ("BitSet" | "bit_set", "union_with") => ("bit_set_union", Type::Void),
+                            ("BitSet" | "bit_set", "intersect_with") => ("bit_set_intersect", Type::Void),
+                            ("BitSet" | "bit_set", "difference_with") => ("bit_set_difference", Type::Void),
+                            ("BitSet" | "bit_set", "clear") => ("bit_set_clear", Type::Void),
 
                             _ => {
                                 return Err(RozeError::type_error(

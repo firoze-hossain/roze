@@ -1,0 +1,167 @@
+// Test advanced high-performance standard collections (M2-T03)
+
+func test_vec_deque() -> void {
+    println("--- VecDeque ---");
+    let vd = new VecDeque<int>();
+    vd.push_back(10);
+    vd.push_back(20);
+    vd.push_front(5);
+    vd.push_front(1);
+    // order in deque: 1, 5, 10, 20
+    println(vd.len());
+    println(vd.front());
+    println(vd.back());
+    println(vd.get(1));
+    vd.set(1, 7);
+    println(vd.get(1));
+    println(vd.pop_front());
+    println(vd.pop_back());
+    println(vd.len());
+    vd.clear();
+    println(vd.is_empty());
+}
+
+func test_btree_map() -> void {
+    println("--- BTreeMap ---");
+    let map = new BTreeMap<int, int>();
+    map.insert(50, 500);
+    map.insert(20, 200);
+    map.insert(80, 800);
+    map.insert(10, 100);
+    map.insert(30, 300);
+
+    println(map.len());
+    println(map.first_key());
+    println(map.last_key());
+    println(map.get(20));
+    println(map.contains_key(80));
+    println(map.contains_key(99));
+    println(map.remove(20));
+    println(map.len());
+    println(map.contains_key(20));
+    map.clear();
+    println(map.is_empty());
+}
+
+func test_btree_set() -> void {
+    println("--- BTreeSet ---");
+    let set = new BTreeSet<int>();
+    println(set.insert(40));
+    println(set.insert(10));
+    println(set.insert(30));
+    println(set.insert(10));
+    println(set.len());
+    println(set.first());
+    println(set.last());
+    println(set.contains(30));
+    println(set.contains(99));
+    println(set.remove(10));
+    println(set.len());
+    set.clear();
+    println(set.is_empty());
+}
+
+func test_binary_heap() -> void {
+    println("--- BinaryHeap ---");
+    let heap = new BinaryHeap<int>();
+    heap.push(15);
+    heap.push(40);
+    heap.push(10);
+    heap.push(30);
+    heap.push(50);
+    heap.push(20);
+
+    println(heap.len());
+    println(heap.peek());
+    println(heap.pop());
+    println(heap.pop());
+    println(heap.pop());
+    println(heap.len());
+    heap.clear();
+    println(heap.is_empty());
+}
+
+func test_index_map() -> void {
+    println("--- IndexMap ---");
+    let map = new IndexMap<int, int>();
+    map.insert(100, 1);
+    map.insert(200, 2);
+    map.insert(300, 3);
+
+    println(map.len());
+    println(map.get(200));
+    println(map.get_index_key(0));
+    println(map.get_index_value(0));
+    println(map.get_index_key(2));
+    println(map.get_index_value(2));
+    println(map.contains_key(300));
+    println(map.remove(200));
+    println(map.len());
+    map.clear();
+    println(map.is_empty());
+}
+
+func test_ring_buffer() -> void {
+    println("--- RingBuffer ---");
+    let rb = new RingBuffer<int>(3);
+    println(rb.capacity());
+    println(rb.is_empty());
+    println(rb.push(10));
+    println(rb.push(20));
+    println(rb.push(30));
+    println(rb.is_full());
+    println(rb.push(40));
+    rb.push_overwrite(40);
+    println(rb.len());
+    println(rb.peek());
+    println(rb.pop());
+    println(rb.pop());
+    println(rb.pop());
+    println(rb.is_empty());
+}
+
+func test_bit_set() -> void {
+    println("--- BitSet ---");
+    let bs = new BitSet();
+    bs.set(1);
+    bs.set(65);
+    bs.set(130);
+    println(bs.test(1));
+    println(bs.test(2));
+    println(bs.test(65));
+    println(bs.count_ones());
+    bs.flip(1);
+    println(bs.test(1));
+    println(bs.count_ones());
+    bs.clear_bit(65);
+    println(bs.count_ones());
+
+    let bs1 = new BitSet();
+    bs1.set(10);
+    bs1.set(20);
+
+    let bs2 = new BitSet();
+    bs2.set(20);
+    bs2.set(30);
+
+    bs1.union_with(bs2);
+    println(bs1.count_ones());
+    println(bs1.test(30));
+
+    bs1.intersect_with(bs2);
+    println(bs1.count_ones());
+
+    bs1.difference_with(bs2);
+    println(bs1.count_ones());
+}
+
+func main() {
+    test_vec_deque();
+    test_btree_map();
+    test_btree_set();
+    test_binary_heap();
+    test_index_map();
+    test_ring_buffer();
+    test_bit_set();
+    println("COLLECTIONS_ALL_PASSED");
+}

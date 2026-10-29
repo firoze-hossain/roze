@@ -1282,5 +1282,94 @@ Vec16u8(200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 20
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
 
+#[test]
+fn advanced_collections_suite() {
+    let (stdout, stderr, ok) = run_fixture("advanced_collections.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+--- VecDeque ---
+4
+1
+20
+5
+7
+1
+20
+2
+true
+--- BTreeMap ---
+5
+10
+80
+200
+true
+false
+200
+4
+false
+true
+--- BTreeSet ---
+true
+true
+true
+false
+3
+10
+40
+true
+false
+true
+2
+true
+--- BinaryHeap ---
+6
+50
+50
+40
+30
+3
+true
+--- IndexMap ---
+3
+2
+100
+1
+300
+3
+true
+2
+2
+true
+--- RingBuffer ---
+3
+true
+true
+true
+true
+true
+false
+3
+20
+20
+30
+40
+true
+--- BitSet ---
+true
+false
+true
+3
+false
+2
+1
+3
+true
+2
+0
+COLLECTIONS_ALL_PASSED";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+
 
 

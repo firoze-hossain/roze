@@ -60,6 +60,9 @@ const RAYLIB_DISPLAY_NAME: &str = "raylib (built-in)";
 const AI_SOURCE: &str = include_str!("../../stdlib/src/ai.roze");
 const AI_DISPLAY_NAME: &str = "ai (built-in)";
 
+const COLLECTIONS_SOURCE: &str = include_str!("../../stdlib/src/collections.roze");
+const COLLECTIONS_DISPLAY_NAME: &str = "collections (built-in)";
+
 /// Walks `program`'s top-level statements, replacing every `Import` with
 /// the functions it pulls in. `base_dir` is the directory of the file
 /// being compiled, used to resolve relative import paths.
@@ -172,6 +175,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "ai" {
         return Ok((AI_SOURCE.to_string(), AI_DISPLAY_NAME.to_string()));
+    }
+    if path == "collections" {
+        return Ok((COLLECTIONS_SOURCE.to_string(), COLLECTIONS_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

@@ -282,7 +282,7 @@ s1_rows = [
         ("M2-T03", 8), ("Month 2", 4), ("Sprint 3 (W05-W06)", 8), "Standard Collections", "Advanced High-Performance Collections",
         "Implement VecDeque<T>, BTreeMap<K, V>, BTreeSet<T>, BinaryHeap<T> (priority queue), IndexMap<K, V>, RingBuffer<T>, and BitSet with amortized O(1) ops.",
         "Parity with Rust std::collections and Java 25 java.util collections hierarchy.",
-        "All Domains, Databases, Frameworks", "8 Days", ("High", 14), ("Planned", 12)
+        "All Domains, Databases, Frameworks", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M2-T04", 8), ("Month 2", 4), ("Sprint 3 (W05-W06)", 8), "Memory Architecture", "Pluggable Allocator API & Smart Pointers",

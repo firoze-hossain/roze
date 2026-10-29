@@ -150,7 +150,35 @@ unsafe {
 }
 ```
 
-### 2.3 Algebraic Data Types (Enums)
+### 2.3 Standard Collections: Advanced High-Performance Collections
+Roze provides a comprehensive standard library of 7 high-performance, specialized collections achieving amortized O(1) performance where applicable, matching Rust `std::collections` and the Java 25 `java.util` hierarchy with 100% behavioral parity across both JVM and Native Cranelift backends:
+
+| Collection | Internal Architecture | Time Complexity | Primary Capabilities |
+| :--- | :--- | :--- | :--- |
+| `VecDeque<T>` | Contiguous circular ring buffer with geometric 2x growth | Amortized O(1) push/pop both ends, O(1) indexed lookup | `push_front`, `push_back`, `pop_front`, `pop_back`, `front`, `back`, `get`, `set`, `len`, `is_empty`, `clear` |
+| `BTreeMap<K, V>` | Self-balancing ordered AVL binary search tree | O(log N) lookup, insertion, and deletion; sorted order | `insert`, `get`, `contains_key`, `remove`, `first_key`, `last_key`, `keys`, `values`, `len`, `is_empty`, `clear` |
+| `BTreeSet<T>` | Unique sorted set wrapping AVL tree | O(log N) membership and insertion; ascending traversal | `insert`, `contains`, `remove`, `first`, `last`, `to_list`, `len`, `is_empty`, `clear` |
+| `BinaryHeap<T>` | Max-heap binary array with sift-up and sift-down | O(1) peek, O(log N) push and pop; priority queue | `push`, `pop`, `peek`, `len`, `is_empty`, `clear` |
+| `IndexMap<K, V>` | Insertion-ordered hash map with dense array and hash index | Amortized O(1) key lookup and O(1) indexed access | `insert`, `get`, `get_index_key`, `get_index_value`, `contains_key`, `remove`, `keys`, `values`, `len`, `is_empty`, `clear` |
+| `RingBuffer<T>` | Fixed-capacity circular bounded ring buffer | O(1) non-allocating push/pop with overwrite semantics | `push`, `push_overwrite`, `pop`, `peek`, `capacity`, `is_full`, `is_empty`, `len`, `clear` |
+| `BitSet` | Dense 64-bit word array with SIMD popcount (`__builtin_popcountll`) | O(1) bit mutation and testing, O(W) bitwise set algebra | `set`, `clear_bit`, `test`, `flip`, `count_ones`, `union_with`, `intersect_with`, `difference_with`, `len`, `is_empty`, `clear` |
+
+#### Dual Method & Procedural APIs
+Collections support both object-oriented method calling syntax and procedural standard library functions:
+```roze
+// Object-oriented method calls
+let dq = new VecDeque<int>();
+dq.push_back(10);
+dq.push_front(5);
+let first = dq.pop_front(); // 5
+
+// Procedural standard library calls
+let m = new BTreeMap<int, string>();
+btree_map_insert(m, 1, "one");
+let has_key = btree_map_contains_key(m, 1); // true
+```
+
+### 2.4 Algebraic Data Types (Enums)
 Enums represent discriminated unions with payload variants:
 ```roze
 enum Color {

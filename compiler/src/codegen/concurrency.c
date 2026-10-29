@@ -3027,4 +3027,1153 @@ int64_t __roze_vec16u8_eq(RozeVec16u8* a, RozeVec16u8* b) {
     return memcmp(&a->data, &b->data, 16) == 0 ? 1 : 0;
 }
 
+// =============================================================
+// Advanced High-Performance Standard Collections (M2-T03)
+// =============================================================
+
+extern int64_t __roze_list_new(void);
+extern int64_t __roze_list_push(int64_t list_ptr, int64_t item);
+
+static inline int roze_compare_keys(int64_t a, int64_t b, int is_str_key) {
+    if (is_str_key) {
+        if (!a && !b) return 0;
+        if (!a) return -1;
+        if (!b) return 1;
+        return strcmp((const char*)a, (const char*)b);
+    } else {
+        if (a < b) return -1;
+        if (a > b) return 1;
+        return 0;
+    }
+}
+
+static inline uint64_t roze_hash_key(int64_t key, int is_str_key) {
+    if (is_str_key && key) {
+        const char* s = (const char*)key;
+        uint64_t h = 14695981039346656037ULL;
+        while (*s) {
+            h ^= (uint64_t)(unsigned char)(*s++);
+            h *= 1099511628211ULL;
+        }
+        return h;
+    } else {
+        return ((uint64_t)key) * 11400714819323198485ULL;
+    }
+}
+
+// -------------------------------------------------------------
+// 1. VecDeque (Growable Circular Ring-Buffer Deque)
+// -------------------------------------------------------------
+
+typedef struct {
+    int64_t refcount;
+    int64_t* buffer;
+    int64_t capacity;
+    int64_t head;
+    int64_t count;
+} RozeVecDeque;
+
+static void vec_deque_ensure_cap(RozeVecDeque* vd) {
+    if (vd->count >= vd->capacity) {
+        int64_t new_cap = vd->capacity ? vd->capacity * 2 : 8;
+        int64_t* new_buf = (int64_t*)malloc(sizeof(int64_t) * new_cap);
+        for (int64_t i = 0; i < vd->count; i++) {
+            new_buf[i] = vd->buffer[(vd->head + i) % vd->capacity];
+        }
+        if (vd->buffer) free(vd->buffer);
+        vd->buffer = new_buf;
+        vd->head = 0;
+        vd->capacity = new_cap;
+    }
+}
+
+int64_t __roze_vec_deque_new(void) {
+    RozeVecDeque* vd = (RozeVecDeque*)malloc(sizeof(RozeVecDeque));
+    vd->refcount = 1;
+    vd->capacity = 8;
+    vd->buffer = (int64_t*)malloc(sizeof(int64_t) * 8);
+    vd->head = 0;
+    vd->count = 0;
+    return (int64_t)vd;
+}
+
+int64_t __roze_vec_deque_with_capacity(int64_t cap) {
+    if (cap <= 0) cap = 8;
+    RozeVecDeque* vd = (RozeVecDeque*)malloc(sizeof(RozeVecDeque));
+    vd->refcount = 1;
+    vd->capacity = cap;
+    vd->buffer = (int64_t*)malloc(sizeof(int64_t) * cap);
+    vd->head = 0;
+    vd->count = 0;
+    return (int64_t)vd;
+}
+
+void __roze_vec_deque_retain(int64_t vd_val) {
+    if (!vd_val) return;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    __atomic_fetch_add(&vd->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_vec_deque_release(int64_t vd_val) {
+    if (!vd_val) return;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    if (__atomic_fetch_sub(&vd->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        if (vd->buffer) free(vd->buffer);
+        free(vd);
+    }
+}
+
+void __roze_vec_deque_push_back(int64_t vd_val, int64_t val) {
+    if (!vd_val) return;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    vec_deque_ensure_cap(vd);
+    vd->buffer[(vd->head + vd->count) % vd->capacity] = val;
+    vd->count++;
+}
+
+void __roze_vec_deque_push_front(int64_t vd_val, int64_t val) {
+    if (!vd_val) return;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    vec_deque_ensure_cap(vd);
+    vd->head = (vd->head - 1 + vd->capacity) % vd->capacity;
+    vd->buffer[vd->head] = val;
+    vd->count++;
+}
+
+int64_t __roze_vec_deque_pop_front(int64_t vd_val) {
+    if (!vd_val) return 0;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    if (vd->count == 0) return 0;
+    int64_t val = vd->buffer[vd->head];
+    vd->head = (vd->head + 1) % vd->capacity;
+    vd->count--;
+    return val;
+}
+
+int64_t __roze_vec_deque_pop_back(int64_t vd_val) {
+    if (!vd_val) return 0;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    if (vd->count == 0) return 0;
+    int64_t idx = (vd->head + vd->count - 1) % vd->capacity;
+    int64_t val = vd->buffer[idx];
+    vd->count--;
+    return val;
+}
+
+int64_t __roze_vec_deque_front(int64_t vd_val) {
+    if (!vd_val) return 0;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    if (vd->count == 0) return 0;
+    return vd->buffer[vd->head];
+}
+
+int64_t __roze_vec_deque_back(int64_t vd_val) {
+    if (!vd_val) return 0;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    if (vd->count == 0) return 0;
+    return vd->buffer[(vd->head + vd->count - 1) % vd->capacity];
+}
+
+int64_t __roze_vec_deque_get(int64_t vd_val, int64_t idx) {
+    if (!vd_val) return 0;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    if (idx < 0 || idx >= vd->count) return 0;
+    return vd->buffer[(vd->head + idx) % vd->capacity];
+}
+
+void __roze_vec_deque_set(int64_t vd_val, int64_t idx, int64_t val) {
+    if (!vd_val) return;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    if (idx < 0 || idx >= vd->count) return;
+    vd->buffer[(vd->head + idx) % vd->capacity] = val;
+}
+
+int64_t __roze_vec_deque_len(int64_t vd_val) {
+    if (!vd_val) return 0;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    return vd->count;
+}
+
+int64_t __roze_vec_deque_is_empty(int64_t vd_val) {
+    if (!vd_val) return 1;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    return vd->count == 0;
+}
+
+void __roze_vec_deque_clear(int64_t vd_val) {
+    if (!vd_val) return;
+    RozeVecDeque* vd = (RozeVecDeque*)vd_val;
+    vd->head = 0;
+    vd->count = 0;
+}
+
+// -------------------------------------------------------------
+// 2. BTreeMap (Ordered AVL Balanced Search Tree)
+// -------------------------------------------------------------
+
+typedef struct RozeBTreeNode {
+    int64_t key;
+    int64_t value;
+    int height;
+    struct RozeBTreeNode* left;
+    struct RozeBTreeNode* right;
+} RozeBTreeNode;
+
+typedef struct {
+    int64_t refcount;
+    RozeBTreeNode* root;
+    int64_t count;
+    int is_str_key;
+} RozeBTreeMap;
+
+static inline int btree_height(RozeBTreeNode* n) {
+    return n ? n->height : 0;
+}
+
+static inline int btree_max(int a, int b) {
+    return (a > b) ? a : b;
+}
+
+static inline void btree_update_height(RozeBTreeNode* n) {
+    if (n) {
+        n->height = 1 + btree_max(btree_height(n->left), btree_height(n->right));
+    }
+}
+
+static inline int btree_balance_factor(RozeBTreeNode* n) {
+    return n ? (btree_height(n->left) - btree_height(n->right)) : 0;
+}
+
+static RozeBTreeNode* btree_rotate_right(RozeBTreeNode* y) {
+    RozeBTreeNode* x = y->left;
+    RozeBTreeNode* T2 = x->right;
+    x->right = y;
+    y->left = T2;
+    btree_update_height(y);
+    btree_update_height(x);
+    return x;
+}
+
+static RozeBTreeNode* btree_rotate_left(RozeBTreeNode* x) {
+    RozeBTreeNode* y = x->right;
+    RozeBTreeNode* T2 = y->left;
+    y->left = x;
+    x->right = T2;
+    btree_update_height(x);
+    btree_update_height(y);
+    return y;
+}
+
+static RozeBTreeNode* btree_rebalance(RozeBTreeNode* node) {
+    if (!node) return NULL;
+    btree_update_height(node);
+    int bf = btree_balance_factor(node);
+    if (bf > 1) {
+        if (btree_balance_factor(node->left) < 0) {
+            node->left = btree_rotate_left(node->left);
+        }
+        return btree_rotate_right(node);
+    }
+    if (bf < -1) {
+        if (btree_balance_factor(node->right) > 0) {
+            node->right = btree_rotate_right(node->right);
+        }
+        return btree_rotate_left(node);
+    }
+    return node;
+}
+
+static RozeBTreeNode* btree_insert_node(RozeBTreeNode* node, int64_t key, int64_t value, int is_str, int* inserted) {
+    if (!node) {
+        RozeBTreeNode* n = (RozeBTreeNode*)malloc(sizeof(RozeBTreeNode));
+        n->key = key;
+        n->value = value;
+        n->height = 1;
+        n->left = NULL;
+        n->right = NULL;
+        *inserted = 1;
+        return n;
+    }
+    int cmp = roze_compare_keys(key, node->key, is_str);
+    if (cmp == 0) {
+        node->value = value;
+        *inserted = 0;
+        return node;
+    }
+    if (cmp < 0) {
+        node->left = btree_insert_node(node->left, key, value, is_str, inserted);
+    } else {
+        node->right = btree_insert_node(node->right, key, value, is_str, inserted);
+    }
+    return btree_rebalance(node);
+}
+
+static RozeBTreeNode* btree_min_node(RozeBTreeNode* node) {
+    RozeBTreeNode* curr = node;
+    while (curr && curr->left) {
+        curr = curr->left;
+    }
+    return curr;
+}
+
+static RozeBTreeNode* btree_remove_node(RozeBTreeNode* node, int64_t key, int is_str, int64_t* removed_val, int* removed) {
+    if (!node) return NULL;
+    int cmp = roze_compare_keys(key, node->key, is_str);
+    if (cmp < 0) {
+        node->left = btree_remove_node(node->left, key, is_str, removed_val, removed);
+    } else if (cmp > 0) {
+        node->right = btree_remove_node(node->right, key, is_str, removed_val, removed);
+    } else {
+        *removed = 1;
+        *removed_val = node->value;
+        if (!node->left || !node->right) {
+            RozeBTreeNode* temp = node->left ? node->left : node->right;
+            free(node);
+            return temp;
+        } else {
+            RozeBTreeNode* succ = btree_min_node(node->right);
+            node->key = succ->key;
+            node->value = succ->value;
+            int dummy_rem = 0;
+            int64_t dummy_val = 0;
+            node->right = btree_remove_node(node->right, succ->key, is_str, &dummy_val, &dummy_rem);
+        }
+    }
+    return btree_rebalance(node);
+}
+
+static void btree_free_tree(RozeBTreeNode* node) {
+    if (!node) return;
+    btree_free_tree(node->left);
+    btree_free_tree(node->right);
+    free(node);
+}
+
+static void btree_inorder_keys(RozeBTreeNode* node, int64_t list) {
+    if (!node) return;
+    btree_inorder_keys(node->left, list);
+    __roze_list_push(list, node->key);
+    btree_inorder_keys(node->right, list);
+}
+
+static void btree_inorder_values(RozeBTreeNode* node, int64_t list) {
+    if (!node) return;
+    btree_inorder_values(node->left, list);
+    __roze_list_push(list, node->value);
+    btree_inorder_values(node->right, list);
+}
+
+int64_t __roze_btree_map_new(void) {
+    RozeBTreeMap* m = (RozeBTreeMap*)malloc(sizeof(RozeBTreeMap));
+    m->refcount = 1;
+    m->root = NULL;
+    m->count = 0;
+    m->is_str_key = 0;
+    return (int64_t)m;
+}
+
+int64_t __roze_btree_map_new_str(void) {
+    RozeBTreeMap* m = (RozeBTreeMap*)malloc(sizeof(RozeBTreeMap));
+    m->refcount = 1;
+    m->root = NULL;
+    m->count = 0;
+    m->is_str_key = 1;
+    return (int64_t)m;
+}
+
+void __roze_btree_map_retain(int64_t m_val) {
+    if (!m_val) return;
+    RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+    __atomic_fetch_add(&m->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_btree_map_release(int64_t m_val) {
+    if (!m_val) return;
+    RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+    if (__atomic_fetch_sub(&m->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        btree_free_tree(m->root);
+        free(m);
+    }
+}
+
+void __roze_btree_map_insert(int64_t m_val, int64_t key, int64_t value) {
+    if (!m_val) return;
+    RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+    int inserted = 0;
+    m->root = btree_insert_node(m->root, key, value, m->is_str_key, &inserted);
+    if (inserted) m->count++;
+}
+
+int64_t __roze_btree_map_get(int64_t m_val, int64_t key) {
+    if (!m_val) return 0;
+    RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+    RozeBTreeNode* curr = m->root;
+    while (curr) {
+        int cmp = roze_compare_keys(key, curr->key, m->is_str_key);
+        if (cmp == 0) return curr->value;
+        if (cmp < 0) curr = curr->left;
+        else curr = curr->right;
+    }
+    return 0;
+}
+
+int64_t __roze_btree_map_contains_key(int64_t m_val, int64_t key) {
+    if (!m_val) return 0;
+    RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+    RozeBTreeNode* curr = m->root;
+    while (curr) {
+        int cmp = roze_compare_keys(key, curr->key, m->is_str_key);
+        if (cmp == 0) return 1;
+        if (cmp < 0) curr = curr->left;
+        else curr = curr->right;
+    }
+    return 0;
+}
+
+int64_t __roze_btree_map_remove(int64_t m_val, int64_t key) {
+    if (!m_val) return 0;
+    RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+    int removed = 0;
+    int64_t val = 0;
+    m->root = btree_remove_node(m->root, key, m->is_str_key, &val, &removed);
+    if (removed) m->count--;
+    return val;
+}
+
+int64_t __roze_btree_map_len(int64_t m_val) {
+    if (!m_val) return 0;
+    RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+    return m->count;
+}
+
+int64_t __roze_btree_map_is_empty(int64_t m_val) {
+    if (!m_val) return 1;
+    RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+    return m->count == 0;
+}
+
+int64_t __roze_btree_map_first_key(int64_t m_val) {
+    if (!m_val) return 0;
+    RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+    RozeBTreeNode* min_n = btree_min_node(m->root);
+    return min_n ? min_n->key : 0;
+}
+
+int64_t __roze_btree_map_last_key(int64_t m_val) {
+    if (!m_val) return 0;
+    RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+    RozeBTreeNode* curr = m->root;
+    while (curr && curr->right) {
+        curr = curr->right;
+    }
+    return curr ? curr->key : 0;
+}
+
+int64_t __roze_btree_map_keys(int64_t m_val) {
+    int64_t list = __roze_list_new();
+    if (m_val) {
+        RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+        btree_inorder_keys(m->root, list);
+    }
+    return list;
+}
+
+int64_t __roze_btree_map_values(int64_t m_val) {
+    int64_t list = __roze_list_new();
+    if (m_val) {
+        RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+        btree_inorder_values(m->root, list);
+    }
+    return list;
+}
+
+void __roze_btree_map_clear(int64_t m_val) {
+    if (!m_val) return;
+    RozeBTreeMap* m = (RozeBTreeMap*)m_val;
+    btree_free_tree(m->root);
+    m->root = NULL;
+    m->count = 0;
+}
+
+// -------------------------------------------------------------
+// 3. BTreeSet (Ordered Unique Set)
+// -------------------------------------------------------------
+
+typedef struct {
+    int64_t refcount;
+    RozeBTreeMap* map;
+} RozeBTreeSet;
+
+int64_t __roze_btree_set_new(void) {
+    RozeBTreeSet* s = (RozeBTreeSet*)malloc(sizeof(RozeBTreeSet));
+    s->refcount = 1;
+    s->map = (RozeBTreeMap*)__roze_btree_map_new();
+    return (int64_t)s;
+}
+
+int64_t __roze_btree_set_new_str(void) {
+    RozeBTreeSet* s = (RozeBTreeSet*)malloc(sizeof(RozeBTreeSet));
+    s->refcount = 1;
+    s->map = (RozeBTreeMap*)__roze_btree_map_new_str();
+    return (int64_t)s;
+}
+
+void __roze_btree_set_retain(int64_t s_val) {
+    if (!s_val) return;
+    RozeBTreeSet* s = (RozeBTreeSet*)s_val;
+    __atomic_fetch_add(&s->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_btree_set_release(int64_t s_val) {
+    if (!s_val) return;
+    RozeBTreeSet* s = (RozeBTreeSet*)s_val;
+    if (__atomic_fetch_sub(&s->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        __roze_btree_map_release((int64_t)s->map);
+        free(s);
+    }
+}
+
+int64_t __roze_btree_set_insert(int64_t s_val, int64_t val) {
+    if (!s_val) return 0;
+    RozeBTreeSet* s = (RozeBTreeSet*)s_val;
+    if (__roze_btree_map_contains_key((int64_t)s->map, val)) {
+        return 0;
+    }
+    __roze_btree_map_insert((int64_t)s->map, val, 1);
+    return 1;
+}
+
+int64_t __roze_btree_set_contains(int64_t s_val, int64_t val) {
+    if (!s_val) return 0;
+    RozeBTreeSet* s = (RozeBTreeSet*)s_val;
+    return __roze_btree_map_contains_key((int64_t)s->map, val);
+}
+
+int64_t __roze_btree_set_remove(int64_t s_val, int64_t val) {
+    if (!s_val) return 0;
+    RozeBTreeSet* s = (RozeBTreeSet*)s_val;
+    if (!__roze_btree_map_contains_key((int64_t)s->map, val)) {
+        return 0;
+    }
+    __roze_btree_map_remove((int64_t)s->map, val);
+    return 1;
+}
+
+int64_t __roze_btree_set_len(int64_t s_val) {
+    if (!s_val) return 0;
+    RozeBTreeSet* s = (RozeBTreeSet*)s_val;
+    return __roze_btree_map_len((int64_t)s->map);
+}
+
+int64_t __roze_btree_set_is_empty(int64_t s_val) {
+    if (!s_val) return 1;
+    RozeBTreeSet* s = (RozeBTreeSet*)s_val;
+    return __roze_btree_map_is_empty((int64_t)s->map);
+}
+
+int64_t __roze_btree_set_first(int64_t s_val) {
+    if (!s_val) return 0;
+    RozeBTreeSet* s = (RozeBTreeSet*)s_val;
+    return __roze_btree_map_first_key((int64_t)s->map);
+}
+
+int64_t __roze_btree_set_last(int64_t s_val) {
+    if (!s_val) return 0;
+    RozeBTreeSet* s = (RozeBTreeSet*)s_val;
+    return __roze_btree_map_last_key((int64_t)s->map);
+}
+
+int64_t __roze_btree_set_to_list(int64_t s_val) {
+    if (!s_val) return __roze_list_new();
+    RozeBTreeSet* s = (RozeBTreeSet*)s_val;
+    return __roze_btree_map_keys((int64_t)s->map);
+}
+
+void __roze_btree_set_clear(int64_t s_val) {
+    if (!s_val) return;
+    RozeBTreeSet* s = (RozeBTreeSet*)s_val;
+    __roze_btree_map_clear((int64_t)s->map);
+}
+
+// -------------------------------------------------------------
+// 4. BinaryHeap (Max-Heap Priority Queue)
+// -------------------------------------------------------------
+
+typedef struct {
+    int64_t refcount;
+    int64_t* data;
+    int64_t count;
+    int64_t capacity;
+} RozeBinaryHeap;
+
+int64_t __roze_binary_heap_new(void) {
+    RozeBinaryHeap* h = (RozeBinaryHeap*)malloc(sizeof(RozeBinaryHeap));
+    h->refcount = 1;
+    h->capacity = 8;
+    h->data = (int64_t*)malloc(sizeof(int64_t) * 8);
+    h->count = 0;
+    return (int64_t)h;
+}
+
+void __roze_binary_heap_retain(int64_t h_val) {
+    if (!h_val) return;
+    RozeBinaryHeap* h = (RozeBinaryHeap*)h_val;
+    __atomic_fetch_add(&h->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_binary_heap_release(int64_t h_val) {
+    if (!h_val) return;
+    RozeBinaryHeap* h = (RozeBinaryHeap*)h_val;
+    if (__atomic_fetch_sub(&h->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        if (h->data) free(h->data);
+        free(h);
+    }
+}
+
+void __roze_binary_heap_push(int64_t h_val, int64_t val) {
+    if (!h_val) return;
+    RozeBinaryHeap* h = (RozeBinaryHeap*)h_val;
+    if (h->count >= h->capacity) {
+        h->capacity = h->capacity ? h->capacity * 2 : 8;
+        h->data = (int64_t*)realloc(h->data, sizeof(int64_t) * h->capacity);
+    }
+    int64_t i = h->count;
+    h->data[i] = val;
+    h->count++;
+    // sift-up
+    while (i > 0) {
+        int64_t parent = (i - 1) / 2;
+        if (h->data[i] > h->data[parent]) {
+            int64_t tmp = h->data[i];
+            h->data[i] = h->data[parent];
+            h->data[parent] = tmp;
+            i = parent;
+        } else {
+            break;
+        }
+    }
+}
+
+int64_t __roze_binary_heap_pop(int64_t h_val) {
+    if (!h_val) return 0;
+    RozeBinaryHeap* h = (RozeBinaryHeap*)h_val;
+    if (h->count == 0) return 0;
+    int64_t top = h->data[0];
+    h->count--;
+    h->data[0] = h->data[h->count];
+    // sift-down
+    int64_t i = 0;
+    while (2 * i + 1 < h->count) {
+        int64_t left = 2 * i + 1;
+        int64_t right = 2 * i + 2;
+        int64_t largest = (right < h->count && h->data[right] > h->data[left]) ? right : left;
+        if (h->data[largest] > h->data[i]) {
+            int64_t tmp = h->data[i];
+            h->data[i] = h->data[largest];
+            h->data[largest] = tmp;
+            i = largest;
+        } else {
+            break;
+        }
+    }
+    return top;
+}
+
+int64_t __roze_binary_heap_peek(int64_t h_val) {
+    if (!h_val) return 0;
+    RozeBinaryHeap* h = (RozeBinaryHeap*)h_val;
+    return (h->count > 0) ? h->data[0] : 0;
+}
+
+int64_t __roze_binary_heap_len(int64_t h_val) {
+    if (!h_val) return 0;
+    RozeBinaryHeap* h = (RozeBinaryHeap*)h_val;
+    return h->count;
+}
+
+int64_t __roze_binary_heap_is_empty(int64_t h_val) {
+    if (!h_val) return 1;
+    RozeBinaryHeap* h = (RozeBinaryHeap*)h_val;
+    return h->count == 0;
+}
+
+void __roze_binary_heap_clear(int64_t h_val) {
+    if (!h_val) return;
+    RozeBinaryHeap* h = (RozeBinaryHeap*)h_val;
+    h->count = 0;
+}
+
+// -------------------------------------------------------------
+// 5. IndexMap (Insertion-Ordered Hash Map with Indexed Access)
+// -------------------------------------------------------------
+
+typedef struct {
+    int64_t key;
+    int64_t value;
+} RozeIndexEntry;
+
+typedef struct {
+    int64_t refcount;
+    RozeIndexEntry* entries;
+    int64_t count;
+    int64_t entry_capacity;
+    int64_t* buckets;
+    int64_t bucket_capacity;
+    int is_str_key;
+} RozeIndexMap;
+
+static int64_t index_map_find(RozeIndexMap* m, int64_t key) {
+    if (m->count == 0 || m->bucket_capacity == 0) return -1;
+    uint64_t h = roze_hash_key(key, m->is_str_key);
+    int64_t mask = m->bucket_capacity - 1;
+    int64_t idx = (int64_t)(h & (uint64_t)mask);
+    while (m->buckets[idx] != -1) {
+        int64_t e_idx = m->buckets[idx];
+        if (roze_compare_keys(m->entries[e_idx].key, key, m->is_str_key) == 0) {
+            return e_idx;
+        }
+        idx = (idx + 1) & mask;
+    }
+    return -1;
+}
+
+static void index_map_rehash(RozeIndexMap* m) {
+    int64_t new_cap = m->bucket_capacity * 2;
+    int64_t* new_b = (int64_t*)malloc(sizeof(int64_t) * new_cap);
+    memset(new_b, -1, sizeof(int64_t) * new_cap);
+    int64_t mask = new_cap - 1;
+    for (int64_t i = 0; i < m->count; i++) {
+        uint64_t h = roze_hash_key(m->entries[i].key, m->is_str_key);
+        int64_t idx = (int64_t)(h & (uint64_t)mask);
+        while (new_b[idx] != -1) {
+            idx = (idx + 1) & mask;
+        }
+        new_b[idx] = i;
+    }
+    free(m->buckets);
+    m->buckets = new_b;
+    m->bucket_capacity = new_cap;
+}
+
+int64_t __roze_index_map_new(void) {
+    RozeIndexMap* m = (RozeIndexMap*)malloc(sizeof(RozeIndexMap));
+    m->refcount = 1;
+    m->count = 0;
+    m->entry_capacity = 16;
+    m->entries = (RozeIndexEntry*)malloc(sizeof(RozeIndexEntry) * 16);
+    m->bucket_capacity = 32;
+    m->buckets = (int64_t*)malloc(sizeof(int64_t) * 32);
+    memset(m->buckets, -1, sizeof(int64_t) * 32);
+    m->is_str_key = 0;
+    return (int64_t)m;
+}
+
+int64_t __roze_index_map_new_str(void) {
+    RozeIndexMap* m = (RozeIndexMap*)malloc(sizeof(RozeIndexMap));
+    m->refcount = 1;
+    m->count = 0;
+    m->entry_capacity = 16;
+    m->entries = (RozeIndexEntry*)malloc(sizeof(RozeIndexEntry) * 16);
+    m->bucket_capacity = 32;
+    m->buckets = (int64_t*)malloc(sizeof(int64_t) * 32);
+    memset(m->buckets, -1, sizeof(int64_t) * 32);
+    m->is_str_key = 1;
+    return (int64_t)m;
+}
+
+void __roze_index_map_retain(int64_t m_val) {
+    if (!m_val) return;
+    RozeIndexMap* m = (RozeIndexMap*)m_val;
+    __atomic_fetch_add(&m->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_index_map_release(int64_t m_val) {
+    if (!m_val) return;
+    RozeIndexMap* m = (RozeIndexMap*)m_val;
+    if (__atomic_fetch_sub(&m->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        if (m->entries) free(m->entries);
+        if (m->buckets) free(m->buckets);
+        free(m);
+    }
+}
+
+void __roze_index_map_insert(int64_t m_val, int64_t key, int64_t value) {
+    if (!m_val) return;
+    RozeIndexMap* m = (RozeIndexMap*)m_val;
+    int64_t existing = index_map_find(m, key);
+    if (existing != -1) {
+        m->entries[existing].value = value;
+        return;
+    }
+    if (m->count >= m->entry_capacity) {
+        m->entry_capacity *= 2;
+        m->entries = (RozeIndexEntry*)realloc(m->entries, sizeof(RozeIndexEntry) * m->entry_capacity);
+    }
+    if ((double)m->count >= (double)m->bucket_capacity * 0.70) {
+        index_map_rehash(m);
+    }
+    int64_t e_idx = m->count;
+    m->entries[e_idx].key = key;
+    m->entries[e_idx].value = value;
+    m->count++;
+
+    uint64_t h = roze_hash_key(key, m->is_str_key);
+    int64_t mask = m->bucket_capacity - 1;
+    int64_t idx = (int64_t)(h & (uint64_t)mask);
+    while (m->buckets[idx] != -1) {
+        idx = (idx + 1) & mask;
+    }
+    m->buckets[idx] = e_idx;
+}
+
+int64_t __roze_index_map_get(int64_t m_val, int64_t key) {
+    if (!m_val) return 0;
+    RozeIndexMap* m = (RozeIndexMap*)m_val;
+    int64_t idx = index_map_find(m, key);
+    return (idx != -1) ? m->entries[idx].value : 0;
+}
+
+int64_t __roze_index_map_get_index_key(int64_t m_val, int64_t idx) {
+    if (!m_val) return 0;
+    RozeIndexMap* m = (RozeIndexMap*)m_val;
+    return (idx >= 0 && idx < m->count) ? m->entries[idx].key : 0;
+}
+
+int64_t __roze_index_map_get_index_value(int64_t m_val, int64_t idx) {
+    if (!m_val) return 0;
+    RozeIndexMap* m = (RozeIndexMap*)m_val;
+    return (idx >= 0 && idx < m->count) ? m->entries[idx].value : 0;
+}
+
+int64_t __roze_index_map_contains_key(int64_t m_val, int64_t key) {
+    if (!m_val) return 0;
+    RozeIndexMap* m = (RozeIndexMap*)m_val;
+    return index_map_find(m, key) != -1;
+}
+
+int64_t __roze_index_map_remove(int64_t m_val, int64_t key) {
+    if (!m_val) return 0;
+    RozeIndexMap* m = (RozeIndexMap*)m_val;
+    int64_t e_idx = index_map_find(m, key);
+    if (e_idx == -1) return 0;
+    int64_t old_val = m->entries[e_idx].value;
+    for (int64_t i = e_idx; i < m->count - 1; i++) {
+        m->entries[i] = m->entries[i + 1];
+    }
+    m->count--;
+    // rebuild buckets to reflect shifted entry indices
+    memset(m->buckets, -1, sizeof(int64_t) * m->bucket_capacity);
+    int64_t mask = m->bucket_capacity - 1;
+    for (int64_t i = 0; i < m->count; i++) {
+        uint64_t h = roze_hash_key(m->entries[i].key, m->is_str_key);
+        int64_t idx = (int64_t)(h & (uint64_t)mask);
+        while (m->buckets[idx] != -1) {
+            idx = (idx + 1) & mask;
+        }
+        m->buckets[idx] = i;
+    }
+    return old_val;
+}
+
+int64_t __roze_index_map_len(int64_t m_val) {
+    if (!m_val) return 0;
+    RozeIndexMap* m = (RozeIndexMap*)m_val;
+    return m->count;
+}
+
+int64_t __roze_index_map_is_empty(int64_t m_val) {
+    if (!m_val) return 1;
+    RozeIndexMap* m = (RozeIndexMap*)m_val;
+    return m->count == 0;
+}
+
+int64_t __roze_index_map_keys(int64_t m_val) {
+    int64_t list = __roze_list_new();
+    if (m_val) {
+        RozeIndexMap* m = (RozeIndexMap*)m_val;
+        for (int64_t i = 0; i < m->count; i++) {
+            __roze_list_push(list, m->entries[i].key);
+        }
+    }
+    return list;
+}
+
+int64_t __roze_index_map_values(int64_t m_val) {
+    int64_t list = __roze_list_new();
+    if (m_val) {
+        RozeIndexMap* m = (RozeIndexMap*)m_val;
+        for (int64_t i = 0; i < m->count; i++) {
+            __roze_list_push(list, m->entries[i].value);
+        }
+    }
+    return list;
+}
+
+void __roze_index_map_clear(int64_t m_val) {
+    if (!m_val) return;
+    RozeIndexMap* m = (RozeIndexMap*)m_val;
+    m->count = 0;
+    memset(m->buckets, -1, sizeof(int64_t) * m->bucket_capacity);
+}
+
+// -------------------------------------------------------------
+// 6. RingBuffer (Fixed-Capacity Circular Buffer)
+// -------------------------------------------------------------
+
+typedef struct {
+    int64_t refcount;
+    int64_t* buffer;
+    int64_t capacity;
+    int64_t head;
+    int64_t count;
+} RozeRingBuffer;
+
+int64_t __roze_ring_buffer_new(int64_t capacity) {
+    if (capacity <= 0) capacity = 16;
+    RozeRingBuffer* rb = (RozeRingBuffer*)malloc(sizeof(RozeRingBuffer));
+    rb->refcount = 1;
+    rb->capacity = capacity;
+    rb->buffer = (int64_t*)malloc(sizeof(int64_t) * capacity);
+    rb->head = 0;
+    rb->count = 0;
+    return (int64_t)rb;
+}
+
+void __roze_ring_buffer_retain(int64_t rb_val) {
+    if (!rb_val) return;
+    RozeRingBuffer* rb = (RozeRingBuffer*)rb_val;
+    __atomic_fetch_add(&rb->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_ring_buffer_release(int64_t rb_val) {
+    if (!rb_val) return;
+    RozeRingBuffer* rb = (RozeRingBuffer*)rb_val;
+    if (__atomic_fetch_sub(&rb->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        if (rb->buffer) free(rb->buffer);
+        free(rb);
+    }
+}
+
+int64_t __roze_ring_buffer_push(int64_t rb_val, int64_t val) {
+    if (!rb_val) return 0;
+    RozeRingBuffer* rb = (RozeRingBuffer*)rb_val;
+    if (rb->count >= rb->capacity) return 0; // full
+    rb->buffer[(rb->head + rb->count) % rb->capacity] = val;
+    rb->count++;
+    return 1;
+}
+
+void __roze_ring_buffer_push_overwrite(int64_t rb_val, int64_t val) {
+    if (!rb_val) return;
+    RozeRingBuffer* rb = (RozeRingBuffer*)rb_val;
+    if (rb->count >= rb->capacity) {
+        rb->buffer[rb->head] = val;
+        rb->head = (rb->head + 1) % rb->capacity;
+    } else {
+        rb->buffer[(rb->head + rb->count) % rb->capacity] = val;
+        rb->count++;
+    }
+}
+
+int64_t __roze_ring_buffer_pop(int64_t rb_val) {
+    if (!rb_val) return 0;
+    RozeRingBuffer* rb = (RozeRingBuffer*)rb_val;
+    if (rb->count == 0) return 0;
+    int64_t val = rb->buffer[rb->head];
+    rb->head = (rb->head + 1) % rb->capacity;
+    rb->count--;
+    return val;
+}
+
+int64_t __roze_ring_buffer_peek(int64_t rb_val) {
+    if (!rb_val) return 0;
+    RozeRingBuffer* rb = (RozeRingBuffer*)rb_val;
+    return (rb->count > 0) ? rb->buffer[rb->head] : 0;
+}
+
+int64_t __roze_ring_buffer_len(int64_t rb_val) {
+    if (!rb_val) return 0;
+    RozeRingBuffer* rb = (RozeRingBuffer*)rb_val;
+    return rb->count;
+}
+
+int64_t __roze_ring_buffer_capacity(int64_t rb_val) {
+    if (!rb_val) return 0;
+    RozeRingBuffer* rb = (RozeRingBuffer*)rb_val;
+    return rb->capacity;
+}
+
+int64_t __roze_ring_buffer_is_empty(int64_t rb_val) {
+    if (!rb_val) return 1;
+    RozeRingBuffer* rb = (RozeRingBuffer*)rb_val;
+    return rb->count == 0;
+}
+
+int64_t __roze_ring_buffer_is_full(int64_t rb_val) {
+    if (!rb_val) return 0;
+    RozeRingBuffer* rb = (RozeRingBuffer*)rb_val;
+    return rb->count >= rb->capacity;
+}
+
+void __roze_ring_buffer_clear(int64_t rb_val) {
+    if (!rb_val) return;
+    RozeRingBuffer* rb = (RozeRingBuffer*)rb_val;
+    rb->head = 0;
+    rb->count = 0;
+}
+
+// -------------------------------------------------------------
+// 7. BitSet (Dense 64-Bit Word Bit Vector)
+// -------------------------------------------------------------
+
+typedef struct {
+    int64_t refcount;
+    uint64_t* words;
+    int64_t num_words;
+} RozeBitSet;
+
+static void bit_set_ensure_word(RozeBitSet* bs, int64_t word_idx) {
+    if (word_idx >= bs->num_words) {
+        int64_t new_words = word_idx + 4;
+        uint64_t* new_arr = (uint64_t*)realloc(bs->words, sizeof(uint64_t) * new_words);
+        for (int64_t i = bs->num_words; i < new_words; i++) {
+            new_arr[i] = 0;
+        }
+        bs->words = new_arr;
+        bs->num_words = new_words;
+    }
+}
+
+int64_t __roze_bit_set_new(void) {
+    RozeBitSet* bs = (RozeBitSet*)malloc(sizeof(RozeBitSet));
+    bs->refcount = 1;
+    bs->num_words = 1;
+    bs->words = (uint64_t*)calloc(1, sizeof(uint64_t));
+    return (int64_t)bs;
+}
+
+int64_t __roze_bit_set_with_capacity(int64_t num_bits) {
+    int64_t words = (num_bits > 0) ? (num_bits + 63) / 64 : 1;
+    if (words <= 0) words = 1;
+    RozeBitSet* bs = (RozeBitSet*)malloc(sizeof(RozeBitSet));
+    bs->refcount = 1;
+    bs->num_words = words;
+    bs->words = (uint64_t*)calloc(words, sizeof(uint64_t));
+    return (int64_t)bs;
+}
+
+void __roze_bit_set_retain(int64_t bs_val) {
+    if (!bs_val) return;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    __atomic_fetch_add(&bs->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_bit_set_release(int64_t bs_val) {
+    if (!bs_val) return;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    if (__atomic_fetch_sub(&bs->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        if (bs->words) free(bs->words);
+        free(bs);
+    }
+}
+
+void __roze_bit_set_set(int64_t bs_val, int64_t idx) {
+    if (!bs_val || idx < 0) return;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    int64_t w_idx = idx / 64;
+    bit_set_ensure_word(bs, w_idx);
+    bs->words[w_idx] |= (1ULL << (idx % 64));
+}
+
+void __roze_bit_set_clear_bit(int64_t bs_val, int64_t idx) {
+    if (!bs_val || idx < 0) return;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    int64_t w_idx = idx / 64;
+    if (w_idx >= bs->num_words) return;
+    bs->words[w_idx] &= ~(1ULL << (idx % 64));
+}
+
+int64_t __roze_bit_set_test(int64_t bs_val, int64_t idx) {
+    if (!bs_val || idx < 0) return 0;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    int64_t w_idx = idx / 64;
+    if (w_idx >= bs->num_words) return 0;
+    return (bs->words[w_idx] >> (idx % 64)) & 1ULL;
+}
+
+void __roze_bit_set_flip(int64_t bs_val, int64_t idx) {
+    if (!bs_val || idx < 0) return;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    int64_t w_idx = idx / 64;
+    bit_set_ensure_word(bs, w_idx);
+    bs->words[w_idx] ^= (1ULL << (idx % 64));
+}
+
+int64_t __roze_bit_set_count_ones(int64_t bs_val) {
+    if (!bs_val) return 0;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    int64_t total = 0;
+    for (int64_t i = 0; i < bs->num_words; i++) {
+        total += __builtin_popcountll(bs->words[i]);
+    }
+    return total;
+}
+
+int64_t __roze_bit_set_len(int64_t bs_val) {
+    if (!bs_val) return 0;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    return bs->num_words * 64;
+}
+
+int64_t __roze_bit_set_is_empty(int64_t bs_val) {
+    if (!bs_val) return 1;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    for (int64_t i = 0; i < bs->num_words; i++) {
+        if (bs->words[i] != 0) return 0;
+    }
+    return 1;
+}
+
+void __roze_bit_set_union(int64_t bs_val, int64_t other_val) {
+    if (!bs_val || !other_val) return;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    RozeBitSet* other = (RozeBitSet*)other_val;
+    if (other->num_words > bs->num_words) {
+        bit_set_ensure_word(bs, other->num_words - 1);
+    }
+    for (int64_t i = 0; i < other->num_words; i++) {
+        bs->words[i] |= other->words[i];
+    }
+}
+
+void __roze_bit_set_intersect(int64_t bs_val, int64_t other_val) {
+    if (!bs_val || !other_val) return;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    RozeBitSet* other = (RozeBitSet*)other_val;
+    int64_t min_w = (bs->num_words < other->num_words) ? bs->num_words : other->num_words;
+    for (int64_t i = 0; i < min_w; i++) {
+        bs->words[i] &= other->words[i];
+    }
+    for (int64_t i = min_w; i < bs->num_words; i++) {
+        bs->words[i] = 0;
+    }
+}
+
+void __roze_bit_set_difference(int64_t bs_val, int64_t other_val) {
+    if (!bs_val || !other_val) return;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    RozeBitSet* other = (RozeBitSet*)other_val;
+    int64_t min_w = (bs->num_words < other->num_words) ? bs->num_words : other->num_words;
+    for (int64_t i = 0; i < min_w; i++) {
+        bs->words[i] &= ~(other->words[i]);
+    }
+}
+
+void __roze_bit_set_clear(int64_t bs_val) {
+    if (!bs_val) return;
+    RozeBitSet* bs = (RozeBitSet*)bs_val;
+    memset(bs->words, 0, sizeof(uint64_t) * bs->num_words);
+}
+
+
 

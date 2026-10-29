@@ -1,0 +1,56 @@
+// stdlib/src/memory.roze
+//
+// Roze Pluggable Allocator API & Smart Pointers (M2-T04)
+// Provides:
+//   - Box<T>: Unique ownership heap-allocated pointer.
+//   - Arc<T>: Atomically reference-counted thread-safe pointer with weak references.
+//   - Weak<T>: Non-owning weak pointer with cyclic reference avoidance and expiry detection.
+//   - BumpAllocator: High-throughput linear allocator with cache alignment.
+//   - ArenaAllocator: Chunked arena allocator with bulk reset and deallocation.
+//   - PoolAllocator: Fixed-size block pool allocator with O(1) allocation and deallocation.
+//   - align_to(value, align): Align integer or pointer to power-of-two alignment boundary.
+//   - cache_line_size(): CPU cache line size (64 bytes).
+//
+// Full parity with Rust Allocator API and modern C++ PMR (Polymorphic Memory Resources).
+
+// ---- Allocator Interface ----
+trait Allocator {
+    func alloc(size: int) -> int;
+    func dealloc(ptr: int) -> void;
+    func reset() -> void;
+}
+
+// ---- Smart Pointer Factory Functions ----
+func new_box<T>(val: T) -> Box<T> {
+    return box_new(val);
+}
+
+func new_arc<T>(val: T) -> Arc<T> {
+    return arc_new(val);
+}
+
+func new_weak<T>() -> Weak<T> {
+    return weak_new();
+}
+
+// ---- Allocator Factory Functions ----
+func new_bump_allocator(capacity: int) -> BumpAllocator {
+    return bump_allocator_new(capacity);
+}
+
+func new_arena_allocator(chunk_size: int) -> ArenaAllocator {
+    return arena_allocator_new(chunk_size);
+}
+
+func new_pool_allocator(block_size: int, block_count: int) -> PoolAllocator {
+    return pool_allocator_new(block_size, block_count);
+}
+
+// ---- Cache Alignment Helpers ----
+func align_address(addr: int, align: int) -> int {
+    return align_to(addr, align);
+}
+
+func get_cache_line_size() -> int {
+    return cache_line_size();
+}

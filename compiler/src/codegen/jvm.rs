@@ -3511,6 +3511,448 @@ const COLLECTIONS_HELPER_METHODS: &str = r#"
     private static void bit_set_clear(Object bs) { ((RozeBitSet) bs).clear(); }
 "#;
 
+// ==================== Memory & Smart Pointers (M2-T04) ====================
+const MEMORY_HELPER_CLASSES: &str = r#"
+class RozeMemory {
+    private static final java.util.concurrent.atomic.AtomicInteger NEXT_PTR = new java.util.concurrent.atomic.AtomicInteger(0x10000);
+
+    public static int alloc(int size) {
+        if (size <= 0) size = 1;
+        size = (size + 7) & ~7;
+        return NEXT_PTR.getAndAdd(size);
+    }
+
+    public static void free(int ptr) {}
+}
+
+class RozeBox {
+    private Object value;
+    private static final java.util.concurrent.ConcurrentHashMap<Integer, RozeBox> RAW_BOX_MAP = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.atomic.AtomicInteger RAW_BOX_ID = new java.util.concurrent.atomic.AtomicInteger(1000000);
+
+    public RozeBox(Object value) {
+        this.value = value;
+    }
+
+    public Object get() {
+        return this.value;
+    }
+
+    public void set(Object value) {
+        this.value = value;
+    }
+
+    public int intoRaw() {
+        int id = RAW_BOX_ID.incrementAndGet();
+        RAW_BOX_MAP.put(id, this);
+        return id;
+    }
+
+    public static RozeBox fromRaw(int id) {
+        RozeBox b = RAW_BOX_MAP.get(id);
+        return b != null ? b : new RozeBox(null);
+    }
+
+    @Override
+    public String toString() {
+        return "Box(" + String.valueOf(value) + ")";
+    }
+}
+
+class RozeArcControlBlock {
+    Object value;
+    final java.util.concurrent.atomic.AtomicInteger strongCount = new java.util.concurrent.atomic.AtomicInteger(1);
+    final java.util.concurrent.atomic.AtomicInteger weakCount = new java.util.concurrent.atomic.AtomicInteger(0);
+    volatile boolean isDropped = false;
+
+    public RozeArcControlBlock(Object value) {
+        this.value = value;
+    }
+}
+
+class RozeWeak {
+    final RozeArcControlBlock ctrl;
+
+    public RozeWeak(RozeArcControlBlock ctrl) {
+        this.ctrl = ctrl;
+    }
+
+    public RozeWeak() {
+        this.ctrl = null;
+    }
+
+    public int strongCount() {
+        return (ctrl == null || ctrl.isDropped) ? 0 : ctrl.strongCount.get();
+    }
+
+    public int weakCount() {
+        return ctrl == null ? 0 : ctrl.weakCount.get();
+    }
+
+    public boolean isExpired() {
+        return ctrl == null || ctrl.isDropped || ctrl.strongCount.get() <= 0;
+    }
+
+    public boolean isAlive() {
+        return !isExpired();
+    }
+
+    public RozeArc upgrade() {
+        if (ctrl == null) return null;
+        while (true) {
+            int count = ctrl.strongCount.get();
+            if (count <= 0 || ctrl.isDropped) return null;
+            if (ctrl.strongCount.compareAndSet(count, count + 1)) {
+                return new RozeArc(ctrl);
+            }
+        }
+    }
+
+    @Override
+    public String toString() {
+        return isAlive() ? ("Weak(strong=" + strongCount() + ", weak=" + weakCount() + ")") : "Weak(expired)";
+    }
+}
+
+class RozeArc {
+    final RozeArcControlBlock ctrl;
+
+    public RozeArc(RozeArcControlBlock ctrl) {
+        this.ctrl = ctrl;
+    }
+
+    public RozeArc(Object value) {
+        this.ctrl = new RozeArcControlBlock(value);
+    }
+
+    public Object get() {
+        return ctrl != null ? ctrl.value : null;
+    }
+
+    public RozeArc cloneArc() {
+        if (ctrl != null) {
+            ctrl.strongCount.incrementAndGet();
+        }
+        return new RozeArc(ctrl);
+    }
+
+    public int strongCount() {
+        return ctrl != null ? ctrl.strongCount.get() : 0;
+    }
+
+    public int weakCount() {
+        return ctrl != null ? ctrl.weakCount.get() : 0;
+    }
+
+    public RozeWeak downgrade() {
+        if (ctrl != null) {
+            ctrl.weakCount.incrementAndGet();
+        }
+        return new RozeWeak(ctrl);
+    }
+
+    @Override
+    public String toString() {
+        return "Arc(" + String.valueOf(get()) + ")";
+    }
+}
+
+class RozeBumpAllocator {
+    private final int baseAddress;
+    private final int capacity;
+    private int offset;
+
+    public RozeBumpAllocator(int capacity) {
+        this.capacity = capacity > 0 ? capacity : 65536;
+        this.baseAddress = RozeMemory.alloc(this.capacity);
+        this.offset = 0;
+    }
+
+    public RozeBumpAllocator() {
+        this(65536);
+    }
+
+    public int alloc(int size) {
+        return allocAligned(size, 8);
+    }
+
+    public int allocAligned(int size, int alignment) {
+        if (size <= 0) return 0;
+        if (alignment < 1) alignment = 1;
+        int current = baseAddress + offset;
+        int aligned = (current + alignment - 1) & ~(alignment - 1);
+        int padding = aligned - current;
+        if (offset + padding + size > capacity) return 0;
+        offset += padding + size;
+        return aligned;
+    }
+
+    public void reset() {
+        offset = 0;
+    }
+
+    public int allocatedBytes() {
+        return offset;
+    }
+
+    public int remainingBytes() {
+        return capacity - offset;
+    }
+
+    public int capacity() {
+        return capacity;
+    }
+
+    public boolean isEmpty() {
+        return offset == 0;
+    }
+
+    @Override
+    public String toString() {
+        return "BumpAllocator(allocated=" + offset + ", capacity=" + capacity + ")";
+    }
+}
+
+class RozeArenaChunk {
+    RozeArenaChunk next;
+    final int memory;
+    final int capacity;
+    int offset;
+
+    public RozeArenaChunk(int capacity) {
+        this.next = null;
+        this.capacity = capacity;
+        this.memory = RozeMemory.alloc(capacity);
+        this.offset = 0;
+    }
+}
+
+class RozeArenaAllocator {
+    private final int defaultChunkSize;
+    private final RozeArenaChunk head;
+    private RozeArenaChunk current;
+    private int chunkCount;
+    private int totalAllocated;
+
+    public RozeArenaAllocator(int chunkSize) {
+        this.defaultChunkSize = chunkSize > 0 ? chunkSize : 4096;
+        this.head = new RozeArenaChunk(this.defaultChunkSize);
+        this.current = this.head;
+        this.chunkCount = 1;
+        this.totalAllocated = 0;
+    }
+
+    public RozeArenaAllocator() {
+        this(4096);
+    }
+
+    public int alloc(int size) {
+        return allocAligned(size, 8);
+    }
+
+    public int allocAligned(int size, int alignment) {
+        if (size <= 0) return 0;
+        if (alignment < 1) alignment = 1;
+
+        RozeArenaChunk cur = this.current;
+        int currentAddr = cur.memory + cur.offset;
+        int alignedAddr = (currentAddr + alignment - 1) & ~(alignment - 1);
+        int padding = alignedAddr - currentAddr;
+
+        if (cur.offset + padding + size <= cur.capacity) {
+            cur.offset += padding + size;
+            totalAllocated += padding + size;
+            return alignedAddr;
+        }
+
+        int newCap = defaultChunkSize > (size + alignment) ? defaultChunkSize : (size + alignment * 2);
+        RozeArenaChunk newChunk = new RozeArenaChunk(newCap);
+        cur.next = newChunk;
+        this.current = newChunk;
+        this.chunkCount++;
+
+        currentAddr = newChunk.memory + newChunk.offset;
+        alignedAddr = (currentAddr + alignment - 1) & ~(alignment - 1);
+        padding = alignedAddr - currentAddr;
+        newChunk.offset += padding + size;
+        totalAllocated += padding + size;
+        return alignedAddr;
+    }
+
+    public void reset() {
+        RozeArenaChunk curr = head;
+        while (curr != null) {
+            curr.offset = 0;
+            curr = curr.next;
+        }
+        current = head;
+        totalAllocated = 0;
+    }
+
+    public int allocatedBytes() {
+        return totalAllocated;
+    }
+
+    public int chunkCount() {
+        return chunkCount;
+    }
+
+    public void clear() {
+        reset();
+    }
+
+    @Override
+    public String toString() {
+        return "ArenaAllocator(allocated=" + totalAllocated + ", chunks=" + chunkCount + ")";
+    }
+}
+
+class RozePoolAllocator {
+    private final int blockSize;
+    private final int capacity;
+    private final int baseAddress;
+    private final int[] freeList;
+    private int freeTop;
+
+    public RozePoolAllocator(int blockSize, int blockCount) {
+        this.blockSize = blockSize > 0 ? blockSize : 32;
+        this.capacity = blockCount > 0 ? blockCount : 64;
+        this.baseAddress = RozeMemory.alloc(this.blockSize * this.capacity);
+        this.freeList = new int[this.capacity];
+        for (int i = 0; i < this.capacity; i++) {
+            this.freeList[i] = this.baseAddress + i * this.blockSize;
+        }
+        this.freeTop = this.capacity;
+    }
+
+    public int alloc() {
+        if (freeTop <= 0) return 0;
+        freeTop--;
+        return freeList[freeTop];
+    }
+
+    public boolean dealloc(int ptr) {
+        if (ptr == 0) return false;
+        int start = baseAddress;
+        int end = start + (blockSize * capacity);
+        if (ptr < start || ptr >= end) return false;
+        if (freeTop >= capacity) return false;
+        freeList[freeTop++] = ptr;
+        return true;
+    }
+
+    public int blockSize() {
+        return blockSize;
+    }
+
+    public int capacity() {
+        return capacity;
+    }
+
+    public int availableBlocks() {
+        return freeTop;
+    }
+
+    public boolean isFull() {
+        return freeTop == 0;
+    }
+
+    public boolean isEmpty() {
+        return freeTop == capacity;
+    }
+
+    public void reset() {
+        for (int i = 0; i < capacity; i++) {
+            freeList[i] = baseAddress + i * blockSize;
+        }
+        freeTop = capacity;
+    }
+
+    @Override
+    public String toString() {
+        return "PoolAllocator(available=" + freeTop + "/" + capacity + ", blockSize=" + blockSize + ")";
+    }
+}
+"#;
+
+const MEMORY_HELPER_METHODS: &str = r#"
+    // Memory Utilities
+    private static int align_to(int val, int align) {
+        if (align <= 1) return val;
+        return (val + align - 1) & ~(align - 1);
+    }
+    private static int align_address(int val, int align) { return align_to(val, align); }
+    private static int cache_line_size() { return 64; }
+    private static int get_cache_line_size() { return 64; }
+
+    // Box<T>
+    private static RozeBox box_new(Object val) { return new RozeBox(val); }
+    private static RozeBox Box_new(Object val) { return new RozeBox(val); }
+    private static RozeBox new_box(Object val) { return new RozeBox(val); }
+    private static Object box_get(Object b) { return ((RozeBox) b).get(); }
+    private static void box_set(Object b, Object val) { ((RozeBox) b).set(val); }
+    private static int box_into_raw(Object b) { return ((RozeBox) b).intoRaw(); }
+    private static RozeBox box_from_raw(int ptr) { return RozeBox.fromRaw(ptr); }
+
+    // Arc<T>
+    private static RozeArc arc_new(Object val) { return new RozeArc(val); }
+    private static RozeArc Arc_new(Object val) { return new RozeArc(val); }
+    private static RozeArc new_arc(Object val) { return new RozeArc(val); }
+    private static Object arc_get(Object a) { return ((RozeArc) a).get(); }
+    private static RozeArc arc_clone(Object a) { return ((RozeArc) a).cloneArc(); }
+    private static int arc_strong_count(Object a) { return ((RozeArc) a).strongCount(); }
+    private static int arc_weak_count(Object a) { return ((RozeArc) a).weakCount(); }
+    private static RozeWeak arc_downgrade(Object a) { return ((RozeArc) a).downgrade(); }
+
+    // Weak<T>
+    private static RozeWeak weak_new() { return new RozeWeak(); }
+    private static RozeWeak Weak_new() { return new RozeWeak(); }
+    private static RozeWeak new_weak() { return new RozeWeak(); }
+    private static RozeArc weak_upgrade(Object w) { return ((RozeWeak) w).upgrade(); }
+    private static int weak_strong_count(Object w) { return ((RozeWeak) w).strongCount(); }
+    private static int weak_weak_count(Object w) { return ((RozeWeak) w).weakCount(); }
+    private static boolean weak_is_expired(Object w) { return ((RozeWeak) w).isExpired(); }
+    private static boolean weak_is_alive(Object w) { return ((RozeWeak) w).isAlive(); }
+
+    // BumpAllocator
+    private static RozeBumpAllocator bump_allocator_new(int cap) { return new RozeBumpAllocator(cap); }
+    private static RozeBumpAllocator BumpAllocator_new(int cap) { return new RozeBumpAllocator(cap); }
+    private static RozeBumpAllocator bump_allocator_new_default() { return new RozeBumpAllocator(); }
+    private static RozeBumpAllocator new_bump_allocator(int cap) { return new RozeBumpAllocator(cap); }
+    private static int bump_alloc(Object ba, int size) { return ((RozeBumpAllocator) ba).alloc(size); }
+    private static int bump_alloc_aligned(Object ba, int size, int align) { return ((RozeBumpAllocator) ba).allocAligned(size, align); }
+    private static void bump_reset(Object ba) { ((RozeBumpAllocator) ba).reset(); }
+    private static int bump_allocated_bytes(Object ba) { return ((RozeBumpAllocator) ba).allocatedBytes(); }
+    private static int bump_remaining_bytes(Object ba) { return ((RozeBumpAllocator) ba).remainingBytes(); }
+    private static int bump_capacity(Object ba) { return ((RozeBumpAllocator) ba).capacity(); }
+    private static boolean bump_is_empty(Object ba) { return ((RozeBumpAllocator) ba).isEmpty(); }
+
+    // ArenaAllocator
+    private static RozeArenaAllocator arena_allocator_new(int chunkSize) { return new RozeArenaAllocator(chunkSize); }
+    private static RozeArenaAllocator ArenaAllocator_new(int chunkSize) { return new RozeArenaAllocator(chunkSize); }
+    private static RozeArenaAllocator arena_allocator_new_default() { return new RozeArenaAllocator(); }
+    private static RozeArenaAllocator new_arena_allocator(int chunkSize) { return new RozeArenaAllocator(chunkSize); }
+    private static int arena_alloc(Object aa, int size) { return ((RozeArenaAllocator) aa).alloc(size); }
+    private static int arena_alloc_aligned(Object aa, int size, int align) { return ((RozeArenaAllocator) aa).allocAligned(size, align); }
+    private static void arena_reset(Object aa) { ((RozeArenaAllocator) aa).reset(); }
+    private static int arena_allocated_bytes(Object aa) { return ((RozeArenaAllocator) aa).allocatedBytes(); }
+    private static int arena_chunk_count(Object aa) { return ((RozeArenaAllocator) aa).chunkCount(); }
+    private static void arena_clear(Object aa) { ((RozeArenaAllocator) aa).clear(); }
+
+    // PoolAllocator
+    private static RozePoolAllocator pool_allocator_new(int blockSize, int blockCount) { return new RozePoolAllocator(blockSize, blockCount); }
+    private static RozePoolAllocator PoolAllocator_new(int blockSize, int blockCount) { return new RozePoolAllocator(blockSize, blockCount); }
+    private static RozePoolAllocator new_pool_allocator(int blockSize, int blockCount) { return new RozePoolAllocator(blockSize, blockCount); }
+    private static int pool_alloc(Object pa) { return ((RozePoolAllocator) pa).alloc(); }
+    private static boolean pool_dealloc(Object pa, int ptr) { return ((RozePoolAllocator) pa).dealloc(ptr); }
+    private static int pool_block_size(Object pa) { return ((RozePoolAllocator) pa).blockSize(); }
+    private static int pool_capacity(Object pa) { return ((RozePoolAllocator) pa).capacity(); }
+    private static int pool_available_blocks(Object pa) { return ((RozePoolAllocator) pa).availableBlocks(); }
+    private static boolean pool_is_full(Object pa) { return ((RozePoolAllocator) pa).isFull(); }
+    private static boolean pool_is_empty(Object pa) { return ((RozePoolAllocator) pa).isEmpty(); }
+    private static void pool_reset(Object pa) { ((RozePoolAllocator) pa).reset(); }
+"#;
+
 
 /// Returns the Java return type for a built-in Core (string/math)
 /// intrinsic, or None if `name` isn't one. Keep this in sync with
@@ -3835,6 +4277,46 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "bit_set_test" | "bit_set_is_empty" => Some("boolean"),
         "bit_set_count_ones" | "bit_set_len" => Some("long"),
 
+        // Pluggable Allocator API & Smart Pointers (M2-T04)
+        "align_to" | "align_address" => Some("int"),
+        "cache_line_size" | "get_cache_line_size" => Some("int"),
+
+        // Box<T>
+        "box_new" | "Box_new" | "new_box" => Some("RozeBox"),
+        "box_get" => Some(OBJECT_TYPE),
+        "box_set" => Some("void"),
+        "box_into_raw" => Some("int"),
+        "box_from_raw" => Some("RozeBox"),
+
+        // Arc<T> & Weak<T>
+        "arc_new" | "Arc_new" | "new_arc" => Some("RozeArc"),
+        "arc_get" => Some(OBJECT_TYPE),
+        "arc_clone" => Some("RozeArc"),
+        "arc_strong_count" | "arc_weak_count" => Some("int"),
+        "arc_downgrade" => Some("RozeWeak"),
+
+        "weak_new" | "Weak_new" | "new_weak" => Some("RozeWeak"),
+        "weak_upgrade" => Some("RozeArc"),
+        "weak_strong_count" | "weak_weak_count" => Some("int"),
+        "weak_is_expired" | "weak_is_alive" => Some("boolean"),
+
+        // BumpAllocator
+        "bump_allocator_new" | "BumpAllocator_new" | "bump_allocator_new_default" | "new_bump_allocator" => Some("RozeBumpAllocator"),
+        "bump_alloc" | "bump_alloc_aligned" | "bump_allocated_bytes" | "bump_remaining_bytes" | "bump_capacity" => Some("int"),
+        "bump_reset" => Some("void"),
+        "bump_is_empty" => Some("boolean"),
+
+        // ArenaAllocator
+        "arena_allocator_new" | "ArenaAllocator_new" | "arena_allocator_new_default" | "new_arena_allocator" => Some("RozeArenaAllocator"),
+        "arena_alloc" | "arena_alloc_aligned" | "arena_allocated_bytes" | "arena_chunk_count" => Some("int"),
+        "arena_reset" | "arena_clear" => Some("void"),
+
+        // PoolAllocator
+        "pool_allocator_new" | "PoolAllocator_new" | "new_pool_allocator" => Some("RozePoolAllocator"),
+        "pool_alloc" | "pool_block_size" | "pool_capacity" | "pool_available_blocks" => Some("int"),
+        "pool_dealloc" | "pool_is_full" | "pool_is_empty" => Some("boolean"),
+        "pool_reset" => Some("void"),
+
         _ => None,
     }
 }
@@ -3941,6 +4423,18 @@ fn java_type_name(ty: &Type) -> String {
                 "RozeRingBuffer".to_string()
             } else if base == "BitSet" || base == "bit_set" {
                 "RozeBitSet".to_string()
+            } else if base == "RozeBox" {
+                "RozeBox".to_string()
+            } else if base == "RozeArc" || base == "Arc" || base == "arc" {
+                "RozeArc".to_string()
+            } else if base == "RozeWeak" || base == "Weak" || base == "weak" {
+                "RozeWeak".to_string()
+            } else if base == "BumpAllocator" || base == "bump_allocator" {
+                "RozeBumpAllocator".to_string()
+            } else if base == "ArenaAllocator" || base == "arena_allocator" {
+                "RozeArenaAllocator".to_string()
+            } else if base == "PoolAllocator" || base == "pool_allocator" || base == "FixedBlockPoolAllocator" || base == "fixed_block_pool_allocator" {
+                "RozePoolAllocator".to_string()
             } else {
                 escape_java_identifier(&crate::semantic::specialized_name(base, type_args))
             }
@@ -4135,12 +4629,14 @@ impl JavaSourceGenerator {
         source.push_str(NUMERIC_HELPER_METHODS);
         source.push_str(SIMD_HELPER_METHODS);
         source.push_str(COLLECTIONS_HELPER_METHODS);
+        source.push_str(MEMORY_HELPER_METHODS);
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);
         source.push_str(CONCURRENCY_HELPER_CLASSES);
         source.push_str(SIMD_HELPER_CLASSES);
         source.push_str(COLLECTIONS_HELPER_CLASSES);
+        source.push_str(MEMORY_HELPER_CLASSES);
 
         for stmt in &self.program.statements {
             match stmt {
@@ -5205,6 +5701,7 @@ impl JavaSourceGenerator {
                     || function == "binary_heap_pop" || function == "binary_heap_peek"
                     || function == "index_map_get" || function == "index_map_get_index_key" || function == "index_map_get_index_value" || function == "index_map_remove"
                     || function == "ring_buffer_pop" || function == "ring_buffer_peek"
+                    || function == "box_get" || function == "arc_get"
                 ) && expr.type_ != Type::Unknown {
                     let mut call_buf = String::new();
                     self.generate_call(&mut call_buf, function, arguments)?;

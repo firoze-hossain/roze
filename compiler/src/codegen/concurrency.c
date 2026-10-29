@@ -4175,5 +4175,494 @@ void __roze_bit_set_clear(int64_t bs_val) {
     memset(bs->words, 0, sizeof(uint64_t) * bs->num_words);
 }
 
+// =============================================================
+// Pluggable Allocator API & Smart Pointers (M2-T04)
+// =============================================================
+
+static inline int64_t roze_align_to(int64_t value, int64_t align) {
+    if (align <= 1) return value;
+    return (value + align - 1) & ~(align - 1);
+}
+
+int64_t __roze_align_to(int64_t value, int64_t align) {
+    return roze_align_to(value, align);
+}
+
+int64_t __roze_cache_line_size(void) {
+    return 64;
+}
+
+// ---- Box<T> ----
+typedef struct {
+    int64_t refcount;
+    int64_t value;
+} RozeBox;
+
+int64_t __roze_box_new(int64_t val) {
+    RozeBox* b = (RozeBox*)malloc(sizeof(RozeBox));
+    if (!b) return 0;
+    b->refcount = 1;
+    b->value = val;
+    return (int64_t)b;
+}
+
+void __roze_box_retain(int64_t b_val) {
+    if (!b_val) return;
+    RozeBox* b = (RozeBox*)b_val;
+    __atomic_fetch_add(&b->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_box_release(int64_t b_val) {
+    if (!b_val) return;
+    RozeBox* b = (RozeBox*)b_val;
+    if (__atomic_fetch_sub(&b->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        free(b);
+    }
+}
+
+int64_t __roze_box_get(int64_t b_val) {
+    if (!b_val) return 0;
+    return ((RozeBox*)b_val)->value;
+}
+
+void __roze_box_set(int64_t b_val, int64_t val) {
+    if (!b_val) return;
+    ((RozeBox*)b_val)->value = val;
+}
+
+int64_t __roze_box_into_raw(int64_t b_val) {
+    return b_val;
+}
+
+int64_t __roze_box_from_raw(int64_t ptr) {
+    if (ptr) {
+        __roze_box_retain(ptr);
+    }
+    return ptr;
+}
+
+// ---- Arc<T> & Weak<T> ----
+typedef struct {
+    int64_t strong_count;
+    int64_t weak_count;
+    int64_t value;
+    int64_t is_dropped;
+} RozeArcControlBlock;
+
+int64_t __roze_arc_new(int64_t val) {
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)malloc(sizeof(RozeArcControlBlock));
+    if (!cb) return 0;
+    cb->strong_count = 1;
+    cb->weak_count = 0;
+    cb->value = val;
+    cb->is_dropped = 0;
+    return (int64_t)cb;
+}
+
+void __roze_arc_retain(int64_t a_val) {
+    if (!a_val) return;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)a_val;
+    __atomic_fetch_add(&cb->strong_count, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_arc_release(int64_t a_val) {
+    if (!a_val) return;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)a_val;
+    if (__atomic_fetch_sub(&cb->strong_count, 1, __ATOMIC_SEQ_CST) == 1) {
+        __atomic_store_n(&cb->is_dropped, 1, __ATOMIC_SEQ_CST);
+        if (__atomic_load_n(&cb->weak_count, __ATOMIC_SEQ_CST) == 0) {
+            free(cb);
+        }
+    }
+}
+
+int64_t __roze_arc_get(int64_t a_val) {
+    if (!a_val) return 0;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)a_val;
+    return cb->value;
+}
+
+int64_t __roze_arc_clone(int64_t a_val) {
+    if (!a_val) return 0;
+    __roze_arc_retain(a_val);
+    return a_val;
+}
+
+int64_t __roze_arc_strong_count(int64_t a_val) {
+    if (!a_val) return 0;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)a_val;
+    return __atomic_load_n(&cb->strong_count, __ATOMIC_SEQ_CST);
+}
+
+int64_t __roze_arc_weak_count(int64_t a_val) {
+    if (!a_val) return 0;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)a_val;
+    return __atomic_load_n(&cb->weak_count, __ATOMIC_SEQ_CST);
+}
+
+int64_t __roze_arc_downgrade(int64_t a_val) {
+    if (!a_val) return 0;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)a_val;
+    __atomic_fetch_add(&cb->weak_count, 1, __ATOMIC_SEQ_CST);
+    return a_val;
+}
+
+int64_t __roze_weak_new(void) {
+    return 0;
+}
+
+void __roze_weak_retain(int64_t w_val) {
+    if (!w_val) return;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)w_val;
+    __atomic_fetch_add(&cb->weak_count, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_weak_release(int64_t w_val) {
+    if (!w_val) return;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)w_val;
+    if (__atomic_fetch_sub(&cb->weak_count, 1, __ATOMIC_SEQ_CST) == 1) {
+        if (__atomic_load_n(&cb->strong_count, __ATOMIC_SEQ_CST) == 0) {
+            free(cb);
+        }
+    }
+}
+
+int64_t __roze_weak_upgrade(int64_t w_val) {
+    if (!w_val) return 0;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)w_val;
+    while (1) {
+        int64_t count = __atomic_load_n(&cb->strong_count, __ATOMIC_SEQ_CST);
+        if (count <= 0 || __atomic_load_n(&cb->is_dropped, __ATOMIC_SEQ_CST)) {
+            return 0; // expired
+        }
+        if (__atomic_compare_exchange_n(&cb->strong_count, &count, count + 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+            return w_val;
+        }
+    }
+}
+
+int64_t __roze_weak_strong_count(int64_t w_val) {
+    if (!w_val) return 0;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)w_val;
+    return __atomic_load_n(&cb->strong_count, __ATOMIC_SEQ_CST);
+}
+
+int64_t __roze_weak_weak_count(int64_t w_val) {
+    if (!w_val) return 0;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)w_val;
+    return __atomic_load_n(&cb->weak_count, __ATOMIC_SEQ_CST);
+}
+
+int64_t __roze_weak_is_expired(int64_t w_val) {
+    if (!w_val) return 1;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)w_val;
+    return (__atomic_load_n(&cb->strong_count, __ATOMIC_SEQ_CST) <= 0 || __atomic_load_n(&cb->is_dropped, __ATOMIC_SEQ_CST)) ? 1 : 0;
+}
+
+int64_t __roze_weak_is_alive(int64_t w_val) {
+    return __roze_weak_is_expired(w_val) ? 0 : 1;
+}
+
+// ---- BumpAllocator ----
+typedef struct {
+    int64_t refcount;
+    uint8_t* buffer;
+    int64_t capacity;
+    int64_t offset;
+} RozeBumpAllocator;
+
+int64_t __roze_bump_allocator_new(int64_t cap) {
+    RozeBumpAllocator* ba = (RozeBumpAllocator*)malloc(sizeof(RozeBumpAllocator));
+    if (!ba) return 0;
+    ba->refcount = 1;
+    ba->capacity = cap > 0 ? cap : 65536;
+    ba->buffer = (uint8_t*)malloc(ba->capacity);
+    ba->offset = 0;
+    return (int64_t)ba;
+}
+
+int64_t __roze_bump_allocator_new_default(void) {
+    return __roze_bump_allocator_new(65536);
+}
+
+void __roze_bump_allocator_retain(int64_t ba_val) {
+    if (!ba_val) return;
+    RozeBumpAllocator* ba = (RozeBumpAllocator*)ba_val;
+    __atomic_fetch_add(&ba->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_bump_allocator_release(int64_t ba_val) {
+    if (!ba_val) return;
+    RozeBumpAllocator* ba = (RozeBumpAllocator*)ba_val;
+    if (__atomic_fetch_sub(&ba->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        if (ba->buffer) free(ba->buffer);
+        free(ba);
+    }
+}
+
+int64_t __roze_bump_alloc_aligned(int64_t ba_val, int64_t size, int64_t align) {
+    if (!ba_val || size <= 0) return 0;
+    RozeBumpAllocator* ba = (RozeBumpAllocator*)ba_val;
+    if (align < 1) align = 1;
+    uintptr_t current_addr = (uintptr_t)(ba->buffer + ba->offset);
+    uintptr_t aligned_addr = (uintptr_t)roze_align_to((int64_t)current_addr, align);
+    int64_t padding = (int64_t)(aligned_addr - current_addr);
+    if (ba->offset + padding + size > ba->capacity) return 0;
+    ba->offset += padding + size;
+    return (int64_t)aligned_addr;
+}
+
+int64_t __roze_bump_alloc(int64_t ba_val, int64_t size) {
+    return __roze_bump_alloc_aligned(ba_val, size, 8);
+}
+
+void __roze_bump_reset(int64_t ba_val) {
+    if (!ba_val) return;
+    RozeBumpAllocator* ba = (RozeBumpAllocator*)ba_val;
+    ba->offset = 0;
+}
+
+int64_t __roze_bump_allocated_bytes(int64_t ba_val) {
+    if (!ba_val) return 0;
+    return ((RozeBumpAllocator*)ba_val)->offset;
+}
+
+int64_t __roze_bump_remaining_bytes(int64_t ba_val) {
+    if (!ba_val) return 0;
+    RozeBumpAllocator* ba = (RozeBumpAllocator*)ba_val;
+    return ba->capacity - ba->offset;
+}
+
+int64_t __roze_bump_capacity(int64_t ba_val) {
+    if (!ba_val) return 0;
+    return ((RozeBumpAllocator*)ba_val)->capacity;
+}
+
+int64_t __roze_bump_is_empty(int64_t ba_val) {
+    if (!ba_val) return 1;
+    return ((RozeBumpAllocator*)ba_val)->offset == 0;
+}
+
+// ---- ArenaAllocator ----
+typedef struct RozeArenaChunk {
+    struct RozeArenaChunk* next;
+    uint8_t* memory;
+    int64_t capacity;
+    int64_t offset;
+} RozeArenaChunk;
+
+typedef struct {
+    int64_t refcount;
+    RozeArenaChunk* head;
+    RozeArenaChunk* current;
+    int64_t default_chunk_size;
+    int64_t total_allocated;
+    int64_t chunk_count;
+} RozeArenaAllocator;
+
+static RozeArenaChunk* arena_chunk_create(int64_t capacity) {
+    RozeArenaChunk* chunk = (RozeArenaChunk*)malloc(sizeof(RozeArenaChunk));
+    if (!chunk) return NULL;
+    chunk->next = NULL;
+    chunk->capacity = capacity;
+    chunk->memory = (uint8_t*)malloc(capacity);
+    chunk->offset = 0;
+    return chunk;
+}
+
+int64_t __roze_arena_allocator_new(int64_t chunk_size) {
+    RozeArenaAllocator* aa = (RozeArenaAllocator*)malloc(sizeof(RozeArenaAllocator));
+    if (!aa) return 0;
+    aa->refcount = 1;
+    aa->default_chunk_size = chunk_size > 0 ? chunk_size : 4096;
+    aa->head = arena_chunk_create(aa->default_chunk_size);
+    aa->current = aa->head;
+    aa->total_allocated = 0;
+    aa->chunk_count = 1;
+    return (int64_t)aa;
+}
+
+int64_t __roze_arena_allocator_new_default(void) {
+    return __roze_arena_allocator_new(4096);
+}
+
+void __roze_arena_allocator_retain(int64_t aa_val) {
+    if (!aa_val) return;
+    RozeArenaAllocator* aa = (RozeArenaAllocator*)aa_val;
+    __atomic_fetch_add(&aa->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_arena_allocator_release(int64_t aa_val) {
+    if (!aa_val) return;
+    RozeArenaAllocator* aa = (RozeArenaAllocator*)aa_val;
+    if (__atomic_fetch_sub(&aa->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        RozeArenaChunk* curr = aa->head;
+        while (curr) {
+            RozeArenaChunk* next = curr->next;
+            if (curr->memory) free(curr->memory);
+            free(curr);
+            curr = next;
+        }
+        free(aa);
+    }
+}
+
+int64_t __roze_arena_alloc_aligned(int64_t aa_val, int64_t size, int64_t align) {
+    if (!aa_val || size <= 0) return 0;
+    RozeArenaAllocator* aa = (RozeArenaAllocator*)aa_val;
+    if (align < 1) align = 1;
+
+    RozeArenaChunk* cur = aa->current;
+    uintptr_t current_addr = (uintptr_t)(cur->memory + cur->offset);
+    uintptr_t aligned_addr = (uintptr_t)roze_align_to((int64_t)current_addr, align);
+    int64_t padding = (int64_t)(aligned_addr - current_addr);
+
+    if (cur->offset + padding + size <= cur->capacity) {
+        cur->offset += padding + size;
+        aa->total_allocated += padding + size;
+        return (int64_t)aligned_addr;
+    }
+
+    int64_t new_cap = aa->default_chunk_size > (size + align) ? aa->default_chunk_size : (size + align * 2);
+    RozeArenaChunk* new_chunk = arena_chunk_create(new_cap);
+    if (!new_chunk) return 0;
+    cur->next = new_chunk;
+    aa->current = new_chunk;
+    aa->chunk_count++;
+
+    current_addr = (uintptr_t)(new_chunk->memory + new_chunk->offset);
+    aligned_addr = (uintptr_t)roze_align_to((int64_t)current_addr, align);
+    padding = (int64_t)(aligned_addr - current_addr);
+    new_chunk->offset += padding + size;
+    aa->total_allocated += padding + size;
+    return (int64_t)aligned_addr;
+}
+
+int64_t __roze_arena_alloc(int64_t aa_val, int64_t size) {
+    return __roze_arena_alloc_aligned(aa_val, size, 8);
+}
+
+void __roze_arena_reset(int64_t aa_val) {
+    if (!aa_val) return;
+    RozeArenaAllocator* aa = (RozeArenaAllocator*)aa_val;
+    RozeArenaChunk* curr = aa->head;
+    while (curr) {
+        curr->offset = 0;
+        curr = curr->next;
+    }
+    aa->current = aa->head;
+    aa->total_allocated = 0;
+}
+
+int64_t __roze_arena_allocated_bytes(int64_t aa_val) {
+    if (!aa_val) return 0;
+    return ((RozeArenaAllocator*)aa_val)->total_allocated;
+}
+
+int64_t __roze_arena_chunk_count(int64_t aa_val) {
+    if (!aa_val) return 0;
+    return ((RozeArenaAllocator*)aa_val)->chunk_count;
+}
+
+void __roze_arena_clear(int64_t aa_val) {
+    __roze_arena_reset(aa_val);
+}
+
+// ---- PoolAllocator ----
+typedef struct {
+    int64_t refcount;
+    uint8_t* pool_memory;
+    int64_t* free_list;
+    int64_t block_size;
+    int64_t block_count;
+    int64_t free_top;
+} RozePoolAllocator;
+
+int64_t __roze_pool_allocator_new(int64_t block_size, int64_t block_count) {
+    RozePoolAllocator* pa = (RozePoolAllocator*)malloc(sizeof(RozePoolAllocator));
+    if (!pa) return 0;
+    pa->refcount = 1;
+    pa->block_size = block_size > 0 ? block_size : 32;
+    pa->block_count = block_count > 0 ? block_count : 64;
+    pa->pool_memory = (uint8_t*)malloc(pa->block_size * pa->block_count);
+    pa->free_list = (int64_t*)malloc(sizeof(int64_t) * pa->block_count);
+    for (int64_t i = 0; i < pa->block_count; i++) {
+        pa->free_list[i] = (int64_t)(pa->pool_memory + (i * pa->block_size));
+    }
+    pa->free_top = pa->block_count;
+    return (int64_t)pa;
+}
+
+void __roze_pool_allocator_retain(int64_t pa_val) {
+    if (!pa_val) return;
+    RozePoolAllocator* pa = (RozePoolAllocator*)pa_val;
+    __atomic_fetch_add(&pa->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_pool_allocator_release(int64_t pa_val) {
+    if (!pa_val) return;
+    RozePoolAllocator* pa = (RozePoolAllocator*)pa_val;
+    if (__atomic_fetch_sub(&pa->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        if (pa->free_list) free(pa->free_list);
+        if (pa->pool_memory) free(pa->pool_memory);
+        free(pa);
+    }
+}
+
+int64_t __roze_pool_alloc(int64_t pa_val) {
+    if (!pa_val) return 0;
+    RozePoolAllocator* pa = (RozePoolAllocator*)pa_val;
+    if (pa->free_top <= 0) return 0;
+    pa->free_top--;
+    return pa->free_list[pa->free_top];
+}
+
+int64_t __roze_pool_dealloc(int64_t pa_val, int64_t ptr) {
+    if (!pa_val || !ptr) return 0;
+    RozePoolAllocator* pa = (RozePoolAllocator*)pa_val;
+    uintptr_t start = (uintptr_t)pa->pool_memory;
+    uintptr_t end = start + (pa->block_size * pa->block_count);
+    if ((uintptr_t)ptr < start || (uintptr_t)ptr >= end) return 0;
+    if (pa->free_top >= pa->block_count) return 0;
+    pa->free_list[pa->free_top++] = ptr;
+    return 1;
+}
+
+int64_t __roze_pool_block_size(int64_t pa_val) {
+    if (!pa_val) return 0;
+    return ((RozePoolAllocator*)pa_val)->block_size;
+}
+
+int64_t __roze_pool_capacity(int64_t pa_val) {
+    if (!pa_val) return 0;
+    return ((RozePoolAllocator*)pa_val)->block_count;
+}
+
+int64_t __roze_pool_available_blocks(int64_t pa_val) {
+    if (!pa_val) return 0;
+    return ((RozePoolAllocator*)pa_val)->free_top;
+}
+
+int64_t __roze_pool_is_full(int64_t pa_val) {
+    if (!pa_val) return 1;
+    return ((RozePoolAllocator*)pa_val)->free_top == 0;
+}
+
+int64_t __roze_pool_is_empty(int64_t pa_val) {
+    if (!pa_val) return 1;
+    RozePoolAllocator* pa = (RozePoolAllocator*)pa_val;
+    return pa->free_top == pa->block_count;
+}
+
+void __roze_pool_reset(int64_t pa_val) {
+    if (!pa_val) return;
+    RozePoolAllocator* pa = (RozePoolAllocator*)pa_val;
+    for (int64_t i = 0; i < pa->block_count; i++) {
+        pa->free_list[i] = (int64_t)(pa->pool_memory + (i * pa->block_size));
+    }
+    pa->free_top = pa->block_count;
+}
+
+
 
 

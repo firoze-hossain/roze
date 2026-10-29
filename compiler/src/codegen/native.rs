@@ -930,6 +930,71 @@ void __roze_bit_set_intersect(long bs, long other) { (void)bs; (void)other; }
 void __roze_bit_set_difference(long bs, long other) { (void)bs; (void)other; }
 void __roze_bit_set_clear(long bs) { (void)bs; }
 
+// Pluggable Allocators & Smart Pointers Stubs (M2-T04)
+long __roze_align_to(long val, long align) { if (align <= 1) return val; return (val + align - 1) & ~(align - 1); }
+long __roze_cache_line_size(void) { return 64; }
+
+long __roze_box_new(long val) { (void)val; return 0; }
+void __roze_box_retain(long b) { (void)b; }
+void __roze_box_release(long b) { (void)b; }
+long __roze_box_get(long b) { (void)b; return 0; }
+void __roze_box_set(long b, long val) { (void)b; (void)val; }
+long __roze_box_into_raw(long b) { return b; }
+long __roze_box_from_raw(long ptr) { return ptr; }
+
+long __roze_arc_new(long val) { (void)val; return 0; }
+void __roze_arc_retain(long a) { (void)a; }
+void __roze_arc_release(long a) { (void)a; }
+long __roze_arc_get(long a) { (void)a; return 0; }
+long __roze_arc_clone(long a) { (void)a; return 0; }
+long __roze_arc_strong_count(long a) { (void)a; return 0; }
+long __roze_arc_weak_count(long a) { (void)a; return 0; }
+long __roze_arc_downgrade(long a) { (void)a; return 0; }
+
+long __roze_weak_new(void) { return 0; }
+void __roze_weak_retain(long w) { (void)w; }
+void __roze_weak_release(long w) { (void)w; }
+long __roze_weak_upgrade(long w) { (void)w; return 0; }
+long __roze_weak_strong_count(long w) { (void)w; return 0; }
+long __roze_weak_weak_count(long w) { (void)w; return 0; }
+long __roze_weak_is_expired(long w) { (void)w; return 1; }
+long __roze_weak_is_alive(long w) { (void)w; return 0; }
+
+long __roze_bump_allocator_new(long cap) { (void)cap; return 0; }
+long __roze_bump_allocator_new_default(void) { return 0; }
+void __roze_bump_allocator_retain(long ba) { (void)ba; }
+void __roze_bump_allocator_release(long ba) { (void)ba; }
+long __roze_bump_alloc(long ba, long size) { (void)ba; (void)size; return 0; }
+long __roze_bump_alloc_aligned(long ba, long size, long align) { (void)ba; (void)size; (void)align; return 0; }
+void __roze_bump_reset(long ba) { (void)ba; }
+long __roze_bump_allocated_bytes(long ba) { (void)ba; return 0; }
+long __roze_bump_remaining_bytes(long ba) { (void)ba; return 0; }
+long __roze_bump_capacity(long ba) { (void)ba; return 0; }
+long __roze_bump_is_empty(long ba) { (void)ba; return 1; }
+
+long __roze_arena_allocator_new(long chunk_size) { (void)chunk_size; return 0; }
+long __roze_arena_allocator_new_default(void) { return 0; }
+void __roze_arena_allocator_retain(long aa) { (void)aa; }
+void __roze_arena_allocator_release(long aa) { (void)aa; }
+long __roze_arena_alloc(long aa, long size) { (void)aa; (void)size; return 0; }
+long __roze_arena_alloc_aligned(long aa, long size, long align) { (void)aa; (void)size; (void)align; return 0; }
+void __roze_arena_reset(long aa) { (void)aa; }
+long __roze_arena_allocated_bytes(long aa) { (void)aa; return 0; }
+long __roze_arena_chunk_count(long aa) { (void)aa; return 0; }
+void __roze_arena_clear(long aa) { (void)aa; }
+
+long __roze_pool_allocator_new(long block_size, long block_count) { (void)block_size; (void)block_count; return 0; }
+void __roze_pool_allocator_retain(long pa) { (void)pa; }
+void __roze_pool_allocator_release(long pa) { (void)pa; }
+long __roze_pool_alloc(long pa) { (void)pa; return 0; }
+long __roze_pool_dealloc(long pa, long ptr) { (void)pa; (void)ptr; return 0; }
+long __roze_pool_block_size(long pa) { (void)pa; return 0; }
+long __roze_pool_capacity(long pa) { (void)pa; return 0; }
+long __roze_pool_available_blocks(long pa) { (void)pa; return 0; }
+long __roze_pool_is_full(long pa) { (void)pa; return 1; }
+long __roze_pool_is_empty(long pa) { (void)pa; return 1; }
+void __roze_pool_reset(long pa) { (void)pa; }
+
 // 6. Bootstrap entry point called by entry64
 __attribute__((weak))
 void __roze_main(void);
@@ -4271,6 +4336,177 @@ fn declare_collections_runtime(module: &mut ObjectModule) -> Result<CollectionsR
     })
 }
 
+pub struct MemoryRuntime {
+    // Utilities
+    pub align_to: FuncId,
+    pub cache_line_size: FuncId,
+
+    // Box<T>
+    pub box_new: FuncId,
+    pub box_retain: FuncId,
+    pub box_release: FuncId,
+    pub box_get: FuncId,
+    pub box_set: FuncId,
+    pub box_into_raw: FuncId,
+    pub box_from_raw: FuncId,
+
+    // Arc<T> & Weak<T>
+    pub arc_new: FuncId,
+    pub arc_retain: FuncId,
+    pub arc_release: FuncId,
+    pub arc_get: FuncId,
+    pub arc_clone: FuncId,
+    pub arc_strong_count: FuncId,
+    pub arc_weak_count: FuncId,
+    pub arc_downgrade: FuncId,
+
+    pub weak_new: FuncId,
+    pub weak_retain: FuncId,
+    pub weak_release: FuncId,
+    pub weak_upgrade: FuncId,
+    pub weak_strong_count: FuncId,
+    pub weak_weak_count: FuncId,
+    pub weak_is_expired: FuncId,
+    pub weak_is_alive: FuncId,
+
+    // BumpAllocator
+    pub bump_allocator_new: FuncId,
+    pub bump_allocator_new_default: FuncId,
+    pub bump_allocator_retain: FuncId,
+    pub bump_allocator_release: FuncId,
+    pub bump_alloc: FuncId,
+    pub bump_alloc_aligned: FuncId,
+    pub bump_reset: FuncId,
+    pub bump_allocated_bytes: FuncId,
+    pub bump_remaining_bytes: FuncId,
+    pub bump_capacity: FuncId,
+    pub bump_is_empty: FuncId,
+
+    // ArenaAllocator
+    pub arena_allocator_new: FuncId,
+    pub arena_allocator_new_default: FuncId,
+    pub arena_allocator_retain: FuncId,
+    pub arena_allocator_release: FuncId,
+    pub arena_alloc: FuncId,
+    pub arena_alloc_aligned: FuncId,
+    pub arena_reset: FuncId,
+    pub arena_allocated_bytes: FuncId,
+    pub arena_chunk_count: FuncId,
+    pub arena_clear: FuncId,
+
+    // PoolAllocator
+    pub pool_allocator_new: FuncId,
+    pub pool_allocator_retain: FuncId,
+    pub pool_allocator_release: FuncId,
+    pub pool_alloc: FuncId,
+    pub pool_dealloc: FuncId,
+    pub pool_block_size: FuncId,
+    pub pool_capacity: FuncId,
+    pub pool_available_blocks: FuncId,
+    pub pool_is_full: FuncId,
+    pub pool_is_empty: FuncId,
+    pub pool_reset: FuncId,
+}
+
+fn declare_memory_runtime(module: &mut ObjectModule) -> Result<MemoryRuntime> {
+    macro_rules! decl {
+        ($name:expr, $sig:expr) => {
+            module.declare_function($name, Linkage::Import, &$sig).map_err(|e| anyhow!(e.to_string()))?
+        };
+    }
+
+    let mut sig_void_to_i64 = module.make_signature();
+    sig_void_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_to_void = module.make_signature();
+    sig_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_to_i64 = module.make_signature();
+    sig_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_i64_to_void = module.make_signature();
+    sig_i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_i64_to_i64 = module.make_signature();
+    sig_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_i64_i64_to_i64 = module.make_signature();
+    sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    Ok(MemoryRuntime {
+        align_to: decl!("__roze_align_to", sig_i64_i64_to_i64),
+        cache_line_size: decl!("__roze_cache_line_size", sig_void_to_i64),
+
+        box_new: decl!("__roze_box_new", sig_i64_to_i64),
+        box_retain: decl!("__roze_box_retain", sig_i64_to_void),
+        box_release: decl!("__roze_box_release", sig_i64_to_void),
+        box_get: decl!("__roze_box_get", sig_i64_to_i64),
+        box_set: decl!("__roze_box_set", sig_i64_i64_to_void),
+        box_into_raw: decl!("__roze_box_into_raw", sig_i64_to_i64),
+        box_from_raw: decl!("__roze_box_from_raw", sig_i64_to_i64),
+
+        arc_new: decl!("__roze_arc_new", sig_i64_to_i64),
+        arc_retain: decl!("__roze_arc_retain", sig_i64_to_void),
+        arc_release: decl!("__roze_arc_release", sig_i64_to_void),
+        arc_get: decl!("__roze_arc_get", sig_i64_to_i64),
+        arc_clone: decl!("__roze_arc_clone", sig_i64_to_i64),
+        arc_strong_count: decl!("__roze_arc_strong_count", sig_i64_to_i64),
+        arc_weak_count: decl!("__roze_arc_weak_count", sig_i64_to_i64),
+        arc_downgrade: decl!("__roze_arc_downgrade", sig_i64_to_i64),
+
+        weak_new: decl!("__roze_weak_new", sig_void_to_i64),
+        weak_retain: decl!("__roze_weak_retain", sig_i64_to_void),
+        weak_release: decl!("__roze_weak_release", sig_i64_to_void),
+        weak_upgrade: decl!("__roze_weak_upgrade", sig_i64_to_i64),
+        weak_strong_count: decl!("__roze_weak_strong_count", sig_i64_to_i64),
+        weak_weak_count: decl!("__roze_weak_weak_count", sig_i64_to_i64),
+        weak_is_expired: decl!("__roze_weak_is_expired", sig_i64_to_i64),
+        weak_is_alive: decl!("__roze_weak_is_alive", sig_i64_to_i64),
+
+        bump_allocator_new: decl!("__roze_bump_allocator_new", sig_i64_to_i64),
+        bump_allocator_new_default: decl!("__roze_bump_allocator_new_default", sig_void_to_i64),
+        bump_allocator_retain: decl!("__roze_bump_allocator_retain", sig_i64_to_void),
+        bump_allocator_release: decl!("__roze_bump_allocator_release", sig_i64_to_void),
+        bump_alloc: decl!("__roze_bump_alloc", sig_i64_i64_to_i64),
+        bump_alloc_aligned: decl!("__roze_bump_alloc_aligned", sig_i64_i64_i64_to_i64),
+        bump_reset: decl!("__roze_bump_reset", sig_i64_to_void),
+        bump_allocated_bytes: decl!("__roze_bump_allocated_bytes", sig_i64_to_i64),
+        bump_remaining_bytes: decl!("__roze_bump_remaining_bytes", sig_i64_to_i64),
+        bump_capacity: decl!("__roze_bump_capacity", sig_i64_to_i64),
+        bump_is_empty: decl!("__roze_bump_is_empty", sig_i64_to_i64),
+
+        arena_allocator_new: decl!("__roze_arena_allocator_new", sig_i64_to_i64),
+        arena_allocator_new_default: decl!("__roze_arena_allocator_new_default", sig_void_to_i64),
+        arena_allocator_retain: decl!("__roze_arena_allocator_retain", sig_i64_to_void),
+        arena_allocator_release: decl!("__roze_arena_allocator_release", sig_i64_to_void),
+        arena_alloc: decl!("__roze_arena_alloc", sig_i64_i64_to_i64),
+        arena_alloc_aligned: decl!("__roze_arena_alloc_aligned", sig_i64_i64_i64_to_i64),
+        arena_reset: decl!("__roze_arena_reset", sig_i64_to_void),
+        arena_allocated_bytes: decl!("__roze_arena_allocated_bytes", sig_i64_to_i64),
+        arena_chunk_count: decl!("__roze_arena_chunk_count", sig_i64_to_i64),
+        arena_clear: decl!("__roze_arena_clear", sig_i64_to_void),
+
+        pool_allocator_new: decl!("__roze_pool_allocator_new", sig_i64_i64_to_i64),
+        pool_allocator_retain: decl!("__roze_pool_allocator_retain", sig_i64_to_void),
+        pool_allocator_release: decl!("__roze_pool_allocator_release", sig_i64_to_void),
+        pool_alloc: decl!("__roze_pool_alloc", sig_i64_to_i64),
+        pool_dealloc: decl!("__roze_pool_dealloc", sig_i64_i64_to_i64),
+        pool_block_size: decl!("__roze_pool_block_size", sig_i64_to_i64),
+        pool_capacity: decl!("__roze_pool_capacity", sig_i64_to_i64),
+        pool_available_blocks: decl!("__roze_pool_available_blocks", sig_i64_to_i64),
+        pool_is_full: decl!("__roze_pool_is_full", sig_i64_to_i64),
+        pool_is_empty: decl!("__roze_pool_is_empty", sig_i64_to_i64),
+        pool_reset: decl!("__roze_pool_reset", sig_i64_to_void),
+    })
+}
+
 /// A native class instance is a pointer to a heap block:
 ///
 ///   [0..8)          i64  refcount
@@ -4617,6 +4853,7 @@ struct NativeGenerator<'a> {
     numerics: NumericRuntime,
     simd: SimdRuntime,
     collections: CollectionsRuntime,
+    memory: MemoryRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -4703,6 +4940,7 @@ impl<'a> NativeGenerator<'a> {
         let numerics = declare_numeric_runtime(module)?;
         let simd = declare_simd_runtime(module)?;
         let collections = declare_collections_runtime(module)?;
+        let memory = declare_memory_runtime(module)?;
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
@@ -4737,6 +4975,7 @@ impl<'a> NativeGenerator<'a> {
             numerics,
             simd,
             collections,
+            memory,
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
@@ -5101,6 +5340,7 @@ impl<'a> NativeGenerator<'a> {
                     numerics: &self.numerics,
                     simd: &self.simd,
                     collections: &self.collections,
+                    memory: &self.memory,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
@@ -5223,6 +5463,7 @@ impl<'a> NativeGenerator<'a> {
                                 numerics: &self.numerics,
                                 simd: &self.simd,
                                 collections: &self.collections,
+                                memory: &self.memory,
                                 classes: &self.classes,
                                 class_retain_id: self.class_retain_id,
                                 literal_counter: &mut self.literal_counter,
@@ -5333,6 +5574,7 @@ impl<'a> NativeGenerator<'a> {
                         numerics: &self.numerics,
                         simd: &self.simd,
                         collections: &self.collections,
+                        memory: &self.memory,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
@@ -5486,6 +5728,7 @@ struct FunctionCompiler<'a, 'b> {
     numerics: &'a NumericRuntime,
     simd: &'a SimdRuntime,
     collections: &'a CollectionsRuntime,
+    memory: &'a MemoryRuntime,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -5700,6 +5943,36 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
             }
+            Type::Generic { base, .. } if base == "RozeBox" => {
+                let func_ref = self.module.declare_func_in_func(self.memory.box_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "RozeArc" || base == "Arc" || base == "arc" => {
+                let func_ref = self.module.declare_func_in_func(self.memory.arc_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "RozeWeak" || base == "Weak" || base == "weak" => {
+                let func_ref = self.module.declare_func_in_func(self.memory.weak_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "BumpAllocator" || base == "bump_allocator" => {
+                let func_ref = self.module.declare_func_in_func(self.memory.bump_allocator_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "ArenaAllocator" || base == "arena_allocator" => {
+                let func_ref = self.module.declare_func_in_func(self.memory.arena_allocator_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "PoolAllocator" || base == "pool_allocator" || base == "FixedBlockPoolAllocator" || base == "fixed_block_pool_allocator" => {
+                let func_ref = self.module.declare_func_in_func(self.memory.pool_allocator_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
             Type::Generic { .. } => self.emit_class_retain(val),
             Type::I128 => {
                 let func_ref = self.module.declare_func_in_func(self.numerics.i128_retain, self.builder.func);
@@ -5891,6 +6164,36 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             Type::Generic { base, .. } if base == "BitSet" || base == "bit_set" => {
                 let release_ref = self.module.declare_func_in_func(self.collections.bit_set_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "RozeBox" => {
+                let release_ref = self.module.declare_func_in_func(self.memory.box_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "RozeArc" || base == "Arc" || base == "arc" => {
+                let release_ref = self.module.declare_func_in_func(self.memory.arc_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "RozeWeak" || base == "Weak" || base == "weak" => {
+                let release_ref = self.module.declare_func_in_func(self.memory.weak_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "BumpAllocator" || base == "bump_allocator" => {
+                let release_ref = self.module.declare_func_in_func(self.memory.bump_allocator_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "ArenaAllocator" || base == "arena_allocator" => {
+                let release_ref = self.module.declare_func_in_func(self.memory.arena_allocator_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "PoolAllocator" || base == "pool_allocator" || base == "FixedBlockPoolAllocator" || base == "fixed_block_pool_allocator" => {
+                let release_ref = self.module.declare_func_in_func(self.memory.pool_allocator_release, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
@@ -9610,6 +9913,381 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let func_ref = self.module.declare_func_in_func(self.collections.bit_set_clear, self.builder.func);
                 self.builder.ins().call(func_ref, &[bs]);
                 self.release_if_fresh(&arguments[0], bs)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+
+            // Pluggable Allocator API & Smart Pointers (M2-T04)
+            "align_to" | "align_address" if arguments.len() == 2 => {
+                let val = self.compile_expression(&arguments[0])?;
+                let align = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.align_to, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[val, align]);
+                self.release_if_fresh(&arguments[0], val)?;
+                self.release_if_fresh(&arguments[1], align)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "cache_line_size" | "get_cache_line_size" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.memory.cache_line_size, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+
+            // Box<T>
+            "box_new" | "Box_new" | "new_box" if arguments.len() == 1 => {
+                let val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.box_new, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[val]);
+                let b = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], val)?;
+                return Ok(b);
+            }
+            "box_get" if arguments.len() == 1 => {
+                let b = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.box_get, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[b]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], b)?;
+                return Ok(res);
+            }
+            "box_set" if arguments.len() == 2 => {
+                let b = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.box_set, self.builder.func);
+                self.builder.ins().call(func_ref, &[b, val]);
+                self.release_if_fresh(&arguments[0], b)?;
+                self.release_if_fresh(&arguments[1], val)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "box_into_raw" if arguments.len() == 1 => {
+                let b = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.box_into_raw, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[b]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], b)?;
+                return Ok(res);
+            }
+            "box_from_raw" if arguments.len() == 1 => {
+                let ptr = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.box_from_raw, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ptr]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], ptr)?;
+                return Ok(res);
+            }
+
+            // Arc<T> & Weak<T>
+            "arc_new" | "Arc_new" | "new_arc" if arguments.len() == 1 => {
+                let val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arc_new, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[val]);
+                let a = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], val)?;
+                return Ok(a);
+            }
+            "arc_get" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arc_get, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(res);
+            }
+            "arc_clone" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arc_clone, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(res);
+            }
+            "arc_strong_count" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arc_strong_count, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(res);
+            }
+            "arc_weak_count" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arc_weak_count, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(res);
+            }
+            "arc_downgrade" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arc_downgrade, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(res);
+            }
+
+            "weak_new" | "Weak_new" | "new_weak" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.memory.weak_new, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "weak_upgrade" if arguments.len() == 1 => {
+                let w = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.weak_upgrade, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[w]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], w)?;
+                return Ok(res);
+            }
+            "weak_strong_count" if arguments.len() == 1 => {
+                let w = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.weak_strong_count, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[w]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], w)?;
+                return Ok(res);
+            }
+            "weak_weak_count" if arguments.len() == 1 => {
+                let w = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.weak_weak_count, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[w]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], w)?;
+                return Ok(res);
+            }
+            "weak_is_expired" if arguments.len() == 1 => {
+                let w = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.weak_is_expired, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[w]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], w)?;
+                return Ok(res);
+            }
+            "weak_is_alive" if arguments.len() == 1 => {
+                let w = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.weak_is_alive, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[w]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], w)?;
+                return Ok(res);
+            }
+
+            // BumpAllocator
+            "bump_allocator_new" | "BumpAllocator_new" | "new_bump_allocator" if arguments.len() == 1 => {
+                let cap = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.bump_allocator_new, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[cap]);
+                let ba = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], cap)?;
+                return Ok(ba);
+            }
+            "bump_allocator_new_default" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.memory.bump_allocator_new_default, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "bump_alloc" if arguments.len() == 2 => {
+                let ba = self.compile_expression(&arguments[0])?;
+                let sz = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.bump_alloc, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ba, sz]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], ba)?;
+                self.release_if_fresh(&arguments[1], sz)?;
+                return Ok(res);
+            }
+            "bump_alloc_aligned" if arguments.len() == 3 => {
+                let ba = self.compile_expression(&arguments[0])?;
+                let sz = self.compile_expression(&arguments[1])?;
+                let align = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.bump_alloc_aligned, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ba, sz, align]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], ba)?;
+                self.release_if_fresh(&arguments[1], sz)?;
+                self.release_if_fresh(&arguments[2], align)?;
+                return Ok(res);
+            }
+            "bump_reset" if arguments.len() == 1 => {
+                let ba = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.bump_reset, self.builder.func);
+                self.builder.ins().call(func_ref, &[ba]);
+                self.release_if_fresh(&arguments[0], ba)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "bump_allocated_bytes" if arguments.len() == 1 => {
+                let ba = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.bump_allocated_bytes, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ba]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], ba)?;
+                return Ok(res);
+            }
+            "bump_remaining_bytes" if arguments.len() == 1 => {
+                let ba = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.bump_remaining_bytes, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ba]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], ba)?;
+                return Ok(res);
+            }
+            "bump_capacity" if arguments.len() == 1 => {
+                let ba = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.bump_capacity, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ba]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], ba)?;
+                return Ok(res);
+            }
+            "bump_is_empty" if arguments.len() == 1 => {
+                let ba = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.bump_is_empty, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ba]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], ba)?;
+                return Ok(res);
+            }
+
+            // ArenaAllocator
+            "arena_allocator_new" | "ArenaAllocator_new" | "new_arena_allocator" if arguments.len() == 1 => {
+                let cs = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arena_allocator_new, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[cs]);
+                let aa = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], cs)?;
+                return Ok(aa);
+            }
+            "arena_allocator_new_default" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.memory.arena_allocator_new_default, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "arena_alloc" if arguments.len() == 2 => {
+                let aa = self.compile_expression(&arguments[0])?;
+                let sz = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arena_alloc, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[aa, sz]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], aa)?;
+                self.release_if_fresh(&arguments[1], sz)?;
+                return Ok(res);
+            }
+            "arena_alloc_aligned" if arguments.len() == 3 => {
+                let aa = self.compile_expression(&arguments[0])?;
+                let sz = self.compile_expression(&arguments[1])?;
+                let align = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arena_alloc_aligned, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[aa, sz, align]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], aa)?;
+                self.release_if_fresh(&arguments[1], sz)?;
+                self.release_if_fresh(&arguments[2], align)?;
+                return Ok(res);
+            }
+            "arena_reset" if arguments.len() == 1 => {
+                let aa = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arena_reset, self.builder.func);
+                self.builder.ins().call(func_ref, &[aa]);
+                self.release_if_fresh(&arguments[0], aa)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "arena_allocated_bytes" if arguments.len() == 1 => {
+                let aa = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arena_allocated_bytes, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[aa]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], aa)?;
+                return Ok(res);
+            }
+            "arena_chunk_count" if arguments.len() == 1 => {
+                let aa = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arena_chunk_count, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[aa]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], aa)?;
+                return Ok(res);
+            }
+            "arena_clear" if arguments.len() == 1 => {
+                let aa = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arena_clear, self.builder.func);
+                self.builder.ins().call(func_ref, &[aa]);
+                self.release_if_fresh(&arguments[0], aa)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+
+            // PoolAllocator
+            "pool_allocator_new" | "PoolAllocator_new" | "new_pool_allocator" if arguments.len() == 2 => {
+                let bs = self.compile_expression(&arguments[0])?;
+                let bc = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.pool_allocator_new, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[bs, bc]);
+                let pa = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], bs)?;
+                self.release_if_fresh(&arguments[1], bc)?;
+                return Ok(pa);
+            }
+            "pool_alloc" if arguments.len() == 1 => {
+                let pa = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.pool_alloc, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[pa]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], pa)?;
+                return Ok(res);
+            }
+            "pool_dealloc" if arguments.len() == 2 => {
+                let pa = self.compile_expression(&arguments[0])?;
+                let ptr = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.pool_dealloc, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[pa, ptr]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], pa)?;
+                self.release_if_fresh(&arguments[1], ptr)?;
+                return Ok(res);
+            }
+            "pool_block_size" if arguments.len() == 1 => {
+                let pa = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.pool_block_size, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[pa]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], pa)?;
+                return Ok(res);
+            }
+            "pool_capacity" if arguments.len() == 1 => {
+                let pa = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.pool_capacity, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[pa]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], pa)?;
+                return Ok(res);
+            }
+            "pool_available_blocks" if arguments.len() == 1 => {
+                let pa = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.pool_available_blocks, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[pa]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], pa)?;
+                return Ok(res);
+            }
+            "pool_is_full" if arguments.len() == 1 => {
+                let pa = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.pool_is_full, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[pa]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], pa)?;
+                return Ok(res);
+            }
+            "pool_is_empty" if arguments.len() == 1 => {
+                let pa = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.pool_is_empty, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[pa]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], pa)?;
+                return Ok(res);
+            }
+            "pool_reset" if arguments.len() == 1 => {
+                let pa = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.pool_reset, self.builder.func);
+                self.builder.ins().call(func_ref, &[pa]);
+                self.release_if_fresh(&arguments[0], pa)?;
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
             _ => {}

@@ -288,7 +288,7 @@ s1_rows = [
         ("M2-T04", 8), ("Month 2", 4), ("Sprint 3 (W05-W06)", 8), "Memory Architecture", "Pluggable Allocator API & Smart Pointers",
         "Arena Allocator, Bump Allocator, Fixed-Size Block Pool Allocator, Box<T>, Arc<T>, and Weak<T> with cyclic reference detection and cache alignment.",
         "Parity with Rust Allocator API and modern C++ polymorphic allocators (PMR).",
-        "OS Development, High-Frequency Trading, Games", "6 Days", ("High", 14), ("Planned", 12)
+        "OS Development, High-Frequency Trading, Games", "6 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M2-T05", 8), ("Month 2", 4), ("Sprint 4 (W07-W08)", 8), "Freestanding Systems", "Bare-Metal Kernel Target (--target freestanding)",

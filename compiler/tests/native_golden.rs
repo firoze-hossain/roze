@@ -3482,6 +3482,121 @@ COLLECTIONS_ALL_PASSED";
     assert_eq!(out.trim_end(), expected);
 }
 
+#[test]
+fn native_pluggable_allocators_and_smart_pointers_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("memory_management.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read memory_management.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("memory_management_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    let expected = "\
+--- Memory Utilities ---
+8
+16
+64
+64
+64
+--- Box ---
+42
+99
+99
+--- Arc & Weak ---
+100
+1
+0
+2
+1
+true
+false
+2
+100
+3
+--- BumpAllocator ---
+1024
+true
+0
+true
+false
+true
+true
+true
+true
+true
+0
+--- ArenaAllocator ---
+1
+0
+true
+1
+true
+true
+true
+0
+--- PoolAllocator ---
+32
+4
+4
+false
+true
+true
+0
+true
+true
+true
+1
+false
+4
+true
+MEMORY_ALL_PASSED";
+    assert_eq!(out.trim_end(), expected);
+}
+
+#[test]
+fn no_leak_in_pluggable_allocators_and_smart_pointers() {
+    if Command::new("valgrind").arg("--version").output().is_err() {
+        eprintln!("skipping no_leak_in_pluggable_allocators_and_smart_pointers: valgrind not found on PATH");
+        return;
+    }
+
+    let dir = scratch_dir("valgrind_memory_management");
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("memory_management.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read memory_management.roze fixture");
+    std::fs::write(dir.join("memory_leak_check.roze"), &source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg("memory_leak_check.roze")
+        .arg("--target")
+        .arg("native")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke the roze binary");
+    assert!(
+        build_output.status.success(),
+        "build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let valgrind_output = Command::new("valgrind")
+        .arg("--leak-check=full")
+        .arg("--error-exitcode=42")
+        .arg("./memory_leak_check")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke valgrind");
+
+    let stderr = String::from_utf8_lossy(&valgrind_output.stderr);
+    assert!(valgrind_output.status.success(), "valgrind detected a memory error or leak:\n{}", stderr);
+    assert!(stderr.contains("All heap blocks were freed"), "expected zero leaks, got:\n{}", stderr);
+}
+
 
 
 

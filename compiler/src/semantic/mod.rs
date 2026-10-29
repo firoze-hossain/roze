@@ -285,6 +285,12 @@ impl Type {
             "index_map" | "IndexMap" => Type::Generic { base: "IndexMap".to_string(), type_args: vec![] },
             "ring_buffer" | "RingBuffer" => Type::Generic { base: "RingBuffer".to_string(), type_args: vec![] },
             "bit_set" | "BitSet" => Type::Generic { base: "BitSet".to_string(), type_args: vec![] },
+            "RozeBox" => Type::Generic { base: "RozeBox".to_string(), type_args: vec![] },
+            "RozeArc" | "arc" | "Arc" => Type::Generic { base: "RozeArc".to_string(), type_args: vec![] },
+            "RozeWeak" | "weak" | "Weak" => Type::Generic { base: "RozeWeak".to_string(), type_args: vec![] },
+            "bump_allocator" | "BumpAllocator" => Type::Generic { base: "BumpAllocator".to_string(), type_args: vec![] },
+            "arena_allocator" | "ArenaAllocator" => Type::Generic { base: "ArenaAllocator".to_string(), type_args: vec![] },
+            "pool_allocator" | "PoolAllocator" | "fixed_block_pool_allocator" | "FixedBlockPoolAllocator" => Type::Generic { base: "PoolAllocator".to_string(), type_args: vec![] },
             _ => Type::Unknown,
         }
     }
@@ -371,6 +377,18 @@ impl Type {
                     "RozeRingBuffer".to_string()
                 } else if base == "BitSet" || base == "bit_set" {
                     "RozeBitSet".to_string()
+                } else if base == "RozeBox" {
+                    "RozeBox".to_string()
+                } else if base == "RozeArc" || base == "Arc" || base == "arc" {
+                    "RozeArc".to_string()
+                } else if base == "RozeWeak" || base == "Weak" || base == "weak" {
+                    "RozeWeak".to_string()
+                } else if base == "BumpAllocator" || base == "bump_allocator" {
+                    "RozeBumpAllocator".to_string()
+                } else if base == "ArenaAllocator" || base == "arena_allocator" {
+                    "RozeArenaAllocator".to_string()
+                } else if base == "PoolAllocator" || base == "pool_allocator" || base == "FixedBlockPoolAllocator" || base == "fixed_block_pool_allocator" {
+                    "RozePoolAllocator".to_string()
                 } else {
                     specialized_name(base, type_args)
                 }
@@ -511,6 +529,14 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
             || (b1.eq_ignore_ascii_case("IndexMap") && b2.eq_ignore_ascii_case("IndexMap"))
             || (b1.eq_ignore_ascii_case("RingBuffer") && b2.eq_ignore_ascii_case("RingBuffer"))
             || (b1.eq_ignore_ascii_case("BitSet") && b2.eq_ignore_ascii_case("BitSet")) => true,
+        // Memory & Smart Pointers (M2-T04)
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if ((b1 == "RozeBox" || b1.eq_ignore_ascii_case("Box")) && (b2 == "RozeBox" || b2.eq_ignore_ascii_case("Box")))
+            || ((b1 == "RozeArc" || b1.eq_ignore_ascii_case("Arc")) && (b2 == "RozeArc" || b2.eq_ignore_ascii_case("Arc")))
+            || ((b1 == "RozeWeak" || b1.eq_ignore_ascii_case("Weak")) && (b2 == "RozeWeak" || b2.eq_ignore_ascii_case("Weak")))
+            || (b1.eq_ignore_ascii_case("BumpAllocator") && b2.eq_ignore_ascii_case("BumpAllocator"))
+            || (b1.eq_ignore_ascii_case("ArenaAllocator") && b2.eq_ignore_ascii_case("ArenaAllocator"))
+            || (b1.eq_ignore_ascii_case("PoolAllocator") && b2.eq_ignore_ascii_case("PoolAllocator")) => true,
         // Fiber <-> Thread interoperability
         (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
             if ((b1 == "Fiber" || b1 == "fiber") && (b2 == "Thread" || b2 == "thread"))
@@ -1212,6 +1238,69 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("bit_set_intersect", vec![Type::Unknown, Type::Unknown], Type::Void),
         ("bit_set_difference", vec![Type::Unknown, Type::Unknown], Type::Void),
         ("bit_set_clear", vec![Type::Unknown], Type::Void),
+
+        // Memory Architecture & Smart Pointers (M2-T04)
+        ("align_to", vec![Type::Int, Type::Int], Type::Int),
+        ("cache_line_size", vec![], Type::Int),
+
+        // Box<T>
+        ("box_new", vec![Type::Unknown], Type::Generic { base: "RozeBox".to_string(), type_args: vec![] }),
+        ("Box_new", vec![Type::Unknown], Type::Generic { base: "RozeBox".to_string(), type_args: vec![] }),
+        ("box_get", vec![Type::Unknown], Type::Unknown),
+        ("box_set", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("box_into_raw", vec![Type::Unknown], Type::Int),
+        ("box_from_raw", vec![Type::Int], Type::Generic { base: "RozeBox".to_string(), type_args: vec![] }),
+
+        // Arc<T> & Weak<T>
+        ("arc_new", vec![Type::Unknown], Type::Generic { base: "RozeArc".to_string(), type_args: vec![] }),
+        ("Arc_new", vec![Type::Unknown], Type::Generic { base: "RozeArc".to_string(), type_args: vec![] }),
+        ("arc_get", vec![Type::Unknown], Type::Unknown),
+        ("arc_clone", vec![Type::Unknown], Type::Generic { base: "RozeArc".to_string(), type_args: vec![] }),
+        ("arc_strong_count", vec![Type::Unknown], Type::Int),
+        ("arc_weak_count", vec![Type::Unknown], Type::Int),
+        ("arc_downgrade", vec![Type::Unknown], Type::Generic { base: "RozeWeak".to_string(), type_args: vec![] }),
+        ("weak_new", vec![], Type::Generic { base: "RozeWeak".to_string(), type_args: vec![] }),
+        ("Weak_new", vec![], Type::Generic { base: "RozeWeak".to_string(), type_args: vec![] }),
+        ("weak_upgrade", vec![Type::Unknown], Type::Generic { base: "RozeArc".to_string(), type_args: vec![] }),
+        ("weak_strong_count", vec![Type::Unknown], Type::Int),
+        ("weak_weak_count", vec![Type::Unknown], Type::Int),
+        ("weak_is_expired", vec![Type::Unknown], Type::Bool),
+        ("weak_is_alive", vec![Type::Unknown], Type::Bool),
+
+        // BumpAllocator
+        ("bump_allocator_new", vec![Type::Int], Type::Generic { base: "BumpAllocator".to_string(), type_args: vec![] }),
+        ("BumpAllocator_new", vec![Type::Int], Type::Generic { base: "BumpAllocator".to_string(), type_args: vec![] }),
+        ("bump_allocator_new_default", vec![], Type::Generic { base: "BumpAllocator".to_string(), type_args: vec![] }),
+        ("bump_alloc", vec![Type::Unknown, Type::Int], Type::Int),
+        ("bump_alloc_aligned", vec![Type::Unknown, Type::Int, Type::Int], Type::Int),
+        ("bump_reset", vec![Type::Unknown], Type::Void),
+        ("bump_allocated_bytes", vec![Type::Unknown], Type::Int),
+        ("bump_remaining_bytes", vec![Type::Unknown], Type::Int),
+        ("bump_capacity", vec![Type::Unknown], Type::Int),
+        ("bump_is_empty", vec![Type::Unknown], Type::Bool),
+
+        // ArenaAllocator
+        ("arena_allocator_new", vec![Type::Int], Type::Generic { base: "ArenaAllocator".to_string(), type_args: vec![] }),
+        ("ArenaAllocator_new", vec![Type::Int], Type::Generic { base: "ArenaAllocator".to_string(), type_args: vec![] }),
+        ("arena_allocator_new_default", vec![], Type::Generic { base: "ArenaAllocator".to_string(), type_args: vec![] }),
+        ("arena_alloc", vec![Type::Unknown, Type::Int], Type::Int),
+        ("arena_alloc_aligned", vec![Type::Unknown, Type::Int, Type::Int], Type::Int),
+        ("arena_reset", vec![Type::Unknown], Type::Void),
+        ("arena_allocated_bytes", vec![Type::Unknown], Type::Int),
+        ("arena_chunk_count", vec![Type::Unknown], Type::Int),
+        ("arena_clear", vec![Type::Unknown], Type::Void),
+
+        // PoolAllocator
+        ("pool_allocator_new", vec![Type::Int, Type::Int], Type::Generic { base: "PoolAllocator".to_string(), type_args: vec![] }),
+        ("PoolAllocator_new", vec![Type::Int, Type::Int], Type::Generic { base: "PoolAllocator".to_string(), type_args: vec![] }),
+        ("pool_alloc", vec![Type::Unknown], Type::Int),
+        ("pool_dealloc", vec![Type::Unknown, Type::Int], Type::Bool),
+        ("pool_block_size", vec![Type::Unknown], Type::Int),
+        ("pool_capacity", vec![Type::Unknown], Type::Int),
+        ("pool_available_blocks", vec![Type::Unknown], Type::Int),
+        ("pool_is_full", vec![Type::Unknown], Type::Bool),
+        ("pool_is_empty", vec![Type::Unknown], Type::Bool),
+        ("pool_reset", vec![Type::Unknown], Type::Void),
     ]
 }
 
@@ -2207,8 +2296,15 @@ impl TypeChecker {
                     }
                 }
 
+                let canonical_base = match base {
+                    "Box" | "box" | "RozeBox" => "RozeBox",
+                    "Arc" | "arc" | "RozeArc" => "RozeArc",
+                    "Weak" | "weak" | "RozeWeak" => "RozeWeak",
+                    _ => base,
+                };
+
                 return Type::Generic {
-                    base: base.to_string(),
+                    base: canonical_base.to_string(),
                     type_args,
                 };
             }
@@ -3752,6 +3848,31 @@ impl TypeChecker {
                             Type::Generic { base, type_args } if (base == "RingBuffer" || base == "ring_buffer") && !type_args.is_empty() => type_args[0].clone(),
                             _ => Type::Unknown,
                         }
+                    } else if name == "box_get" && typed_arguments.len() == 1 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "RozeBox" || base == "Box" || base == "box") && !type_args.is_empty() => type_args[0].clone(),
+                            _ => Type::Unknown,
+                        }
+                    } else if (name == "arc_get" || name == "arc_clone" || name == "arc_downgrade") && typed_arguments.len() == 1 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "RozeArc" || base == "Arc" || base == "arc") => {
+                                if name == "arc_get" {
+                                    if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }
+                                } else if name == "arc_clone" {
+                                    typed_arguments[0].type_.clone()
+                                } else {
+                                    Type::Generic { base: "RozeWeak".to_string(), type_args: type_args.clone() }
+                                }
+                            }
+                            _ => Type::Unknown,
+                        }
+                    } else if name == "weak_upgrade" && typed_arguments.len() == 1 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "RozeWeak" || base == "Weak" || base == "weak") => {
+                                Type::Generic { base: "RozeArc".to_string(), type_args: type_args.clone() }
+                            }
+                            _ => Type::Generic { base: "RozeArc".to_string(), type_args: vec![] },
+                        }
                     } else if let Some(sig) = self.functions.get(name) {
                         // Validate argument count and each argument's
                         // type against the declared signature -- the
@@ -3898,11 +4019,15 @@ impl TypeChecker {
                 }
             }
             Expression::New { class_name, type_args, arguments, location } => {
-                let is_builtin_col = matches!(
+                let is_user_class = self.classes.contains_key(class_name) || self.generic_classes.contains_key(class_name);
+                let is_builtin_col = !is_user_class && matches!(
                     class_name.as_str(),
                     "VecDeque" | "vec_deque" | "BTreeMap" | "btree_map" | "BTreeSet" | "btree_set"
                     | "BinaryHeap" | "binary_heap" | "IndexMap" | "index_map" | "RingBuffer" | "ring_buffer"
                     | "BitSet" | "bit_set"
+                    | "Box" | "box" | "RozeBox" | "Arc" | "arc" | "RozeArc" | "Weak" | "weak" | "RozeWeak"
+                    | "BumpAllocator" | "bump_allocator" | "ArenaAllocator" | "arena_allocator"
+                    | "PoolAllocator" | "pool_allocator" | "FixedBlockPoolAllocator" | "fixed_block_pool_allocator"
                 );
                 if is_builtin_col {
                     let mut concrete_args = Vec::new();
@@ -3939,6 +4064,28 @@ impl TypeChecker {
                         }
                         "RingBuffer" | "ring_buffer" => ("ring_buffer_new", "RingBuffer"),
                         "BitSet" | "bit_set" => (if typed_args.is_empty() { "bit_set_new" } else { "bit_set_with_capacity" }, "BitSet"),
+                        "Box" | "box" | "RozeBox" => {
+                            if concrete_args.is_empty() && !typed_args.is_empty() {
+                                concrete_args.push(typed_args[0].type_.clone());
+                            }
+                            ("box_new", "RozeBox")
+                        }
+                        "Arc" | "arc" | "RozeArc" => {
+                            if concrete_args.is_empty() && !typed_args.is_empty() {
+                                concrete_args.push(typed_args[0].type_.clone());
+                            }
+                            ("arc_new", "RozeArc")
+                        }
+                        "Weak" | "weak" | "RozeWeak" => ("weak_new", "RozeWeak"),
+                        "BumpAllocator" | "bump_allocator" => {
+                            (if typed_args.is_empty() { "bump_allocator_new_default" } else { "bump_allocator_new" }, "BumpAllocator")
+                        }
+                        "ArenaAllocator" | "arena_allocator" => {
+                            (if typed_args.is_empty() { "arena_allocator_new_default" } else { "arena_allocator_new" }, "ArenaAllocator")
+                        }
+                        "PoolAllocator" | "pool_allocator" | "FixedBlockPoolAllocator" | "fixed_block_pool_allocator" => {
+                            ("pool_allocator_new", "PoolAllocator")
+                        }
                         _ => unreachable!(),
                     };
                     return Ok(TypedExpression {
@@ -4567,6 +4714,52 @@ impl TypeChecker {
                             ("BitSet" | "bit_set", "intersect_with") => ("bit_set_intersect", Type::Void),
                             ("BitSet" | "bit_set", "difference_with") => ("bit_set_difference", Type::Void),
                             ("BitSet" | "bit_set", "clear") => ("bit_set_clear", Type::Void),
+
+                            // Box<T>
+                            ("RozeBox" | "Box" | "box", "get") => ("box_get", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("RozeBox" | "Box" | "box", "set") => ("box_set", Type::Void),
+                            ("RozeBox" | "Box" | "box", "into_raw") => ("box_into_raw", Type::Int),
+
+                            // Arc<T>
+                            ("RozeArc" | "Arc" | "arc", "get") => ("arc_get", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("RozeArc" | "Arc" | "arc", "clone") => ("arc_clone", Type::Generic { base: "RozeArc".to_string(), type_args: type_args.clone() }),
+                            ("RozeArc" | "Arc" | "arc", "strong_count") => ("arc_strong_count", Type::Int),
+                            ("RozeArc" | "Arc" | "arc", "weak_count") => ("arc_weak_count", Type::Int),
+                            ("RozeArc" | "Arc" | "arc", "downgrade") => ("arc_downgrade", Type::Generic { base: "RozeWeak".to_string(), type_args: type_args.clone() }),
+
+                            // Weak<T>
+                            ("RozeWeak" | "Weak" | "weak", "upgrade") => ("weak_upgrade", Type::Generic { base: "RozeArc".to_string(), type_args: type_args.clone() }),
+                            ("RozeWeak" | "Weak" | "weak", "strong_count") => ("weak_strong_count", Type::Int),
+                            ("RozeWeak" | "Weak" | "weak", "weak_count") => ("weak_weak_count", Type::Int),
+                            ("RozeWeak" | "Weak" | "weak", "is_expired") => ("weak_is_expired", Type::Bool),
+                            ("RozeWeak" | "Weak" | "weak", "is_alive") => ("weak_is_alive", Type::Bool),
+
+                            // BumpAllocator
+                            ("BumpAllocator" | "bump_allocator", "alloc") => ("bump_alloc", Type::Int),
+                            ("BumpAllocator" | "bump_allocator", "alloc_aligned") => ("bump_alloc_aligned", Type::Int),
+                            ("BumpAllocator" | "bump_allocator", "reset") => ("bump_reset", Type::Void),
+                            ("BumpAllocator" | "bump_allocator", "allocated_bytes") => ("bump_allocated_bytes", Type::Int),
+                            ("BumpAllocator" | "bump_allocator", "remaining_bytes") => ("bump_remaining_bytes", Type::Int),
+                            ("BumpAllocator" | "bump_allocator", "capacity") => ("bump_capacity", Type::Int),
+                            ("BumpAllocator" | "bump_allocator", "is_empty") => ("bump_is_empty", Type::Bool),
+
+                            // ArenaAllocator
+                            ("ArenaAllocator" | "arena_allocator", "alloc") => ("arena_alloc", Type::Int),
+                            ("ArenaAllocator" | "arena_allocator", "alloc_aligned") => ("arena_alloc_aligned", Type::Int),
+                            ("ArenaAllocator" | "arena_allocator", "reset") => ("arena_reset", Type::Void),
+                            ("ArenaAllocator" | "arena_allocator", "allocated_bytes") => ("arena_allocated_bytes", Type::Int),
+                            ("ArenaAllocator" | "arena_allocator", "chunk_count") => ("arena_chunk_count", Type::Int),
+                            ("ArenaAllocator" | "arena_allocator", "clear") => ("arena_clear", Type::Void),
+
+                            // PoolAllocator
+                            ("PoolAllocator" | "pool_allocator" | "FixedBlockPoolAllocator" | "fixed_block_pool_allocator", "alloc") => ("pool_alloc", Type::Int),
+                            ("PoolAllocator" | "pool_allocator" | "FixedBlockPoolAllocator" | "fixed_block_pool_allocator", "dealloc") => ("pool_dealloc", Type::Bool),
+                            ("PoolAllocator" | "pool_allocator" | "FixedBlockPoolAllocator" | "fixed_block_pool_allocator", "block_size") => ("pool_block_size", Type::Int),
+                            ("PoolAllocator" | "pool_allocator" | "FixedBlockPoolAllocator" | "fixed_block_pool_allocator", "capacity") => ("pool_capacity", Type::Int),
+                            ("PoolAllocator" | "pool_allocator" | "FixedBlockPoolAllocator" | "fixed_block_pool_allocator", "available_blocks") => ("pool_available_blocks", Type::Int),
+                            ("PoolAllocator" | "pool_allocator" | "FixedBlockPoolAllocator" | "fixed_block_pool_allocator", "is_full") => ("pool_is_full", Type::Bool),
+                            ("PoolAllocator" | "pool_allocator" | "FixedBlockPoolAllocator" | "fixed_block_pool_allocator", "is_empty") => ("pool_is_empty", Type::Bool),
+                            ("PoolAllocator" | "pool_allocator" | "FixedBlockPoolAllocator" | "fixed_block_pool_allocator", "reset") => ("pool_reset", Type::Void),
 
                             _ => {
                                 return Err(RozeError::type_error(

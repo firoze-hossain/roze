@@ -615,6 +615,56 @@ Milestone Gate M1 serves as the comprehensive integration checkpoint for Month 1
   - 100% test pass rate across all unit tests and golden integration suites on both JVM and Native Cranelift backends.
   - Three-stage self-hosting compiler bootstrap (`Stage 0 (Rust) -> Stage 1 (Roze) -> Stage 2 (Roze) -> Stage 3 (Roze)`) achieves a bit-for-bit, 0-diff fixpoint verification proof.
 
+### 3.9 Memory Architecture: Pluggable Allocator API & Smart Pointers
+
+Roze provides pluggable memory allocators and high-level smart pointers matching Rust's `alloc` and C++ polymorphic memory allocators (PMR):
+
+#### Smart Pointers
+- **`Box<T>`**: Unique ownership heap pointer.
+  - `new_box(value: T) -> Box<T>`: Allocates and boxes a value on the heap.
+  - `b.get() -> T`: Dereferences the boxed value.
+  - `b.set(val: T)`: Mutates the boxed value.
+  - `b.into_raw() -> int`: Consumes the box and yields the raw heap pointer address.
+  - `new_box_from_raw(raw: int) -> Box<T>`: Reconstitutes a `Box<T>` from a raw pointer address.
+- **`Arc<T>`**: Thread-safe atomically reference-counted pointer.
+  - `new_arc(value: T) -> Arc<T>`: Allocates an atomically reference-counted object with a unified control block.
+  - `a.get() -> T`: Retrieves the underlying value.
+  - `a.clone() -> Arc<T>`: Increments the strong reference count atomically and returns a new `Arc<T>` reference.
+  - `a.strong_count() -> int`: Returns the current strong reference count.
+  - `a.weak_count() -> int`: Returns the current weak reference count.
+  - `a.downgrade() -> Weak<T>`: Creates a non-owning `Weak<T>` pointer referencing the control block.
+- **`Weak<T>`**: Non-owning weak pointer for cyclic reference avoidance and cache eviction.
+  - `w.upgrade() -> Option<Arc<T>>`: Upgrades to `Some(Arc<T>)` if strong count > 0, or `None` if expired.
+  - `w.strong_count() -> int`: Returns the strong reference count of the target.
+  - `w.weak_count() -> int`: Returns the weak reference count of the target.
+  - `w.is_expired() -> bool`: Returns true if the referenced value has been dropped (`strong_count == 0`).
+  - `w.is_alive() -> bool`: Returns true if the referenced value is still active (`strong_count > 0`).
+
+#### Pluggable Allocator API
+Allocators implement the core `Allocator` trait defined in `stdlib/src/memory.roze`:
+- **`BumpAllocator`**: High-performance linear bump allocator with monotonic pointer bump and bulk reset.
+  - `new_bump_allocator(capacity: int) -> BumpAllocator`: Initializes a contiguous memory arena of given capacity.
+  - `alloc(size: int) -> int`: Allocates `size` bytes linearly; returns raw offset address or `0` on out-of-memory.
+  - `alloc_aligned(size: int, align: int) -> int`: Allocates with power-of-two alignment padding.
+  - `reset()`: O(1) bulk reset that resets the bump pointer to 0 without freeing the underlying arena.
+  - Metrics: `allocated_bytes()`, `remaining_bytes()`, `capacity()`, `is_empty()`.
+- **`ArenaAllocator`**: Chunked arena allocator that allocates fixed-size memory blocks dynamically.
+  - `new_arena_allocator(chunk_size: int) -> ArenaAllocator`: Initializes an arena with default chunk size.
+  - `alloc(size: int) -> int` / `alloc_aligned(size: int, align: int) -> int`: Allocates from current chunk or links a new chunk.
+  - `reset()`: Resets all active chunks to empty without deallocating OS memory.
+  - `clear()`: Deallocates all chunks back to the global heap.
+  - Metrics: `allocated_bytes()`, `chunk_count()`.
+- **`PoolAllocator`**: Fixed-size block pool allocator with O(1) free-list recycling.
+  - `new_pool_allocator(block_size: int, capacity: int) -> PoolAllocator`: Pre-allocates a fixed pool of uniform blocks.
+  - `alloc() -> int`: Pops a block from the singly-linked free-list in O(1) time; returns 0 if exhausted.
+  - `dealloc(ptr: int)`: Pushes a returned block address back onto the free-list in O(1) time.
+  - `reset()`: Re-links all blocks into the free-list.
+  - Metrics: `block_size()`, `capacity()`, `available_blocks()`, `is_full()`, `is_empty()`.
+
+#### Memory Alignment Utilities
+- `align_to(value: int, align: int) -> int` / `align_address(addr: int, align: int) -> int`: Computes power-of-two address alignment using bitwise formula `(val + align - 1) & ~(align - 1)`.
+- `cache_line_size() -> int` / `get_cache_line_size() -> int`: Returns standard CPU cache-line size (64 bytes).
+
 ---
 
 ## 4. Error Handling (`Result`, `Option`, `?`)

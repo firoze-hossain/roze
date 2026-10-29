@@ -1370,6 +1370,72 @@ COLLECTIONS_ALL_PASSED";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
 
+#[test]
+fn pluggable_allocators_and_smart_pointers_suite() {
+    let (stdout, stderr, ok) = run_fixture("memory_management.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+--- Memory Utilities ---
+8
+16
+64
+64
+64
+--- Box ---
+42
+99
+99
+--- Arc & Weak ---
+100
+1
+0
+2
+1
+true
+false
+2
+100
+3
+--- BumpAllocator ---
+1024
+true
+0
+true
+false
+true
+true
+true
+true
+true
+0
+--- ArenaAllocator ---
+1
+0
+true
+1
+true
+true
+true
+0
+--- PoolAllocator ---
+32
+4
+4
+false
+true
+true
+0
+true
+true
+true
+1
+false
+4
+true
+MEMORY_ALL_PASSED";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
 
 
 

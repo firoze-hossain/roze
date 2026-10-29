@@ -1,0 +1,135 @@
+import "memory";
+
+func test_utilities() {
+    println("--- Memory Utilities ---");
+    let a1 = align_to(1, 8);
+    println(a1);
+    let a2 = align_to(9, 8);
+    println(a2);
+    let a3 = align_to(63, 64);
+    println(a3);
+    let a4 = align_to(64, 64);
+    println(a4);
+    let cls = cache_line_size();
+    println(cls);
+}
+
+func test_box() {
+    println("--- Box ---");
+    let b = new Box<int>(42);
+    println(b.get());
+    b.set(99);
+    println(b.get());
+
+    let raw_ptr = b.into_raw();
+    let b2 = box_from_raw(raw_ptr);
+    println(b2.get());
+}
+
+func test_arc_and_weak() {
+    println("--- Arc & Weak ---");
+    let a = new Arc<int>(100);
+    println(a.get());
+    println(a.strong_count());
+    println(a.weak_count());
+
+    let a2 = a.clone();
+    println(a.strong_count());
+
+    let w = a.downgrade();
+    println(a.weak_count());
+    println(w.is_alive());
+    println(w.is_expired());
+    println(w.strong_count());
+
+    let up = w.upgrade();
+    println(up.get());
+    println(a.strong_count());
+}
+
+func test_bump_allocator() {
+    println("--- BumpAllocator ---");
+    let ba = new BumpAllocator(1024);
+    println(ba.capacity());
+    println(ba.is_empty());
+    println(ba.allocated_bytes());
+
+    let ptr1 = ba.alloc(16);
+    println(ptr1 != 0);
+    println(ba.is_empty());
+
+    let ptr2 = ba.alloc_aligned(64, 64);
+    println(ptr2 != 0);
+    println(ptr2 % 64 == 0);
+
+    println(ba.allocated_bytes() >= 80);
+    println(ba.remaining_bytes() < 1024);
+
+    ba.reset();
+    println(ba.is_empty());
+    println(ba.allocated_bytes());
+}
+
+func test_arena_allocator() {
+    println("--- ArenaAllocator ---");
+    let aa = new ArenaAllocator(128);
+    println(aa.chunk_count());
+    println(aa.allocated_bytes());
+
+    let p1 = aa.alloc(64);
+    println(p1 != 0);
+    println(aa.chunk_count());
+
+    // Allocate beyond first chunk to trigger expansion
+    let p2 = aa.alloc(128);
+    println(p2 != 0);
+    println(aa.chunk_count() > 1);
+
+    println(aa.allocated_bytes() >= 192);
+
+    aa.reset();
+    println(aa.allocated_bytes());
+}
+
+func test_pool_allocator() {
+    println("--- PoolAllocator ---");
+    let pa = new PoolAllocator(32, 4);
+    println(pa.block_size());
+    println(pa.capacity());
+    println(pa.available_blocks());
+    println(pa.is_full());
+    println(pa.is_empty());
+
+    let b1 = pa.alloc();
+    let b2 = pa.alloc();
+    let b3 = pa.alloc();
+    let b4 = pa.alloc();
+    println(b1 != 0 && b2 != 0 && b3 != 0 && b4 != 0);
+    println(pa.available_blocks());
+    println(pa.is_full());
+
+    // Cannot allocate when full
+    let b5 = pa.alloc();
+    println(b5 == 0);
+
+    // Deallocate one block
+    let ok = pa.dealloc(b1);
+    println(ok);
+    println(pa.available_blocks());
+    println(pa.is_full());
+
+    // Reset pool
+    pa.reset();
+    println(pa.available_blocks());
+    println(pa.is_empty());
+}
+
+func main() {
+    test_utilities();
+    test_box();
+    test_arc_and_weak();
+    test_bump_allocator();
+    test_arena_allocator();
+    test_pool_allocator();
+    println("MEMORY_ALL_PASSED");
+}

@@ -801,6 +801,30 @@ long __roze_atomic_or(long a, long v) { (void)a; (void)v; return 0; }
 long __roze_atomic_xor(long a, long v) { (void)a; (void)v; return 0; }
 void __roze_atomic_retain(long a) { (void)a; }
 void __roze_atomic_release(long a) { (void)a; }
+long __roze_nursery_new(void) { return 0; }
+long __roze_nursery_on_failure(void) { return 0; }
+long __roze_nursery_on_success(void) { return 0; }
+long __roze_nursery_with_timeout(long ms) { (void)ms; return 0; }
+long __roze_nursery_fork(long tg, void* cl) { (void)tg; (void)cl; return 0; }
+long __roze_nursery_join(long tg) { (void)tg; return 0; }
+void __roze_nursery_cancel(long tg) { (void)tg; }
+long __roze_nursery_is_cancelled(long tg) { (void)tg; return 0; }
+long __roze_nursery_result(long tg) { (void)tg; return 0; }
+long __roze_nursery_token(long tg) { (void)tg; return 0; }
+long __roze_nursery_task_count(long tg) { (void)tg; return 0; }
+long __roze_nursery_completed_count(long tg) { (void)tg; return 0; }
+void __roze_nursery_retain(long tg) { (void)tg; }
+void __roze_nursery_release(long tg) { (void)tg; }
+long __roze_subtask_get(long sub) { (void)sub; return 0; }
+long __roze_subtask_is_done(long sub) { (void)sub; return 0; }
+long __roze_subtask_is_cancelled(long sub) { (void)sub; return 0; }
+void __roze_subtask_retain(long sub) { (void)sub; }
+void __roze_subtask_release(long sub) { (void)sub; }
+long __roze_cancel_token_new(void) { return 0; }
+void __roze_cancel_token_cancel(long tok) { (void)tok; }
+long __roze_cancel_token_is_cancelled(long tok) { (void)tok; return 0; }
+void __roze_cancel_token_retain(long tok) { (void)tok; }
+void __roze_cancel_token_release(long tok) { (void)tok; }
 
 // 6. Bootstrap entry point called by entry64
 __attribute__((weak))
@@ -2884,6 +2908,34 @@ struct ConcurrencyRuntime {
     atomic_xor_id: FuncId,
     atomic_retain_id: FuncId,
     atomic_release_id: FuncId,
+
+    // Structured Concurrency (M1-T07)
+    nursery_new_id: FuncId,
+    nursery_on_failure_id: FuncId,
+    nursery_on_success_id: FuncId,
+    nursery_with_timeout_id: FuncId,
+    nursery_fork_id: FuncId,
+    nursery_join_id: FuncId,
+    nursery_cancel_id: FuncId,
+    nursery_is_cancelled_id: FuncId,
+    nursery_result_id: FuncId,
+    nursery_token_id: FuncId,
+    nursery_task_count_id: FuncId,
+    nursery_completed_count_id: FuncId,
+    nursery_retain_id: FuncId,
+    nursery_release_id: FuncId,
+
+    subtask_get_id: FuncId,
+    subtask_is_done_id: FuncId,
+    subtask_is_cancelled_id: FuncId,
+    subtask_retain_id: FuncId,
+    subtask_release_id: FuncId,
+
+    cancel_token_new_id: FuncId,
+    cancel_token_cancel_id: FuncId,
+    cancel_token_is_cancelled_id: FuncId,
+    cancel_token_retain_id: FuncId,
+    cancel_token_release_id: FuncId,
 }
 
 fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyRuntime> {
@@ -3046,6 +3098,58 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
     let atomic_release_id = module.declare_function("__roze_atomic_release", Linkage::Import, &i64_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
 
+    // Structured Concurrency (M1-T07)
+    let nursery_new_id = module.declare_function("__roze_nursery_new", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_on_failure_id = module.declare_function("__roze_nursery_on_failure", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_on_success_id = module.declare_function("__roze_nursery_on_success", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_with_timeout_id = module.declare_function("__roze_nursery_with_timeout", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_fork_id = module.declare_function("__roze_nursery_fork", Linkage::Import, &i64_i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_join_id = module.declare_function("__roze_nursery_join", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_cancel_id = module.declare_function("__roze_nursery_cancel", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_is_cancelled_id = module.declare_function("__roze_nursery_is_cancelled", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_result_id = module.declare_function("__roze_nursery_result", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_token_id = module.declare_function("__roze_nursery_token", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_task_count_id = module.declare_function("__roze_nursery_task_count", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_completed_count_id = module.declare_function("__roze_nursery_completed_count", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_retain_id = module.declare_function("__roze_nursery_retain", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let nursery_release_id = module.declare_function("__roze_nursery_release", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    let subtask_get_id = module.declare_function("__roze_subtask_get", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let subtask_is_done_id = module.declare_function("__roze_subtask_is_done", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let subtask_is_cancelled_id = module.declare_function("__roze_subtask_is_cancelled", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let subtask_retain_id = module.declare_function("__roze_subtask_retain", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let subtask_release_id = module.declare_function("__roze_subtask_release", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    let cancel_token_new_id = module.declare_function("__roze_cancel_token_new", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let cancel_token_cancel_id = module.declare_function("__roze_cancel_token_cancel", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let cancel_token_is_cancelled_id = module.declare_function("__roze_cancel_token_is_cancelled", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let cancel_token_retain_id = module.declare_function("__roze_cancel_token_retain", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let cancel_token_release_id = module.declare_function("__roze_cancel_token_release", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
     Ok(ConcurrencyRuntime {
         thread_spawn_id,
         thread_join_id,
@@ -3108,6 +3212,30 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
         atomic_xor_id,
         atomic_retain_id,
         atomic_release_id,
+        nursery_new_id,
+        nursery_on_failure_id,
+        nursery_on_success_id,
+        nursery_with_timeout_id,
+        nursery_fork_id,
+        nursery_join_id,
+        nursery_cancel_id,
+        nursery_is_cancelled_id,
+        nursery_result_id,
+        nursery_token_id,
+        nursery_task_count_id,
+        nursery_completed_count_id,
+        nursery_retain_id,
+        nursery_release_id,
+        subtask_get_id,
+        subtask_is_done_id,
+        subtask_is_cancelled_id,
+        subtask_retain_id,
+        subtask_release_id,
+        cancel_token_new_id,
+        cancel_token_cancel_id,
+        cancel_token_is_cancelled_id,
+        cancel_token_retain_id,
+        cancel_token_release_id,
     })
 }
 
@@ -4620,6 +4748,21 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
             }
+            Type::Generic { base, .. } if base == "TaskGroup" || base == "task_group" || base == "Nursery" || base == "nursery" => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_retain_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "Subtask" || base == "subtask" => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.subtask_retain_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "CancellationToken" || base == "cancellation_token" || base == "CancelToken" || base == "cancel_token" => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.cancel_token_retain_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
             Type::Generic { .. } => self.emit_class_retain(val),
             _ => Ok(()),
         }
@@ -4731,6 +4874,21 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 || base == "AtomicUsize" || base == "atomic_usize"
                 || base == "AtomicPtr" || base == "atomic_ptr" => {
                 let release_ref = self.module.declare_func_in_func(self.concurrency.atomic_release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "TaskGroup" || base == "task_group" || base == "Nursery" || base == "nursery" => {
+                let release_ref = self.module.declare_func_in_func(self.concurrency.nursery_release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "Subtask" || base == "subtask" => {
+                let release_ref = self.module.declare_func_in_func(self.concurrency.subtask_release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "CancellationToken" || base == "cancellation_token" || base == "CancelToken" || base == "cancel_token" => {
+                let release_ref = self.module.declare_func_in_func(self.concurrency.cancel_token_release_id, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
@@ -6381,6 +6539,138 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let result = self.builder.inst_results(call)[0];
                 self.release_if_fresh(&arguments[0], a_val)?;
                 self.release_if_fresh(&arguments[1], val)?;
+                return Ok(result);
+            }
+
+            // Structured Concurrency (M1-T07)
+            "nursery_new" | "task_group_new" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_new_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "nursery_on_failure" | "task_group_on_failure" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_on_failure_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "nursery_on_success" | "task_group_on_success" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_on_success_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "nursery_with_timeout" | "task_group_with_timeout" if arguments.len() == 1 => {
+                let ms_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_with_timeout_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ms_val]);
+                self.release_if_fresh(&arguments[0], ms_val)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "nursery_fork" | "task_group_fork" | "nursery_spawn" | "task_group_spawn" if arguments.len() == 2 => {
+                let tg_val = self.compile_expression(&arguments[0])?;
+                let fn_val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_fork_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[tg_val, fn_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], tg_val)?;
+                return Ok(result);
+            }
+            "nursery_join" | "task_group_join" | "nursery_wait" | "task_group_wait" if arguments.len() == 1 => {
+                let tg_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_join_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[tg_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], tg_val)?;
+                return Ok(result);
+            }
+            "nursery_cancel" | "task_group_cancel" if arguments.len() == 1 => {
+                let tg_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_cancel_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[tg_val]);
+                self.release_if_fresh(&arguments[0], tg_val)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "nursery_is_cancelled" | "task_group_is_cancelled" if arguments.len() == 1 => {
+                let tg_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_is_cancelled_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[tg_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], tg_val)?;
+                return Ok(result);
+            }
+            "nursery_result" | "task_group_result" if arguments.len() == 1 => {
+                let tg_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_result_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[tg_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], tg_val)?;
+                return Ok(result);
+            }
+            "nursery_token" | "task_group_token" if arguments.len() == 1 => {
+                let tg_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_token_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[tg_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], tg_val)?;
+                return Ok(result);
+            }
+            "nursery_task_count" | "task_group_task_count" if arguments.len() == 1 => {
+                let tg_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_task_count_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[tg_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], tg_val)?;
+                return Ok(result);
+            }
+            "nursery_completed_count" | "task_group_completed_count" if arguments.len() == 1 => {
+                let tg_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.nursery_completed_count_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[tg_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], tg_val)?;
+                return Ok(result);
+            }
+            "subtask_get" if arguments.len() == 1 => {
+                let sub_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.subtask_get_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[sub_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], sub_val)?;
+                return Ok(result);
+            }
+            "subtask_is_done" if arguments.len() == 1 => {
+                let sub_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.subtask_is_done_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[sub_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], sub_val)?;
+                return Ok(result);
+            }
+            "subtask_is_cancelled" if arguments.len() == 1 => {
+                let sub_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.subtask_is_cancelled_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[sub_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], sub_val)?;
+                return Ok(result);
+            }
+            "cancel_token_new" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.cancel_token_new_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "cancel_token_cancel" if arguments.len() == 1 => {
+                let tok_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.cancel_token_cancel_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[tok_val]);
+                self.release_if_fresh(&arguments[0], tok_val)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "cancel_token_is_cancelled" if arguments.len() == 1 => {
+                let tok_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.concurrency.cancel_token_is_cancelled_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[tok_val]);
+                let result = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], tok_val)?;
                 return Ok(result);
             }
 

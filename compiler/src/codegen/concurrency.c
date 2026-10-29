@@ -14,6 +14,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <sched.h>
+#include <errno.h>
 
 #define ROZE_MAGIC_THREAD 0x544852445F4D4147ULL // "THRD_MAG"
 #define ROZE_MAGIC_FIBER  0x464942525F4D4147ULL // "FIBR_MAG"
@@ -1288,6 +1289,510 @@ int64_t __roze_async_sleep(int64_t ms) {
     }
 
     return (int64_t)f;
+}
+
+// ============================================================================
+// 5. Structured Concurrency: Nursery, Task Groups & Cancelation (M1-T07)
+// ============================================================================
+
+#define ROZE_MAGIC_CANCEL_TOKEN 0x524F5A43414E434CULL /* "ROZCANCL" */
+#define ROZE_MAGIC_TASK_GROUP   0x524F5A54534B4750ULL /* "ROZTSKGP" */
+#define ROZE_MAGIC_SUBTASK      0x524F5A535542544BULL /* "ROZSUBTK" */
+
+#define ROZE_TG_POLICY_ALL                 0
+#define ROZE_TG_POLICY_SHUTDOWN_ON_FAILURE 1
+#define ROZE_TG_POLICY_SHUTDOWN_ON_SUCCESS 2
+
+// ----------------------------------------------------------------------------
+// CancellationToken
+// ----------------------------------------------------------------------------
+
+typedef struct {
+    int64_t refcount;
+    uint64_t magic;
+    _Atomic int64_t cancelled;
+} RozeCancellationToken;
+
+int64_t __roze_cancel_token_new(void) {
+    RozeCancellationToken* tok = (RozeCancellationToken*)malloc(sizeof(RozeCancellationToken));
+    if (!tok) return 0;
+    tok->refcount = 1;
+    tok->magic = ROZE_MAGIC_CANCEL_TOKEN;
+    __atomic_store_n(&tok->cancelled, 0, __ATOMIC_SEQ_CST);
+    return (int64_t)tok;
+}
+
+void __roze_cancel_token_cancel(int64_t token_val) {
+    if (!token_val) return;
+    RozeCancellationToken* tok = (RozeCancellationToken*)token_val;
+    if (tok->magic == ROZE_MAGIC_CANCEL_TOKEN) {
+        __atomic_store_n(&tok->cancelled, 1, __ATOMIC_SEQ_CST);
+    }
+}
+
+int64_t __roze_cancel_token_is_cancelled(int64_t token_val) {
+    if (!token_val) return 0;
+    RozeCancellationToken* tok = (RozeCancellationToken*)token_val;
+    if (tok->magic == ROZE_MAGIC_CANCEL_TOKEN) {
+        return __atomic_load_n(&tok->cancelled, __ATOMIC_SEQ_CST);
+    }
+    return 0;
+}
+
+void __roze_cancel_token_retain(int64_t token_val) {
+    if (!token_val) return;
+    RozeCancellationToken* tok = (RozeCancellationToken*)token_val;
+    if (tok->magic == ROZE_MAGIC_CANCEL_TOKEN) {
+        __atomic_fetch_add(&tok->refcount, 1, __ATOMIC_SEQ_CST);
+    }
+}
+
+void __roze_cancel_token_release(int64_t token_val) {
+    if (!token_val) return;
+    RozeCancellationToken* tok = (RozeCancellationToken*)token_val;
+    if (tok->magic == ROZE_MAGIC_CANCEL_TOKEN) {
+        if (__atomic_fetch_sub(&tok->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+            free(tok);
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Subtask & TaskGroup / Nursery
+// ----------------------------------------------------------------------------
+
+typedef struct RozeTaskGroup RozeTaskGroup;
+
+typedef struct {
+    int64_t refcount;
+    uint64_t magic;
+    RozeClosure* closure;
+    int64_t result;
+    _Atomic int64_t state; // 0: PENDING/RUNNING, 1: SUCCESS, 2: FAILED, 3: CANCELLED
+    int64_t fiber_or_thread;
+    RozeTaskGroup* parent_tg;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+} RozeSubtask;
+
+struct RozeTaskGroup {
+    int64_t refcount;
+    uint64_t magic;
+    int64_t policy;
+    RozeCancellationToken* token;
+    _Atomic int64_t cancelled;
+    int64_t timeout_ms;
+    pthread_t timeout_thread;
+    _Atomic int64_t timeout_active;
+
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+
+    int64_t task_capacity;
+    int64_t task_count;
+    RozeSubtask** tasks;
+
+    _Atomic int64_t completed_count;
+    _Atomic int64_t failed_count;
+    _Atomic int64_t success_result;
+    _Atomic int64_t has_success_result;
+    int joined;
+};
+
+void __roze_subtask_retain(int64_t sub_val);
+void __roze_subtask_release(int64_t sub_val);
+void __roze_nursery_retain(int64_t tg_val);
+void __roze_nursery_release(int64_t tg_val);
+
+int64_t __roze_subtask_get(int64_t sub_val) {
+    if (!sub_val) return 0;
+    RozeSubtask* sub = (RozeSubtask*)sub_val;
+    if (sub->magic != ROZE_MAGIC_SUBTASK) return 0;
+
+    pthread_mutex_lock(&sub->lock);
+    while (__atomic_load_n(&sub->state, __ATOMIC_ACQUIRE) == 0) {
+        pthread_cond_wait(&sub->cond, &sub->lock);
+    }
+    int64_t res = sub->result;
+    pthread_mutex_unlock(&sub->lock);
+    return res;
+}
+
+int64_t __roze_subtask_is_done(int64_t sub_val) {
+    if (!sub_val) return 0;
+    RozeSubtask* sub = (RozeSubtask*)sub_val;
+    if (sub->magic != ROZE_MAGIC_SUBTASK) return 0;
+    return __atomic_load_n(&sub->state, __ATOMIC_ACQUIRE) != 0 ? 1 : 0;
+}
+
+int64_t __roze_subtask_is_cancelled(int64_t sub_val) {
+    if (!sub_val) return 0;
+    RozeSubtask* sub = (RozeSubtask*)sub_val;
+    if (sub->magic != ROZE_MAGIC_SUBTASK) return 0;
+    return __atomic_load_n(&sub->state, __ATOMIC_ACQUIRE) == 3 ? 1 : 0;
+}
+
+void __roze_subtask_retain(int64_t sub_val) {
+    if (!sub_val) return;
+    RozeSubtask* sub = (RozeSubtask*)sub_val;
+    if (sub->magic == ROZE_MAGIC_SUBTASK) {
+        __atomic_fetch_add(&sub->refcount, 1, __ATOMIC_SEQ_CST);
+    }
+}
+
+void __roze_subtask_release(int64_t sub_val) {
+    if (!sub_val) return;
+    RozeSubtask* sub = (RozeSubtask*)sub_val;
+    if (sub->magic == ROZE_MAGIC_SUBTASK) {
+        if (__atomic_fetch_sub(&sub->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+            pthread_mutex_destroy(&sub->lock);
+            pthread_cond_destroy(&sub->cond);
+            free(sub);
+        }
+    }
+}
+
+// Timeout Watcher Thread
+static void* roze_timeout_watcher_thread(void* arg) {
+    RozeTaskGroup* tg = (RozeTaskGroup*)arg;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += tg->timeout_ms / 1000;
+    ts.tv_nsec += (tg->timeout_ms % 1000) * 1000000;
+    if (ts.tv_nsec >= 1000000000) {
+        ts.tv_sec += 1;
+        ts.tv_nsec -= 1000000000;
+    }
+
+    pthread_mutex_lock(&tg->lock);
+    while (__atomic_load_n(&tg->timeout_active, __ATOMIC_ACQUIRE) && !tg->joined) {
+        int r = pthread_cond_timedwait(&tg->cond, &tg->lock, &ts);
+        if (r == ETIMEDOUT) {
+            if (__atomic_load_n(&tg->timeout_active, __ATOMIC_ACQUIRE) && !tg->joined) {
+                if (tg->token) {
+                    __roze_cancel_token_cancel((int64_t)tg->token);
+                }
+                __atomic_store_n(&tg->cancelled, 1, __ATOMIC_SEQ_CST);
+                pthread_cond_broadcast(&tg->cond);
+            }
+            break;
+        }
+    }
+    pthread_mutex_unlock(&tg->lock);
+    __roze_nursery_release((int64_t)tg);
+    return NULL;
+}
+
+int64_t __roze_nursery_create(int64_t policy, int64_t timeout_ms) {
+    RozeTaskGroup* tg = (RozeTaskGroup*)malloc(sizeof(RozeTaskGroup));
+    if (!tg) return 0;
+    tg->refcount = 1;
+    tg->magic = ROZE_MAGIC_TASK_GROUP;
+    tg->policy = policy;
+    tg->token = (RozeCancellationToken*)__roze_cancel_token_new();
+    __atomic_store_n(&tg->cancelled, 0, __ATOMIC_SEQ_CST);
+    tg->timeout_ms = timeout_ms;
+    tg->timeout_active = 0;
+    pthread_mutex_init(&tg->lock, NULL);
+    pthread_cond_init(&tg->cond, NULL);
+
+    tg->task_capacity = 16;
+    tg->task_count = 0;
+    tg->tasks = (RozeSubtask**)malloc(sizeof(RozeSubtask*) * tg->task_capacity);
+
+    __atomic_store_n(&tg->completed_count, 0, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&tg->failed_count, 0, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&tg->success_result, 0, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&tg->has_success_result, 0, __ATOMIC_SEQ_CST);
+    tg->joined = 0;
+
+    if (timeout_ms > 0) {
+        __atomic_store_n(&tg->timeout_active, 1, __ATOMIC_SEQ_CST);
+        __roze_nursery_retain((int64_t)tg);
+        pthread_create(&tg->timeout_thread, NULL, roze_timeout_watcher_thread, tg);
+    }
+    return (int64_t)tg;
+}
+
+int64_t __roze_nursery_new(void) {
+    return __roze_nursery_create(ROZE_TG_POLICY_ALL, 0);
+}
+
+int64_t __roze_task_group_new(void) {
+    return __roze_nursery_create(ROZE_TG_POLICY_ALL, 0);
+}
+
+int64_t __roze_nursery_on_failure(void) {
+    return __roze_nursery_create(ROZE_TG_POLICY_SHUTDOWN_ON_FAILURE, 0);
+}
+
+int64_t __roze_task_group_on_failure(void) {
+    return __roze_nursery_create(ROZE_TG_POLICY_SHUTDOWN_ON_FAILURE, 0);
+}
+
+int64_t __roze_nursery_on_success(void) {
+    return __roze_nursery_create(ROZE_TG_POLICY_SHUTDOWN_ON_SUCCESS, 0);
+}
+
+int64_t __roze_task_group_on_success(void) {
+    return __roze_nursery_create(ROZE_TG_POLICY_SHUTDOWN_ON_SUCCESS, 0);
+}
+
+int64_t __roze_nursery_with_timeout(int64_t timeout_ms) {
+    return __roze_nursery_create(ROZE_TG_POLICY_ALL, timeout_ms);
+}
+
+int64_t __roze_task_group_with_timeout(int64_t timeout_ms) {
+    return __roze_nursery_create(ROZE_TG_POLICY_ALL, timeout_ms);
+}
+
+// Subtask worker runner
+static void* roze_subtask_runner(void* arg) {
+    RozeSubtask* sub = (RozeSubtask*)arg;
+    RozeTaskGroup* tg = sub->parent_tg;
+
+    if (__roze_cancel_token_is_cancelled((int64_t)tg->token)) {
+        pthread_mutex_lock(&sub->lock);
+        __atomic_store_n(&sub->state, 3, __ATOMIC_RELEASE); // CANCELLED
+        pthread_cond_broadcast(&sub->cond);
+        pthread_mutex_unlock(&sub->lock);
+
+        __atomic_fetch_add(&tg->failed_count, 1, __ATOMIC_SEQ_CST);
+        __atomic_fetch_add(&tg->completed_count, 1, __ATOMIC_SEQ_CST);
+
+        pthread_mutex_lock(&tg->lock);
+        pthread_cond_broadcast(&tg->cond);
+        pthread_mutex_unlock(&tg->lock);
+
+        __roze_subtask_release((int64_t)sub);
+        __roze_nursery_release((int64_t)tg);
+        return NULL;
+    }
+
+    int64_t res = 0;
+    if (sub->closure && sub->closure->fn_ptr) {
+        res = (int64_t)sub->closure->fn_ptr(sub->closure);
+    }
+
+    pthread_mutex_lock(&sub->lock);
+    if (__roze_cancel_token_is_cancelled((int64_t)tg->token)) {
+        __atomic_store_n(&sub->state, 3, __ATOMIC_RELEASE); // CANCELLED
+        __atomic_fetch_add(&tg->failed_count, 1, __ATOMIC_SEQ_CST);
+    } else {
+        sub->result = res;
+        __atomic_store_n(&sub->state, 1, __ATOMIC_RELEASE); // SUCCESS
+
+        if (tg->policy == ROZE_TG_POLICY_SHUTDOWN_ON_SUCCESS) {
+            int64_t expected = 0;
+            if (__atomic_compare_exchange_n(&tg->has_success_result, &expected, 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+                __atomic_store_n(&tg->success_result, res, __ATOMIC_SEQ_CST);
+                __roze_cancel_token_cancel((int64_t)tg->token);
+            }
+        }
+    }
+    pthread_cond_broadcast(&sub->cond);
+    pthread_mutex_unlock(&sub->lock);
+
+    __atomic_fetch_add(&tg->completed_count, 1, __ATOMIC_SEQ_CST);
+
+    pthread_mutex_lock(&tg->lock);
+    pthread_cond_broadcast(&tg->cond);
+    pthread_mutex_unlock(&tg->lock);
+
+    __roze_subtask_release((int64_t)sub);
+    __roze_nursery_release((int64_t)tg);
+    return NULL;
+}
+
+int64_t __roze_nursery_fork(int64_t tg_val, void* closure_ptr) {
+    if (!tg_val || !closure_ptr) return 0;
+    RozeTaskGroup* tg = (RozeTaskGroup*)tg_val;
+    if (tg->magic != ROZE_MAGIC_TASK_GROUP) return 0;
+
+    RozeSubtask* sub = (RozeSubtask*)malloc(sizeof(RozeSubtask));
+    if (!sub) return 0;
+    sub->refcount = 2; // 1 for caller, 1 for runner
+    sub->magic = ROZE_MAGIC_SUBTASK;
+    sub->closure = (RozeClosure*)closure_ptr;
+    sub->result = 0;
+    sub->state = 0;
+    sub->parent_tg = tg;
+    pthread_mutex_init(&sub->lock, NULL);
+    pthread_cond_init(&sub->cond, NULL);
+
+    pthread_mutex_lock(&tg->lock);
+    if (tg->task_count == tg->task_capacity) {
+        int64_t new_cap = tg->task_capacity * 2;
+        tg->tasks = (RozeSubtask**)realloc(tg->tasks, sizeof(RozeSubtask*) * new_cap);
+        tg->task_capacity = new_cap;
+    }
+    tg->tasks[tg->task_count++] = sub;
+    __roze_subtask_retain((int64_t)sub);
+    pthread_mutex_unlock(&tg->lock);
+
+    __roze_nursery_retain((int64_t)tg);
+
+    pthread_t th;
+    pthread_create(&th, NULL, roze_subtask_runner, sub);
+    sub->fiber_or_thread = (int64_t)th;
+    pthread_detach(th);
+
+    return (int64_t)sub;
+}
+
+int64_t __roze_task_group_fork(int64_t tg_val, void* closure_ptr) {
+    return __roze_nursery_fork(tg_val, closure_ptr);
+}
+
+int64_t __roze_nursery_join(int64_t tg_val) {
+    if (!tg_val) return 0;
+    RozeTaskGroup* tg = (RozeTaskGroup*)tg_val;
+    if (tg->magic != ROZE_MAGIC_TASK_GROUP) return 0;
+
+    pthread_mutex_lock(&tg->lock);
+    while (1) {
+        if (tg->policy == ROZE_TG_POLICY_SHUTDOWN_ON_SUCCESS && __atomic_load_n(&tg->has_success_result, __ATOMIC_ACQUIRE)) {
+            break;
+        }
+        if (tg->policy == ROZE_TG_POLICY_SHUTDOWN_ON_FAILURE && __atomic_load_n(&tg->failed_count, __ATOMIC_ACQUIRE) > 0) {
+            break;
+        }
+        if (__atomic_load_n(&tg->completed_count, __ATOMIC_ACQUIRE) >= tg->task_count) {
+            break;
+        }
+        pthread_cond_wait(&tg->cond, &tg->lock);
+    }
+    tg->joined = 1;
+    __atomic_store_n(&tg->timeout_active, 0, __ATOMIC_RELEASE);
+    pthread_cond_broadcast(&tg->cond);
+    pthread_mutex_unlock(&tg->lock);
+
+    if (__atomic_load_n(&tg->has_success_result, __ATOMIC_ACQUIRE)) {
+        return __atomic_load_n(&tg->success_result, __ATOMIC_ACQUIRE);
+    }
+    return 0;
+}
+
+int64_t __roze_task_group_join(int64_t tg_val) {
+    return __roze_nursery_join(tg_val);
+}
+
+void __roze_nursery_cancel(int64_t tg_val) {
+    if (!tg_val) return;
+    RozeTaskGroup* tg = (RozeTaskGroup*)tg_val;
+    if (tg->magic == ROZE_MAGIC_TASK_GROUP) {
+        if (tg->token) {
+            __roze_cancel_token_cancel((int64_t)tg->token);
+        }
+        __atomic_store_n(&tg->cancelled, 1, __ATOMIC_SEQ_CST);
+        pthread_mutex_lock(&tg->lock);
+        pthread_cond_broadcast(&tg->cond);
+        pthread_mutex_unlock(&tg->lock);
+    }
+}
+
+void __roze_task_group_cancel(int64_t tg_val) {
+    __roze_nursery_cancel(tg_val);
+}
+
+int64_t __roze_nursery_is_cancelled(int64_t tg_val) {
+    if (!tg_val) return 0;
+    RozeTaskGroup* tg = (RozeTaskGroup*)tg_val;
+    if (tg->magic == ROZE_MAGIC_TASK_GROUP) {
+        return __roze_cancel_token_is_cancelled((int64_t)tg->token);
+    }
+    return 0;
+}
+
+int64_t __roze_task_group_is_cancelled(int64_t tg_val) {
+    return __roze_nursery_is_cancelled(tg_val);
+}
+
+int64_t __roze_nursery_result(int64_t tg_val) {
+    if (!tg_val) return 0;
+    RozeTaskGroup* tg = (RozeTaskGroup*)tg_val;
+    if (tg->magic == ROZE_MAGIC_TASK_GROUP) {
+        return __atomic_load_n(&tg->success_result, __ATOMIC_ACQUIRE);
+    }
+    return 0;
+}
+
+int64_t __roze_task_group_result(int64_t tg_val) {
+    return __roze_nursery_result(tg_val);
+}
+
+int64_t __roze_nursery_token(int64_t tg_val) {
+    if (!tg_val) return 0;
+    RozeTaskGroup* tg = (RozeTaskGroup*)tg_val;
+    if (tg->magic == ROZE_MAGIC_TASK_GROUP) {
+        return (int64_t)tg->token;
+    }
+    return 0;
+}
+
+int64_t __roze_task_group_token(int64_t tg_val) {
+    return __roze_nursery_token(tg_val);
+}
+
+int64_t __roze_nursery_task_count(int64_t tg_val) {
+    if (!tg_val) return 0;
+    RozeTaskGroup* tg = (RozeTaskGroup*)tg_val;
+    if (tg->magic == ROZE_MAGIC_TASK_GROUP) {
+        return tg->task_count;
+    }
+    return 0;
+}
+
+int64_t __roze_task_group_task_count(int64_t tg_val) {
+    return __roze_nursery_task_count(tg_val);
+}
+
+int64_t __roze_nursery_completed_count(int64_t tg_val) {
+    if (!tg_val) return 0;
+    RozeTaskGroup* tg = (RozeTaskGroup*)tg_val;
+    if (tg->magic == ROZE_MAGIC_TASK_GROUP) {
+        return __atomic_load_n(&tg->completed_count, __ATOMIC_ACQUIRE);
+    }
+    return 0;
+}
+
+int64_t __roze_task_group_completed_count(int64_t tg_val) {
+    return __roze_nursery_completed_count(tg_val);
+}
+
+void __roze_nursery_retain(int64_t tg_val) {
+    if (!tg_val) return;
+    RozeTaskGroup* tg = (RozeTaskGroup*)tg_val;
+    if (tg->magic == ROZE_MAGIC_TASK_GROUP) {
+        __atomic_fetch_add(&tg->refcount, 1, __ATOMIC_SEQ_CST);
+    }
+}
+
+void __roze_task_group_retain(int64_t tg_val) {
+    __roze_nursery_retain(tg_val);
+}
+
+void __roze_nursery_release(int64_t tg_val) {
+    if (!tg_val) return;
+    RozeTaskGroup* tg = (RozeTaskGroup*)tg_val;
+    if (tg->magic == ROZE_MAGIC_TASK_GROUP) {
+        if (__atomic_fetch_sub(&tg->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+            for (int64_t i = 0; i < tg->task_count; i++) {
+                __roze_subtask_release((int64_t)tg->tasks[i]);
+            }
+            free(tg->tasks);
+            if (tg->token) {
+                __roze_cancel_token_release((int64_t)tg->token);
+            }
+            pthread_mutex_destroy(&tg->lock);
+            pthread_cond_destroy(&tg->cond);
+            free(tg);
+        }
+    }
+}
+
+void __roze_task_group_release(int64_t tg_val) {
+    __roze_nursery_release(tg_val);
 }
 
 // Freestanding VGA Text Driver Stubs for Hosted Native Target

@@ -1,0 +1,78 @@
+// compiler/tests/fixtures/structured_concurrency.roze
+//
+// Tests Structured Concurrency: Nursery, Task Groups & Cancelation (M1-T07)
+// - Nursery / TaskGroup scopes awaiting child tasks
+// - Subtask handles (get, is_done, is_cancelled)
+// - CancellationToken propagation and triggering
+// - Shutdown on success (speculative execution) policy
+// - Timeout-driven cancellation triggers
+// - Standard library nursery and task_group scoped helpers
+
+import "concurrency";
+
+func main() {
+    // ---------------------------------------------------------
+    // 1. TaskGroup Default Policy (Await all spawned tasks)
+    // ---------------------------------------------------------
+    let tg = task_group_new();
+    let s1 = tg.fork(|| 10);
+    let s2 = tg.fork(|| 20);
+    let s3 = tg.fork(|| 30);
+
+    tg.join();
+
+    println(s1.get());
+    println(s2.get());
+    println(s3.get());
+    println(s1.is_done());
+    println(s1.is_cancelled());
+    println(tg.task_count());
+    println(tg.completed_count());
+    println(tg.is_cancelled());
+
+    // ---------------------------------------------------------
+    // 2. Standalone CancellationToken
+    // ---------------------------------------------------------
+    let tok = cancel_token_new();
+    println(tok.is_cancelled());
+    tok.cancel();
+    println(tok.is_cancelled());
+
+    // ---------------------------------------------------------
+    // 3. TaskGroup Cancellation & Token Propagation
+    // ---------------------------------------------------------
+    let tg2 = task_group_new();
+    let group_tok = tg2.token();
+    println(group_tok.is_cancelled());
+    tg2.cancel();
+    println(group_tok.is_cancelled());
+    println(tg2.is_cancelled());
+
+    // ---------------------------------------------------------
+    // 4. Speculative Execution (ShutdownOnSuccess Policy)
+    // ---------------------------------------------------------
+    let spec = task_group_on_success();
+    let s_first = spec.fork(|| 999);
+    let win = spec.join();
+
+    println(win);
+    println(spec.result());
+    println(spec.is_cancelled());
+
+    // ---------------------------------------------------------
+    // 5. Timeout Trigger Cancellation
+    // ---------------------------------------------------------
+    let tmo = task_group_with_timeout(10);
+    thread_sleep(40);
+    println(tmo.is_cancelled());
+
+    // ---------------------------------------------------------
+    // 6. Nursery Scoped Helper Functions
+    // ---------------------------------------------------------
+    let n = nursery_new();
+    let ns1 = n.fork(|| 100);
+    let ns2 = n.fork(|| 200);
+    n.join();
+    println(ns1.get() + ns2.get());
+    println(n.task_count());
+}

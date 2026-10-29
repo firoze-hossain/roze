@@ -1641,6 +1641,210 @@ class RozeFuture {
         return this.cf.isDone();
     }
 }
+
+class RozeCancellationToken {
+    public final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    public void cancel() {
+        cancelled.set(true);
+    }
+
+    public boolean isCancelled() {
+        return cancelled.get();
+    }
+}
+
+class RozeSubtask {
+    public final java.util.concurrent.CompletableFuture<Object> future = new java.util.concurrent.CompletableFuture<>();
+    public volatile Object result = null;
+    public volatile boolean isDone = false;
+    public volatile boolean isCancelled = false;
+
+    public Object get() {
+        try {
+            return future.join();
+        } catch (java.util.concurrent.CompletionException ce) {
+            Throwable cause = ce.getCause();
+            if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+            throw new RuntimeException(cause);
+        }
+    }
+
+    public boolean isDone() {
+        return isDone;
+    }
+
+    public boolean isCancelled() {
+        return isCancelled;
+    }
+}
+
+class RozeTaskGroup {
+    public final int policy; // 0 = ALL, 1 = SHUTDOWN_ON_FAILURE, 2 = SHUTDOWN_ON_SUCCESS
+    public final RozeCancellationToken token = new RozeCancellationToken();
+    public final java.util.List<RozeSubtask> tasks = new java.util.concurrent.CopyOnWriteArrayList<>();
+    public final java.util.concurrent.atomic.AtomicInteger completedCount = new java.util.concurrent.atomic.AtomicInteger(0);
+    public final java.util.concurrent.atomic.AtomicInteger failedCount = new java.util.concurrent.atomic.AtomicInteger(0);
+    public final java.util.concurrent.atomic.AtomicBoolean hasSuccessResult = new java.util.concurrent.atomic.AtomicBoolean(false);
+    public volatile Object successResult = null;
+    public final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
+    public final java.util.concurrent.locks.Condition cond = lock.newCondition();
+    public volatile boolean joined = false;
+    private final Thread timeoutThread;
+
+    public RozeTaskGroup(int policy, long timeoutMs) {
+        this.policy = policy;
+        if (timeoutMs > 0) {
+            Runnable watcher = () -> {
+                try {
+                    Thread.sleep(timeoutMs);
+                    if (!joined) {
+                        cancel();
+                    }
+                } catch (InterruptedException ignored) {}
+            };
+            Thread t;
+            try {
+                Object ofVirtual = Thread.class.getMethod("ofVirtual").invoke(null);
+                t = (Thread) ofVirtual.getClass().getMethod("start", Runnable.class).invoke(ofVirtual, watcher);
+            } catch (Throwable fallback) {
+                t = new Thread(watcher);
+                t.setDaemon(true);
+                t.start();
+            }
+            this.timeoutThread = t;
+        } else {
+            this.timeoutThread = null;
+        }
+    }
+
+    public RozeSubtask fork(RozeFn fn) {
+        RozeSubtask sub = new RozeSubtask();
+        tasks.add(sub);
+
+        Runnable runner = () -> {
+            if (token.isCancelled()) {
+                sub.isCancelled = true;
+                sub.isDone = true;
+                sub.future.complete(null);
+                failedCount.incrementAndGet();
+                completedCount.incrementAndGet();
+                lock.lock();
+                try {
+                    cond.signalAll();
+                } finally {
+                    lock.unlock();
+                }
+                return;
+            }
+
+            try {
+                Object res = fn.apply();
+                if (token.isCancelled()) {
+                    sub.isCancelled = true;
+                    sub.isDone = true;
+                    sub.future.complete(null);
+                    failedCount.incrementAndGet();
+                } else {
+                    sub.result = res;
+                    sub.isDone = true;
+                    sub.future.complete(res);
+
+                    if (policy == 2) { // SHUTDOWN_ON_SUCCESS
+                        if (hasSuccessResult.compareAndSet(false, true)) {
+                            successResult = res;
+                            cancel();
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                sub.isCancelled = true;
+                sub.isDone = true;
+                sub.future.completeExceptionally(t);
+                failedCount.incrementAndGet();
+                if (policy == 1) { // SHUTDOWN_ON_FAILURE
+                    cancel();
+                }
+            } finally {
+                completedCount.incrementAndGet();
+                lock.lock();
+                try {
+                    cond.signalAll();
+                } finally {
+                    lock.unlock();
+                }
+            }
+        };
+
+        try {
+            Object ofVirtual = Thread.class.getMethod("ofVirtual").invoke(null);
+            ofVirtual.getClass().getMethod("start", Runnable.class).invoke(ofVirtual, runner);
+        } catch (Throwable fallback) {
+            Thread t = new Thread(runner);
+            t.setDaemon(true);
+            t.start();
+        }
+        return sub;
+    }
+
+    public int join() {
+        lock.lock();
+        try {
+            while (true) {
+                if (policy == 2 && hasSuccessResult.get()) break;
+                if (policy == 1 && failedCount.get() > 0) break;
+                if (completedCount.get() >= tasks.size()) break;
+                try {
+                    cond.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            joined = true;
+        } finally {
+            lock.unlock();
+        }
+
+        if (hasSuccessResult.get() && successResult instanceof Number) {
+            return ((Number) successResult).intValue();
+        }
+        return 0;
+    }
+
+    public void cancel() {
+        token.cancel();
+        lock.lock();
+        try {
+            cond.signalAll();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public boolean isCancelled() {
+        return token.isCancelled();
+    }
+
+    public int result() {
+        if (successResult instanceof Number) {
+            return ((Number) successResult).intValue();
+        }
+        return 0;
+    }
+
+    public RozeCancellationToken token() {
+        return token;
+    }
+
+    public int taskCount() {
+        return tasks.size();
+    }
+
+    public int completedCount() {
+        return completedCount.get();
+    }
+}
 "#;
 
 const CONCURRENCY_HELPER_METHODS: &str = r#"
@@ -2017,6 +2221,145 @@ const CONCURRENCY_HELPER_METHODS: &str = r#"
     private static int __roze_atomic_sub(Object a, long delta) {
         return __roze_atomic_i64_sub(a, delta);
     }
+
+    // Structured Concurrency (M1-T07)
+    private static RozeTaskGroup __roze_nursery_new() {
+        return new RozeTaskGroup(0, 0);
+    }
+    private static RozeTaskGroup __roze_task_group_new() {
+        return new RozeTaskGroup(0, 0);
+    }
+    private static RozeTaskGroup __roze_nursery_on_failure() {
+        return new RozeTaskGroup(1, 0);
+    }
+    private static RozeTaskGroup __roze_task_group_on_failure() {
+        return new RozeTaskGroup(1, 0);
+    }
+    private static RozeTaskGroup __roze_nursery_on_success() {
+        return new RozeTaskGroup(2, 0);
+    }
+    private static RozeTaskGroup __roze_task_group_on_success() {
+        return new RozeTaskGroup(2, 0);
+    }
+    private static RozeTaskGroup __roze_nursery_with_timeout(long ms) {
+        return new RozeTaskGroup(0, ms);
+    }
+    private static RozeTaskGroup __roze_task_group_with_timeout(long ms) {
+        return new RozeTaskGroup(0, ms);
+    }
+
+    private static RozeSubtask __roze_nursery_fork(Object tg, Object fnObj) {
+        if (tg instanceof RozeTaskGroup && fnObj instanceof RozeFn) {
+            return ((RozeTaskGroup) tg).fork((RozeFn) fnObj);
+        }
+        return null;
+    }
+    private static RozeSubtask __roze_task_group_fork(Object tg, Object fnObj) {
+        return __roze_nursery_fork(tg, fnObj);
+    }
+
+    private static int __roze_nursery_join(Object tg) {
+        if (tg instanceof RozeTaskGroup) {
+            return ((RozeTaskGroup) tg).join();
+        }
+        return 0;
+    }
+    private static int __roze_task_group_join(Object tg) {
+        return __roze_nursery_join(tg);
+    }
+
+    private static void __roze_nursery_cancel(Object tg) {
+        if (tg instanceof RozeTaskGroup) {
+            ((RozeTaskGroup) tg).cancel();
+        }
+    }
+    private static void __roze_task_group_cancel(Object tg) {
+        __roze_nursery_cancel(tg);
+    }
+
+    private static boolean __roze_nursery_is_cancelled(Object tg) {
+        if (tg instanceof RozeTaskGroup) {
+            return ((RozeTaskGroup) tg).isCancelled();
+        }
+        return false;
+    }
+    private static boolean __roze_task_group_is_cancelled(Object tg) {
+        return __roze_nursery_is_cancelled(tg);
+    }
+
+    private static int __roze_nursery_result(Object tg) {
+        if (tg instanceof RozeTaskGroup) {
+            return ((RozeTaskGroup) tg).result();
+        }
+        return 0;
+    }
+    private static int __roze_task_group_result(Object tg) {
+        return __roze_nursery_result(tg);
+    }
+
+    private static RozeCancellationToken __roze_nursery_token(Object tg) {
+        if (tg instanceof RozeTaskGroup) {
+            return ((RozeTaskGroup) tg).token();
+        }
+        return null;
+    }
+    private static RozeCancellationToken __roze_task_group_token(Object tg) {
+        return __roze_nursery_token(tg);
+    }
+
+    private static int __roze_nursery_task_count(Object tg) {
+        if (tg instanceof RozeTaskGroup) {
+            return ((RozeTaskGroup) tg).taskCount();
+        }
+        return 0;
+    }
+    private static int __roze_task_group_task_count(Object tg) {
+        return __roze_nursery_task_count(tg);
+    }
+
+    private static int __roze_nursery_completed_count(Object tg) {
+        if (tg instanceof RozeTaskGroup) {
+            return ((RozeTaskGroup) tg).completedCount();
+        }
+        return 0;
+    }
+    private static int __roze_task_group_completed_count(Object tg) {
+        return __roze_nursery_completed_count(tg);
+    }
+
+    private static Object __roze_subtask_get(Object sub) {
+        if (sub instanceof RozeSubtask) {
+            return ((RozeSubtask) sub).get();
+        }
+        return null;
+    }
+    private static boolean __roze_subtask_is_done(Object sub) {
+        if (sub instanceof RozeSubtask) {
+            return ((RozeSubtask) sub).isDone();
+        }
+        return false;
+    }
+    private static boolean __roze_subtask_is_cancelled(Object sub) {
+        if (sub instanceof RozeSubtask) {
+            return ((RozeSubtask) sub).isCancelled();
+        }
+        return false;
+    }
+
+    private static RozeCancellationToken __roze_cancel_token_new() {
+        return new RozeCancellationToken();
+    }
+    private static void __roze_cancel_token_cancel(Object tok) {
+        if (tok instanceof RozeCancellationToken) {
+            ((RozeCancellationToken) tok).cancel();
+        }
+    }
+    private static boolean __roze_cancel_token_is_cancelled(Object tok) {
+        if (tok instanceof RozeCancellationToken) {
+            return ((RozeCancellationToken) tok).isCancelled();
+        }
+        return false;
+    }
 "#;
 
 const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
@@ -2352,6 +2695,34 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "atomic_cas" => Some("boolean"),
         "atomic_add" | "atomic_sub" => Some("int"),
 
+        // Structured Concurrency: Nursery, Task Groups & Cancelation (M1-T07)
+        "nursery_new" | "task_group_new" |
+        "nursery_on_failure" | "task_group_on_failure" |
+        "nursery_on_success" | "task_group_on_success" |
+        "nursery_with_timeout" | "task_group_with_timeout" => Some("RozeTaskGroup"),
+
+        "nursery_fork" | "task_group_fork" |
+        "nursery_spawn" | "task_group_spawn" => Some("RozeSubtask"),
+
+        "nursery_join" | "task_group_join" |
+        "nursery_wait" | "task_group_wait" |
+        "nursery_result" | "task_group_result" => Some("int"),
+
+        "nursery_cancel" | "task_group_cancel" => Some("void"),
+        "nursery_is_cancelled" | "task_group_is_cancelled" => Some("boolean"),
+
+        "nursery_token" | "task_group_token" => Some("RozeCancellationToken"),
+
+        "nursery_task_count" | "task_group_task_count" |
+        "nursery_completed_count" | "task_group_completed_count" => Some("int"),
+
+        "subtask_get" => Some(OBJECT_TYPE),
+        "subtask_is_done" | "subtask_is_cancelled" => Some("boolean"),
+
+        "cancel_token_new" => Some("RozeCancellationToken"),
+        "cancel_token_cancel" => Some("void"),
+        "cancel_token_is_cancelled" => Some("boolean"),
+
         // Unsafe Raw Pointers & Direct Memory (MED-05)
         "alloc" | "alloc_zeroed" | "realloc" => Some("long"),
         "free" => Some("void"),
@@ -2457,6 +2828,12 @@ fn java_type_name(ty: &Type) -> String {
                 "java.util.concurrent.atomic.AtomicLong".to_string()
             } else if base == "AtomicPtr" || base == "atomic_ptr" {
                 "java.util.concurrent.atomic.AtomicReference".to_string()
+            } else if base == "TaskGroup" || base == "task_group" || base == "Nursery" || base == "nursery" {
+                "RozeTaskGroup".to_string()
+            } else if base == "Subtask" || base == "subtask" {
+                "RozeSubtask".to_string()
+            } else if base == "CancellationToken" || base == "cancellation_token" || base == "CancelToken" || base == "cancel_token" {
+                "RozeCancellationToken".to_string()
             } else {
                 escape_java_identifier(&crate::semantic::specialized_name(base, type_args))
             }
@@ -2500,6 +2877,12 @@ fn java_unbox(ty: &Type, expr_str: &str) -> String {
                 format!("((java.util.concurrent.atomic.AtomicLong) {})", expr_str)
             } else if base == "AtomicPtr" || base == "atomic_ptr" {
                 format!("((java.util.concurrent.atomic.AtomicReference) {})", expr_str)
+            } else if base == "TaskGroup" || base == "task_group" || base == "Nursery" || base == "nursery" {
+                format!("((RozeTaskGroup) {})", expr_str)
+            } else if base == "Subtask" || base == "subtask" {
+                format!("((RozeSubtask) {})", expr_str)
+            } else if base == "CancellationToken" || base == "cancellation_token" || base == "CancelToken" || base == "cancel_token" {
+                format!("((RozeCancellationToken) {})", expr_str)
             } else {
                 let spec = crate::semantic::specialized_name(base, type_args);
                 format!("(({}) {})", escape_java_identifier(&spec), expr_str)
@@ -3619,7 +4002,7 @@ impl JavaSourceGenerator {
                 }
             }
             TypedExpressionKind::Call { function, arguments } => {
-                if (function == "list_get" || function == "map_get" || function == "channel_recv" || function == "recv" || function == "channel_try_recv" || function == "thread_join" || function == "fiber_join" || function == "future_await" || function == "__roze_future_await" || function == "atomic_ptr_load" || function == "atomic_load" || function == "atomic_ptr_swap" || function == "atomic_swap") && expr.type_ != Type::Unknown {
+                if (function == "list_get" || function == "map_get" || function == "channel_recv" || function == "recv" || function == "channel_try_recv" || function == "thread_join" || function == "fiber_join" || function == "future_await" || function == "__roze_future_await" || function == "atomic_ptr_load" || function == "atomic_load" || function == "atomic_ptr_swap" || function == "atomic_swap" || function == "subtask_get") && expr.type_ != Type::Unknown {
                     let mut call_buf = String::new();
                     self.generate_call(&mut call_buf, function, arguments)?;
                     source.push_str(&java_unbox(&expr.type_, &call_buf));
@@ -4807,6 +5190,92 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str(", ");
                 self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+
+            // Structured Concurrency (M1-T07)
+            "nursery_new" | "task_group_new" if arguments.is_empty() => {
+                source.push_str("__roze_nursery_new()");
+            }
+            "nursery_on_failure" | "task_group_on_failure" if arguments.is_empty() => {
+                source.push_str("__roze_nursery_on_failure()");
+            }
+            "nursery_on_success" | "task_group_on_success" if arguments.is_empty() => {
+                source.push_str("__roze_nursery_on_success()");
+            }
+            "nursery_with_timeout" | "task_group_with_timeout" if arguments.len() == 1 => {
+                source.push_str("__roze_nursery_with_timeout(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "nursery_fork" | "task_group_fork" | "nursery_spawn" | "task_group_spawn" if arguments.len() == 2 => {
+                source.push_str("__roze_nursery_fork(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "nursery_join" | "task_group_join" | "nursery_wait" | "task_group_wait" if arguments.len() == 1 => {
+                source.push_str("__roze_nursery_join(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "nursery_cancel" | "task_group_cancel" if arguments.len() == 1 => {
+                source.push_str("__roze_nursery_cancel(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "nursery_is_cancelled" | "task_group_is_cancelled" if arguments.len() == 1 => {
+                source.push_str("__roze_nursery_is_cancelled(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "nursery_result" | "task_group_result" if arguments.len() == 1 => {
+                source.push_str("__roze_nursery_result(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "nursery_token" | "task_group_token" if arguments.len() == 1 => {
+                source.push_str("__roze_nursery_token(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "nursery_task_count" | "task_group_task_count" if arguments.len() == 1 => {
+                source.push_str("__roze_nursery_task_count(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "nursery_completed_count" | "task_group_completed_count" if arguments.len() == 1 => {
+                source.push_str("__roze_nursery_completed_count(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "subtask_get" if arguments.len() == 1 => {
+                source.push_str("__roze_subtask_get(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "subtask_is_done" if arguments.len() == 1 => {
+                source.push_str("__roze_subtask_is_done(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "subtask_is_cancelled" if arguments.len() == 1 => {
+                source.push_str("__roze_subtask_is_cancelled(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "cancel_token_new" if arguments.is_empty() => {
+                source.push_str("__roze_cancel_token_new()");
+            }
+            "cancel_token_cancel" if arguments.len() == 1 => {
+                source.push_str("__roze_cancel_token_cancel(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "cancel_token_is_cancelled" if arguments.len() == 1 => {
+                source.push_str("__roze_cancel_token_is_cancelled(");
+                self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
 

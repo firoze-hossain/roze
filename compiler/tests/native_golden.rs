@@ -3170,4 +3170,38 @@ true
     assert_eq!(out.trim_end(), expected);
 }
 
+#[test]
+fn native_structured_concurrency_nursery_and_task_groups() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("structured_concurrency.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read structured_concurrency.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("structured_concurrency_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    let expected = "\
+10
+20
+30
+true
+false
+3
+3
+false
+false
+true
+false
+true
+true
+999
+999
+true
+true
+300
+2";
+    assert_eq!(out.trim_end(), expected);
+}
+
+
 

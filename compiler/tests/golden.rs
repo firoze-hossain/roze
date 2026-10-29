@@ -1088,4 +1088,31 @@ true
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
 
+#[test]
+fn structured_concurrency_nursery_and_task_groups() {
+    let (stdout, stderr, ok) = run_fixture("structured_concurrency.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+10
+20
+30
+true
+false
+3
+3
+false
+false
+true
+false
+true
+true
+999
+999
+true
+true
+300
+2";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
 

@@ -414,6 +414,49 @@ func main() {
 }
 ```
 
+### 3.7 Structured Concurrency: Nursery, Task Groups & Cancelation
+Roze provides full-featured Structured Concurrency matching Java 25 JEP 453 `StructuredTaskScope` and Rust nursery runtimes (`TaskGroup` / `Nursery`), ensuring that child tasks are lifetime-bounded by their parent scope:
+
+- **Nursery / TaskGroup Scope**:
+  - `task_group_new()` / `nursery_new()`: Default scope awaiting all spawned child tasks.
+  - `tg.fork(|| ...)` / `tg.spawn(|| ...)`: Spawns a concurrent child subtask and returns a `Subtask<T>` handle.
+  - `tg.join()` / `tg.wait()`: Awaits task completion according to the configured scope policy.
+  - Guarantees zero orphaned child tasks or thread leaks: scope exit waits for all spawned workers.
+- **Policies & Error Handling**:
+  - `task_group_on_failure()` / `nursery_on_failure()` (ShutdownOnFailure): If any child task fails or cancels, the remaining sibling tasks are automatically cancelled immediately.
+  - `task_group_on_success()` / `nursery_on_success()` (ShutdownOnSuccess): Speculative race execution where the first child task to succeed sets the scope result and automatically cancels all remaining sibling tasks.
+  - `task_group_with_timeout(ms)` / `nursery_with_timeout(ms)`: Deadline-triggered scope that automatically cancels all subtasks upon timeout expiration.
+- **Subtask Handles (`Subtask<T>`)**:
+  - `subtask.get()`: Blocks cooperatively until the subtask finishes and extracts its resolved value.
+  - `subtask.is_done()`: Returns `true` if the subtask has completed (succeeded, failed, or cancelled).
+  - `subtask.is_cancelled()`: Returns `true` if the subtask was cancelled before completion.
+- **Unified CancellationToken**:
+  - `cancel_token_new()`: Instantiates a cooperatively pollable cancellation token.
+  - `tok.cancel()`: Triggers cancellation and broadcasts state change.
+  - `tok.is_cancelled()`: Checks cancellation status in long-running loops or nested child nurseries.
+  - `tg.token()`: Accesses the cancellation token embedded within a TaskGroup.
+- **Backend Mapping**:
+  - **JVM Backend**: Implemented via Project Loom virtual threads, `java.util.concurrent.CompletableFuture`, `AtomicInteger`, `AtomicBoolean`, and condition-variable task synchronizers (`RozeTaskGroup`, `RozeSubtask`, `RozeCancellationToken`).
+  - **Native Backend**: Implemented via POSIX threads, atomic state flags, timeout watcher threads, and unified ARC retain/release (`RozeTaskGroup`, `RozeSubtask`, `RozeCancellationToken`).
+
+```roze
+import "concurrency";
+
+func main() {
+    let tg = task_group_new();
+    let s1 = tg.fork(|| 10);
+    let s2 = tg.fork(|| 20);
+    tg.join();
+    println(s1.get() + s2.get()); // 30
+
+    // Speculative execution
+    let spec = task_group_on_success();
+    spec.fork(|| 999);
+    let first = spec.join();
+    println(first); // 999
+}
+```
+
 ---
 
 ## 4. Error Handling (`Result`, `Option`, `?`)

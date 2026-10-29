@@ -256,7 +256,7 @@ s1_rows = [
         ("M1-T07", 8), ("Month 1", 3), ("Sprint 2 (W03-W04)", 8), "Structured Concurrency", "Nursery, Task Groups & Cancelation",
         "Nursery structured concurrency scope: parent task automatically awaits all spawned child tasks. Unified cancelation tokens and timeout triggers.",
         "Parity with Java 25 JEP 453 Structured Concurrency and Rust nursery runtimes.",
-        "Cloud Microservices, Distributed Systems", "5 Days", ("Medium", 14), ("Planned", 12)
+        "Cloud Microservices, Distributed Systems", "5 Days", ("Medium", 14), ("Completed", 16)
     ],
     [
         ("M1-T08", 8), ("Month 1", 3), ("Sprint 2 (W03-W04)", 8), "Milestone Gate M1", "Month 1 Integration & Concurrency Benchmark",

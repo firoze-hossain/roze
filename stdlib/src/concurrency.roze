@@ -79,3 +79,45 @@ func future_completed(val: int) -> Future<int> {
 func future_is_done(fut: Future<int>) -> bool {
     return future_poll(fut);
 }
+
+// ---- Structured Concurrency: Nursery, Task Groups & Cancelation (M1-T07) ----
+//
+//   nursery(scope_fn)           -> void : executes scope_fn with a Nursery / TaskGroup, awaiting all tasks
+//   task_group(scope_fn)        -> void : alias for nursery(scope_fn)
+//   task_group_fail_fast(fn)    -> void : task group with fail-fast policy: child error cancels siblings
+//   task_group_speculative(fn)  -> int  : speculative execution: first success cancels siblings and returns
+//   task_group_timeout(ms, fn)  -> void : task group with automatic cancellation deadline
+
+func nursery(scope_fn: func(TaskGroup)) {
+    let tg = nursery_new();
+    scope_fn(tg);
+    tg.join();
+}
+
+func task_group(scope_fn: func(TaskGroup)) {
+    let tg = task_group_new();
+    scope_fn(tg);
+    tg.join();
+}
+
+func task_group_fail_fast(scope_fn: func(TaskGroup)) {
+    let tg = task_group_on_failure();
+    scope_fn(tg);
+    tg.join();
+}
+
+func task_group_speculative(scope_fn: func(TaskGroup)) -> int {
+    let tg = task_group_on_success();
+    scope_fn(tg);
+    return tg.join();
+}
+
+func task_group_timeout(ms: int, scope_fn: func(TaskGroup)) {
+    let tg = task_group_with_timeout(ms);
+    scope_fn(tg);
+    tg.join();
+}
+
+func cancellation_token() -> CancellationToken {
+    return cancel_token_new();
+}

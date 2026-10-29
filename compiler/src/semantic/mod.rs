@@ -169,6 +169,9 @@ impl Type {
             "atomic_i64" | "AtomicI64" => Type::Generic { base: "AtomicI64".to_string(), type_args: vec![] },
             "atomic_usize" | "AtomicUsize" => Type::Generic { base: "AtomicUsize".to_string(), type_args: vec![] },
             "atomic_ptr" | "AtomicPtr" => Type::Generic { base: "AtomicPtr".to_string(), type_args: vec![] },
+            "task_group" | "TaskGroup" | "nursery" | "Nursery" => Type::Generic { base: "TaskGroup".to_string(), type_args: vec![] },
+            "subtask" | "Subtask" => Type::Generic { base: "Subtask".to_string(), type_args: vec![] },
+            "cancellation_token" | "CancellationToken" | "cancel_token" | "CancelToken" => Type::Generic { base: "CancellationToken".to_string(), type_args: vec![] },
             _ => Type::Unknown,
         }
     }
@@ -217,6 +220,12 @@ impl Type {
                     "java.util.concurrent.atomic.AtomicLong".to_string()
                 } else if base == "AtomicPtr" || base == "atomic_ptr" {
                     "java.util.concurrent.atomic.AtomicReference".to_string()
+                } else if base == "TaskGroup" || base == "task_group" || base == "Nursery" || base == "nursery" {
+                    "RozeTaskGroup".to_string()
+                } else if base == "Subtask" || base == "subtask" {
+                    "RozeSubtask".to_string()
+                } else if base == "CancellationToken" || base == "cancellation_token" || base == "CancelToken" || base == "cancel_token" {
+                    "RozeCancellationToken".to_string()
                 } else {
                     specialized_name(base, type_args)
                 }
@@ -315,6 +324,15 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
         // AtomicPtr <-> AtomicPtr
         (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
             if (b1 == "AtomicPtr" || b1 == "atomic_ptr") && (b2 == "AtomicPtr" || b2 == "atomic_ptr") => true,
+        // TaskGroup <-> TaskGroup / Nursery
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "TaskGroup" || b1 == "task_group" || b1 == "Nursery" || b1 == "nursery") && (b2 == "TaskGroup" || b2 == "task_group" || b2 == "Nursery" || b2 == "nursery") => true,
+        // Subtask <-> Subtask
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "Subtask" || b1 == "subtask") && (b2 == "Subtask" || b2 == "subtask") => true,
+        // CancellationToken <-> CancellationToken
+        (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
+            if (b1 == "CancellationToken" || b1 == "cancellation_token" || b1 == "CancelToken" || b1 == "cancel_token") && (b2 == "CancellationToken" || b2 == "cancellation_token" || b2 == "CancelToken" || b2 == "cancel_token") => true,
         // Fiber <-> Thread interoperability
         (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
             if ((b1 == "Fiber" || b1 == "fiber") && (b2 == "Thread" || b2 == "thread"))
@@ -686,6 +704,52 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("atomic_cas", vec![Type::Unknown, Type::Unknown, Type::Unknown], Type::Bool),
         ("atomic_add", vec![Type::Unknown, Type::Int], Type::Int),
         ("atomic_sub", vec![Type::Unknown, Type::Int], Type::Int),
+
+        // ---- Structured Concurrency: Nursery, Task Groups & Cancelation (M1-T07) ----
+        ("nursery_new", vec![], Type::Generic { base: "TaskGroup".to_string(), type_args: vec![] }),
+        ("task_group_new", vec![], Type::Generic { base: "TaskGroup".to_string(), type_args: vec![] }),
+        ("nursery_on_failure", vec![], Type::Generic { base: "TaskGroup".to_string(), type_args: vec![] }),
+        ("task_group_on_failure", vec![], Type::Generic { base: "TaskGroup".to_string(), type_args: vec![] }),
+        ("nursery_on_success", vec![], Type::Generic { base: "TaskGroup".to_string(), type_args: vec![] }),
+        ("task_group_on_success", vec![], Type::Generic { base: "TaskGroup".to_string(), type_args: vec![] }),
+        ("nursery_with_timeout", vec![Type::Int], Type::Generic { base: "TaskGroup".to_string(), type_args: vec![] }),
+        ("task_group_with_timeout", vec![Type::Int], Type::Generic { base: "TaskGroup".to_string(), type_args: vec![] }),
+
+        ("nursery_fork", vec![Type::Unknown, Type::Unknown], Type::Generic { base: "Subtask".to_string(), type_args: vec![] }),
+        ("task_group_fork", vec![Type::Unknown, Type::Unknown], Type::Generic { base: "Subtask".to_string(), type_args: vec![] }),
+        ("nursery_spawn", vec![Type::Unknown, Type::Unknown], Type::Generic { base: "Subtask".to_string(), type_args: vec![] }),
+        ("task_group_spawn", vec![Type::Unknown, Type::Unknown], Type::Generic { base: "Subtask".to_string(), type_args: vec![] }),
+
+        ("nursery_join", vec![Type::Unknown], Type::Int),
+        ("task_group_join", vec![Type::Unknown], Type::Int),
+        ("nursery_wait", vec![Type::Unknown], Type::Int),
+        ("task_group_wait", vec![Type::Unknown], Type::Int),
+
+        ("nursery_cancel", vec![Type::Unknown], Type::Void),
+        ("task_group_cancel", vec![Type::Unknown], Type::Void),
+
+        ("nursery_is_cancelled", vec![Type::Unknown], Type::Bool),
+        ("task_group_is_cancelled", vec![Type::Unknown], Type::Bool),
+
+        ("nursery_result", vec![Type::Unknown], Type::Int),
+        ("task_group_result", vec![Type::Unknown], Type::Int),
+
+        ("nursery_token", vec![Type::Unknown], Type::Generic { base: "CancellationToken".to_string(), type_args: vec![] }),
+        ("task_group_token", vec![Type::Unknown], Type::Generic { base: "CancellationToken".to_string(), type_args: vec![] }),
+
+        ("nursery_task_count", vec![Type::Unknown], Type::Int),
+        ("task_group_task_count", vec![Type::Unknown], Type::Int),
+
+        ("nursery_completed_count", vec![Type::Unknown], Type::Int),
+        ("task_group_completed_count", vec![Type::Unknown], Type::Int),
+
+        ("subtask_get", vec![Type::Unknown], Type::Unknown),
+        ("subtask_is_done", vec![Type::Unknown], Type::Bool),
+        ("subtask_is_cancelled", vec![Type::Unknown], Type::Bool),
+
+        ("cancel_token_new", vec![], Type::Generic { base: "CancellationToken".to_string(), type_args: vec![] }),
+        ("cancel_token_cancel", vec![Type::Unknown], Type::Void),
+        ("cancel_token_is_cancelled", vec![Type::Unknown], Type::Bool),
 
         // ---- Unsafe Raw Pointers & Direct Memory (MED-05) ----
         ("alloc", vec![Type::Int], Type::RawPointer(Box::new(Type::U8))),
@@ -3125,10 +3189,16 @@ impl TypeChecker {
                             "Thread"
                         };
                         Type::Generic { base: base.to_string(), type_args: ret_type }
-                    } else if (name == "thread_join" || name == "fiber_join" || name == "future_await" || name == "__roze_future_await") && typed_arguments.len() == 1 {
+                    } else if (name == "task_group_fork" || name == "nursery_fork" || name == "task_group_spawn" || name == "nursery_spawn") && typed_arguments.len() == 2 {
+                        let ret_type = match &typed_arguments[1].type_ {
+                            Type::Function { return_type, .. } => vec![*return_type.clone()],
+                            _ => vec![],
+                        };
+                        Type::Generic { base: "Subtask".to_string(), type_args: ret_type }
+                    } else if (name == "thread_join" || name == "fiber_join" || name == "future_await" || name == "__roze_future_await" || name == "subtask_get") && typed_arguments.len() == 1 {
                         let th_ty = &typed_arguments[0].type_;
                         match th_ty {
-                            Type::Generic { base, type_args } if (base == "Thread" || base == "thread" || base == "Fiber" || base == "fiber" || base == "Future" || base == "future") && !type_args.is_empty() => {
+                            Type::Generic { base, type_args } if (base == "Thread" || base == "thread" || base == "Fiber" || base == "fiber" || base == "Future" || base == "future" || base == "Subtask" || base == "subtask") && !type_args.is_empty() => {
                                 type_args[0].clone()
                             }
                             _ => Type::Unknown,
@@ -3799,6 +3869,35 @@ impl TypeChecker {
                             ("AtomicPtr" | "atomic_ptr", "store") => ("atomic_ptr_store", Type::Void),
                             ("AtomicPtr" | "atomic_ptr", "swap") => ("atomic_ptr_swap", if type_args.is_empty() { Type::RawPointer(Box::new(Type::U8)) } else { type_args[0].clone() }),
                             ("AtomicPtr" | "atomic_ptr", "cas") => ("atomic_ptr_cas", Type::Bool),
+
+                            // TaskGroup / Nursery
+                            ("TaskGroup" | "task_group" | "Nursery" | "nursery", "fork" | "spawn") => {
+                                let subtask_ret_type = if !typed_args.is_empty() {
+                                    match &typed_args[0].type_ {
+                                        Type::Function { return_type, .. } => vec![*return_type.clone()],
+                                        _ => vec![],
+                                    }
+                                } else {
+                                    vec![]
+                                };
+                                ("task_group_fork", Type::Generic { base: "Subtask".to_string(), type_args: subtask_ret_type })
+                            }
+                            ("TaskGroup" | "task_group" | "Nursery" | "nursery", "join" | "wait") => ("task_group_join", Type::Int),
+                            ("TaskGroup" | "task_group" | "Nursery" | "nursery", "cancel") => ("task_group_cancel", Type::Void),
+                            ("TaskGroup" | "task_group" | "Nursery" | "nursery", "is_cancelled") => ("task_group_is_cancelled", Type::Bool),
+                            ("TaskGroup" | "task_group" | "Nursery" | "nursery", "result") => ("task_group_result", Type::Int),
+                            ("TaskGroup" | "task_group" | "Nursery" | "nursery", "token") => ("task_group_token", Type::Generic { base: "CancellationToken".to_string(), type_args: vec![] }),
+                            ("TaskGroup" | "task_group" | "Nursery" | "nursery", "task_count") => ("task_group_task_count", Type::Int),
+                            ("TaskGroup" | "task_group" | "Nursery" | "nursery", "completed_count") => ("task_group_completed_count", Type::Int),
+
+                            // Subtask
+                            ("Subtask" | "subtask", "get") => ("subtask_get", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("Subtask" | "subtask", "is_done") => ("subtask_is_done", Type::Bool),
+                            ("Subtask" | "subtask", "is_cancelled") => ("subtask_is_cancelled", Type::Bool),
+
+                            // CancellationToken
+                            ("CancellationToken" | "cancellation_token" | "CancelToken" | "cancel_token", "cancel") => ("cancel_token_cancel", Type::Void),
+                            ("CancellationToken" | "cancellation_token" | "CancelToken" | "cancel_token", "is_cancelled") => ("cancel_token_is_cancelled", Type::Bool),
 
                             _ => {
                                 return Err(RozeError::type_error(

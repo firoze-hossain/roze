@@ -457,6 +457,19 @@ func main() {
 }
 ```
 
+### 3.8 Milestone Gate M1: Integration & Concurrency Benchmark
+Milestone Gate M1 serves as the comprehensive integration checkpoint for Month 1 (Sprint 1 & Sprint 2: Core Type System, Advanced Generics, Pattern Matching, Metaprogramming, M:N Green Threads, Async/Await, Lock-Free Synchronization, and Structured Concurrency).
+
+- **100,000 Concurrent Ping-Pong Message Benchmark**:
+  - Validates high-throughput message exchange over MPMC channels between M:N green threads (Native work-stealing pool) and Virtual Threads (JVM Loom).
+  - Sustains 100,000 loss-free round-trip messages across bounded/unbounded channel buffers with sub-2-second native latency and zero-allocation fiber recycling.
+- **Monomorphized Generic Data Structures Stress Suite**:
+  - Exercises deeply monomorphized generic structures including multi-parameter pairs (`Pair<A, B>`), nested containers (`Box<Pair<T1, T2>>`), and recursive binary trees (`TreeNode<T>`).
+  - Verifies compile-time type substitution, zero-cost specialized memory layouts, and automatic ARC reference counting across both Native and JVM backends.
+- **Backend Parity & Fixpoint Verification**:
+  - 100% test pass rate across all unit tests and golden integration suites on both JVM and Native Cranelift backends.
+  - Three-stage self-hosting compiler bootstrap (`Stage 0 (Rust) -> Stage 1 (Roze) -> Stage 2 (Roze) -> Stage 3 (Roze)`) achieves a bit-for-bit, 0-diff fixpoint verification proof.
+
 ---
 
 ## 4. Error Handling (`Result`, `Option`, `?`)

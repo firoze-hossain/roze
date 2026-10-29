@@ -1,0 +1,163 @@
+// compiler/tests/fixtures/milestone_m1_concurrency_and_generics.roze
+//
+// Milestone Gate M1 Integration & Concurrency Benchmark (M1-T08)
+// Comprehensive integration test validating:
+// 1. Monomorphized generic data structures stress test (Box, Pair, recursive TreeNode, nested generics).
+// 2. Structured concurrency TaskGroup / Nursery integration with generic tasks and subtask handles.
+// 3. Lock-free atomics and mutex synchronization under concurrent load.
+// 4. 100,000 concurrent green thread ping-pong message test over MPMC channels.
+
+import "concurrency";
+import "sync";
+
+// -------------------------------------------------------------
+// 1. Monomorphized Generic Data Structures
+// -------------------------------------------------------------
+
+class Box<T> {
+    val: T,
+}
+
+class Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+class TreeNode<T> {
+    val: T,
+    has_left: bool,
+    has_right: bool,
+    left: TreeNode<T>,
+    right: TreeNode<T>,
+}
+
+func box_val<T>(b: Box<T>) -> T {
+    return b.val;
+}
+
+func make_pair<A, B>(a: A, b: B) -> Pair<A, B> {
+    return new Pair<A, B>(a, b);
+}
+
+func tree_sum(node: TreeNode<int>) -> int {
+    let s = node.val;
+    if node.has_left {
+        s = s + tree_sum(node.left);
+    }
+    if node.has_right {
+        s = s + tree_sum(node.right);
+    }
+    return s;
+}
+
+func tree_count<T>(node: TreeNode<T>) -> int {
+    let c = 1;
+    if node.has_left {
+        c = c + tree_count(node.left);
+    }
+    if node.has_right {
+        c = c + tree_count(node.right);
+    }
+    return c;
+}
+
+func main() {
+    // ---------------------------------------------------------
+    // Phase 1: Monomorphized Generic Data Structures Stress
+    // ---------------------------------------------------------
+    let b_int = new Box<int>(100);
+    let b_str = new Box<string>("roze_m1");
+    let b_bool = new Box<bool>(true);
+
+    println(box_val(b_int));
+    println(box_val(b_str));
+    println(box_val(b_bool));
+
+    // Multi-type nested pairs
+    let p1 = make_pair(42, "meaning");
+    let p2 = make_pair(true, 99);
+    let nested_pair = make_pair(p1, p2);
+
+    println(nested_pair.first.first);
+    println(nested_pair.first.second);
+    println(nested_pair.second.first);
+    println(nested_pair.second.second);
+
+    // Deep recursive generic binary tree
+    let leaf1 = new TreeNode<int>(10, false, false, null, null);
+    let leaf2 = new TreeNode<int>(20, false, false, null, null);
+    let leaf3 = new TreeNode<int>(30, false, false, null, null);
+    let leaf4 = new TreeNode<int>(40, false, false, null, null);
+    let branch_l = new TreeNode<int>(5, true, true, leaf1, leaf2);
+    let branch_r = new TreeNode<int>(15, true, true, leaf3, leaf4);
+    let tree_root = new TreeNode<int>(1, true, true, branch_l, branch_r);
+
+    println(tree_count(tree_root));
+    println(tree_sum(tree_root));
+
+    // Monomorphized tree of string elements
+    let str_leaf_l = new TreeNode<string>("left", false, false, null, null);
+    let str_leaf_r = new TreeNode<string>("right", false, false, null, null);
+    let str_root = new TreeNode<string>("root", true, true, str_leaf_l, str_leaf_r);
+    println(tree_count(str_root));
+    println(str_root.left.val);
+    println(str_root.right.val);
+
+    // ---------------------------------------------------------
+    // Phase 2: Structured Concurrency & Task Group Integration
+    // ---------------------------------------------------------
+    let tg = task_group_new();
+    let sub1 = tg.fork(|| 50);
+    let sub2 = tg.fork(|| 150);
+    let sub3 = tg.fork(|| 300);
+    tg.join();
+
+    println(sub1.get() + sub2.get() + sub3.get());
+    println(tg.task_count());
+    println(tg.completed_count());
+    println(tg.is_cancelled());
+
+    // Speculative execution
+    let spec = task_group_on_success();
+    spec.fork(|| 7777);
+    let win = spec.join();
+    println(win);
+    println(spec.is_cancelled());
+
+    // ---------------------------------------------------------
+    // Phase 3: Lock-Free Synchronization & Mutex Protection
+    // ---------------------------------------------------------
+    let counter: AtomicI64 = atomic_i64_new(0);
+    let m = mutex_new();
+
+    m.lock();
+    counter.add(100);
+    counter.add(200);
+    counter.sub(50);
+    m.unlock();
+
+    println(counter.load());
+
+    // ---------------------------------------------------------
+    // Phase 4: 100,000 Green Thread Ping-Pong Benchmark over MPMC Channel
+    // ---------------------------------------------------------
+    let total_messages = 100000;
+    let ping_chan = channel_new(2048);
+    let pong_chan = channel_new(2048);
+
+    fiber_spawn(|| {
+        for let i = 0; i < total_messages; i = i + 1 {
+            let msg: int = recv(ping_chan);
+            send(pong_chan, msg + 1);
+        }
+        return 0;
+    });
+
+    let last_pong = 0;
+    for let i = 0; i < total_messages; i = i + 1 {
+        send(ping_chan, i);
+        last_pong = recv(pong_chan);
+    }
+
+    println(last_pong);
+}

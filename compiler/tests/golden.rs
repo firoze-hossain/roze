@@ -1115,4 +1115,32 @@ true
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
 
+#[test]
+fn milestone_gate_m1_concurrency_and_generics_benchmark() {
+    let (stdout, stderr, ok) = run_fixture("milestone_m1_concurrency_and_generics.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+100
+roze_m1
+true
+42
+meaning
+true
+99
+7
+121
+3
+left
+right
+500
+3
+3
+false
+7777
+true
+250
+100000";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
 

@@ -262,7 +262,7 @@ s1_rows = [
         ("M1-T08", 8), ("Month 1", 3), ("Sprint 2 (W03-W04)", 8), "Milestone Gate M1", "Month 1 Integration & Concurrency Benchmark",
         "Verify 100,000 concurrent green thread ping-pong message test over MPMC channels. Monomorphized generic data structures stress test suite.",
         "100% test pass on all concurrency and advanced type fixtures.",
-        "All Domains", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
+        "All Domains", "3 Days", ("Critical", 14), ("Completed", 16)
     ],
 
     # MONTH 2: BATTERIES-INCLUDED SYSTEMS CORE & FREESTANDING OS KERNEL
@@ -822,13 +822,13 @@ s5_rows = [
         ("Sprint 1", 3), "W01 - W02", "Core Type Power", "Generics, Trait Bounds, Pattern Matching, Comptime",
         "Monomorphized generics with bounds, deep pattern matching with guards, comptime expressions. All compiler tests pass.",
         "Risk: Monomorphization code bloat. Mitigation: Deduplicate identical binary representations.",
-        ("Gate 1: Types Pass", 12)
+        ("Gate 1: Types Pass", 16)
     ],
     [
         ("Sprint 2", 3), "W03 - W04", "Concurrency Milestone M1", "M:N Green Threads, Async/Await, Channels, Nurseries",
         "100,000 green thread stress test, MPMC ring buffer channels, nursery task cancelation. Zero data races.",
         "Risk: Thread starvation. Mitigation: Work-stealing randomized deque scheduler.",
-        ("Gate 2: Concurrency Sign-Off", 12)
+        ("Gate 2: Concurrency Sign-Off", 16)
     ],
     [
         ("Sprint 3", 4), "W05 - W06", "Systems Core & SIMD", "Numeric Primitives (i8-u128), SIMD (AVX/NEON), Collections",

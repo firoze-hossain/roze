@@ -3203,5 +3203,39 @@ true
     assert_eq!(out.trim_end(), expected);
 }
 
+#[test]
+fn native_milestone_gate_m1_concurrency_and_generics_benchmark() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("milestone_m1_concurrency_and_generics.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read milestone_m1_concurrency_and_generics.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("milestone_m1_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    let expected = "\
+100
+roze_m1
+true
+42
+meaning
+true
+99
+7
+121
+3
+left
+right
+500
+3
+3
+false
+7777
+true
+250
+100000";
+    assert_eq!(out.trim_end(), expected);
+}
+
 
 

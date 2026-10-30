@@ -708,6 +708,62 @@ Allocators implement the core `Allocator` trait defined in `stdlib/src/memory.ro
 
 ---
 
+### 3.10 Kernel Memory: 4-Level Paging & Virtual Memory Manager
+
+Roze provides a complete, low-level OS memory management stack implemented in pure Roze (`import "paging";` or `import "vmm";`):
+
+#### 4-Level x86_64 Paging Architecture
+Canonical 48-bit virtual addresses are decomposed across 4 hierarchical levels:
+- **PML4** (Page Map Level 4): bits 47..39 (Index 0..511)
+- **PDPT** (Page Directory Pointer Table): bits 38..30 (Index 0..511)
+- **PD** (Page Directory): bits 29..21 (Index 0..511)
+- **PT** (Page Table): bits 20..12 (Index 0..511)
+- **Page Offset**: bits 11..0 (0..4095 for 4KB standard pages; bits 20..0 for 2MB huge pages)
+
+#### Page Table Entry (PTE) Flags
+```roze
+const PAGE_PRESENT: int       = 1;          // Bit 0: Page present in memory
+const PAGE_WRITABLE: int      = 2;          // Bit 1: Read/write permissions (1 = writable)
+const PAGE_USER: int          = 4;          // Bit 2: User-mode accessible (0 = supervisor only)
+const PAGE_WRITE_THROUGH: int = 8;          // Bit 3: Write-through caching
+const PAGE_NO_CACHE: int      = 16;         // Bit 4: Cache disable
+const PAGE_ACCESSED: int      = 32;         // Bit 5: Accessed by CPU read/write
+const PAGE_DIRTY: int         = 64;         // Bit 6: Written to (dirty)
+const PAGE_HUGE: int          = 128;        // Bit 7: 2MB huge page (in PDE) or 1GB huge page (in PDPTE)
+const PAGE_GLOBAL: int        = 256;        // Bit 8: Global TLB pin across CR3 reloads
+const PAGE_NX: int            = 0x80000000; // Bit 63: No-Execute bit
+```
+
+#### Page Mapping & Translation Operations
+- `vmm_map_page(pml4_root: int, vaddr: int, paddr: int, flags: int, frame_alloc_fn: func() -> int) -> int`: Traverses/allocates intermediate tables and maps a 4KB virtual page to a physical frame.
+- `vmm_map_huge_page(pml4_root: int, vaddr: int, paddr: int, flags: int, frame_alloc_fn: func() -> int) -> int`: Maps a contiguous 2MB huge page directly in the Page Directory entry (`PAGE_HUGE`).
+- `vmm_unmap_page(pml4_root: int, vaddr: int) -> int`: Clears PTE and invalidates TLB entry via `invlpg`.
+- `vmm_unmap_huge_page(pml4_root: int, vaddr: int) -> int`: Clears PDE huge entry and invalidates TLB.
+- `vmm_translate(pml4_root: int, vaddr: int) -> int`: Walks page tables returning physical address or -1 if unmapped.
+- `vmm_get_page_flags(pml4_root: int, vaddr: int) -> int` / `vmm_set_page_flags(...) -> int`: Inspects and updates entry flags.
+- `vmm_identity_map_range(pml4_root: int, start: int, end: int, flags: int, alloc_fn) -> int`: Maps `[start, end)` where virtual address equals physical address.
+
+#### Physical Frame Allocator (Bitmap Allocator)
+- `BitmapAllocator`: Manages frame allocation across physical memory via bit arrays:
+  - `alloc() -> int`: Finds next free bit, marks it used, and returns 4KB-aligned frame base address.
+  - `dealloc(frame_addr: int)`: Clears bit corresponding to physical frame.
+  - `reserve(paddr: int, count: int)`: Marks frame range as permanently reserved (e.g. kernel code, ACPI, BIOS).
+  - Metrics: `total_frames()`, `used_frames()`, `free_frames()`, `is_frame_used(paddr: int) -> bool`.
+
+#### Physical Frame Allocator (Buddy Allocator)
+- `BuddyAllocator`: Binary buddy system managing power-of-two frame blocks (orders 0..`max_order`):
+  - `alloc(order: int) -> int`: Allocates a block of $2^{\text{order}}$ frames (Order 0 = 4KB, Order 9 = 2MB huge page), recursively splitting higher-order blocks as required.
+  - `dealloc(addr: int, order: int)`: Returns block to free list, recursively coalescing adjacent free buddy pairs up to `max_order`.
+  - `alloc_huge_page() -> int` / `free_huge_page(addr: int)`: Dedicated Order 9 (2MB) helpers.
+
+#### Hardware TLB & Control Register Intrinsics
+- `invlpg(vaddr: int)` / `tlb_invalidate_page(vaddr: int)`: Invalidates TLB translation for a single page using `invlpg [vaddr]`.
+- `tlb_flush_all()`: Full TLB flush by reloading `CR3`.
+- `read_cr3() -> int`: Reads current page table root address from `CR3`.
+- `write_cr3(val: int)`: Writes new PML4 root address into `CR3`.
+
+---
+
 ## 4. Error Handling (`Result`, `Option`, `?`)
 
 Roze replaces unchecked exceptions with explicit sum types:

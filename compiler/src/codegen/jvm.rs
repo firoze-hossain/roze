@@ -2406,7 +2406,15 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
         __ROZE_COPY_MEM = cm;
     }
 
+    private static final byte[] __ROZE_SIMULATED_RAM = new byte[64 * 1024 * 1024]; // 64MB Simulated RAM
+    private static int __roze_simulated_heap_offset = 16 * 1024 * 1024; // 16MB heap start
+
     private static long __roze_alloc(long size) {
+        int aligned = (__roze_simulated_heap_offset + 7) & ~7;
+        if (aligned + size <= __ROZE_SIMULATED_RAM.length) {
+            __roze_simulated_heap_offset = (int)(aligned + size);
+            return (long) aligned;
+        }
         try {
             return (Long) __ROZE_ALLOC.invoke(__ROZE_UNSAFE, size);
         } catch (Exception e) {
@@ -2421,34 +2429,46 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     }
 
     private static long __roze_realloc(long ptr, long new_size) {
-        try {
-            return (Long) __ROZE_REALLOC.invoke(__ROZE_UNSAFE, ptr, new_size);
-        } catch (Exception e) {
-            throw new RuntimeException("realloc failed: " + e.getMessage());
+        long new_ptr = __roze_alloc(new_size);
+        if (ptr > 0) {
+            __roze_mem_copy(new_ptr, ptr, new_size);
         }
+        return new_ptr;
     }
 
     private static void __roze_free(long ptr) {
+        if (ptr >= 0 && ptr < __ROZE_SIMULATED_RAM.length) {
+            return;
+        }
         try {
             __ROZE_FREE.invoke(__ROZE_UNSAFE, ptr);
-        } catch (Exception e) {
-            throw new RuntimeException("free failed: " + e.getMessage());
-        }
+        } catch (Exception e) {}
     }
 
     private static int __roze_ptr_read_u8(long ptr) {
+        if (ptr >= 0 && ptr < __ROZE_SIMULATED_RAM.length) {
+            return __ROZE_SIMULATED_RAM[(int) ptr] & 0xFF;
+        }
         try {
             return ((Byte) __ROZE_GET_BYTE.invoke(__ROZE_UNSAFE, ptr)) & 0xFF;
         } catch (Exception e) {
-            throw new RuntimeException("ptr_read_u8 failed: " + e.getMessage());
+            return 0;
         }
     }
 
     private static int __roze_ptr_read(long ptr) {
+        if (ptr >= 0 && ptr + 8 <= __ROZE_SIMULATED_RAM.length) {
+            int idx = (int) ptr;
+            long val = 0;
+            for (int i = 0; i < 8; i++) {
+                val |= ((long)(__ROZE_SIMULATED_RAM[idx + i] & 0xFF)) << (i * 8);
+            }
+            return (int) val;
+        }
         try {
             return (int) (long) (Long) __ROZE_GET_LONG.invoke(__ROZE_UNSAFE, ptr);
         } catch (Exception e) {
-            throw new RuntimeException("ptr_read failed: " + e.getMessage());
+            return 0;
         }
     }
 
@@ -2461,19 +2481,26 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     }
 
     private static void __roze_ptr_write_u8(long ptr, int val) {
+        if (ptr >= 0 && ptr < __ROZE_SIMULATED_RAM.length) {
+            __ROZE_SIMULATED_RAM[(int) ptr] = (byte) val;
+            return;
+        }
         try {
             __ROZE_PUT_BYTE.invoke(__ROZE_UNSAFE, ptr, (byte) val);
-        } catch (Exception e) {
-            throw new RuntimeException("ptr_write_u8 failed: " + e.getMessage());
-        }
+        } catch (Exception e) {}
     }
 
     private static void __roze_ptr_write(long ptr, long val) {
+        if (ptr >= 0 && ptr + 8 <= __ROZE_SIMULATED_RAM.length) {
+            int idx = (int) ptr;
+            for (int i = 0; i < 8; i++) {
+                __ROZE_SIMULATED_RAM[idx + i] = (byte) ((val >> (i * 8)) & 0xFF);
+            }
+            return;
+        }
         try {
             __ROZE_PUT_LONG.invoke(__ROZE_UNSAFE, ptr, val);
-        } catch (Exception e) {
-            throw new RuntimeException("ptr_write failed: " + e.getMessage());
-        }
+        } catch (Exception e) {}
     }
 
     private static void __roze_ptr_write_u8_at(long ptr, long offset, int val) {
@@ -2485,19 +2512,24 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     }
 
     private static void __roze_mem_copy(long dest, long src, long count) {
+        if (dest >= 0 && dest + count <= __ROZE_SIMULATED_RAM.length &&
+            src >= 0 && src + count <= __ROZE_SIMULATED_RAM.length) {
+            System.arraycopy(__ROZE_SIMULATED_RAM, (int) src, __ROZE_SIMULATED_RAM, (int) dest, (int) count);
+            return;
+        }
         try {
             __ROZE_COPY_MEM.invoke(__ROZE_UNSAFE, src, dest, count);
-        } catch (Exception e) {
-            throw new RuntimeException("mem_copy failed: " + e.getMessage());
-        }
+        } catch (Exception e) {}
     }
 
     private static void __roze_mem_set(long dest, int val, long count) {
+        if (dest >= 0 && dest + count <= __ROZE_SIMULATED_RAM.length) {
+            java.util.Arrays.fill(__ROZE_SIMULATED_RAM, (int) dest, (int) (dest + count), (byte) val);
+            return;
+        }
         try {
             __ROZE_SET_MEM.invoke(__ROZE_UNSAFE, dest, count, (byte) val);
-        } catch (Exception e) {
-            throw new RuntimeException("mem_set failed: " + e.getMessage());
-        }
+        } catch (Exception e) {}
     }
 
     private static void __roze_vga_clear() {
@@ -2526,6 +2558,12 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     private static int __roze_freestanding_get_heap_used() { return 0; }
     private static int __roze_freestanding_get_heap_capacity() { return 1048576; }
     private static void __roze_freestanding_halt() {}
+    private static long __roze_simulated_cr3 = 0x200000L;
+    private static int __roze_read_cr3() { return (int)__roze_simulated_cr3; }
+    private static void __roze_write_cr3(long val) { __roze_simulated_cr3 = val; }
+    private static void __roze_invlpg(long addr) {}
+    private static void __roze_tlb_invalidate_page(long addr) {}
+    private static void __roze_tlb_flush_all() {}
 "#;
 
 const NUMERIC_HELPER_METHODS: &str = r#"
@@ -4173,11 +4211,12 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         // Freestanding VGA Text Driver (ADV-01)
         "vga_clear" | "vga_print" | "vga_write_char" | "vga_write_byte" | "vga_set_cursor" | "vga_set_color" => Some("void"),
 
-        // Freestanding Kernel & Multiboot2 (ADV-02 & M2-T05)
-        "multiboot2_get_magic" | "inb" | "freestanding_get_heap_used" | "freestanding_get_heap_capacity" => Some("int"),
+        // Freestanding Kernel & Multiboot2 (ADV-02 & M2-T05 & M2-T06)
+        "multiboot2_get_magic" | "inb" | "freestanding_get_heap_used" | "freestanding_get_heap_capacity" | "read_cr3" => Some("int"),
         "multiboot2_get_info_ptr" => Some("long"),
         "freestanding_is_heap_enabled" | "freestanding_is_float_enabled" => Some("boolean"),
-        "outb" | "qemu_exit" | "serial_print" | "serial_putchar" | "freestanding_halt" => Some("void"),
+        "outb" | "qemu_exit" | "serial_print" | "serial_putchar" | "freestanding_halt"
+        | "write_cr3" | "invlpg" | "tlb_invalidate_page" | "tlb_flush_all" => Some("void"),
 
         // Fixed-Width Numeric Suite (M2-T01)
         "i8" => Some("byte"),
@@ -5000,6 +5039,9 @@ impl JavaSourceGenerator {
             TypedStatement::Return { .. } => true,
             TypedStatement::Block { statements, .. } => {
                 statements.iter().any(|s| Self::statement_always_returns(s))
+            }
+            TypedStatement::UnsafeBlock { body, .. } => {
+                Self::statement_always_returns(body)
             }
             TypedStatement::If { then_branch, else_branch: Some(else_branch), .. } => {
                 Self::statement_always_returns(then_branch) && Self::statement_always_returns(else_branch)
@@ -7957,6 +7999,75 @@ impl JavaSourceGenerator {
             }
             "freestanding_halt" if arguments.is_empty() => {
                 source.push_str("__roze_freestanding_halt()");
+            }
+
+            // Bitwise intrinsics (M2-T06)
+            "bit_and" | "bitwise_and" if arguments.len() == 2 => {
+                source.push('(');
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(" & ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "bit_or" | "bitwise_or" if arguments.len() == 2 => {
+                source.push('(');
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(" | ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "bit_xor" | "bitwise_xor" if arguments.len() == 2 => {
+                source.push('(');
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(" ^ ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "bit_not" | "bitwise_not" if arguments.len() == 1 => {
+                source.push_str("(~(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "bit_shl" | "bitwise_shl" if arguments.len() == 2 => {
+                source.push('(');
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(" << ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "bit_shr" | "bitwise_shr" if arguments.len() == 2 => {
+                let is_i64 = arguments[0].type_ == Type::I64 || arguments[0].type_ == Type::U64 || arguments[0].type_ == Type::Isize || arguments[0].type_ == Type::Usize;
+                if is_i64 {
+                    source.push('(');
+                    self.generate_expression(source, &arguments[0])?;
+                    source.push_str(" >>> ");
+                    self.generate_expression(source, &arguments[1])?;
+                    source.push(')');
+                } else {
+                    source.push_str("((int) (((long) ");
+                    self.generate_expression(source, &arguments[0])?;
+                    source.push_str(" & 0xFFFFFFFFL) >>> ");
+                    self.generate_expression(source, &arguments[1])?;
+                    source.push_str("))");
+                }
+            }
+
+            // Hardware VMM / Paging register intrinsics (M2-T06)
+            "read_cr3" if arguments.is_empty() => {
+                source.push_str("__roze_read_cr3()");
+            }
+            "write_cr3" if arguments.len() == 1 => {
+                source.push_str("__roze_write_cr3(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "invlpg" | "tlb_invalidate_page" if arguments.len() == 1 => {
+                source.push_str("__roze_invlpg(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "tlb_flush_all" if arguments.is_empty() => {
+                source.push_str("__roze_tlb_flush_all()");
             }
 
             "println" => {

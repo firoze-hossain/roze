@@ -3866,6 +3866,57 @@ fn native_freestanding_kernel_target_suite() {
     assert!(u_out.is_empty(), "expected zero undefined symbols, got:\n{}", u_out);
 }
 
+#[test]
+fn native_kernel_paging_and_virtual_memory_manager_suite() {
+    let source = std::fs::read_to_string("tests/fixtures/kernel_paging_vmm.roze")
+        .or_else(|_| std::fs::read_to_string("compiler/tests/fixtures/kernel_paging_vmm.roze"))
+        .expect("read kernel_paging_vmm fixture");
+
+    let (stdout, stderr, ok) = run_native_source("native_kernel_paging_vmm", &source);
+    assert!(ok, "native build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== Roze Kernel Paging & VMM Test Suite ==="));
+    assert!(stdout.contains("--- Test 1: Bitwise Intrinsics ---"));
+    assert!(stdout.contains("--- Test 2: Address Decomposition & Alignment ---"));
+    assert!(stdout.contains("--- Test 3: Bitmap Frame Allocator ---"));
+    assert!(stdout.contains("--- Test 4: Buddy Allocator (Split & Coalesce) ---"));
+    assert!(stdout.contains("--- Test 5: 4-Level Page Table Manipulator ---"));
+    assert!(stdout.contains("--- Test 6: TLB & CR3 Hardware Control ---"));
+    assert!(stdout.contains("=== All Kernel Memory & VMM Tests Passed Successfully ==="));
+
+    // Also verify standalone freestanding kernel binary compilation
+    let dir = scratch_dir("freestanding_paging_kernel");
+    let file_name = "paging_kernel.roze";
+    std::fs::write(dir.join(file_name), &source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        build_output.status.success(),
+        "freestanding build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("paging_kernel");
+    assert!(kernel_bin.exists());
+
+    let nm_u = Command::new("nm")
+        .arg("-u")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run nm -u");
+    assert!(nm_u.status.success());
+    let u_out = String::from_utf8_lossy(&nm_u.stdout).trim().to_string();
+    assert!(u_out.is_empty(), "expected zero undefined symbols, got:\n{}", u_out);
+}
+
+
 
 
 

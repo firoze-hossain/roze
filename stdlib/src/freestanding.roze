@@ -15,3 +15,10 @@ extern "C" func serial_putchar(ch: int);
 extern "C" func outb(port: int, val: int);
 extern "C" func inb(port: int) -> int;
 extern "C" func qemu_exit(code: int);
+
+// Hardware Paging & Virtual Memory Intrinsics (M2-T06)
+extern "C" func read_cr3() -> int;
+extern "C" func write_cr3(val: int);
+extern "C" func invlpg(addr: int);
+extern "C" func tlb_invalidate_page(addr: int);
+extern "C" func tlb_flush_all();

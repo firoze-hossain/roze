@@ -1822,6 +1822,13 @@ __attribute__((weak)) int64_t freestanding_get_heap_used(void) { return 0; }
 __attribute__((weak)) int64_t freestanding_get_heap_capacity(void) { return 1048576; }
 __attribute__((weak)) void freestanding_halt(void) { }
 
+static unsigned long __roze_hosted_cr3 = 0x200000;
+__attribute__((weak)) int64_t read_cr3(void) { return (int64_t)__roze_hosted_cr3; }
+__attribute__((weak)) void write_cr3(int64_t val) { __roze_hosted_cr3 = (unsigned long)val; }
+__attribute__((weak)) void invlpg(int64_t addr) { (void)addr; }
+__attribute__((weak)) void tlb_invalidate_page(int64_t addr) { (void)addr; }
+__attribute__((weak)) void tlb_flush_all(void) { }
+
 // RozeBoot Enterprise Framework Stubs for Hosted Native Target
 __attribute__((weak)) void* db_pool_create(const char* url, int64_t max_conns) { (void)url; (void)max_conns; return NULL; }
 __attribute__((weak)) void* db_pool_get(void* pool) { (void)pool; return NULL; }

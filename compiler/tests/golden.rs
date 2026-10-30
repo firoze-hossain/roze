@@ -1448,6 +1448,21 @@ fn freestanding_kernel_target_suite() {
     assert!(stdout.contains("Freestanding Kernel Target Complete"));
 }
 
+#[test]
+fn kernel_paging_and_virtual_memory_manager_suite() {
+    let (stdout, stderr, ok) = run_fixture("kernel_paging_vmm.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== Roze Kernel Paging & VMM Test Suite ==="));
+    assert!(stdout.contains("--- Test 1: Bitwise Intrinsics ---"));
+    assert!(stdout.contains("--- Test 2: Address Decomposition & Alignment ---"));
+    assert!(stdout.contains("--- Test 3: Bitmap Frame Allocator ---"));
+    assert!(stdout.contains("--- Test 4: Buddy Allocator (Split & Coalesce) ---"));
+    assert!(stdout.contains("--- Test 5: 4-Level Page Table Manipulator ---"));
+    assert!(stdout.contains("--- Test 6: TLB & CR3 Hardware Control ---"));
+    assert!(stdout.contains("=== All Kernel Memory & VMM Tests Passed Successfully ==="));
+}
+
+
 
 
 

@@ -1000,6 +1000,11 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("freestanding_get_heap_used", vec![], Type::Int),
         ("freestanding_get_heap_capacity", vec![], Type::Int),
         ("freestanding_halt", vec![], Type::Void),
+        ("read_cr3", vec![], Type::Int),
+        ("write_cr3", vec![Type::Int], Type::Void),
+        ("invlpg", vec![Type::Int], Type::Void),
+        ("tlb_invalidate_page", vec![Type::Int], Type::Void),
+        ("tlb_flush_all", vec![], Type::Void),
 
         // ---- Fixed-Width Numeric Suite (M2-T01) ----
         // Type conversion constructors
@@ -1058,6 +1063,20 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("saturating_add", vec![Type::Unknown, Type::Unknown], Type::Unknown),
         ("saturating_sub", vec![Type::Unknown, Type::Unknown], Type::Unknown),
         ("saturating_mul", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+
+        // Bitwise arithmetic intrinsics (M2-T06)
+        ("bit_and", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("bit_or", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("bit_xor", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("bit_not", vec![Type::Unknown], Type::Unknown),
+        ("bit_shl", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("bit_shr", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("bitwise_and", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("bitwise_or", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("bitwise_xor", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("bitwise_not", vec![Type::Unknown], Type::Unknown),
+        ("bitwise_shl", vec![Type::Unknown, Type::Unknown], Type::Unknown),
+        ("bitwise_shr", vec![Type::Unknown, Type::Unknown], Type::Unknown),
 
         // ---- Hardware SIMD Vector Intrinsics Engine (M2-T02) ----
         // Vec4f
@@ -3660,7 +3679,13 @@ impl TypeChecker {
                                 location.column,
                             ))?
                     } else if (name == "wrapping_add" || name == "wrapping_sub" || name == "wrapping_mul" ||
-                               name == "saturating_add" || name == "saturating_sub" || name == "saturating_mul") && typed_arguments.len() == 2 {
+                               name == "saturating_add" || name == "saturating_sub" || name == "saturating_mul" ||
+                               name == "bit_and" || name == "bit_or" || name == "bit_xor" ||
+                               name == "bit_shl" || name == "bit_shr" ||
+                               name == "bitwise_and" || name == "bitwise_or" || name == "bitwise_xor" ||
+                               name == "bitwise_shl" || name == "bitwise_shr") && typed_arguments.len() == 2 {
+                        typed_arguments[0].type_.clone()
+                    } else if (name == "bit_not" || name == "bitwise_not") && typed_arguments.len() == 1 {
                         typed_arguments[0].type_.clone()
                     } else if name == "Vec4f" || name == "vec4f" {
                         Type::Vec4f
@@ -4853,10 +4878,24 @@ impl TypeChecker {
                     other if other.is_integer() => {
                         match method.as_str() {
                             "wrapping_add" | "wrapping_sub" | "wrapping_mul"
-                            | "saturating_add" | "saturating_sub" | "saturating_mul" if typed_args.len() == 1 => {
+                            | "saturating_add" | "saturating_sub" | "saturating_mul"
+                            | "bit_and" | "bit_or" | "bit_xor" | "bit_shl" | "bit_shr"
+                            | "bitwise_and" | "bitwise_or" | "bitwise_xor" | "bitwise_shl" | "bitwise_shr" if typed_args.len() == 1 => {
                                 let mut all_args = Vec::with_capacity(2);
                                 all_args.push(typed_obj);
                                 all_args.extend(typed_args);
+                                Ok(TypedExpression {
+                                    kind: TypedExpressionKind::Call {
+                                        function: method.clone(),
+                                        arguments: all_args,
+                                    },
+                                    type_: other.clone(),
+                                    location: location.clone(),
+                                })
+                            }
+                            "bit_not" | "bitwise_not" if typed_args.is_empty() => {
+                                let mut all_args = Vec::with_capacity(1);
+                                all_args.push(typed_obj);
                                 Ok(TypedExpression {
                                     kind: TypedExpressionKind::Call {
                                         function: method.clone(),

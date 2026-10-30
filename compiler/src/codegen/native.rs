@@ -501,6 +501,39 @@ void freestanding_halt(void) {
     }
 }
 
+long read_cr3(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    unsigned long val = 0;
+    __asm__ volatile("movq %%cr3, %0" : "=r"(val));
+    return (long)val;
+#else
+    return 0;
+#endif
+}
+
+void write_cr3(long val) {
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("movq %0, %%cr3" : : "r"(val) : "memory");
+#endif
+}
+
+void invlpg(long addr) {
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("invlpg (%0)" : : "r"(addr) : "memory");
+#endif
+}
+
+void tlb_invalidate_page(long addr) {
+    invlpg(addr);
+}
+
+void tlb_flush_all(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    unsigned long val;
+    __asm__ volatile("movq %%cr3, %0; movq %0, %%cr3" : "=r"(val) : : "memory");
+#endif
+}
+
 // 3. Serial COM1 UART Driver (115200 8N1)
 #define COM1 0x3F8
 
@@ -3624,6 +3657,11 @@ pub struct KernelRuntime {
     pub get_heap_used_id: FuncId,
     pub get_heap_capacity_id: FuncId,
     pub halt_id: FuncId,
+    pub read_cr3_id: FuncId,
+    pub write_cr3_id: FuncId,
+    pub invlpg_id: FuncId,
+    pub tlb_invalidate_page_id: FuncId,
+    pub tlb_flush_all_id: FuncId,
 }
 
 fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
@@ -3667,6 +3705,16 @@ fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
         .map_err(|e| anyhow!(e.to_string()))?;
     let halt_id = module.declare_function("freestanding_halt", Linkage::Import, &void_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
+    let read_cr3_id = module.declare_function("read_cr3", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let write_cr3_id = module.declare_function("write_cr3", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let invlpg_id = module.declare_function("invlpg", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let tlb_invalidate_page_id = module.declare_function("tlb_invalidate_page", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let tlb_flush_all_id = module.declare_function("tlb_flush_all", Linkage::Import, &void_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
 
     Ok(KernelRuntime {
         multiboot2_get_magic_id,
@@ -3681,6 +3729,11 @@ fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
         get_heap_used_id,
         get_heap_capacity_id,
         halt_id,
+        read_cr3_id,
+        write_cr3_id,
+        invlpg_id,
+        tlb_invalidate_page_id,
+        tlb_flush_all_id,
     })
 }
 
@@ -8588,6 +8641,68 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             "freestanding_halt" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.kernel.halt_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+
+            // Bitwise intrinsics (M2-T06)
+            "bit_and" | "bitwise_and" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                return Ok(self.builder.ins().band(a, b));
+            }
+            "bit_or" | "bitwise_or" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                return Ok(self.builder.ins().bor(a, b));
+            }
+            "bit_xor" | "bitwise_xor" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                return Ok(self.builder.ins().bxor(a, b));
+            }
+            "bit_not" | "bitwise_not" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                return Ok(self.builder.ins().bnot(a));
+            }
+            "bit_shl" | "bitwise_shl" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                return Ok(self.builder.ins().ishl(a, b));
+            }
+            "bit_shr" | "bitwise_shr" if arguments.len() == 2 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let b = self.compile_expression(&arguments[1])?;
+                return Ok(self.builder.ins().ushr(a, b));
+            }
+
+            // Hardware VMM / Paging register intrinsics (M2-T06)
+            "read_cr3" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.read_cr3_id, self.builder.func);
+                let call_inst = self.builder.ins().call(func_ref, &[]);
+                let results = self.builder.inst_results(call_inst);
+                return Ok(results[0]);
+            }
+            "write_cr3" if arguments.len() == 1 => {
+                let val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.write_cr3_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "invlpg" if arguments.len() == 1 => {
+                let addr = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.invlpg_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[addr]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "tlb_invalidate_page" if arguments.len() == 1 => {
+                let addr = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.tlb_invalidate_page_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[addr]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "tlb_flush_all" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.tlb_flush_all_id, self.builder.func);
                 self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }

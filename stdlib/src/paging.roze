@@ -1,0 +1,944 @@
+// stdlib/src/paging.roze
+//
+// 🌹 Roze Kernel Memory: 4-Level Paging & Virtual Memory Manager (M2-T06)
+// Provides:
+//   - PML4 -> PDPT -> PD -> PT 4-level page table manipulator.
+//   - 4KB standard page mapping and 2MB huge page mapping.
+//   - Page table translation, flags query/modification, unmapping, and identity range mapping.
+//   - Bitmap Physical Frame Allocator (bitset per 4KB frame with reserving and query).
+//   - Buddy Physical Frame Allocator (binary power-of-two blocks, splitting, buddy coalescing).
+//   - Hardware TLB invalidation (invlpg, tlb_flush_all, read_cr3, write_cr3).
+//
+// Full OS memory management stack written entirely in Roze.
+
+import "freestanding";
+
+// ==============================================================================
+// 1. Paging Architecture Constants & Helpers
+// ==============================================================================
+
+func page_size() -> int { return 4096; }
+func huge_page_size() -> int { return 2097152; } // 2MB
+func entries_per_table() -> int { return 512; }
+
+// Page Table Entry Flags (x86_64)
+func page_present() -> int { return 1; }         // Bit 0: Present
+func page_writable() -> int { return 2; }        // Bit 1: Read/Write
+func page_user() -> int { return 4; }            // Bit 2: User / Supervisor
+func page_write_through() -> int { return 8; }   // Bit 3: Write-Through
+func page_no_cache() -> int { return 16; }       // Bit 4: Cache Disable
+func page_accessed() -> int { return 32; }       // Bit 5: Accessed
+func page_dirty() -> int { return 64; }          // Bit 6: Dirty
+func page_huge() -> int { return 128; }          // Bit 7: Huge Page (2MB in PD)
+func page_global() -> int { return 256; }        // Bit 8: Global Page
+
+// Virtual Address 48-Bit Canonical Index Extraction
+func vmm_pml4_index(vaddr: int) -> int {
+    return bit_and(bit_shr(vaddr, 39), 511);
+}
+
+func vmm_pdpt_index(vaddr: int) -> int {
+    return bit_and(bit_shr(vaddr, 30), 511);
+}
+
+func vmm_pd_index(vaddr: int) -> int {
+    return bit_and(bit_shr(vaddr, 21), 511);
+}
+
+func vmm_pt_index(vaddr: int) -> int {
+    return bit_and(bit_shr(vaddr, 12), 511);
+}
+
+func vmm_page_offset(vaddr: int) -> int {
+    return bit_and(vaddr, 4095);
+}
+
+func vmm_huge_page_offset(vaddr: int) -> int {
+    return bit_and(vaddr, 2097151);
+}
+
+// Alignment checks and computations
+func is_4kb_aligned(addr: int) -> bool {
+    return bit_and(addr, 4095) == 0;
+}
+
+func is_2mb_aligned(addr: int) -> bool {
+    return bit_and(addr, 2097151) == 0;
+}
+
+func align_to_4kb(addr: int) -> int {
+    let remainder = bit_and(addr, 4095);
+    if remainder == 0 {
+        return addr;
+    }
+    return addr + (4096 - remainder);
+}
+
+func align_to_2mb(addr: int) -> int {
+    let remainder = bit_and(addr, 2097151);
+    if remainder == 0 {
+        return addr;
+    }
+    return addr + (2097152 - remainder);
+}
+
+// Page Table Entry Field Extraction
+func vmm_entry_address(entry: int) -> int {
+    let flags = bit_and(entry, 4095);
+    return entry - flags;
+}
+
+func vmm_huge_entry_address(entry: int) -> int {
+    let flags = bit_and(entry, 2097151);
+    return entry - flags;
+}
+
+func vmm_entry_flags(entry: int) -> int {
+    return bit_and(entry, 4095);
+}
+
+func vmm_entry_is_present(entry: int) -> bool {
+    return bit_and(entry, 1) != 0;
+}
+
+func vmm_entry_is_huge(entry: int) -> bool {
+    return bit_and(entry, 128) != 0;
+}
+
+// Low-level table entry read/write
+func vmm_read_entry(tbl_addr: int, idx: int) -> int {
+    unsafe {
+        let ptr = int_to_ptr(tbl_addr);
+        return ptr_read_at(ptr, idx * 8);
+    }
+}
+
+func vmm_write_entry(tbl_addr: int, idx: int, val: int) {
+    unsafe {
+        let ptr = int_to_ptr(tbl_addr);
+        ptr_write_at(ptr, idx * 8, val);
+    }
+}
+
+// ==============================================================================
+// 2. Physical Frame Allocator (Bitmap Allocator)
+// ==============================================================================
+
+class BitmapAllocator {
+    base_addr: int,
+    total_frames: int,
+    bitmap_addr: int,
+    used_frames: int
+}
+
+func bitmap_allocator_init(bitmap_addr: int, total_frames: int) {
+    let byte_count = (total_frames + 7) / 8;
+    unsafe {
+        let ptr = int_to_ptr(bitmap_addr);
+        mem_set(ptr, 0, byte_count);
+    }
+}
+
+func bitmap_alloc(base_addr: int, bitmap_addr: int, total_frames: int) -> int {
+    let num_bytes = (total_frames + 7) / 8;
+    unsafe {
+        let ptr = int_to_ptr(bitmap_addr);
+        let byte_idx = 0;
+        while byte_idx < num_bytes {
+            let b = ptr_read_u8_at(ptr, byte_idx);
+            if b != 255 {
+                let bit_idx = 0;
+                while bit_idx < 8 {
+                    let frame_idx = (byte_idx * 8) + bit_idx;
+                    if frame_idx < total_frames {
+                        let mask = bit_shl(1, bit_idx);
+                        if bit_and(b, mask) == 0 {
+                            // Mark frame as allocated
+                            let new_b = bit_or(b, mask);
+                            ptr_write_u8_at(ptr, byte_idx, new_b);
+
+                            let frame_phys = base_addr + (frame_idx * 4096);
+                            // Zero out the 4KB frame
+                            mem_set(int_to_ptr(frame_phys), 0, 4096);
+                            return frame_phys;
+                        }
+                    }
+                    bit_idx = bit_idx + 1;
+                }
+            }
+            byte_idx = byte_idx + 1;
+        }
+    }
+    return 0; // Out of memory
+}
+
+func bitmap_free(base_addr: int, bitmap_addr: int, total_frames: int, phys_addr: int) -> bool {
+    if phys_addr < base_addr {
+        return false;
+    }
+    let offset = phys_addr - base_addr;
+    let frame_idx = offset / 4096;
+    if frame_idx >= total_frames {
+        return false;
+    }
+    let byte_idx = frame_idx / 8;
+    let bit_idx = frame_idx % 8;
+    let mask = bit_shl(1, bit_idx);
+    unsafe {
+        let ptr = int_to_ptr(bitmap_addr);
+        let b = ptr_read_u8_at(ptr, byte_idx);
+        if bit_and(b, mask) == 0 {
+            return false; // Already free
+        }
+        let new_b = bit_and(b, 255 - mask);
+        ptr_write_u8_at(ptr, byte_idx, new_b);
+    }
+    return true;
+}
+
+func bitmap_reserve(base_addr: int, bitmap_addr: int, total_frames: int, start_addr: int, count: int) -> int {
+    if start_addr < base_addr {
+        return 0;
+    }
+    let offset = start_addr - base_addr;
+    let start_idx = offset / 4096;
+    let newly_reserved = 0;
+    unsafe {
+        let ptr = int_to_ptr(bitmap_addr);
+        let i = 0;
+        while i < count {
+            let frame_idx = start_idx + i;
+            if frame_idx < total_frames {
+                let byte_idx = frame_idx / 8;
+                let bit_idx = frame_idx % 8;
+                let mask = bit_shl(1, bit_idx);
+                let b = ptr_read_u8_at(ptr, byte_idx);
+                if bit_and(b, mask) == 0 {
+                    ptr_write_u8_at(ptr, byte_idx, bit_or(b, mask));
+                    newly_reserved = newly_reserved + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return newly_reserved;
+}
+
+func bitmap_is_allocated(base_addr: int, bitmap_addr: int, total_frames: int, phys_addr: int) -> bool {
+    if phys_addr < base_addr {
+        return false;
+    }
+    let offset = phys_addr - base_addr;
+    let frame_idx = offset / 4096;
+    if frame_idx >= total_frames {
+        return false;
+    }
+    let byte_idx = frame_idx / 8;
+    let bit_idx = frame_idx % 8;
+    let mask = bit_shl(1, bit_idx);
+    unsafe {
+        let ptr = int_to_ptr(bitmap_addr);
+        let b = ptr_read_u8_at(ptr, byte_idx);
+        return bit_and(b, mask) != 0;
+    }
+}
+
+func bitmap_count_used(bitmap_addr: int, total_frames: int) -> int {
+    let count = 0;
+    unsafe {
+        let ptr = int_to_ptr(bitmap_addr);
+        let i = 0;
+        while i < total_frames {
+            let byte_idx = i / 8;
+            let bit_idx = i % 8;
+            let mask = bit_shl(1, bit_idx);
+            let b = ptr_read_u8_at(ptr, byte_idx);
+            if bit_and(b, mask) != 0 {
+                count = count + 1;
+            }
+            i = i + 1;
+        }
+    }
+    return count;
+}
+
+func bitmap_count_free(bitmap_addr: int, total_frames: int) -> int {
+    let used = bitmap_count_used(bitmap_addr, total_frames);
+    return total_frames - used;
+}
+
+// BitmapAllocator Class Factory & Methods
+func bitmap_allocator_new(base_addr: int, total_frames: int, bitmap_addr: int) -> BitmapAllocator {
+    bitmap_allocator_init(bitmap_addr, total_frames);
+    return new BitmapAllocator(base_addr, total_frames, bitmap_addr, 0);
+}
+
+func bitmap_alloc_frame(alloc: BitmapAllocator) -> int {
+    let frame = bitmap_alloc(alloc.base_addr, alloc.bitmap_addr, alloc.total_frames);
+    if frame != 0 {
+        alloc.used_frames = alloc.used_frames + 1;
+    }
+    return frame;
+}
+
+func bitmap_free_frame(alloc: BitmapAllocator, phys_addr: int) -> bool {
+    let freed = bitmap_free(alloc.base_addr, alloc.bitmap_addr, alloc.total_frames, phys_addr);
+    if freed {
+        alloc.used_frames = alloc.used_frames - 1;
+    }
+    return freed;
+}
+
+func bitmap_reserve_frames(alloc: BitmapAllocator, start_addr: int, count: int) -> int {
+    let newly = bitmap_reserve(alloc.base_addr, alloc.bitmap_addr, alloc.total_frames, start_addr, count);
+    alloc.used_frames = alloc.used_frames + newly;
+    return newly;
+}
+
+func bitmap_is_frame_allocated(alloc: BitmapAllocator, phys_addr: int) -> bool {
+    return bitmap_is_allocated(alloc.base_addr, alloc.bitmap_addr, alloc.total_frames, phys_addr);
+}
+
+func bitmap_frames_used(alloc: BitmapAllocator) -> int {
+    return alloc.used_frames;
+}
+
+func bitmap_frames_free(alloc: BitmapAllocator) -> int {
+    return alloc.total_frames - alloc.used_frames;
+}
+
+func bitmap_total_frames(alloc: BitmapAllocator) -> int {
+    return alloc.total_frames;
+}
+
+// ==============================================================================
+// 3. Physical Frame Allocator (Buddy Allocator)
+// ==============================================================================
+
+class BuddyAllocator {
+    base_addr: int,
+    total_frames: int,
+    max_order: int,
+    state_addr: int
+}
+
+func buddy_order_offset(total_frames: int, order: int) -> int {
+    let offset = 0;
+    let curr_order = 0;
+    let frames_per_block = 1;
+    while curr_order < order {
+        let blocks_at_curr = total_frames / frames_per_block;
+        offset = offset + blocks_at_curr;
+        frames_per_block = frames_per_block * 2;
+        curr_order = curr_order + 1;
+    }
+    return offset;
+}
+
+func buddy_blocks_at_order(total_frames: int, order: int) -> int {
+    let frames_per_block = 1;
+    let i = 0;
+    while i < order {
+        frames_per_block = frames_per_block * 2;
+        i = i + 1;
+    }
+    return total_frames / frames_per_block;
+}
+
+func buddy_allocator_init(state_addr: int, total_frames: int, max_order: int) {
+    let total_bytes = total_frames * 2;
+    unsafe {
+        let ptr = int_to_ptr(state_addr);
+        mem_set(ptr, 3, total_bytes);
+
+        let max_blocks = buddy_blocks_at_order(total_frames, max_order);
+        let max_offset = buddy_order_offset(total_frames, max_order);
+        let b = 0;
+        while b < max_blocks {
+            ptr_write_u8_at(ptr, max_offset + b, 0); // FREE
+            b = b + 1;
+        }
+    }
+}
+
+func buddy_alloc(base_addr: int, state_addr: int, total_frames: int, max_order: int, target_order: int) -> int {
+    if target_order > max_order {
+        return 0;
+    }
+    unsafe {
+        let ptr = int_to_ptr(state_addr);
+
+        let found_order = 0 - 1;
+        let found_block = 0 - 1;
+        let curr_order = target_order;
+        while curr_order <= max_order {
+            if found_order < 0 {
+                let offset = buddy_order_offset(total_frames, curr_order);
+                let num_blocks = buddy_blocks_at_order(total_frames, curr_order);
+                let b = 0;
+                while b < num_blocks {
+                    if found_order < 0 {
+                        let st = ptr_read_u8_at(ptr, offset + b);
+                        if st == 0 { // FREE
+                            found_order = curr_order;
+                            found_block = b;
+                        }
+                    }
+                    b = b + 1;
+                }
+            }
+            curr_order = curr_order + 1;
+        }
+
+        if found_order < 0 {
+            return 0; // Out of memory
+        }
+
+        let b = found_block;
+        let o = found_order;
+        while o > target_order {
+            let offset_o = buddy_order_offset(total_frames, o);
+            ptr_write_u8_at(ptr, offset_o + b, 2); // SPLIT
+
+            let left_child = b * 2;
+            let right_child = (b * 2) + 1;
+            let offset_child = buddy_order_offset(total_frames, o - 1);
+
+            ptr_write_u8_at(ptr, offset_child + right_child, 0); // FREE
+
+            b = left_child;
+            o = o - 1;
+        }
+
+        let final_offset = buddy_order_offset(total_frames, target_order);
+        ptr_write_u8_at(ptr, final_offset + b, 1); // ALLOCATED
+
+        let frames_in_block = 1;
+        let i = 0;
+        while i < target_order {
+            frames_in_block = frames_in_block * 2;
+            i = i + 1;
+        }
+        let block_phys = base_addr + (b * frames_in_block * 4096);
+        mem_set(int_to_ptr(block_phys), 0, frames_in_block * 4096);
+        return block_phys;
+    }
+}
+
+func buddy_free(base_addr: int, state_addr: int, total_frames: int, max_order: int, phys_addr: int, order: int) -> bool {
+    if phys_addr < base_addr {
+        return false;
+    }
+    let frames_in_block = 1;
+    let i = 0;
+    while i < order {
+        frames_in_block = frames_in_block * 2;
+        i = i + 1;
+    }
+    let offset = (phys_addr - base_addr) / 4096;
+    let b = offset / frames_in_block;
+
+    unsafe {
+        let ptr = int_to_ptr(state_addr);
+        let curr_offset = buddy_order_offset(total_frames, order);
+        let st = ptr_read_u8_at(ptr, curr_offset + b);
+        if st != 1 {
+            return false; // Not allocated at this order
+        }
+
+        let curr_b = b;
+        let curr_o = order;
+        let done = 0;
+        while curr_o < max_order {
+            if done == 0 {
+                let buddy_b = bit_xor(curr_b, 1);
+                let offset_o = buddy_order_offset(total_frames, curr_o);
+                let buddy_st = ptr_read_u8_at(ptr, offset_o + buddy_b);
+                if buddy_st == 0 {
+                    ptr_write_u8_at(ptr, offset_o + curr_b, 3);
+                    ptr_write_u8_at(ptr, offset_o + buddy_b, 3);
+
+                    curr_b = curr_b / 2;
+                    curr_o = curr_o + 1;
+                    let parent_offset = buddy_order_offset(total_frames, curr_o);
+                    ptr_write_u8_at(ptr, parent_offset + curr_b, 0);
+                } else {
+                    ptr_write_u8_at(ptr, offset_o + curr_b, 0);
+                    done = 1;
+                    curr_o = max_order;
+                }
+            }
+        }
+
+        if done == 0 {
+            let offset_max = buddy_order_offset(total_frames, max_order);
+            ptr_write_u8_at(ptr, offset_max + curr_b, 0);
+        }
+    }
+    return true;
+}
+
+func buddy_alloc_huge(base_addr: int, state_addr: int, total_frames: int, max_order: int) -> int {
+    return buddy_alloc(base_addr, state_addr, total_frames, max_order, 9);
+}
+
+func buddy_free_huge(base_addr: int, state_addr: int, total_frames: int, max_order: int, phys_addr: int) -> bool {
+    return buddy_free(base_addr, state_addr, total_frames, max_order, phys_addr, 9);
+}
+
+func buddy_count_free_order(state_addr: int, total_frames: int, order: int) -> int {
+    let offset = buddy_order_offset(total_frames, order);
+    let total_blocks = buddy_blocks_at_order(total_frames, order);
+    let free_count = 0;
+    unsafe {
+        let ptr = int_to_ptr(state_addr);
+        let b = 0;
+        while b < total_blocks {
+            let st = ptr_read_u8_at(ptr, offset + b);
+            if st == 0 {
+                free_count = free_count + 1;
+            }
+            b = b + 1;
+        }
+    }
+    return free_count;
+}
+
+func buddy_total_free_frames(state_addr: int, total_frames: int, max_order: int) -> int {
+    let total_free = 0;
+    let o = 0;
+    let frames_per_block = 1;
+    while o <= max_order {
+        let cnt = buddy_count_free_order(state_addr, total_frames, o);
+        total_free = total_free + (cnt * frames_per_block);
+        frames_per_block = frames_per_block * 2;
+        o = o + 1;
+    }
+    return total_free;
+}
+
+// BuddyAllocator Class Factory & Methods
+func buddy_allocator_new(base_addr: int, total_frames: int, max_order: int, state_addr: int) -> BuddyAllocator {
+    buddy_allocator_init(state_addr, total_frames, max_order);
+    return new BuddyAllocator(base_addr, total_frames, max_order, state_addr);
+}
+
+func buddy_alloc_block(alloc: BuddyAllocator, order: int) -> int {
+    return buddy_alloc(alloc.base_addr, alloc.state_addr, alloc.total_frames, alloc.max_order, order);
+}
+
+func buddy_free_block(alloc: BuddyAllocator, phys_addr: int, order: int) -> bool {
+    return buddy_free(alloc.base_addr, alloc.state_addr, alloc.total_frames, alloc.max_order, phys_addr, order);
+}
+
+func buddy_alloc_huge_page(alloc: BuddyAllocator) -> int {
+    return buddy_alloc_huge(alloc.base_addr, alloc.state_addr, alloc.total_frames, alloc.max_order);
+}
+
+func buddy_free_huge_page(alloc: BuddyAllocator, phys_addr: int) -> bool {
+    return buddy_free_huge(alloc.base_addr, alloc.state_addr, alloc.total_frames, alloc.max_order, phys_addr);
+}
+
+func buddy_free_blocks_at_order(alloc: BuddyAllocator, order: int) -> int {
+    return buddy_count_free_order(alloc.state_addr, alloc.total_frames, order);
+}
+
+func buddy_total_free_memory_frames(alloc: BuddyAllocator) -> int {
+    return buddy_total_free_frames(alloc.state_addr, alloc.total_frames, alloc.max_order);
+}
+
+// ==============================================================================
+// 4. 4-Level Page Table Manipulator (PML4 -> PDPT -> PD -> PT)
+// ==============================================================================
+
+func page_table_new(alloc_base: int, alloc_bitmap: int, total_frames: int) -> int {
+    let pml4_frame = bitmap_alloc(alloc_base, alloc_bitmap, total_frames);
+    return pml4_frame;
+}
+
+func vmm_map_page(
+    pml4_addr: int,
+    vaddr: int,
+    paddr: int,
+    flags: int,
+    alloc_base: int,
+    alloc_bitmap: int,
+    total_frames: int
+) -> bool {
+    let pml4_idx = vmm_pml4_index(vaddr);
+    let pdpt_idx = vmm_pdpt_index(vaddr);
+    let pd_idx = vmm_pd_index(vaddr);
+    let pt_idx = vmm_pt_index(vaddr);
+
+    // 1. PML4 -> PDPT
+    let pml4_entry = vmm_read_entry(pml4_addr, pml4_idx);
+    let mut_pdpt_addr = 0;
+    if vmm_entry_is_present(pml4_entry) {
+        mut_pdpt_addr = vmm_entry_address(pml4_entry);
+    } else {
+        let new_frame = bitmap_alloc(alloc_base, alloc_bitmap, total_frames);
+        if new_frame == 0 {
+            return false;
+        }
+        mut_pdpt_addr = new_frame;
+        let intermediate_flags = bit_or(1, 2); // PRESENT | WRITABLE
+        if bit_and(flags, 4) != 0 {
+            intermediate_flags = bit_or(intermediate_flags, 4); // USER
+        }
+        vmm_write_entry(pml4_addr, pml4_idx, bit_or(mut_pdpt_addr, intermediate_flags));
+    }
+
+    // 2. PDPT -> PD
+    let pdpt_entry = vmm_read_entry(mut_pdpt_addr, pdpt_idx);
+    let mut_pd_addr = 0;
+    if vmm_entry_is_present(pdpt_entry) {
+        mut_pd_addr = vmm_entry_address(pdpt_entry);
+    } else {
+        let new_frame = bitmap_alloc(alloc_base, alloc_bitmap, total_frames);
+        if new_frame == 0 {
+            return false;
+        }
+        mut_pd_addr = new_frame;
+        let intermediate_flags = bit_or(1, 2);
+        if bit_and(flags, 4) != 0 {
+            intermediate_flags = bit_or(intermediate_flags, 4);
+        }
+        vmm_write_entry(mut_pdpt_addr, pdpt_idx, bit_or(mut_pd_addr, intermediate_flags));
+    }
+
+    // 3. PD -> PT
+    let pd_entry = vmm_read_entry(mut_pd_addr, pd_idx);
+    let mut_pt_addr = 0;
+    if vmm_entry_is_present(pd_entry) {
+        if vmm_entry_is_huge(pd_entry) {
+            // Cannot place 4KB page inside 2MB huge page without splitting
+            return false;
+        }
+        mut_pt_addr = vmm_entry_address(pd_entry);
+    } else {
+        let new_frame = bitmap_alloc(alloc_base, alloc_bitmap, total_frames);
+        if new_frame == 0 {
+            return false;
+        }
+        mut_pt_addr = new_frame;
+        let intermediate_flags = bit_or(1, 2);
+        if bit_and(flags, 4) != 0 {
+            intermediate_flags = bit_or(intermediate_flags, 4);
+        }
+        vmm_write_entry(mut_pd_addr, pd_idx, bit_or(mut_pt_addr, intermediate_flags));
+    }
+
+    // 4. Set PT entry
+    let leaf_flags = bit_or(flags, 1); // Ensure PRESENT is set
+    let clean_paddr = vmm_entry_address(paddr);
+    vmm_write_entry(mut_pt_addr, pt_idx, bit_or(clean_paddr, leaf_flags));
+
+    // 5. Invalidate TLB for virtual address
+    invlpg(vaddr);
+    return true;
+}
+
+func vmm_map_huge_page(
+    pml4_addr: int,
+    vaddr: int,
+    paddr: int,
+    flags: int,
+    alloc_base: int,
+    alloc_bitmap: int,
+    total_frames: int
+) -> bool {
+    // Virtual and physical addresses must be 2MB-aligned
+    if is_2mb_aligned(vaddr) == false {
+        return false;
+    }
+    if is_2mb_aligned(paddr) == false {
+        return false;
+    }
+
+    let pml4_idx = vmm_pml4_index(vaddr);
+    let pdpt_idx = vmm_pdpt_index(vaddr);
+    let pd_idx = vmm_pd_index(vaddr);
+
+    // 1. PML4 -> PDPT
+    let pml4_entry = vmm_read_entry(pml4_addr, pml4_idx);
+    let mut_pdpt_addr = 0;
+    if vmm_entry_is_present(pml4_entry) {
+        mut_pdpt_addr = vmm_entry_address(pml4_entry);
+    } else {
+        let new_frame = bitmap_alloc(alloc_base, alloc_bitmap, total_frames);
+        if new_frame == 0 {
+            return false;
+        }
+        mut_pdpt_addr = new_frame;
+        let intermediate_flags = bit_or(1, 2);
+        if bit_and(flags, 4) != 0 {
+            intermediate_flags = bit_or(intermediate_flags, 4);
+        }
+        vmm_write_entry(pml4_addr, pml4_idx, bit_or(mut_pdpt_addr, intermediate_flags));
+    }
+
+    // 2. PDPT -> PD
+    let pdpt_entry = vmm_read_entry(mut_pdpt_addr, pdpt_idx);
+    let mut_pd_addr = 0;
+    if vmm_entry_is_present(pdpt_entry) {
+        mut_pd_addr = vmm_entry_address(pdpt_entry);
+    } else {
+        let new_frame = bitmap_alloc(alloc_base, alloc_bitmap, total_frames);
+        if new_frame == 0 {
+            return false;
+        }
+        mut_pd_addr = new_frame;
+        let intermediate_flags = bit_or(1, 2);
+        if bit_and(flags, 4) != 0 {
+            intermediate_flags = bit_or(intermediate_flags, 4);
+        }
+        vmm_write_entry(mut_pdpt_addr, pdpt_idx, bit_or(mut_pd_addr, intermediate_flags));
+    }
+
+    // 3. Set PD entry with PAGE_HUGE (bit 7 = 128) and PAGE_PRESENT (bit 0 = 1)
+    let huge_flags = bit_or(flags, bit_or(1, 128));
+    let clean_paddr = vmm_huge_entry_address(paddr);
+    vmm_write_entry(mut_pd_addr, pd_idx, bit_or(clean_paddr, huge_flags));
+
+    // 4. Invalidate TLB
+    invlpg(vaddr);
+    return true;
+}
+
+func vmm_unmap_page(pml4_addr: int, vaddr: int) -> int {
+    let pml4_idx = vmm_pml4_index(vaddr);
+    let pdpt_idx = vmm_pdpt_index(vaddr);
+    let pd_idx = vmm_pd_index(vaddr);
+    let pt_idx = vmm_pt_index(vaddr);
+
+    let pml4_entry = vmm_read_entry(pml4_addr, pml4_idx);
+    if vmm_entry_is_present(pml4_entry) == false { return 0 - 1; }
+    let pdpt_addr = vmm_entry_address(pml4_entry);
+
+    let pdpt_entry = vmm_read_entry(pdpt_addr, pdpt_idx);
+    if vmm_entry_is_present(pdpt_entry) == false { return 0 - 1; }
+    let pd_addr = vmm_entry_address(pdpt_entry);
+
+    let pd_entry = vmm_read_entry(pd_addr, pd_idx);
+    if vmm_entry_is_present(pd_entry) == false { return 0 - 1; }
+    if vmm_entry_is_huge(pd_entry) { return 0 - 1; }
+    let pt_addr = vmm_entry_address(pd_entry);
+
+    let pt_entry = vmm_read_entry(pt_addr, pt_idx);
+    if vmm_entry_is_present(pt_entry) == false { return 0 - 1; }
+
+    let old_phys = vmm_entry_address(pt_entry);
+    vmm_write_entry(pt_addr, pt_idx, 0);
+    invlpg(vaddr);
+    return old_phys;
+}
+
+func vmm_unmap_huge_page(pml4_addr: int, vaddr: int) -> int {
+    let pml4_idx = vmm_pml4_index(vaddr);
+    let pdpt_idx = vmm_pdpt_index(vaddr);
+    let pd_idx = vmm_pd_index(vaddr);
+
+    let pml4_entry = vmm_read_entry(pml4_addr, pml4_idx);
+    if vmm_entry_is_present(pml4_entry) == false { return 0 - 1; }
+    let pdpt_addr = vmm_entry_address(pml4_entry);
+
+    let pdpt_entry = vmm_read_entry(pdpt_addr, pdpt_idx);
+    if vmm_entry_is_present(pdpt_entry) == false { return 0 - 1; }
+    let pd_addr = vmm_entry_address(pdpt_entry);
+
+    let pd_entry = vmm_read_entry(pd_addr, pd_idx);
+    if vmm_entry_is_present(pd_entry) == false { return 0 - 1; }
+    if vmm_entry_is_huge(pd_entry) == false { return 0 - 1; }
+
+    let old_phys = vmm_huge_entry_address(pd_entry);
+    vmm_write_entry(pd_addr, pd_idx, 0);
+    invlpg(vaddr);
+    return old_phys;
+}
+
+func vmm_translate(pml4_addr: int, vaddr: int) -> int {
+    let pml4_idx = vmm_pml4_index(vaddr);
+    let pdpt_idx = vmm_pdpt_index(vaddr);
+    let pd_idx = vmm_pd_index(vaddr);
+    let pt_idx = vmm_pt_index(vaddr);
+
+    let pml4_entry = vmm_read_entry(pml4_addr, pml4_idx);
+    if vmm_entry_is_present(pml4_entry) == false { return 0 - 1; }
+    let pdpt_addr = vmm_entry_address(pml4_entry);
+
+    let pdpt_entry = vmm_read_entry(pdpt_addr, pdpt_idx);
+    if vmm_entry_is_present(pdpt_entry) == false { return 0 - 1; }
+    let pd_addr = vmm_entry_address(pdpt_entry);
+
+    let pd_entry = vmm_read_entry(pd_addr, pd_idx);
+    if vmm_entry_is_present(pd_entry) == false { return 0 - 1; }
+
+    if vmm_entry_is_huge(pd_entry) {
+        let base = vmm_huge_entry_address(pd_entry);
+        let offset = vmm_huge_page_offset(vaddr);
+        return base + offset;
+    }
+
+    let pt_addr = vmm_entry_address(pd_entry);
+    let pt_entry = vmm_read_entry(pt_addr, pt_idx);
+    if vmm_entry_is_present(pt_entry) == false { return 0 - 1; }
+
+    let base = vmm_entry_address(pt_entry);
+    let offset = vmm_page_offset(vaddr);
+    return base + offset;
+}
+
+func vmm_get_page_flags(pml4_addr: int, vaddr: int) -> int {
+    let pml4_idx = vmm_pml4_index(vaddr);
+    let pdpt_idx = vmm_pdpt_index(vaddr);
+    let pd_idx = vmm_pd_index(vaddr);
+    let pt_idx = vmm_pt_index(vaddr);
+
+    let pml4_entry = vmm_read_entry(pml4_addr, pml4_idx);
+    if vmm_entry_is_present(pml4_entry) == false { return 0; }
+    let pdpt_addr = vmm_entry_address(pml4_entry);
+
+    let pdpt_entry = vmm_read_entry(pdpt_addr, pdpt_idx);
+    if vmm_entry_is_present(pdpt_entry) == false { return 0; }
+    let pd_addr = vmm_entry_address(pdpt_entry);
+
+    let pd_entry = vmm_read_entry(pd_addr, pd_idx);
+    if vmm_entry_is_present(pd_entry) == false { return 0; }
+    if vmm_entry_is_huge(pd_entry) {
+        return vmm_entry_flags(pd_entry);
+    }
+
+    let pt_addr = vmm_entry_address(pd_entry);
+    let pt_entry = vmm_read_entry(pt_addr, pt_idx);
+    if vmm_entry_is_present(pt_entry) == false { return 0; }
+    return vmm_entry_flags(pt_entry);
+}
+
+func vmm_set_page_flags(pml4_addr: int, vaddr: int, new_flags: int) -> bool {
+    let pml4_idx = vmm_pml4_index(vaddr);
+    let pdpt_idx = vmm_pdpt_index(vaddr);
+    let pd_idx = vmm_pd_index(vaddr);
+    let pt_idx = vmm_pt_index(vaddr);
+
+    let pml4_entry = vmm_read_entry(pml4_addr, pml4_idx);
+    if vmm_entry_is_present(pml4_entry) == false { return false; }
+    let pdpt_addr = vmm_entry_address(pml4_entry);
+
+    let pdpt_entry = vmm_read_entry(pdpt_addr, pdpt_idx);
+    if vmm_entry_is_present(pdpt_entry) == false { return false; }
+    let pd_addr = vmm_entry_address(pdpt_entry);
+
+    let pd_entry = vmm_read_entry(pd_addr, pd_idx);
+    if vmm_entry_is_present(pd_entry) == false { return false; }
+    if vmm_entry_is_huge(pd_entry) {
+        let base = vmm_huge_entry_address(pd_entry);
+        let flags = bit_or(new_flags, bit_or(1, 128));
+        vmm_write_entry(pd_addr, pd_idx, bit_or(base, flags));
+        invlpg(vaddr);
+        return true;
+    }
+
+    let pt_addr = vmm_entry_address(pd_entry);
+    let pt_entry = vmm_read_entry(pt_addr, pt_idx);
+    if vmm_entry_is_present(pt_entry) == false { return false; }
+
+    let base = vmm_entry_address(pt_entry);
+    let flags = bit_or(new_flags, 1);
+    vmm_write_entry(pt_addr, pt_idx, bit_or(base, flags));
+    invlpg(vaddr);
+    return true;
+}
+
+func vmm_identity_map_range(
+    pml4_addr: int,
+    start_phys: int,
+    length: int,
+    flags: int,
+    alloc_base: int,
+    alloc_bitmap: int,
+    total_frames: int
+) -> int {
+    let end_phys = start_phys + length;
+    let curr = start_phys;
+    let mapped_bytes = 0;
+
+    while curr < end_phys {
+        let remaining = end_phys - curr;
+        if is_2mb_aligned(curr) && remaining >= 2097152 {
+            let ok = vmm_map_huge_page(pml4_addr, curr, curr, flags, alloc_base, alloc_bitmap, total_frames);
+            if ok {
+                mapped_bytes = mapped_bytes + 2097152;
+                curr = curr + 2097152;
+            } else {
+                return mapped_bytes;
+            }
+        } else {
+            let ok = vmm_map_page(pml4_addr, curr, curr, flags, alloc_base, alloc_bitmap, total_frames);
+            if ok {
+                mapped_bytes = mapped_bytes + 4096;
+                curr = curr + 4096;
+            } else {
+                return mapped_bytes;
+            }
+        }
+    }
+    return mapped_bytes;
+}
+
+// Wrappers accepting BitmapAllocator object
+func vmm_map_page_with_alloc(
+    pml4_addr: int,
+    vaddr: int,
+    paddr: int,
+    flags: int,
+    alloc: BitmapAllocator
+) -> bool {
+    let ok = vmm_map_page(pml4_addr, vaddr, paddr, flags, alloc.base_addr, alloc.bitmap_addr, alloc.total_frames);
+    if ok {
+        alloc.used_frames = bitmap_count_used(alloc.bitmap_addr, alloc.total_frames);
+    }
+    return ok;
+}
+
+func vmm_map_huge_page_with_alloc(
+    pml4_addr: int,
+    vaddr: int,
+    paddr: int,
+    flags: int,
+    alloc: BitmapAllocator
+) -> bool {
+    let ok = vmm_map_huge_page(pml4_addr, vaddr, paddr, flags, alloc.base_addr, alloc.bitmap_addr, alloc.total_frames);
+    if ok {
+        alloc.used_frames = bitmap_count_used(alloc.bitmap_addr, alloc.total_frames);
+    }
+    return ok;
+}
+
+func vmm_identity_map_range_with_alloc(
+    pml4_addr: int,
+    start_phys: int,
+    length: int,
+    flags: int,
+    alloc: BitmapAllocator
+) -> int {
+    let mapped = vmm_identity_map_range(pml4_addr, start_phys, length, flags, alloc.base_addr, alloc.bitmap_addr, alloc.total_frames);
+    alloc.used_frames = bitmap_count_used(alloc.bitmap_addr, alloc.total_frames);
+    return mapped;
+}
+
+// TLB & CR3 control wrappers
+func vmm_activate(pml4_addr: int) {
+    write_cr3(pml4_addr);
+}
+
+func vmm_current_table() -> int {
+    return read_cr3();
+}
+
+func vmm_invalidate_page(vaddr: int) {
+    invlpg(vaddr);
+}
+
+func vmm_flush_all() {
+    tlb_flush_all();
+}

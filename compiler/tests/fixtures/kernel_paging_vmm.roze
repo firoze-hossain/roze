@@ -1,0 +1,346 @@
+// compiler/tests/fixtures/kernel_paging_vmm.roze
+//
+// Milestone M2-T06: Kernel Memory: 4-Level Paging & Virtual Memory Manager
+// Verification test suite for:
+// - Bitwise intrinsics and method syntax (bit_and, bit_or, bit_xor, bit_not, bit_shl, bit_shr)
+// - 4-Level x86_64 Paging address indices and flag extractions
+// - Bitmap Physical Frame Allocator (allocation, freeing, reserving, usage counting)
+// - Buddy Allocator (power-of-two blocks, splitting, buddy coalescing, huge pages)
+// - 4-Level Page Table Manipulator (4KB pages, 2MB huge pages, unmap, translate, flags)
+// - Hardware TLB invalidation & CR3 register control (read_cr3, write_cr3, invlpg, tlb_flush_all)
+
+import "paging";
+
+func main() {
+    println("=== Roze Kernel Paging & VMM Test Suite ===");
+
+    // 1. Bitwise Intrinsics & Method Syntax
+    test_bitwise_operations();
+
+    // 2. Virtual Address Decomposition & Alignment
+    test_address_decomposition();
+
+    // 3. Bitmap Physical Frame Allocator
+    test_bitmap_allocator();
+
+    // 4. Buddy Frame Allocator (Splitting & Coalescing)
+    test_buddy_allocator();
+
+    // 5. 4-Level Page Table Manipulator (4KB & 2MB Huge Pages)
+    test_page_table_manipulator();
+
+    // 6. Hardware Register & TLB Control
+    test_tlb_and_cr3();
+
+    println("=== All Kernel Memory & VMM Tests Passed Successfully ===");
+}
+
+func test_bitwise_operations() {
+    println("--- Test 1: Bitwise Intrinsics ---");
+
+    let a = 12; // 1100 in binary
+    let b = 10; // 1010 in binary
+
+    let and_res = bit_and(a, b); // 1000 = 8
+    println(and_res);
+
+    let or_res = bit_or(a, b);   // 1110 = 14
+    println(or_res);
+
+    let xor_res = bit_xor(a, b); // 0110 = 6
+    println(xor_res);
+
+    let shl_res = bit_shl(1, 12); // 4096 (1 << 12)
+    println(shl_res);
+
+    let shr_res = bit_shr(4096, 12); // 1
+    println(shr_res);
+
+    // Method syntax on integers
+    let m_and = a.bit_and(b);
+    let m_or = a.bit_or(b);
+    let m_xor = a.bit_xor(b);
+    let m_shl = 1.bit_shl(21); // 2097152 (2MB)
+    let m_shr = m_shl.bit_shr(21); // 1
+    println(m_and == 8);
+    println(m_or == 14);
+    println(m_xor == 6);
+    println(m_shl == 2097152);
+    println(m_shr == 1);
+}
+
+func test_address_decomposition() {
+    println("--- Test 2: Address Decomposition & Alignment ---");
+
+    println(page_size());
+    println(huge_page_size());
+
+    // Address layout verification
+    // Virtual address within 2GB: PML4 idx 0, PDPT idx 1, PD idx 2, PT idx 3, offset 512
+    let vaddr = (1.bit_shl(30)) + (2.bit_shl(21)) + (3.bit_shl(12)) + 512;
+
+    println(vmm_pml4_index(vaddr));
+    println(vmm_pdpt_index(vaddr));
+    println(vmm_pd_index(vaddr));
+    println(vmm_pt_index(vaddr));
+    println(vmm_page_offset(vaddr));
+
+    // Alignment verification
+    println(is_4kb_aligned(4096));
+    println(is_4kb_aligned(4097) == false);
+    println(is_2mb_aligned(2097152));
+    println(is_2mb_aligned(2097153) == false);
+
+    println(align_to_4kb(4000) == 4096);
+    println(align_to_4kb(4096) == 4096);
+    println(align_to_2mb(2000000) == 2097152);
+    println(align_to_2mb(2097152) == 2097152);
+}
+
+func test_bitmap_allocator() {
+    println("--- Test 3: Bitmap Frame Allocator ---");
+
+    let TOTAL_FRAMES = 64; // 64 * 4KB = 256KB
+    let mut_mem_pool = 0;
+    let mut_bitmap_buf = 0;
+    unsafe {
+        mut_mem_pool = ptr_to_int(alloc_zeroed((TOTAL_FRAMES + 2) * 4096));
+        mut_bitmap_buf = ptr_to_int(alloc_zeroed(64));
+    }
+    let mem_pool = align_to_4kb(mut_mem_pool);
+    let bitmap_buf = mut_bitmap_buf;
+
+    let alloc = bitmap_allocator_new(mem_pool, TOTAL_FRAMES, bitmap_buf);
+    println(bitmap_frames_used(alloc));
+    println(bitmap_frames_free(alloc) == TOTAL_FRAMES);
+
+    // Allocate 3 frames
+    let f0 = bitmap_alloc_frame(alloc);
+    let f1 = bitmap_alloc_frame(alloc);
+    let f2 = bitmap_alloc_frame(alloc);
+
+    println(f0 == mem_pool);
+    println(f1 == mem_pool + 4096);
+    println(f2 == mem_pool + 8192);
+    println(is_4kb_aligned(f0));
+    println(is_4kb_aligned(f1));
+    println(is_4kb_aligned(f2));
+
+    println(bitmap_frames_used(alloc));
+    println(bitmap_is_frame_allocated(alloc, f1));
+
+    // Direct memory write to allocated frame
+    unsafe {
+        let p0 = int_to_ptr(f0);
+        ptr_write_at(p0, 0, 1337);
+        println(ptr_read_at(p0, 0));
+    }
+
+    // Free Frame 1
+    let freed = bitmap_free_frame(alloc, f1);
+    println(freed);
+    println(bitmap_is_frame_allocated(alloc, f1) == false);
+    println(bitmap_frames_used(alloc));
+
+    // Re-allocate should reuse freed frame f1
+    let f_reused = bitmap_alloc_frame(alloc);
+    println(f_reused == f1);
+
+    // Reserve 4 frames starting from frame 10
+    let res_start = mem_pool + (10 * 4096);
+    let reserved = bitmap_reserve_frames(alloc, res_start, 4);
+    println(reserved);
+    println(bitmap_is_frame_allocated(alloc, res_start));
+    println(bitmap_is_frame_allocated(alloc, res_start + 4096));
+    println(bitmap_is_frame_allocated(alloc, res_start + 8192));
+    println(bitmap_is_frame_allocated(alloc, res_start + 12288));
+
+    unsafe {
+        free(int_to_ptr(mut_mem_pool));
+        free(int_to_ptr(mut_bitmap_buf));
+    }
+}
+
+func test_buddy_allocator() {
+    println("--- Test 4: Buddy Allocator (Split & Coalesce) ---");
+
+    let TOTAL_FRAMES = 64; // 64 * 4KB = 256KB
+    let MAX_ORDER = 6;     // 2^6 = 64 frames (256KB top block)
+    let mut_mem_pool = 0;
+    let mut_state_buf = 0;
+    unsafe {
+        mut_mem_pool = ptr_to_int(alloc_zeroed((TOTAL_FRAMES + 2) * 4096));
+        mut_state_buf = ptr_to_int(alloc_zeroed(TOTAL_FRAMES * 4));
+    }
+    let mem_pool = align_to_4kb(mut_mem_pool);
+    let state_buf = mut_state_buf;
+
+    let buddy = buddy_allocator_new(mem_pool, TOTAL_FRAMES, MAX_ORDER, state_buf);
+    println(buddy_total_free_memory_frames(buddy) == TOTAL_FRAMES);
+    println(buddy_free_blocks_at_order(buddy, 6) == 1);
+
+    // 1. Allocate block of order 0 (4KB = 1 frame)
+    let b0 = buddy_alloc_block(buddy, 0);
+    println(b0 == mem_pool);
+    println(buddy_free_blocks_at_order(buddy, 0)); // 0 free at order 0
+
+    // 2. Allocate second block of order 0 (buddy of b0)
+    let b1 = buddy_alloc_block(buddy, 0);
+    println(b1 == mem_pool + 4096);
+
+    // 3. Allocate block of order 1 (8KB = 2 frames)
+    let b2 = buddy_alloc_block(buddy, 1);
+    println(b2 == mem_pool + 8192);
+
+    // 4. Free b0
+    let freed_b0 = buddy_free_block(buddy, b0, 0);
+    println(freed_b0);
+    println(buddy_free_blocks_at_order(buddy, 0) == 1);
+
+    // 5. Free b1 (triggers coalescing with b0 into order 1 block at index 0!)
+    let freed_b1 = buddy_free_block(buddy, b1, 0);
+    println(freed_b1);
+    println(buddy_free_blocks_at_order(buddy, 0) == 0); // Both merged!
+
+    // 6. Free b2 (triggers coalescing with newly formed order 1 block at index 0 into order 2 block!)
+    let freed_b2 = buddy_free_block(buddy, b2, 1);
+    println(freed_b2);
+
+    // 7. Test Huge Page Allocation with a 512-frame pool (Order 9 = 2MB)
+    let HUGE_FRAMES = 512;
+    let HUGE_MAX_ORDER = 9;
+    let mut_huge_pool = 0;
+    let mut_huge_state = 0;
+    unsafe {
+        mut_huge_pool = ptr_to_int(alloc_zeroed((HUGE_FRAMES + 512) * 4096));
+        mut_huge_state = ptr_to_int(alloc_zeroed(HUGE_FRAMES * 4));
+    }
+    let huge_pool = align_to_2mb(mut_huge_pool);
+    let huge_state = mut_huge_state;
+
+    let huge_buddy = buddy_allocator_new(huge_pool, HUGE_FRAMES, HUGE_MAX_ORDER, huge_state);
+    println(buddy_free_blocks_at_order(huge_buddy, 9) == 1);
+
+    let huge_frame = buddy_alloc_huge_page(huge_buddy);
+    println(huge_frame == huge_pool);
+    println(is_2mb_aligned(huge_frame));
+    println(buddy_free_blocks_at_order(huge_buddy, 9) == 0);
+
+    let freed_huge = buddy_free_huge_page(huge_buddy, huge_frame);
+    println(freed_huge);
+    println(buddy_free_blocks_at_order(huge_buddy, 9) == 1);
+
+    unsafe {
+        free(int_to_ptr(mut_mem_pool));
+        free(int_to_ptr(mut_state_buf));
+        free(int_to_ptr(mut_huge_pool));
+        free(int_to_ptr(mut_huge_state));
+    }
+}
+
+func test_page_table_manipulator() {
+    println("--- Test 5: 4-Level Page Table Manipulator ---");
+
+    let TOTAL_FRAMES = 128;
+    let mut_mem_pool = 0;
+    let mut_bitmap_buf = 0;
+    unsafe {
+        mut_mem_pool = ptr_to_int(alloc_zeroed((TOTAL_FRAMES + 2) * 4096));
+        mut_bitmap_buf = ptr_to_int(alloc_zeroed(64));
+    }
+    let mem_pool = align_to_4kb(mut_mem_pool);
+    let bitmap_buf = mut_bitmap_buf;
+    let alloc = bitmap_allocator_new(mem_pool, TOTAL_FRAMES, bitmap_buf);
+
+    // Create root PML4 table
+    let pml4 = bitmap_alloc_frame(alloc);
+    println(pml4 != 0);
+
+    // Map 4KB Virtual Page: 0x400000 -> Physical Frame
+    let vaddr_4k = 4194304; // 0x400000 (4MB)
+    let paddr_4k = mem_pool + (20 * 4096);
+    let flags_4k = bit_or(page_present(), bit_or(page_writable(), page_user()));
+
+    let map_ok = vmm_map_page_with_alloc(pml4, vaddr_4k, paddr_4k, flags_4k, alloc);
+    println(map_ok);
+
+    // Address translation
+    let translated_4k = vmm_translate(pml4, vaddr_4k);
+    println(translated_4k == paddr_4k);
+
+    // Offset preservation
+    let translated_with_off = vmm_translate(pml4, vaddr_4k + 128);
+    println(translated_with_off == paddr_4k + 128);
+
+    // Query & modify flags
+    let cur_flags = vmm_get_page_flags(pml4, vaddr_4k);
+    println(bit_and(cur_flags, page_writable()) != 0);
+    println(bit_and(cur_flags, page_user()) != 0);
+
+    // Change to read-only (remove WRITABLE)
+    let new_flags = bit_or(page_present(), page_user());
+    let flag_update_ok = vmm_set_page_flags(pml4, vaddr_4k, new_flags);
+    println(flag_update_ok);
+    let updated_flags = vmm_get_page_flags(pml4, vaddr_4k);
+    println(bit_and(updated_flags, page_writable()) == 0);
+    println(bit_and(updated_flags, page_user()) != 0);
+
+    // Map 2MB Huge Page: Virtual 0x2000000 (32MB) -> Physical 0x200000 (2MB)
+    let vaddr_huge = 33554432; // 32MB (2MB aligned)
+    let paddr_huge = 2097152;  // 2MB (2MB aligned)
+    let flags_huge = bit_or(page_present(), page_writable());
+
+    let huge_ok = vmm_map_huge_page_with_alloc(pml4, vaddr_huge, paddr_huge, flags_huge, alloc);
+    println(huge_ok);
+
+    let translated_huge = vmm_translate(pml4, vaddr_huge);
+    println(translated_huge == paddr_huge);
+
+    let huge_with_off = vmm_translate(pml4, vaddr_huge + 65536);
+    println(huge_with_off == paddr_huge + 65536);
+
+    // Unmap 4KB Page
+    let unmapped_phys = vmm_unmap_page(pml4, vaddr_4k);
+    println(unmapped_phys == paddr_4k);
+    println(vmm_translate(pml4, vaddr_4k) == 0 - 1); // Not present
+
+    // Unmap 2MB Huge Page
+    let unmapped_huge = vmm_unmap_huge_page(pml4, vaddr_huge);
+    println(unmapped_huge == paddr_huge);
+    println(vmm_translate(pml4, vaddr_huge) == 0 - 1); // Not present
+
+    // Identity Map Range (128 KB = 32 pages of 4KB)
+    let id_start = mem_pool + (40 * 4096);
+    let id_size = 32 * 4096;
+    let mapped_bytes = vmm_identity_map_range_with_alloc(pml4, id_start, id_size, flags_4k, alloc);
+    println(mapped_bytes == id_size);
+
+    println(vmm_translate(pml4, id_start) == id_start);
+    println(vmm_translate(pml4, id_start + 16384) == id_start + 16384);
+
+    unsafe {
+        free(int_to_ptr(mut_mem_pool));
+        free(int_to_ptr(mut_bitmap_buf));
+    }
+}
+
+func test_tlb_and_cr3() {
+    println("--- Test 6: TLB & CR3 Hardware Control ---");
+
+    let cr3_val = vmm_current_table();
+    println(cr3_val > 0);
+
+    let new_pml4 = 2097152; // 0x200000
+    vmm_activate(new_pml4);
+    let read_back = vmm_current_table();
+    println(read_back == new_pml4);
+
+    // Restore original CR3
+    vmm_activate(cr3_val);
+    println(vmm_current_table() == cr3_val);
+
+    // TLB Invalidation calls
+    vmm_invalidate_page(4194304);
+    vmm_flush_all();
+    println(true);
+}

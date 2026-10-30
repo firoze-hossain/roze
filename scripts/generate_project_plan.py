@@ -300,7 +300,7 @@ s1_rows = [
         ("M2-T06", 8), ("Month 2", 4), ("Sprint 4 (W07-W08)", 8), "Kernel Memory", "4-Level Paging & Virtual Memory Manager",
         "PML4 -> PDPT -> PD -> PT page table manipulator. 4KB and 2MB huge page mapping, physical frame allocator (Bitmap + Buddy allocator), and TLB invalidation.",
         "Full OS memory management stack written entirely in Roze.",
-        "Operating System Development", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Operating System Development", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M2-T07", 8), ("Month 2", 4), ("Sprint 4 (W07-W08)", 8), "Kernel Core", "Hardware Interrupts (GDT, IDT, APIC)",

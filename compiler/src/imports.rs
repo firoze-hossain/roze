@@ -69,6 +69,9 @@ const MEMORY_DISPLAY_NAME: &str = "memory (built-in)";
 const FREESTANDING_SOURCE: &str = include_str!("../../stdlib/src/freestanding.roze");
 const FREESTANDING_DISPLAY_NAME: &str = "freestanding (built-in)";
 
+const PAGING_SOURCE: &str = include_str!("../../stdlib/src/paging.roze");
+const PAGING_DISPLAY_NAME: &str = "paging (built-in)";
+
 /// Walks `program`'s top-level statements, replacing every `Import` with
 /// the functions it pulls in. `base_dir` is the directory of the file
 /// being compiled, used to resolve relative import paths.
@@ -190,6 +193,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "freestanding" {
         return Ok((FREESTANDING_SOURCE.to_string(), FREESTANDING_DISPLAY_NAME.to_string()));
+    }
+    if path == "paging" || path == "vmm" {
+        return Ok((PAGING_SOURCE.to_string(), PAGING_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

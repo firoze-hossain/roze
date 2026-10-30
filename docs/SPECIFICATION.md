@@ -762,6 +762,49 @@ const PAGE_NX: int            = 0x80000000; // Bit 63: No-Execute bit
 - `read_cr3() -> int`: Reads current page table root address from `CR3`.
 - `write_cr3(val: int)`: Writes new PML4 root address into `CR3`.
 
+### 3.11 Kernel Core: Hardware Interrupts (GDT, IDT, APIC)
+
+Roze provides a complete, low-level OS kernel interrupt management architecture implemented in pure Roze (`import "interrupts";` or `import "idt";` / `import "gdt";` / `import "apic";` / `import "pic";`):
+
+#### Global Descriptor Table (GDT) & Task State Segment (TSS)
+- **64-Bit Long Mode GDT**: Null descriptor (`0x00`), Kernel Code 64-bit (`0x08`), Kernel Data (`0x10`), User Data 64-bit (`0x18 | 3 = 0x1B`), User Code 64-bit (`0x20 | 3 = 0x23`), and 16-byte Task State Segment (TSS) descriptor (`0x28`).
+- **TSS Configuration**: 104-byte TSS structure providing privileged kernel stack pointer (`RSP0`) and 7 dedicated Interrupt Stack Table pointers (`IST1..7`) for stack fault resilience.
+- **Descriptors & Loading**: `gdt_manager_new`, `gdt_manager_set_entry`, `gdt_manager_set_tss`, `gdt_manager_load` (`lgdt`), and `gdt_manager_load_tss` (`ltr`).
+
+#### Interrupt Descriptor Table (IDT) & 256 Vector Stubs
+- **256 Vector Gates**: 16-byte descriptor gates containing target handler virtual address (`offset_low`, `offset_mid`, `offset_high`), code segment selector, Interrupt Stack Table index (`ist`), and type attributes (`0x8E` for 64-bit interrupt gates, `0x8F` for trap gates, `0xEE` for user system call gates).
+- **Assembly ISR Stubs**: 256 hardware stubs (`isr_stub_0..255`) created via gas macros (`.rept 256`). Vectors pushing CPU error codes (vectors 8, 10, 11, 12, 13, 14, 17, 30) preserve their error code; all other vectors push a dummy 0 error code.
+- **Common Dispatcher**: `isr_common_stub` preserves all general-purpose registers (`%r15..%rax`), passes `%rsp` as `InterruptFrame *` to `roze_interrupt_dispatcher`, restores registers, and issues `iretq`.
+
+#### CPU Exception Handlers & Diagnostic Decoders
+- **Page Fault (#PF, Vector 14)**: Reads linear fault address from `CR2` and decodes the error code:
+  - `is_present`: Protection violation (1) vs. non-present page (0).
+  - `is_write`: Write operation (1) vs. read operation (0).
+  - `is_user`: User-mode execution (1) vs. supervisor mode (0).
+  - `is_reserved`: Reserved bit violation (1).
+  - `is_instruction_fetch`: Instruction fetch NX violation (1).
+- **General Protection Fault (#GP, Vector 13)**: Decodes selector error code into `selector_index`, `table_type` (GDT, IDT, or LDT), and `is_external` bit.
+- **Double Fault (#DF, Vector 8)**: Dedicated IST1 stack prevents triple-fault resets on stack overflows.
+
+#### 8259 PIC Driver
+- Legacy Programmable Interrupt Controller driver remapping master PIC to vector 32 (`0x20`) and slave PIC to vector 40 (`0x28`).
+- Methods: `pic_driver_init_dev`, `pic_driver_send_eoi_irq`, `pic_driver_mask_irq`, `pic_driver_unmask_irq`, `pic_driver_query_masked`, and `pic_driver_disable_dev` (masking all lines for APIC handover).
+
+#### Local APIC Driver
+- Modern Local Advanced Programmable Interrupt Controller driver communicating via memory-mapped I/O (MMIO base detected via MSR `0x1B` `IA32_APIC_BASE` or default `0xFEE00000`).
+- Registers: Spurious Interrupt Vector Register (`SVR` at offset `0x0F0`, enabled with bit 8 + spurious vector 0xFF), Task Priority Register (`TPR` at `0x080`), End of Interrupt (`EOI` at `0x0B0`), and APIC Timer (`LVT Timer 0x320`, Initial Count `0x380`, Divide Config `0x3E0`).
+- Methods: `apic_driver_detect_base`, `apic_driver_init_dev`, `apic_driver_enable_dev`, `apic_driver_send_eoi_dev`, `apic_driver_get_dev_id`, `apic_driver_get_dev_version`, `apic_driver_set_dev_timer`, `apic_driver_read_dev_reg`, `apic_driver_write_dev_reg`.
+
+#### Hardware CPU Interrupt Intrinsics
+- `cli()` / `sti()`: Clears / sets the Interrupt Enable flag (`IF`) in `RFLAGS`.
+- `are_interrupts_enabled() -> bool`: Tests whether `RFLAGS.IF` is active.
+- `read_rflags() -> int`: Reads the CPU flags register.
+- `read_cr2() -> int` / `write_cr2(val: int)`: Reads / writes linear Page Fault Address.
+- `read_msr(msr: int) -> int` / `write_msr(msr: int, val: int)`: Model-Specific Register read/write.
+- `lidt(base: int, limit: int)` / `lgdt(base: int, limit: int)`: Loads IDTR and GDTR descriptor registers.
+- `ltr(sel: int)`: Loads Task Register.
+- `trigger_interrupt(vector: int, error_code: int)`: Fires software interrupt dispatch and records telemetry.
+
 ---
 
 ## 4. Error Handling (`Result`, `Option`, `?`)

@@ -368,6 +368,23 @@ __asm__(
 "    cmpl $512, %ecx\n"
 "    jne 1b\n"
 "\n"
+"    /* Map 3GB..4GB into boot_pdpt[3] with 2MB huge pages for APIC MMIO (0xFEE00000) */\n"
+"    movl $boot_pd3, %eax\n"
+"    orl $0x3, %eax\n"
+"    movl %eax, boot_pdpt+24\n"
+"\n"
+"    xorl %ecx, %ecx\n"
+"2:\n"
+"    movl $0x200000, %eax\n"
+"    mull %ecx\n"
+"    addl $0xC0000000, %eax\n"
+"    orl $0x83, %eax\n"
+"    movl %eax, boot_pd3(,%ecx,8)\n"
+"    movl $0, boot_pd3+4(,%ecx,8)\n"
+"    incl %ecx\n"
+"    cmpl $512, %ecx\n"
+"    jne 2b\n"
+"\n"
 "    /* Enable PAE in CR4 */\n"
 "    movl %cr4, %eax\n"
 "    orl $(1 << 5), %eax\n"
@@ -404,6 +421,9 @@ __asm__(
 "    movw %ax, %ss\n"
 "    movq $stack_top, %rsp\n"
 "\n"
+"    call gdt_init_default\n"
+"    call idt_init_default\n"
+"\n"
 "    call __roze_bootstrap_main\n"
 "\n"
 ".Lhalt:\n"
@@ -411,14 +431,95 @@ __asm__(
 "    hlt\n"
 "    jmp .Lhalt\n"
 "\n"
+".altmacro\n"
+".macro DEF_STUB i\n"
+"    .if \\i == 8 || \\i == 10 || \\i == 11 || \\i == 12 || \\i == 13 || \\i == 14 || \\i == 17 || \\i == 21 || \\i == 29 || \\i == 30\n"
+"        .align 16\n"
+"        .globl isr_stub_\\i\n"
+"        isr_stub_\\i:\n"
+"            pushq $\\i\n"
+"            jmp isr_common_stub\n"
+"    .else\n"
+"        .align 16\n"
+"        .globl isr_stub_\\i\n"
+"        isr_stub_\\i:\n"
+"            pushq $0\n"
+"            pushq $\\i\n"
+"            jmp isr_common_stub\n"
+"    .endif\n"
+".endm\n"
+"\n"
+".set isr_i, 0\n"
+".rept 256\n"
+"    DEF_STUB %isr_i\n"
+"    .set isr_i, isr_i + 1\n"
+".endr\n"
+"\n"
+"isr_common_stub:\n"
+"    pushq %r15\n"
+"    pushq %r14\n"
+"    pushq %r13\n"
+"    pushq %r12\n"
+"    pushq %r11\n"
+"    pushq %r10\n"
+"    pushq %r9\n"
+"    pushq %r8\n"
+"    pushq %rdi\n"
+"    pushq %rsi\n"
+"    pushq %rbp\n"
+"    pushq %rbx\n"
+"    pushq %rdx\n"
+"    pushq %rcx\n"
+"    pushq %rax\n"
+"\n"
+"    movq %rsp, %rdi\n"
+"    call roze_interrupt_dispatcher\n"
+"\n"
+"    popq %rax\n"
+"    popq %rcx\n"
+"    popq %rdx\n"
+"    popq %rbx\n"
+"    popq %rbp\n"
+"    popq %rsi\n"
+"    popq %rdi\n"
+"    popq %r8\n"
+"    popq %r9\n"
+"    popq %r10\n"
+"    popq %r11\n"
+"    popq %r12\n"
+"    popq %r13\n"
+"    popq %r14\n"
+"    popq %r15\n"
+"\n"
+"    addq $16, %rsp\n"
+"    iretq\n"
+"\n"
+".macro DEF_TABLE_ENTRY i\n"
+"    .quad isr_stub_\\i\n"
+".endm\n"
+"\n"
+".globl isr_stub_table\n"
+"isr_stub_table:\n"
+".set tbl_i, 0\n"
+".rept 256\n"
+"    DEF_TABLE_ENTRY %tbl_i\n"
+"    .set tbl_i, tbl_i + 1\n"
+".endr\n"
+"\n"
 ".section .data\n"
 ".align 8\n"
+".globl gdt64\n"
 "gdt64:\n"
 "    .quad 0\n"
 "    .quad 0x00209A0000000000\n"
 "    .quad 0x0000920000000000\n"
+"    .quad 0x0000F20000000000\n"
+"    .quad 0x0020FA0000000000\n"
+"    .quad 0\n"
+"    .quad 0\n"
+".globl gdt64_ptr\n"
 "gdt64_ptr:\n"
-"    .word . - gdt64 - 1\n"
+"    .word 55\n"
 "    .quad gdt64\n"
 "\n"
 ".globl mboot_magic\n"
@@ -436,9 +537,31 @@ __asm__(
 "    .skip 4096\n"
 "boot_pd:\n"
 "    .skip 4096\n"
+"boot_pd3:\n"
+"    .skip 4096\n"
 "kernel_stack:\n"
 "    .skip 65536\n"
 "stack_top:\n"
+"\n"
+".align 16\n"
+".globl tss64\n"
+"tss64:\n"
+"    .skip 104\n"
+".globl interrupt_stack\n"
+"interrupt_stack:\n"
+"    .skip 16384\n"
+"interrupt_stack_top:\n"
+"\n"
+".globl idt64\n"
+".align 4096\n"
+"idt64:\n"
+"    .skip 4096\n"
+"\n"
+".section .data\n"
+".globl idt64_ptr\n"
+"idt64_ptr:\n"
+"    .word 4095\n"
+"    .quad idt64\n"
 "\n"
 ".section .text\n"
 );
@@ -532,6 +655,337 @@ void tlb_flush_all(void) {
     unsigned long val;
     __asm__ volatile("movq %%cr3, %0; movq %0, %%cr3" : "=r"(val) : : "memory");
 #endif
+}
+
+// 2b. Hardware Interrupts, GDT, IDT, PIC & APIC (M2-T07)
+struct __attribute__((packed)) IdtEntry64 {
+    unsigned short offset_low;
+    unsigned short selector;
+    unsigned char ist;
+    unsigned char type_attr;
+    unsigned short offset_mid;
+    unsigned int offset_high;
+    unsigned int reserved;
+};
+
+struct __attribute__((packed)) Dtr64 {
+    unsigned short limit;
+    unsigned long base;
+};
+
+typedef struct {
+    unsigned long rax, rcx, rdx, rbx, rbp, rsi, rdi;
+    unsigned long r8, r9, r10, r11, r12, r13, r14, r15;
+    unsigned long vector;
+    unsigned long error_code;
+    unsigned long rip, cs, rflags, rsp, ss;
+} InterruptFrame;
+
+typedef void (*InterruptHandlerCallback)(long frame_ptr);
+static InterruptHandlerCallback roze_custom_interrupt_handlers[256] = {0};
+
+static long __roze_freestanding_interrupt_counts[256] = {0};
+static long __roze_freestanding_last_int_vector = -1;
+static long __roze_freestanding_last_int_error_code = 0;
+static long __roze_freestanding_last_int_fault_addr = 0;
+static long __roze_freestanding_apic_enabled = 0;
+static long __roze_freestanding_apic_base = 0xFEE00000;
+
+extern unsigned long gdt64[7];
+extern struct IdtEntry64 idt64[256];
+extern void *isr_stub_table[256];
+extern unsigned char tss64[104];
+extern unsigned char interrupt_stack[16384];
+extern unsigned char stack_top;
+
+long read_cr2(void) {
+#if defined(__x86_64__)
+    unsigned long val = 0;
+    __asm__ volatile("movq %%cr2, %0" : "=r"(val));
+    return (long)val;
+#else
+    return 0;
+#endif
+}
+
+void write_cr2(long val) {
+#if defined(__x86_64__)
+    __asm__ volatile("movq %0, %%cr2" : : "r"(val) : "memory");
+#endif
+}
+
+void cli(void) {
+#if defined(__x86_64__)
+    __asm__ volatile("cli" : : : "memory");
+#endif
+}
+
+void sti(void) {
+#if defined(__x86_64__)
+    __asm__ volatile("sti" : : : "memory");
+#endif
+}
+
+long are_interrupts_enabled(void) {
+#if defined(__x86_64__)
+    unsigned long rflags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(rflags));
+    return (rflags & (1UL << 9)) ? 1 : 0;
+#else
+    return 1;
+#endif
+}
+
+long read_rflags(void) {
+#if defined(__x86_64__)
+    unsigned long rflags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(rflags));
+    return (long)rflags;
+#else
+    return 0x202;
+#endif
+}
+
+long read_msr(long msr) {
+#if defined(__x86_64__)
+    unsigned int low, high;
+    __asm__ volatile("rdmsr" : "=a"(low), "=d"(high) : "c"((unsigned int)msr));
+    return ((long)high << 32) | (long)low;
+#else
+    return (msr == 0x1B) ? 0xFEE00900 : 0;
+#endif
+}
+
+void write_msr(long msr, long val) {
+#if defined(__x86_64__)
+    unsigned int low = (unsigned int)val;
+    unsigned int high = (unsigned int)(val >> 32);
+    __asm__ volatile("wrmsr" : : "a"(low), "d"(high), "c"((unsigned int)msr));
+#endif
+}
+
+void lgdt(long base, long limit) {
+#if defined(__x86_64__)
+    struct Dtr64 gdtr;
+    gdtr.limit = (unsigned short)limit;
+    gdtr.base = (unsigned long)base;
+    __asm__ volatile("lgdt %0" : : "m"(gdtr) : "memory");
+#endif
+}
+
+void lidt(long base, long limit) {
+#if defined(__x86_64__)
+    struct Dtr64 idtr;
+    idtr.limit = (unsigned short)limit;
+    idtr.base = (unsigned long)base;
+    __asm__ volatile("lidt %0" : : "m"(idtr) : "memory");
+#endif
+}
+
+void ltr(long selector) {
+#if defined(__x86_64__)
+    __asm__ volatile("ltr %w0" : : "r"((unsigned short)selector));
+#endif
+}
+
+long mmio_read32(long addr) {
+    return (long)(*(volatile unsigned int *)addr);
+}
+
+void mmio_write32(long addr, long val) {
+    *(volatile unsigned int *)addr = (unsigned int)val;
+}
+
+long mmio_read16(long addr) {
+    return (long)(*(volatile unsigned short *)addr);
+}
+
+void mmio_write16(long addr, long val) {
+    *(volatile unsigned short *)addr = (unsigned short)val;
+}
+
+long mmio_read8(long addr) {
+    return (long)(*(volatile unsigned char *)addr);
+}
+
+void mmio_write8(long addr, long val) {
+    *(volatile unsigned char *)addr = (unsigned char)val;
+}
+
+long ptr_read_u32_at(void *ptr, long offset) {
+    return mmio_read32((long)ptr + offset);
+}
+
+void ptr_write_u32_at(void *ptr, long offset, long val) {
+    mmio_write32((long)ptr + offset, val);
+}
+
+long ptr_read_u16_at(void *ptr, long offset) {
+    return mmio_read16((long)ptr + offset);
+}
+
+void ptr_write_u16_at(void *ptr, long offset, long val) {
+    mmio_write16((long)ptr + offset, val);
+}
+
+void pic_remap(long off1, long off2) {
+    outb_internal(0x20, 0x11);
+    outb_internal(0xA0, 0x11);
+    outb_internal(0x21, (unsigned char)off1);
+    outb_internal(0xA1, (unsigned char)off2);
+    outb_internal(0x21, 0x04);
+    outb_internal(0xA1, 0x02);
+    outb_internal(0x21, 0x01);
+    outb_internal(0xA1, 0x01);
+    outb_internal(0x21, 0x00);
+    outb_internal(0xA1, 0x00);
+}
+
+void pic_send_eoi(long irq) {
+    if (irq >= 8) outb_internal(0xA0, 0x20);
+    outb_internal(0x20, 0x20);
+}
+
+void pic_mask_irq(long irq) {
+    unsigned short port = (irq < 8) ? 0x21 : 0xA1;
+    unsigned char line = (unsigned char)((irq < 8) ? irq : (irq - 8));
+    outb_internal(port, inb_internal(port) | (1 << line));
+}
+
+void pic_unmask_irq(long irq) {
+    unsigned short port = (irq < 8) ? 0x21 : 0xA1;
+    unsigned char line = (unsigned char)((irq < 8) ? irq : (irq - 8));
+    outb_internal(port, inb_internal(port) & ~(1 << line));
+}
+
+long pic_is_masked(long irq) {
+    unsigned short port = (irq < 8) ? 0x21 : 0xA1;
+    unsigned char line = (unsigned char)((irq < 8) ? irq : (irq - 8));
+    return (inb_internal(port) & (1 << line)) != 0;
+}
+
+void pic_disable(void) {
+    outb_internal(0x21, 0xFF);
+    outb_internal(0xA1, 0xFF);
+}
+
+void apic_init(long base) {
+    __roze_freestanding_apic_base = base;
+}
+
+void apic_enable(void) {
+    __roze_freestanding_apic_enabled = 1;
+    mmio_write32(__roze_freestanding_apic_base + 0x0F0, 0x1FF);
+    mmio_write32(__roze_freestanding_apic_base + 0x080, 0);
+}
+
+void apic_send_eoi(void) {
+    mmio_write32(__roze_freestanding_apic_base + 0x0B0, 0);
+}
+
+long apic_is_enabled(void) {
+    return __roze_freestanding_apic_enabled;
+}
+
+void interrupt_register_handler(long vector, void *handler) {
+    if (vector >= 0 && vector < 256) {
+        roze_custom_interrupt_handlers[vector] = (InterruptHandlerCallback)handler;
+    }
+}
+
+void roze_interrupt_dispatcher(InterruptFrame *frame) {
+    long vec = (long)frame->vector;
+    __roze_freestanding_interrupt_counts[vec & 0xFF]++;
+    __roze_freestanding_last_int_vector = vec;
+    __roze_freestanding_last_int_error_code = (long)frame->error_code;
+    if (vec == 14) {
+        __roze_freestanding_last_int_fault_addr = read_cr2();
+    }
+
+    if (roze_custom_interrupt_handlers[vec & 0xFF]) {
+        roze_custom_interrupt_handlers[vec & 0xFF]((long)frame);
+    }
+
+    if (vec >= 32 && vec <= 47) {
+        pic_send_eoi(vec - 32);
+    }
+    if (__roze_freestanding_apic_enabled && vec >= 32) {
+        apic_send_eoi();
+    }
+}
+
+void int_invoke(long vector, long error_code) {
+    InterruptFrame f;
+    f.rax = 0; f.rcx = 0; f.rdx = 0; f.rbx = 0; f.rbp = 0; f.rsi = 0; f.rdi = 0;
+    f.r8 = 0; f.r9 = 0; f.r10 = 0; f.r11 = 0; f.r12 = 0; f.r13 = 0; f.r14 = 0; f.r15 = 0;
+    f.vector = (unsigned long)vector;
+    f.error_code = (unsigned long)error_code;
+    f.rip = 0;
+    f.cs = 0x08;
+    f.rflags = (unsigned long)read_rflags();
+    f.rsp = (unsigned long)&stack_top;
+    f.ss = 0x10;
+    roze_interrupt_dispatcher(&f);
+}
+
+void trigger_interrupt(long vector, long error_code) {
+    int_invoke(vector, error_code);
+}
+
+long get_last_interrupt_vector(void) { return __roze_freestanding_last_int_vector; }
+long get_last_interrupt_error_code(void) { return __roze_freestanding_last_int_error_code; }
+long get_last_interrupt_fault_addr(void) { return __roze_freestanding_last_int_fault_addr; }
+long get_interrupt_count(long vec) { return __roze_freestanding_interrupt_counts[vec & 0xFF]; }
+
+long gdt_init_default(void) {
+    gdt64[0] = 0;
+    gdt64[1] = 0x00209A0000000000ULL;
+    gdt64[2] = 0x0000920000000000ULL;
+    gdt64[3] = 0x0000F20000000000ULL;
+    gdt64[4] = 0x0020FA0000000000ULL;
+
+    unsigned long rsp0 = (unsigned long)&stack_top;
+    unsigned long ist1 = (unsigned long)&interrupt_stack[16384];
+    *(unsigned long *)&tss64[4] = rsp0;
+    *(unsigned long *)&tss64[36] = ist1;
+    *(unsigned short *)&tss64[102] = 104;
+
+    unsigned long tss_base = (unsigned long)&tss64[0];
+    unsigned long tss_limit = 103;
+    unsigned long tss_low = (tss_limit & 0xFFFF) |
+                           ((tss_base & 0xFFFF) << 16) |
+                           (((tss_base >> 16) & 0xFF) << 32) |
+                           (0x89ULL << 40) |
+                           (((tss_limit >> 16) & 0x0F) << 48) |
+                           (((tss_base >> 24) & 0xFF) << 56);
+    unsigned long tss_high = (tss_base >> 32);
+    gdt64[5] = tss_low;
+    gdt64[6] = tss_high;
+
+    struct Dtr64 gdtr;
+    gdtr.limit = 55;
+    gdtr.base = (unsigned long)&gdt64[0];
+    lgdt((long)gdtr.base, (long)gdtr.limit);
+    ltr(0x28);
+    return 1;
+}
+
+long idt_init_default(void) {
+    for (int i = 0; i < 256; i++) {
+        unsigned long handler = (unsigned long)isr_stub_table[i];
+        idt64[i].offset_low = (unsigned short)(handler & 0xFFFF);
+        idt64[i].selector = 0x08;
+        idt64[i].ist = (i == 8) ? 1 : 0;
+        idt64[i].type_attr = (i == 3 || i == 128) ? 0xEE : 0x8E;
+        idt64[i].offset_mid = (unsigned short)((handler >> 16) & 0xFFFF);
+        idt64[i].offset_high = (unsigned int)((handler >> 32) & 0xFFFFFFFF);
+        idt64[i].reserved = 0;
+    }
+    struct Dtr64 idtr;
+    idtr.limit = 4095;
+    idtr.base = (unsigned long)&idt64[0];
+    lidt((long)idtr.base, (long)idtr.limit);
+    return 1;
 }
 
 // 3. Serial COM1 UART Driver (115200 8N1)
@@ -3662,6 +4116,41 @@ pub struct KernelRuntime {
     pub invlpg_id: FuncId,
     pub tlb_invalidate_page_id: FuncId,
     pub tlb_flush_all_id: FuncId,
+    pub cli_id: FuncId,
+    pub sti_id: FuncId,
+    pub are_interrupts_enabled_id: FuncId,
+    pub read_rflags_id: FuncId,
+    pub read_cr2_id: FuncId,
+    pub write_cr2_id: FuncId,
+    pub read_msr_id: FuncId,
+    pub write_msr_id: FuncId,
+    pub lidt_id: FuncId,
+    pub lgdt_id: FuncId,
+    pub ltr_id: FuncId,
+    pub int_invoke_id: FuncId,
+    pub trigger_interrupt_id: FuncId,
+    pub get_last_interrupt_vector_id: FuncId,
+    pub get_last_interrupt_error_code_id: FuncId,
+    pub get_last_interrupt_fault_addr_id: FuncId,
+    pub get_interrupt_count_id: FuncId,
+    pub gdt_init_default_id: FuncId,
+    pub idt_init_default_id: FuncId,
+    pub pic_remap_id: FuncId,
+    pub pic_send_eoi_id: FuncId,
+    pub pic_mask_irq_id: FuncId,
+    pub pic_unmask_irq_id: FuncId,
+    pub pic_is_masked_id: FuncId,
+    pub pic_disable_id: FuncId,
+    pub apic_init_id: FuncId,
+    pub apic_enable_id: FuncId,
+    pub apic_send_eoi_id: FuncId,
+    pub apic_is_enabled_id: FuncId,
+    pub mmio_read32_id: FuncId,
+    pub mmio_write32_id: FuncId,
+    pub mmio_read16_id: FuncId,
+    pub mmio_write16_id: FuncId,
+    pub mmio_read8_id: FuncId,
+    pub mmio_write8_id: FuncId,
 }
 
 fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
@@ -3716,6 +4205,77 @@ fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
     let tlb_flush_all_id = module.declare_function("tlb_flush_all", Linkage::Import, &void_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
 
+    let cli_id = module.declare_function("cli", Linkage::Import, &void_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let sti_id = module.declare_function("sti", Linkage::Import, &void_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let are_interrupts_enabled_id = module.declare_function("are_interrupts_enabled", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let read_rflags_id = module.declare_function("read_rflags", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let read_cr2_id = module.declare_function("read_cr2", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let write_cr2_id = module.declare_function("write_cr2", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let read_msr_id = module.declare_function("read_msr", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let write_msr_id = module.declare_function("write_msr", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let lidt_id = module.declare_function("lidt", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let lgdt_id = module.declare_function("lgdt", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let ltr_id = module.declare_function("ltr", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let int_invoke_id = module.declare_function("int_invoke", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let trigger_interrupt_id = module.declare_function("trigger_interrupt", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let get_last_interrupt_vector_id = module.declare_function("get_last_interrupt_vector", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let get_last_interrupt_error_code_id = module.declare_function("get_last_interrupt_error_code", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let get_last_interrupt_fault_addr_id = module.declare_function("get_last_interrupt_fault_addr", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let get_interrupt_count_id = module.declare_function("get_interrupt_count", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let gdt_init_default_id = module.declare_function("gdt_init_default", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let idt_init_default_id = module.declare_function("idt_init_default", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let pic_remap_id = module.declare_function("pic_remap", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let pic_send_eoi_id = module.declare_function("pic_send_eoi", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let pic_mask_irq_id = module.declare_function("pic_mask_irq", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let pic_unmask_irq_id = module.declare_function("pic_unmask_irq", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let pic_is_masked_id = module.declare_function("pic_is_masked", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let pic_disable_id = module.declare_function("pic_disable", Linkage::Import, &void_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let apic_init_id = module.declare_function("apic_init", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let apic_enable_id = module.declare_function("apic_enable", Linkage::Import, &void_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let apic_send_eoi_id = module.declare_function("apic_send_eoi", Linkage::Import, &void_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let apic_is_enabled_id = module.declare_function("apic_is_enabled", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mmio_read32_id = module.declare_function("mmio_read32", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mmio_write32_id = module.declare_function("mmio_write32", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mmio_read16_id = module.declare_function("mmio_read16", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mmio_write16_id = module.declare_function("mmio_write16", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mmio_read8_id = module.declare_function("mmio_read8", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mmio_write8_id = module.declare_function("mmio_write8", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
     Ok(KernelRuntime {
         multiboot2_get_magic_id,
         multiboot2_get_info_ptr_id,
@@ -3734,6 +4294,41 @@ fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
         invlpg_id,
         tlb_invalidate_page_id,
         tlb_flush_all_id,
+        cli_id,
+        sti_id,
+        are_interrupts_enabled_id,
+        read_rflags_id,
+        read_cr2_id,
+        write_cr2_id,
+        read_msr_id,
+        write_msr_id,
+        lidt_id,
+        lgdt_id,
+        ltr_id,
+        int_invoke_id,
+        trigger_interrupt_id,
+        get_last_interrupt_vector_id,
+        get_last_interrupt_error_code_id,
+        get_last_interrupt_fault_addr_id,
+        get_interrupt_count_id,
+        gdt_init_default_id,
+        idt_init_default_id,
+        pic_remap_id,
+        pic_send_eoi_id,
+        pic_mask_irq_id,
+        pic_unmask_irq_id,
+        pic_is_masked_id,
+        pic_disable_id,
+        apic_init_id,
+        apic_enable_id,
+        apic_send_eoi_id,
+        apic_is_enabled_id,
+        mmio_read32_id,
+        mmio_write32_id,
+        mmio_read16_id,
+        mmio_write16_id,
+        mmio_read8_id,
+        mmio_write8_id,
     })
 }
 
@@ -8457,6 +9052,20 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let byte_val = self.builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
                 return Ok(self.builder.ins().uextend(VALUE_TYPE, byte_val));
             }
+            "ptr_read_u32_at" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                let val = self.builder.ins().load(types::I32, MemFlags::trusted(), addr, 0);
+                return Ok(self.builder.ins().uextend(VALUE_TYPE, val));
+            }
+            "ptr_read_u16_at" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                let val = self.builder.ins().load(types::I16, MemFlags::trusted(), addr, 0);
+                return Ok(self.builder.ins().uextend(VALUE_TYPE, val));
+            }
             "ptr_write_u8" if arguments.len() == 2 => {
                 let ptr_val = self.compile_expression(&arguments[0])?;
                 let val = self.compile_expression(&arguments[1])?;
@@ -8485,6 +9094,24 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let addr = self.builder.ins().iadd(ptr_val, offset_val);
                 let byte_val = self.builder.ins().ireduce(types::I8, val);
                 self.builder.ins().store(MemFlags::trusted(), byte_val, addr, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_write_u32_at" if arguments.len() == 3 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let val = self.compile_expression(&arguments[2])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                let reduced = self.builder.ins().ireduce(types::I32, val);
+                self.builder.ins().store(MemFlags::trusted(), reduced, addr, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_write_u16_at" if arguments.len() == 3 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let val = self.compile_expression(&arguments[2])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                let reduced = self.builder.ins().ireduce(types::I16, val);
+                self.builder.ins().store(MemFlags::trusted(), reduced, addr, 0);
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
             "ptr_add" | "ptr_offset" if arguments.len() == 2 => {
@@ -8704,6 +9331,213 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             "tlb_flush_all" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.kernel.tlb_flush_all_id, self.builder.func);
                 self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+
+            // Hardware Interrupts & Control (M2-T07)
+            "cli" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.cli_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "sti" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.sti_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "are_interrupts_enabled" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.are_interrupts_enabled_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "read_rflags" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.read_rflags_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "read_cr2" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.read_cr2_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "write_cr2" if arguments.len() == 1 => {
+                let val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.write_cr2_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "read_msr" if arguments.len() == 1 => {
+                let msr = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.read_msr_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[msr]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "write_msr" if arguments.len() == 2 => {
+                let msr = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.write_msr_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[msr, val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "lidt" if arguments.len() == 2 => {
+                let base = self.compile_expression(&arguments[0])?;
+                let limit = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.lidt_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[base, limit]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "lgdt" if arguments.len() == 2 => {
+                let base = self.compile_expression(&arguments[0])?;
+                let limit = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.lgdt_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[base, limit]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ltr" if arguments.len() == 1 => {
+                let sel = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.ltr_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[sel]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "int_invoke" if arguments.len() == 2 => {
+                let vec = self.compile_expression(&arguments[0])?;
+                let err = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.int_invoke_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[vec, err]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "trigger_interrupt" if arguments.len() == 2 => {
+                let vec = self.compile_expression(&arguments[0])?;
+                let err = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.trigger_interrupt_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[vec, err]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "get_last_interrupt_vector" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.get_last_interrupt_vector_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "get_last_interrupt_error_code" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.get_last_interrupt_error_code_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "get_last_interrupt_fault_addr" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.get_last_interrupt_fault_addr_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "get_interrupt_count" if arguments.len() == 1 => {
+                let vec = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.get_interrupt_count_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[vec]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "gdt_init_default" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.gdt_init_default_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "idt_init_default" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.idt_init_default_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "pic_remap" if arguments.len() == 2 => {
+                let off1 = self.compile_expression(&arguments[0])?;
+                let off2 = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.pic_remap_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[off1, off2]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "pic_send_eoi" if arguments.len() == 1 => {
+                let irq = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.pic_send_eoi_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[irq]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "pic_mask_irq" if arguments.len() == 1 => {
+                let irq = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.pic_mask_irq_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[irq]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "pic_unmask_irq" if arguments.len() == 1 => {
+                let irq = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.pic_unmask_irq_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[irq]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "pic_is_masked" if arguments.len() == 1 => {
+                let irq = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.pic_is_masked_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[irq]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "pic_disable" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.pic_disable_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "apic_init" if arguments.len() == 1 => {
+                let base = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.apic_init_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[base]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "apic_enable" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.apic_enable_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "apic_send_eoi" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.apic_send_eoi_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "apic_is_enabled" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.kernel.apic_is_enabled_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "mmio_read32" if arguments.len() == 1 => {
+                let addr = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.mmio_read32_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[addr]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "mmio_write32" if arguments.len() == 2 => {
+                let addr = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.mmio_write32_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[addr, val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "mmio_read16" if arguments.len() == 1 => {
+                let addr = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.mmio_read16_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[addr]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "mmio_write16" if arguments.len() == 2 => {
+                let addr = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.mmio_write16_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[addr, val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "mmio_read8" if arguments.len() == 1 => {
+                let addr = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.mmio_read8_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[addr]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "mmio_write8" if arguments.len() == 2 => {
+                let addr = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.mmio_write8_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[addr, val]);
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
 

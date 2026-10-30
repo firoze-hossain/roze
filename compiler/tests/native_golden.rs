@@ -3916,6 +3916,57 @@ fn native_kernel_paging_and_virtual_memory_manager_suite() {
     assert!(u_out.is_empty(), "expected zero undefined symbols, got:\n{}", u_out);
 }
 
+#[test]
+fn native_kernel_hardware_interrupts_and_core_suite() {
+    let source = std::fs::read_to_string("tests/fixtures/kernel_interrupts.roze")
+        .or_else(|_| std::fs::read_to_string("compiler/tests/fixtures/kernel_interrupts.roze"))
+        .expect("read kernel_interrupts fixture");
+
+    let (stdout, stderr, ok) = run_native_source("native_kernel_interrupts", &source);
+    assert!(ok, "native build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== Roze Kernel Hardware Interrupts & Core Architecture Test Suite ==="));
+    assert!(stdout.contains("--- Test 1: CPU Interrupt State & Flags ---"));
+    assert!(stdout.contains("--- Test 2: GDT & TSS Configuration ---"));
+    assert!(stdout.contains("--- Test 3: IDT Gate Configuration & Descriptors ---"));
+    assert!(stdout.contains("--- Test 4: Exception Handlers & Diagnostic Decoders ---"));
+    assert!(stdout.contains("--- Test 5: 8259 PIC Driver ---"));
+    assert!(stdout.contains("--- Test 6: Local APIC Driver ---"));
+    assert!(stdout.contains("--- Test 7: Hardware Interrupt Dispatch & Telemetry ---"));
+    assert!(stdout.contains("=== All Kernel Core & Interrupt Subsystem Tests Passed Successfully ==="));
+
+    // Also verify standalone freestanding kernel binary compilation with zero undefined symbols
+    let dir = scratch_dir("freestanding_interrupts_kernel");
+    let file_name = "interrupts_kernel.roze";
+    std::fs::write(dir.join(file_name), &source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke roze build");
+    assert!(
+        build_output.status.success(),
+        "freestanding build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("interrupts_kernel");
+    assert!(kernel_bin.exists());
+
+    let nm_u = Command::new("nm")
+        .arg("-u")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run nm -u");
+    assert!(nm_u.status.success());
+    let u_out = String::from_utf8_lossy(&nm_u.stdout).trim().to_string();
+    assert!(u_out.is_empty(), "expected zero undefined symbols, got:\n{}", u_out);
+}
+
 
 
 

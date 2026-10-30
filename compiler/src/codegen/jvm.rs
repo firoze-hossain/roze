@@ -2548,8 +2548,20 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     // Kernel & Multiboot2 (ADV-02)
     private static int __roze_multiboot2_get_magic() { return 0x36D76289; }
     private static long __roze_multiboot2_get_info_ptr() { return 0L; }
-    private static void __roze_outb(long port, long val) {}
-    private static int __roze_inb(long port) { return 0; }
+    private static int[] __roze_io_ports = new int[65536];
+    private static void __roze_outb(long port, long val) {
+        int p = (int)(port & 0xFFFF);
+        if (p >= 0 && p < __roze_io_ports.length) {
+            __roze_io_ports[p] = (int)(val & 0xFF);
+        }
+    }
+    private static int __roze_inb(long port) {
+        int p = (int)(port & 0xFFFF);
+        if (p >= 0 && p < __roze_io_ports.length) {
+            return __roze_io_ports[p] & 0xFF;
+        }
+        return 0;
+    }
     private static void __roze_qemu_exit(long code) {}
     private static void __roze_serial_print(String s) { System.out.print(s); }
     private static void __roze_serial_putchar(long ch) { System.out.print((char)ch); }
@@ -2564,6 +2576,168 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     private static void __roze_invlpg(long addr) {}
     private static void __roze_tlb_invalidate_page(long addr) {}
     private static void __roze_tlb_flush_all() {}
+
+    // Hardware Interrupts, GDT, IDT, PIC & APIC (M2-T07)
+    private static long __roze_simulated_rflags = 0x202L; // IF bit set
+    private static long __roze_simulated_cr2 = 0L;
+    private static long __roze_simulated_gdtr_base = 0L;
+    private static int __roze_simulated_gdtr_limit = 0;
+    private static long __roze_simulated_idtr_base = 0L;
+    private static int __roze_simulated_idtr_limit = 0;
+    private static int __roze_simulated_tr = 0;
+    private static java.util.Map<Long, Long> __roze_simulated_msrs = new java.util.HashMap<>();
+    private static java.util.Map<Long, Integer> __roze_simulated_mmio = new java.util.HashMap<>();
+    private static long[] __roze_interrupt_counts = new long[256];
+    private static long __roze_last_int_vector = -1;
+    private static long __roze_last_int_error_code = 0;
+    private static long __roze_last_int_fault_addr = 0;
+    private static boolean __roze_apic_enabled = false;
+    private static long __roze_apic_base = 0xFEE00000L;
+    private static boolean __roze_pic_initialized = false;
+    private static int __roze_pic_master_offset = 32;
+    private static int __roze_pic_slave_offset = 40;
+
+    static {
+        __roze_simulated_msrs.put(0x1BL, 0xFEE00900L); // IA32_APIC_BASE
+        __roze_simulated_mmio.put(0xFEE00020L, 0x00000000); // APIC ID
+        __roze_simulated_mmio.put(0xFEE00030L, 0x00050014); // APIC Version
+        __roze_simulated_mmio.put(0xFEE000F0L, 0x000001FF); // SVR
+    }
+
+    private static void __roze_cli() { __roze_simulated_rflags &= ~(1L << 9); }
+    private static void __roze_sti() { __roze_simulated_rflags |= (1L << 9); }
+    private static boolean __roze_are_interrupts_enabled() { return (__roze_simulated_rflags & (1L << 9)) != 0; }
+    private static int __roze_read_rflags() { return (int)__roze_simulated_rflags; }
+    private static int __roze_read_cr2() { return (int)__roze_simulated_cr2; }
+    private static void __roze_write_cr2(long val) { __roze_simulated_cr2 = val; }
+    private static int __roze_read_msr(long msr) { return (int)(long)__roze_simulated_msrs.getOrDefault(msr, 0L); }
+    private static void __roze_write_msr(long msr, long val) { __roze_simulated_msrs.put(msr, val); }
+    private static void __roze_lidt(long base, long limit) {
+        __roze_simulated_idtr_base = base;
+        __roze_simulated_idtr_limit = (int)limit;
+    }
+    private static void __roze_lgdt(long base, long limit) {
+        __roze_simulated_gdtr_base = base;
+        __roze_simulated_gdtr_limit = (int)limit;
+    }
+    private static void __roze_ltr(long sel) { __roze_simulated_tr = (int)sel; }
+    private static void __roze_int_invoke(long vector, long error_code) {
+        int v = (int)(vector & 0xFF);
+        __roze_interrupt_counts[v]++;
+        __roze_last_int_vector = v;
+        __roze_last_int_error_code = error_code;
+        if (v == 14) __roze_last_int_fault_addr = __roze_simulated_cr2;
+    }
+    private static void __roze_trigger_interrupt(long vector, long error_code) { __roze_int_invoke(vector, error_code); }
+    private static int __roze_get_last_interrupt_vector() { return (int)__roze_last_int_vector; }
+    private static int __roze_get_last_interrupt_error_code() { return (int)__roze_last_int_error_code; }
+    private static int __roze_get_last_interrupt_fault_addr() { return (int)__roze_last_int_fault_addr; }
+    private static int __roze_get_interrupt_count(long vec) { return (int)__roze_interrupt_counts[(int)(vec & 0xFF)]; }
+    private static int __roze_gdt_init_default() { return 1; }
+    private static int __roze_idt_init_default() { return 1; }
+
+    private static void __roze_pic_remap(long off1, long off2) {
+        __roze_pic_master_offset = (int)off1;
+        __roze_pic_slave_offset = (int)off2;
+        __roze_pic_initialized = true;
+        __roze_outb(0x21, 0);
+        __roze_outb(0xA1, 0);
+    }
+    private static void __roze_pic_send_eoi(long irq) {
+        if (irq >= 8) __roze_outb(0xA0, 0x20);
+        __roze_outb(0x20, 0x20);
+    }
+    private static void __roze_pic_mask_irq(long irq) {
+        long port = (irq < 8) ? 0x21 : 0xA1;
+        long line = (irq < 8) ? irq : (irq - 8);
+        int val = __roze_inb(port) | (1 << (int)line);
+        __roze_outb(port, val);
+    }
+    private static void __roze_pic_unmask_irq(long irq) {
+        long port = (irq < 8) ? 0x21 : 0xA1;
+        long line = (irq < 8) ? irq : (irq - 8);
+        int val = __roze_inb(port) & ~(1 << (int)line);
+        __roze_outb(port, val);
+    }
+    private static boolean __roze_pic_is_masked(long irq) {
+        long port = (irq < 8) ? 0x21 : 0xA1;
+        long line = (irq < 8) ? irq : (irq - 8);
+        return (__roze_inb(port) & (1 << (int)line)) != 0;
+    }
+    private static void __roze_pic_disable() {
+        __roze_outb(0x21, 0xFF);
+        __roze_outb(0xA1, 0xFF);
+    }
+
+    private static void __roze_apic_init(long base) {
+        __roze_apic_base = base;
+    }
+    private static void __roze_apic_enable() {
+        __roze_apic_enabled = true;
+        __roze_mmio_write32(__roze_apic_base + 0x0F0, 0x1FF);
+        __roze_mmio_write32(__roze_apic_base + 0x080, 0);
+    }
+    private static void __roze_apic_send_eoi() {
+        __roze_mmio_write32(__roze_apic_base + 0x0B0, 0);
+    }
+    private static boolean __roze_apic_is_enabled() {
+        return __roze_apic_enabled;
+    }
+
+    private static int __roze_ptr_read_u32_at(long ptr, long offset) {
+        long addr = ptr + offset;
+        if (addr >= 0 && addr + 4 <= __ROZE_SIMULATED_RAM.length) {
+            int idx = (int)addr;
+            return ((__ROZE_SIMULATED_RAM[idx] & 0xFF)) |
+                   ((__ROZE_SIMULATED_RAM[idx + 1] & 0xFF) << 8) |
+                   ((__ROZE_SIMULATED_RAM[idx + 2] & 0xFF) << 16) |
+                   ((__ROZE_SIMULATED_RAM[idx + 3] & 0xFF) << 24);
+        }
+        if (__roze_simulated_mmio.containsKey(addr)) {
+            return __roze_simulated_mmio.get(addr);
+        }
+        return 0;
+    }
+
+    private static void __roze_ptr_write_u32_at(long ptr, long offset, long val) {
+        long addr = ptr + offset;
+        if (addr >= 0 && addr + 4 <= __ROZE_SIMULATED_RAM.length) {
+            int idx = (int)addr;
+            __ROZE_SIMULATED_RAM[idx] = (byte)(val & 0xFF);
+            __ROZE_SIMULATED_RAM[idx + 1] = (byte)((val >> 8) & 0xFF);
+            __ROZE_SIMULATED_RAM[idx + 2] = (byte)((val >> 16) & 0xFF);
+            __ROZE_SIMULATED_RAM[idx + 3] = (byte)((val >> 24) & 0xFF);
+            return;
+        }
+        __roze_simulated_mmio.put(addr, (int)val);
+    }
+
+    private static int __roze_ptr_read_u16_at(long ptr, long offset) {
+        long addr = ptr + offset;
+        if (addr >= 0 && addr + 2 <= __ROZE_SIMULATED_RAM.length) {
+            int idx = (int)addr;
+            return ((__ROZE_SIMULATED_RAM[idx] & 0xFF)) |
+                   ((__ROZE_SIMULATED_RAM[idx + 1] & 0xFF) << 8);
+        }
+        return 0;
+    }
+
+    private static void __roze_ptr_write_u16_at(long ptr, long offset, long val) {
+        long addr = ptr + offset;
+        if (addr >= 0 && addr + 2 <= __ROZE_SIMULATED_RAM.length) {
+            int idx = (int)addr;
+            __ROZE_SIMULATED_RAM[idx] = (byte)(val & 0xFF);
+            __ROZE_SIMULATED_RAM[idx + 1] = (byte)((val >> 8) & 0xFF);
+        }
+    }
+
+    private static int __roze_mmio_read32(long addr) { return __roze_ptr_read_u32_at(addr, 0); }
+    private static void __roze_mmio_write32(long addr, long val) { __roze_ptr_write_u32_at(addr, 0, val); }
+    private static int __roze_mmio_read16(long addr) { return __roze_ptr_read_u16_at(addr, 0); }
+    private static void __roze_mmio_write16(long addr, long val) { __roze_ptr_write_u16_at(addr, 0, val); }
+    private static int __roze_mmio_read8(long addr) { return __roze_ptr_read_u8(addr); }
+    private static void __roze_mmio_write8(long addr, long val) { __roze_ptr_write_u8(addr, (int)val); }
+
 "#;
 
 const NUMERIC_HELPER_METHODS: &str = r#"
@@ -4218,6 +4392,16 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "outb" | "qemu_exit" | "serial_print" | "serial_putchar" | "freestanding_halt"
         | "write_cr3" | "invlpg" | "tlb_invalidate_page" | "tlb_flush_all" => Some("void"),
 
+        // Hardware Interrupts & Control (M2-T07)
+        "are_interrupts_enabled" | "pic_is_masked" | "apic_is_enabled" => Some("boolean"),
+        "read_rflags" | "read_cr2" | "read_msr" | "get_last_interrupt_vector" | "get_last_interrupt_error_code"
+        | "get_last_interrupt_fault_addr" | "get_interrupt_count" | "gdt_init_default" | "idt_init_default"
+        | "ptr_read_u32_at" | "ptr_read_u16_at" | "mmio_read32" | "mmio_read16" | "mmio_read8" => Some("int"),
+        "cli" | "sti" | "write_cr2" | "write_msr" | "lidt" | "lgdt" | "ltr" | "int_invoke" | "trigger_interrupt"
+        | "pic_remap" | "pic_send_eoi" | "pic_mask_irq" | "pic_unmask_irq" | "pic_disable"
+        | "apic_init" | "apic_enable" | "apic_send_eoi"
+        | "ptr_write_u32_at" | "ptr_write_u16_at" | "mmio_write32" | "mmio_write16" | "mmio_write8" => Some("void"),
+
         // Fixed-Width Numeric Suite (M2-T01)
         "i8" => Some("byte"),
         "u8" => Some("int"),
@@ -5720,8 +5904,12 @@ impl JavaSourceGenerator {
                     }
                     _ => {
                         if !raw.contains('.') && (raw.parse::<i64>().is_ok() && raw.parse::<i32>().is_err()) {
-                            source.push_str(raw);
-                            source.push('L');
+                            if expr.type_ == Type::Int {
+                                source.push_str(&format!("((int) {}L)", raw));
+                            } else {
+                                source.push_str(raw);
+                                source.push('L');
+                            }
                         } else {
                             source.push_str(raw);
                         }
@@ -8068,6 +8256,170 @@ impl JavaSourceGenerator {
             }
             "tlb_flush_all" if arguments.is_empty() => {
                 source.push_str("__roze_tlb_flush_all()");
+            }
+
+            // Hardware Interrupts & Control (M2-T07)
+            "cli" if arguments.is_empty() => source.push_str("__roze_cli()"),
+            "sti" if arguments.is_empty() => source.push_str("__roze_sti()"),
+            "are_interrupts_enabled" if arguments.is_empty() => source.push_str("__roze_are_interrupts_enabled()"),
+            "read_rflags" if arguments.is_empty() => source.push_str("__roze_read_rflags()"),
+            "read_cr2" if arguments.is_empty() => source.push_str("__roze_read_cr2()"),
+            "write_cr2" if arguments.len() == 1 => {
+                source.push_str("__roze_write_cr2(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "read_msr" if arguments.len() == 1 => {
+                source.push_str("__roze_read_msr(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "write_msr" if arguments.len() == 2 => {
+                source.push_str("__roze_write_msr(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "lidt" if arguments.len() == 2 => {
+                source.push_str("__roze_lidt(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "lgdt" if arguments.len() == 2 => {
+                source.push_str("__roze_lgdt(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ltr" if arguments.len() == 1 => {
+                source.push_str("__roze_ltr(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "int_invoke" | "trigger_interrupt" if arguments.len() == 2 => {
+                source.push_str("__roze_int_invoke(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "get_last_interrupt_vector" if arguments.is_empty() => source.push_str("__roze_get_last_interrupt_vector()"),
+            "get_last_interrupt_error_code" if arguments.is_empty() => source.push_str("__roze_get_last_interrupt_error_code()"),
+            "get_last_interrupt_fault_addr" if arguments.is_empty() => source.push_str("__roze_get_last_interrupt_fault_addr()"),
+            "get_interrupt_count" if arguments.len() == 1 => {
+                source.push_str("__roze_get_interrupt_count(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "gdt_init_default" if arguments.is_empty() => source.push_str("__roze_gdt_init_default()"),
+            "idt_init_default" if arguments.is_empty() => source.push_str("__roze_idt_init_default()"),
+            "pic_remap" if arguments.len() == 2 => {
+                source.push_str("__roze_pic_remap(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "pic_send_eoi" if arguments.len() == 1 => {
+                source.push_str("__roze_pic_send_eoi(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "pic_mask_irq" if arguments.len() == 1 => {
+                source.push_str("__roze_pic_mask_irq(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "pic_unmask_irq" if arguments.len() == 1 => {
+                source.push_str("__roze_pic_unmask_irq(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "pic_is_masked" if arguments.len() == 1 => {
+                source.push_str("__roze_pic_is_masked(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "pic_disable" if arguments.is_empty() => source.push_str("__roze_pic_disable()"),
+            "apic_init" if arguments.len() == 1 => {
+                source.push_str("__roze_apic_init(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "apic_enable" if arguments.is_empty() => source.push_str("__roze_apic_enable()"),
+            "apic_send_eoi" if arguments.is_empty() => source.push_str("__roze_apic_send_eoi()"),
+            "apic_is_enabled" if arguments.is_empty() => source.push_str("__roze_apic_is_enabled()"),
+            "ptr_read_u32_at" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_read_u32_at(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_write_u32_at" if arguments.len() == 3 => {
+                source.push_str("__roze_ptr_write_u32_at(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "ptr_read_u16_at" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_read_u16_at(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_write_u16_at" if arguments.len() == 3 => {
+                source.push_str("__roze_ptr_write_u16_at(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "mmio_read32" if arguments.len() == 1 => {
+                source.push_str("__roze_mmio_read32(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "mmio_write32" if arguments.len() == 2 => {
+                source.push_str("__roze_mmio_write32(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "mmio_read16" if arguments.len() == 1 => {
+                source.push_str("__roze_mmio_read16(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "mmio_write16" if arguments.len() == 2 => {
+                source.push_str("__roze_mmio_write16(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "mmio_read8" if arguments.len() == 1 => {
+                source.push_str("__roze_mmio_read8(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "mmio_write8" if arguments.len() == 2 => {
+                source.push_str("__roze_mmio_write8(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
             }
 
             "println" => {

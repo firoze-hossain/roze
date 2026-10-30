@@ -1006,6 +1006,47 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("tlb_invalidate_page", vec![Type::Int], Type::Void),
         ("tlb_flush_all", vec![], Type::Void),
 
+        // ---- Hardware Interrupts, GDT, IDT, PIC & APIC (M2-T07) ----
+        ("cli", vec![], Type::Void),
+        ("sti", vec![], Type::Void),
+        ("are_interrupts_enabled", vec![], Type::Bool),
+        ("read_rflags", vec![], Type::Int),
+        ("read_cr2", vec![], Type::Int),
+        ("write_cr2", vec![Type::Int], Type::Void),
+        ("read_msr", vec![Type::Int], Type::Int),
+        ("write_msr", vec![Type::Int, Type::Int], Type::Void),
+        ("lidt", vec![Type::Int, Type::Int], Type::Void),
+        ("lgdt", vec![Type::Int, Type::Int], Type::Void),
+        ("ltr", vec![Type::Int], Type::Void),
+        ("int_invoke", vec![Type::Int, Type::Int], Type::Void),
+        ("trigger_interrupt", vec![Type::Int, Type::Int], Type::Void),
+        ("get_last_interrupt_vector", vec![], Type::Int),
+        ("get_last_interrupt_error_code", vec![], Type::Int),
+        ("get_last_interrupt_fault_addr", vec![], Type::Int),
+        ("get_interrupt_count", vec![Type::Int], Type::Int),
+        ("gdt_init_default", vec![], Type::Int),
+        ("idt_init_default", vec![], Type::Int),
+        ("pic_remap", vec![Type::Int, Type::Int], Type::Void),
+        ("pic_send_eoi", vec![Type::Int], Type::Void),
+        ("pic_mask_irq", vec![Type::Int], Type::Void),
+        ("pic_unmask_irq", vec![Type::Int], Type::Void),
+        ("pic_is_masked", vec![Type::Int], Type::Bool),
+        ("pic_disable", vec![], Type::Void),
+        ("apic_init", vec![Type::Int], Type::Void),
+        ("apic_enable", vec![], Type::Void),
+        ("apic_send_eoi", vec![], Type::Void),
+        ("apic_is_enabled", vec![], Type::Bool),
+        ("ptr_read_u32_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Int),
+        ("ptr_write_u32_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int, Type::Int], Type::Void),
+        ("ptr_read_u16_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Int),
+        ("ptr_write_u16_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int, Type::Int], Type::Void),
+        ("mmio_read32", vec![Type::Int], Type::Int),
+        ("mmio_write32", vec![Type::Int, Type::Int], Type::Void),
+        ("mmio_read16", vec![Type::Int], Type::Int),
+        ("mmio_write16", vec![Type::Int, Type::Int], Type::Void),
+        ("mmio_read8", vec![Type::Int], Type::Int),
+        ("mmio_write8", vec![Type::Int, Type::Int], Type::Void),
+
         // ---- Fixed-Width Numeric Suite (M2-T01) ----
         // Type conversion constructors
         ("i8", vec![Type::Unknown], Type::I8),
@@ -3208,7 +3249,10 @@ impl TypeChecker {
         matches!(name,
             "alloc" | "alloc_zeroed" | "realloc" | "free" |
             "ptr_read_u8" | "ptr_read" | "ptr_read_i64" | "ptr_read_at" | "ptr_read_u8_at" |
+            "ptr_read_u16_at" | "ptr_read_u32_at" |
             "ptr_write_u8" | "ptr_write" | "ptr_write_i64" | "ptr_write_at" | "ptr_write_u8_at" |
+            "ptr_write_u16_at" | "ptr_write_u32_at" |
+            "mmio_read32" | "mmio_write32" | "mmio_read16" | "mmio_write16" | "mmio_read8" | "mmio_write8" |
             "ptr_add" | "ptr_offset" | "ptr_diff" | "ptr_to_int" | "int_to_ptr" |
             "ptr_is_null" | "mem_copy" | "mem_set"
         )

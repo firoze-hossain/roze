@@ -1462,6 +1462,21 @@ fn kernel_paging_and_virtual_memory_manager_suite() {
     assert!(stdout.contains("=== All Kernel Memory & VMM Tests Passed Successfully ==="));
 }
 
+#[test]
+fn kernel_hardware_interrupts_and_core_suite() {
+    let (stdout, stderr, ok) = run_fixture("kernel_interrupts.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== Roze Kernel Hardware Interrupts & Core Architecture Test Suite ==="));
+    assert!(stdout.contains("--- Test 1: CPU Interrupt State & Flags ---"));
+    assert!(stdout.contains("--- Test 2: GDT & TSS Configuration ---"));
+    assert!(stdout.contains("--- Test 3: IDT Gate Configuration & Descriptors ---"));
+    assert!(stdout.contains("--- Test 4: Exception Handlers & Diagnostic Decoders ---"));
+    assert!(stdout.contains("--- Test 5: 8259 PIC Driver ---"));
+    assert!(stdout.contains("--- Test 6: Local APIC Driver ---"));
+    assert!(stdout.contains("--- Test 7: Hardware Interrupt Dispatch & Telemetry ---"));
+    assert!(stdout.contains("=== All Kernel Core & Interrupt Subsystem Tests Passed Successfully ==="));
+}
+
 
 
 

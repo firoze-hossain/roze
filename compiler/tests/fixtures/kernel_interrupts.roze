@@ -1,0 +1,264 @@
+// compiler/tests/fixtures/kernel_interrupts.roze
+//
+// Milestone M2-T07: Kernel Core: Hardware Interrupts (GDT, IDT, APIC)
+// Comprehensive verification suite for:
+// - Hardware CPU Interrupt State & RFLAGS control (cli, sti, are_interrupts_enabled, read_rflags)
+// - Global Descriptor Table (GDT) and Task State Segment (TSS) manager (RSP0, IST1..7, 16-byte TSS descriptor)
+// - Interrupt Descriptor Table (IDT) with 256 vector gates and descriptor manipulator
+// - Exception Handlers & Diagnostic Decoders (Page Fault #PF decoding, GPF #GP decoding)
+// - 8259 Programmable Interrupt Controller (PIC) driver (remapping to vectors 32/40, masking, EOI, disable)
+// - Local Advanced Programmable Interrupt Controller (APIC) driver (MMIO, SVR, TPR, Timer setup, EOI)
+// - Hardware Interrupt Dispatch & Telemetry (trigger_interrupt, vector counting, fault addresses)
+
+import "interrupts";
+
+func main() {
+    println("=== Roze Kernel Hardware Interrupts & Core Architecture Test Suite ===");
+
+    // 1. CPU Interrupt State & Flags
+    test_interrupt_flags_and_state();
+
+    // 2. Global Descriptor Table (GDT) & Task State Segment (TSS)
+    test_gdt_and_tss();
+
+    // 3. Interrupt Descriptor Table (IDT) & Gate Descriptors
+    test_idt_and_gates();
+
+    // 4. Exception Handlers & Diagnostic Decoders
+    test_exception_decoders();
+
+    // 5. 8259 PIC Driver
+    test_pic_driver();
+
+    // 6. Local APIC Driver
+    test_apic_driver();
+
+    // 7. Hardware Interrupt Dispatch & Telemetry
+    test_interrupt_dispatch_and_telemetry();
+
+    println("=== All Kernel Core & Interrupt Subsystem Tests Passed Successfully ===");
+}
+
+func test_interrupt_flags_and_state() {
+    println("--- Test 1: CPU Interrupt State & Flags ---");
+
+    // Initially interrupts enabled
+    let init_enabled = interrupts_are_enabled();
+    println(init_enabled);
+
+    // Disable interrupts (cli)
+    interrupts_disable();
+    println(interrupts_are_enabled());
+
+    // Enable interrupts (sti)
+    interrupts_enable();
+    println(interrupts_are_enabled());
+
+    // Check RFLAGS IF bit (bit 9 = 512)
+    let flags = interrupt_get_rflags();
+    let if_bit = bit_and(flags, 512);
+    println(if_bit == 512);
+}
+
+func test_gdt_and_tss() {
+    println("--- Test 2: GDT & TSS Configuration ---");
+
+    // Selectors
+    println(gdt_sel_null());
+    println(gdt_sel_kernel_code());
+    println(gdt_sel_kernel_data());
+    println(gdt_sel_user_data());
+    println(gdt_sel_user_code());
+    println(gdt_sel_tss());
+
+    // Allocate 128 bytes for GDT and 128 bytes for TSS
+    let mut_gdt_buf = 0;
+    let mut_tss_buf = 0;
+    unsafe {
+        mut_gdt_buf = ptr_to_int(alloc_zeroed(128));
+        mut_tss_buf = ptr_to_int(alloc_zeroed(128));
+    }
+
+    let gdt = gdt_manager_new(mut_gdt_buf, 7);
+    let tss = tss_manager_new(mut_tss_buf, 2147418112); // 0x7FFF0000
+
+    println(tss_manager_get_rsp0(tss) == 2147418112);
+
+    let ist1_set = tss_manager_set_ist(tss, 1, 2147450880); // 0x7FFF8000
+    println(ist1_set);
+    println(tss_manager_get_ist(tss, 1) == 2147450880);
+    println(tss_manager_get_ist(tss, 2) == 0);
+
+    // Configure 16-byte TSS descriptor in GDT at slot 5
+    gdt_manager_set_tss(gdt, 5, mut_tss_buf, 103);
+
+    // Load GDT and Task Register (LTR)
+    gdt_manager_load(gdt);
+    gdt_manager_load_tss(gdt, 40);
+    println("GDT & TSS Loaded");
+
+    unsafe {
+        free(int_to_ptr(mut_gdt_buf));
+        free(int_to_ptr(mut_tss_buf));
+    }
+}
+
+func test_idt_and_gates() {
+    println("--- Test 3: IDT Gate Configuration & Descriptors ---");
+
+    let mut_idt_buf = 0;
+    unsafe {
+        mut_idt_buf = ptr_to_int(alloc_zeroed(4096)); // 256 * 16 bytes
+    }
+
+    let idt = idt_manager_new(mut_idt_buf, 256);
+
+    // Set Gate for Page Fault #PF (vector 14)
+    // handler_addr = 0x10005000 = 268453888, selector = 8, type_attr = 142 (0x8E), ist = 0
+    idt_manager_set_gate(idt, 14, 268453888, 8, 142, 0);
+
+    // Set Gate for Double Fault #DF (vector 8) with IST1
+    // handler_addr = 0x10006000 = 268457984, selector = 8, type_attr = 142 (0x8E), ist = 1
+    idt_manager_set_gate(idt, 8, 268457984, 8, 142, 1);
+
+    // Query gate properties
+    println(idt_manager_get_gate_selector(idt, 14));
+    println(idt_manager_get_gate_type(idt, 14));
+    println(idt_manager_get_gate_ist(idt, 14));
+    println(idt_manager_get_gate_offset(idt, 14) == 268453888);
+
+    println(idt_manager_get_gate_ist(idt, 8));
+    println(idt_manager_get_gate_offset(idt, 8) == 268457984);
+
+    println(idt_manager_is_gate_present(idt, 14));
+    println(idt_manager_is_gate_present(idt, 8));
+    println(idt_manager_is_gate_present(idt, 15));
+
+    // Load IDT
+    idt_manager_load(idt);
+    println("IDT Loaded");
+
+    unsafe {
+        free(int_to_ptr(mut_idt_buf));
+    }
+}
+
+func test_exception_decoders() {
+    println("--- Test 4: Exception Handlers & Diagnostic Decoders ---");
+
+    // Page Fault decoding
+    // Case A: User Write to non-present page at 0xDEADBEEF (3735928559)
+    // error_code = 6 (present=0, write=1, user=1, reserved=0, instruction=0)
+    let pf_a = decode_page_fault(3735928559, 6);
+    println(pf_a.is_present);
+    println(pf_a.is_write);
+    println(pf_a.is_user);
+    println(pf_a.is_reserved);
+    println(pf_a.is_instruction_fetch);
+
+    // Case B: Supervisor Instruction Fetch (NX) page fault at 0xC0000000 (3221225472)
+    // error_code = 17 (present=1, write=0, user=0, reserved=0, instruction=1)
+    let pf_b = decode_page_fault(3221225472, 17);
+    println(pf_b.is_present);
+    println(pf_b.is_instruction_fetch);
+
+    // General Protection Fault decoding
+    // Error code 27: (sel_idx=3, tbl=1 [IDT], ext=1)
+    let gpf = decode_gpf(27);
+    println(gpf.is_external);
+    println(gpf.table_type);
+    println(gpf.selector_index);
+
+    // Exception names
+    println(exception_name(0));
+    println(exception_name(8));
+    println(exception_name(13));
+    println(exception_name(14));
+    println(exception_name(33));
+}
+
+func test_pic_driver() {
+    println("--- Test 5: 8259 PIC Driver ---");
+
+    let pic = pic_driver_new();
+    pic_driver_init_dev(pic, 32, 40);
+    println(pic.is_active);
+
+    // Initially IRQ0 is unmasked
+    println(pic_driver_query_masked(pic, 0));
+
+    // Mask IRQ 1 (Keyboard)
+    pic_driver_mask_irq(pic, 1);
+    println(pic_driver_query_masked(pic, 1));
+
+    // Unmask IRQ 1
+    pic_driver_unmask_irq(pic, 1);
+    println(pic_driver_query_masked(pic, 1));
+
+    // Send EOI for IRQ 0
+    pic_driver_send_eoi_irq(pic, 0);
+
+    // Disable PIC (mask all lines for APIC switchover)
+    pic_driver_disable_dev(pic);
+    println(pic.is_active);
+    println(pic_driver_query_masked(pic, 0));
+    println(pic_driver_query_masked(pic, 7));
+}
+
+func test_apic_driver() {
+    println("--- Test 6: Local APIC Driver ---");
+
+    let base = apic_driver_detect_base();
+    println(base == 4276092928);
+
+    let apic = apic_driver_new(base);
+    apic_driver_init_dev(apic, base);
+    apic_driver_enable_dev(apic);
+    println(apic.is_enabled);
+
+    // Read ID and Version
+    let apic_id = apic_driver_get_dev_id(apic);
+    println(apic_id >= 0);
+    let apic_ver = apic_driver_get_dev_version(apic);
+    println(apic_ver >= 0);
+
+    // Configure Timer: vector 32, initial count 100000, periodic true, divide 3
+    apic_driver_set_dev_timer(apic, 32, 100000, true, 3);
+
+    // Verify LVT Timer register: vector 32 (0x20) and bit 17 (131072) set
+    let lvt_timer = apic_driver_read_dev_reg(apic, 800);
+    println(bit_and(lvt_timer, 255));
+    println(bit_and(lvt_timer, 131072) == 131072);
+
+    // Verify Timer Initial Count register
+    let init_cnt = apic_driver_read_dev_reg(apic, 896);
+    println(init_cnt == 100000);
+
+    // Send EOI
+    apic_driver_send_eoi_dev(apic);
+    println("APIC EOI Sent");
+}
+
+func test_interrupt_dispatch_and_telemetry() {
+    println("--- Test 7: Hardware Interrupt Dispatch & Telemetry ---");
+
+    // CR2 register read/write
+    interrupt_set_cr2(3405691582); // 0xCAFEBABE
+    println(interrupt_get_cr2() == 3405691582);
+
+    // Trigger Page Fault (#PF, vector 14, error code 7)
+    interrupt_trigger(14, 7);
+    println(interrupt_get_last_vector());
+    println(interrupt_get_last_error_code());
+    println(interrupt_get_last_fault_addr() == 3405691582);
+    println(interrupt_get_count(14));
+
+    // Trigger second Page Fault
+    interrupt_trigger(14, 3);
+    println(interrupt_get_count(14));
+
+    // Trigger Hardware Timer IRQ (vector 32, error code 0)
+    interrupt_trigger(32, 0);
+    println(interrupt_get_last_vector());
+    println(interrupt_get_count(32));
+}

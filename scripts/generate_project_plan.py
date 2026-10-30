@@ -306,7 +306,7 @@ s1_rows = [
         ("M2-T07", 8), ("Month 2", 4), ("Sprint 4 (W07-W08)", 8), "Kernel Core", "Hardware Interrupts (GDT, IDT, APIC)",
         "Global Descriptor Table, Interrupt Descriptor Table with 256 vector stubs, Exception handlers (Page Fault #PF, GPF #GP), and Local APIC / 8259 PIC driver.",
         "Production kernel interrupt handling with zero host OS dependencies.",
-        "Operating System Development", "7 Days", ("High", 14), ("Planned", 12)
+        "Operating System Development", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M2-T08", 8), ("Month 2", 4), ("Sprint 4 (W07-W08)", 8), "Hardware Drivers", "UART, Keyboard, Timer & GOP Framebuffer",

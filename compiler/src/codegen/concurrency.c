@@ -1811,8 +1811,14 @@ __attribute__((weak)) void __roze_vga_print_bool(int64_t val) { puts(val ? "true
 // Freestanding Kernel & Multiboot2 Stubs for Hosted Native Target
 __attribute__((weak)) int64_t multiboot2_get_magic(void) { return 0x36D76289LL; }
 __attribute__((weak)) void* multiboot2_get_info_ptr(void) { return NULL; }
-__attribute__((weak)) void outb(int64_t port, int64_t val) { (void)port; (void)val; }
-__attribute__((weak)) int64_t inb(int64_t port) { (void)port; return 0; }
+
+static unsigned char __roze_hosted_io_ports[65536] = {0};
+__attribute__((weak)) void outb(int64_t port, int64_t val) {
+    __roze_hosted_io_ports[(unsigned short)port] = (unsigned char)val;
+}
+__attribute__((weak)) int64_t inb(int64_t port) {
+    return (int64_t)__roze_hosted_io_ports[(unsigned short)port];
+}
 __attribute__((weak)) void qemu_exit(int64_t code) { (void)code; }
 __attribute__((weak)) void serial_print(const char* s) { if (s) fputs(s, stdout); }
 __attribute__((weak)) void serial_putchar(int64_t ch) { putchar((int)ch); }
@@ -1828,6 +1834,154 @@ __attribute__((weak)) void write_cr3(int64_t val) { __roze_hosted_cr3 = (unsigne
 __attribute__((weak)) void invlpg(int64_t addr) { (void)addr; }
 __attribute__((weak)) void tlb_invalidate_page(int64_t addr) { (void)addr; }
 __attribute__((weak)) void tlb_flush_all(void) { }
+
+// Hardware Interrupts, GDT, IDT, PIC & APIC Stubs (M2-T07)
+static int64_t __roze_hosted_rflags = 0x202LL;
+static int64_t __roze_hosted_cr2 = 0LL;
+static int64_t __roze_hosted_gdtr_base = 0LL;
+static int64_t __roze_hosted_gdtr_limit = 0LL;
+static int64_t __roze_hosted_idtr_base = 0LL;
+static int64_t __roze_hosted_idtr_limit = 0LL;
+static int64_t __roze_hosted_tr = 0LL;
+static int64_t __roze_hosted_msr_apic = 0xFEE00900LL;
+static int64_t __roze_hosted_interrupt_counts[256] = {0};
+static int64_t __roze_hosted_last_int_vector = -1;
+static int64_t __roze_hosted_last_int_error_code = 0;
+static int64_t __roze_hosted_last_int_fault_addr = 0;
+static int64_t __roze_hosted_apic_enabled = 0;
+static int64_t __roze_hosted_apic_base = 0xFEE00000LL;
+static unsigned int __roze_hosted_apic_mmio[1024] = {0};
+static int __roze_hosted_apic_init_done = 0;
+
+static void ensure_hosted_apic_init(void) {
+    if (!__roze_hosted_apic_init_done) {
+        __roze_hosted_apic_mmio[0x020 / 4] = 0x00000000;
+        __roze_hosted_apic_mmio[0x030 / 4] = 0x00050014;
+        __roze_hosted_apic_mmio[0x0F0 / 4] = 0x000001FF;
+        __roze_hosted_apic_init_done = 1;
+    }
+}
+
+__attribute__((weak)) void cli(void) { __roze_hosted_rflags &= ~(1LL << 9); }
+__attribute__((weak)) void sti(void) { __roze_hosted_rflags |= (1LL << 9); }
+__attribute__((weak)) int64_t are_interrupts_enabled(void) { return (__roze_hosted_rflags & (1LL << 9)) != 0; }
+__attribute__((weak)) int64_t read_rflags(void) { return __roze_hosted_rflags; }
+__attribute__((weak)) int64_t read_cr2(void) { return __roze_hosted_cr2; }
+__attribute__((weak)) void write_cr2(int64_t val) { __roze_hosted_cr2 = val; }
+__attribute__((weak)) int64_t read_msr(int64_t msr) { if (msr == 0x1B) return __roze_hosted_msr_apic; return 0; }
+__attribute__((weak)) void write_msr(int64_t msr, int64_t val) { if (msr == 0x1B) __roze_hosted_msr_apic = val; }
+__attribute__((weak)) void lgdt(int64_t base, int64_t limit) { __roze_hosted_gdtr_base = base; __roze_hosted_gdtr_limit = limit; }
+__attribute__((weak)) void lidt(int64_t base, int64_t limit) { __roze_hosted_idtr_base = base; __roze_hosted_idtr_limit = limit; }
+__attribute__((weak)) void ltr(int64_t sel) { __roze_hosted_tr = sel; }
+__attribute__((weak)) void int_invoke(int64_t vector, int64_t error_code) {
+    int v = (int)(vector & 0xFF);
+    __roze_hosted_interrupt_counts[v]++;
+    __roze_hosted_last_int_vector = v;
+    __roze_hosted_last_int_error_code = error_code;
+    if (v == 14) __roze_hosted_last_int_fault_addr = __roze_hosted_cr2;
+}
+__attribute__((weak)) void trigger_interrupt(int64_t vector, int64_t error_code) { int_invoke(vector, error_code); }
+__attribute__((weak)) int64_t get_last_interrupt_vector(void) { return __roze_hosted_last_int_vector; }
+__attribute__((weak)) int64_t get_last_interrupt_error_code(void) { return __roze_hosted_last_int_error_code; }
+__attribute__((weak)) int64_t get_last_interrupt_fault_addr(void) { return __roze_hosted_last_int_fault_addr; }
+__attribute__((weak)) int64_t get_interrupt_count(int64_t vec) { return __roze_hosted_interrupt_counts[vec & 0xFF]; }
+__attribute__((weak)) int64_t gdt_init_default(void) { return 1; }
+__attribute__((weak)) int64_t idt_init_default(void) { return 1; }
+
+__attribute__((weak)) void pic_remap(int64_t off1, int64_t off2) {
+    (void)off1; (void)off2;
+    outb(0x21, 0);
+    outb(0xA1, 0);
+}
+__attribute__((weak)) void pic_send_eoi(int64_t irq) {
+    if (irq >= 8) outb(0xA0, 0x20);
+    outb(0x20, 0x20);
+}
+__attribute__((weak)) void pic_mask_irq(int64_t irq) {
+    int64_t port = (irq < 8) ? 0x21 : 0xA1;
+    int64_t line = (irq < 8) ? irq : (irq - 8);
+    outb(port, inb(port) | (1LL << line));
+}
+__attribute__((weak)) void pic_unmask_irq(int64_t irq) {
+    int64_t port = (irq < 8) ? 0x21 : 0xA1;
+    int64_t line = (irq < 8) ? irq : (irq - 8);
+    outb(port, inb(port) & ~(1LL << line));
+}
+__attribute__((weak)) int64_t pic_is_masked(int64_t irq) {
+    int64_t port = (irq < 8) ? 0x21 : 0xA1;
+    int64_t line = (irq < 8) ? irq : (irq - 8);
+    return (inb(port) & (1LL << line)) != 0;
+}
+__attribute__((weak)) void pic_disable(void) {
+    outb(0x21, 0xFF);
+    outb(0xA1, 0xFF);
+}
+
+__attribute__((weak)) void apic_init(int64_t base) {
+    __roze_hosted_apic_base = base;
+}
+__attribute__((weak)) void apic_enable(void) {
+    __roze_hosted_apic_enabled = 1;
+    ensure_hosted_apic_init();
+    __roze_hosted_apic_mmio[0x0F0 / 4] = 0x000001FF;
+    __roze_hosted_apic_mmio[0x080 / 4] = 0x00000000;
+}
+__attribute__((weak)) void apic_send_eoi(void) {
+    ensure_hosted_apic_init();
+    __roze_hosted_apic_mmio[0x0B0 / 4] = 0;
+}
+__attribute__((weak)) int64_t apic_is_enabled(void) {
+    return __roze_hosted_apic_enabled;
+}
+
+__attribute__((weak)) int64_t mmio_read32(int64_t addr) {
+    ensure_hosted_apic_init();
+    if (addr >= 0xFEE00000LL && addr < 0xFEE01000LL) {
+        return (int64_t)__roze_hosted_apic_mmio[(addr - 0xFEE00000LL) / 4];
+    }
+    return (int64_t)(*(volatile unsigned int *)addr);
+}
+
+__attribute__((weak)) void mmio_write32(int64_t addr, int64_t val) {
+    ensure_hosted_apic_init();
+    if (addr >= 0xFEE00000LL && addr < 0xFEE01000LL) {
+        __roze_hosted_apic_mmio[(addr - 0xFEE00000LL) / 4] = (unsigned int)val;
+        return;
+    }
+    *(volatile unsigned int *)addr = (unsigned int)val;
+}
+
+__attribute__((weak)) int64_t mmio_read16(int64_t addr) {
+    return (int64_t)(*(volatile unsigned short *)addr);
+}
+
+__attribute__((weak)) void mmio_write16(int64_t addr, int64_t val) {
+    *(volatile unsigned short *)addr = (unsigned short)val;
+}
+
+__attribute__((weak)) int64_t mmio_read8(int64_t addr) {
+    return (int64_t)(*(volatile unsigned char *)addr);
+}
+
+__attribute__((weak)) void mmio_write8(int64_t addr, int64_t val) {
+    *(volatile unsigned char *)addr = (unsigned char)val;
+}
+
+__attribute__((weak)) int64_t ptr_read_u32_at(void *ptr, int64_t offset) {
+    return mmio_read32((int64_t)ptr + offset);
+}
+
+__attribute__((weak)) void ptr_write_u32_at(void *ptr, int64_t offset, int64_t val) {
+    mmio_write32((int64_t)ptr + offset, val);
+}
+
+__attribute__((weak)) int64_t ptr_read_u16_at(void *ptr, int64_t offset) {
+    return mmio_read16((int64_t)ptr + offset);
+}
+
+__attribute__((weak)) void ptr_write_u16_at(void *ptr, int64_t offset, int64_t val) {
+    mmio_write16((int64_t)ptr + offset, val);
+}
 
 // RozeBoot Enterprise Framework Stubs for Hosted Native Target
 __attribute__((weak)) void* db_pool_create(const char* url, int64_t max_conns) { (void)url; (void)max_conns; return NULL; }

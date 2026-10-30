@@ -1,0 +1,654 @@
+// stdlib/src/interrupts.roze
+//
+// 🌹 Roze Kernel Core: Hardware Interrupts (GDT, IDT, APIC) (M2-T07)
+// Provides:
+//   - Global Descriptor Table (GDT) and Task State Segment (TSS) manager.
+//   - Interrupt Descriptor Table (IDT) with 256 vector gates and descriptor manipulator.
+//   - CPU Exception decoders and handlers (Page Fault #PF, GPF #GP, Double Fault #DF).
+//   - 8259 Programmable Interrupt Controller (PIC) driver (remapping, masking, EOI).
+//   - Local Advanced Programmable Interrupt Controller (APIC) driver (MMIO, SVR, TPR, Timer, EOI).
+//   - Hardware interrupt control intrinsics (cli, sti, lidt, lgdt, ltr, read_cr2, read_msr).
+//
+// Production kernel interrupt handling with zero host OS dependencies.
+
+import "freestanding";
+
+// ==============================================================================
+// 1. Architecture Constants & Exception Definitions
+// ==============================================================================
+
+// x86_64 CPU Exceptions (Vectors 0..31)
+func exc_de() -> int { return 0; }   // #DE: Divide-by-Zero Error
+func exc_db() -> int { return 1; }   // #DB: Debug
+func exc_nmi() -> int { return 2; }  // #NMI: Non-Maskable Interrupt
+func exc_bp() -> int { return 3; }   // #BP: Breakpoint (INT 3)
+func exc_of() -> int { return 4; }   // #OF: Overflow
+func exc_br() -> int { return 5; }   // #BR: Bound Range Exceeded
+func exc_ud() -> int { return 6; }   // #UD: Invalid Opcode
+func exc_nm() -> int { return 7; }   // #NM: Device Not Available (No Math Coprocessor)
+func exc_df() -> int { return 8; }   // #DF: Double Fault (has error code)
+func exc_ts() -> int { return 10; }  // #TS: Invalid TSS (has error code)
+func exc_np() -> int { return 11; }  // #NP: Segment Not Present (has error code)
+func exc_ss() -> int { return 12; }  // #SS: Stack-Segment Fault (has error code)
+func exc_gp() -> int { return 13; }  // #GP: General Protection Fault (has error code)
+func exc_pf() -> int { return 14; }  // #PF: Page Fault (has error code & CR2)
+func exc_mf() -> int { return 16; }  // #MF: x87 Floating-Point Exception
+func exc_ac() -> int { return 17; }  // #AC: Alignment Check (has error code)
+func exc_mc() -> int { return 18; }  // #MC: Machine Check
+func exc_xm() -> int { return 19; }  // #XM: SIMD Floating-Point Exception
+
+// Standard Hardware IRQs (remapped to Vectors 32..47)
+func irq_base() -> int { return 32; }
+func irq_timer() -> int { return 32; }       // IRQ 0: PIT / APIC Timer
+func irq_keyboard() -> int { return 33; }    // IRQ 1: PS/2 Keyboard
+func irq_cascade() -> int { return 34; }     // IRQ 2: Cascade
+func irq_com2() -> int { return 35; }        // IRQ 3: Serial COM2
+func irq_com1() -> int { return 36; }        // IRQ 4: Serial COM1
+func irq_lpt2() -> int { return 37; }        // IRQ 5: Parallel Port 2
+func irq_floppy() -> int { return 38; }      // IRQ 6: Diskette Drive
+func irq_lpt1() -> int { return 39; }        // IRQ 7: Spurious Master
+func irq_rtc() -> int { return 40; }         // IRQ 8: Real-Time Clock
+func irq_mouse() -> int { return 44; }       // IRQ 12: PS/2 Mouse
+func irq_fpu() -> int { return 45; }         // IRQ 13: FPU Coprocessor
+func irq_primary_ata() -> int { return 46; } // IRQ 14: Primary ATA Hard Drive
+func irq_second_ata() -> int { return 47; }  // IRQ 15: Secondary ATA Hard Drive
+
+// Standard GDT Selectors (64-bit Long Mode)
+func gdt_sel_null() -> int { return 0; }
+func gdt_sel_kernel_code() -> int { return 8; }       // 0x08
+func gdt_sel_kernel_data() -> int { return 16; }      // 0x10
+func gdt_sel_user_data() -> int { return 27; }        // 0x18 | 3 = 0x1B
+func gdt_sel_user_code() -> int { return 35; }        // 0x20 | 3 = 0x23
+func gdt_sel_tss() -> int { return 40; }              // 0x28
+
+// Standard IDT Gate Attributes
+func idt_gate_interrupt() -> int { return 142; } // 0x8E: Present, Ring 0, 64-bit Interrupt Gate
+func idt_gate_trap() -> int { return 143; }      // 0x8F: Present, Ring 0, 64-bit Trap Gate
+func idt_gate_user() -> int { return 238; }      // 0xEE: Present, Ring 3, 64-bit Interrupt Gate
+
+// Page Fault Error Code Flags
+func pf_err_present() -> int { return 1; }       // Bit 0: 0 = non-present, 1 = protection violation
+func pf_err_write() -> int { return 2; }         // Bit 1: 0 = read, 1 = write
+func pf_err_user() -> int { return 4; }          // Bit 2: 0 = supervisor, 1 = user
+func pf_err_reserved() -> int { return 8; }      // Bit 3: reserved bit violation
+func pf_err_instruction() -> int { return 16; }  // Bit 4: instruction fetch (NX violation)
+
+// Local APIC Standard Register Offsets
+func apic_base_default() -> int { return 4276092928; } // 0xFEE00000
+func apic_reg_id() -> int { return 32; }               // 0x020: Local APIC ID
+func apic_reg_version() -> int { return 48; }          // 0x030: Local APIC Version
+func apic_reg_tpr() -> int { return 128; }             // 0x080: Task Priority Register
+func apic_reg_eoi() -> int { return 176; }             // 0x0B0: End of Interrupt Register
+func apic_reg_svr() -> int { return 240; }             // 0x0F0: Spurious Interrupt Vector Register
+func apic_reg_esr() -> int { return 640; }             // 0x280: Error Status Register
+func apic_reg_lvt_timer() -> int { return 800; }       // 0x320: LVT Timer Register
+func apic_reg_lvt_lint0() -> int { return 848; }       // 0x350: LVT LINT0
+func apic_reg_lvt_lint1() -> int { return 864; }       // 0x360: LVT LINT1
+func apic_reg_lvt_error() -> int { return 880; }       // 0x370: LVT Error
+func apic_reg_timer_init() -> int { return 896; }      // 0x380: Timer Initial Count Register
+func apic_reg_timer_curr() -> int { return 912; }      // 0x390: Timer Current Count Register
+func apic_reg_timer_div() -> int { return 992; }       // 0x3E0: Timer Divide Configuration
+
+func exception_name(vector: int) -> string {
+    if vector == 0 { return "Divide-by-Zero (#DE)"; }
+    if vector == 1 { return "Debug (#DB)"; }
+    if vector == 2 { return "Non-Maskable Interrupt (#NMI)"; }
+    if vector == 3 { return "Breakpoint (#BP)"; }
+    if vector == 4 { return "Overflow (#OF)"; }
+    if vector == 5 { return "Bound Range Exceeded (#BR)"; }
+    if vector == 6 { return "Invalid Opcode (#UD)"; }
+    if vector == 7 { return "Device Not Available (#NM)"; }
+    if vector == 8 { return "Double Fault (#DF)"; }
+    if vector == 10 { return "Invalid TSS (#TS)"; }
+    if vector == 11 { return "Segment Not Present (#NP)"; }
+    if vector == 12 { return "Stack-Segment Fault (#SS)"; }
+    if vector == 13 { return "General Protection Fault (#GP)"; }
+    if vector == 14 { return "Page Fault (#PF)"; }
+    if vector == 16 { return "x87 FPU Error (#MF)"; }
+    if vector == 17 { return "Alignment Check (#AC)"; }
+    if vector == 18 { return "Machine Check (#MC)"; }
+    if vector == 19 { return "SIMD Exception (#XM)"; }
+    if vector >= 32 {
+        if vector <= 47 {
+            return "Hardware IRQ";
+        }
+    }
+    return "User/Software Interrupt";
+}
+
+// ==============================================================================
+// 2. Global Descriptor Table (GDT) & Task State Segment (TSS)
+// ==============================================================================
+
+func gdt_set_entry(table_addr: int, idx: int, base: int, limit: int, access: int, flags: int) {
+    let entry_offset = idx * 8;
+    unsafe {
+        let p = int_to_ptr(table_addr + entry_offset);
+        let lim_low = bit_and(limit, 65535);
+        let b_low = bit_and(base, 65535);
+        let b_mid = bit_and(bit_shr(base, 16), 255);
+        let b_high = bit_and(bit_shr(base, 24), 255);
+        let lim_high = bit_and(bit_shr(limit, 16), 15);
+        let fl_lim = bit_or(bit_shl(bit_and(flags, 15), 4), lim_high);
+
+        ptr_write_u8_at(p, 0, bit_and(lim_low, 255));
+        ptr_write_u8_at(p, 1, bit_and(bit_shr(lim_low, 8), 255));
+        ptr_write_u8_at(p, 2, bit_and(b_low, 255));
+        ptr_write_u8_at(p, 3, bit_and(bit_shr(b_low, 8), 255));
+        ptr_write_u8_at(p, 4, b_mid);
+        ptr_write_u8_at(p, 5, bit_and(access, 255));
+        ptr_write_u8_at(p, 6, fl_lim);
+        ptr_write_u8_at(p, 7, b_high);
+    }
+}
+
+func gdt_set_tss(table_addr: int, idx: int, tss_base: int, tss_limit: int) {
+    // Slot idx: lower 8 bytes (access = 0x89 for 64-bit TSS Available)
+    gdt_set_entry(table_addr, idx, tss_base, tss_limit, 137, 0);
+
+    // Slot idx + 1: upper 8 bytes (base bits 32..63 + reserved 0)
+    let upper_offset = (idx + 1) * 8;
+    unsafe {
+        let p = int_to_ptr(table_addr + upper_offset);
+        let b_upper = bit_shr(tss_base, 32);
+        ptr_write_u8_at(p, 0, bit_and(b_upper, 255));
+        ptr_write_u8_at(p, 1, bit_and(bit_shr(b_upper, 8), 255));
+        ptr_write_u8_at(p, 2, bit_and(bit_shr(b_upper, 16), 255));
+        ptr_write_u8_at(p, 3, bit_and(bit_shr(b_upper, 24), 255));
+        ptr_write_u8_at(p, 4, 0);
+        ptr_write_u8_at(p, 5, 0);
+        ptr_write_u8_at(p, 6, 0);
+        ptr_write_u8_at(p, 7, 0);
+    }
+}
+
+func gdt_load(table_addr: int, entry_count: int) {
+    let limit = (entry_count * 8) - 1;
+    lgdt(table_addr, limit);
+}
+
+func tss_init(tss_addr: int, rsp0: int) {
+    unsafe {
+        let p = int_to_ptr(tss_addr);
+        // Zero all 104 bytes
+        let i = 0;
+        while i < 104 {
+            ptr_write_u8_at(p, i, 0);
+            i = i + 1;
+        }
+        // RSP0 at offset 4
+        ptr_write_at(p, 4, rsp0);
+        // I/O Map Base Address at offset 102
+        ptr_write_u16_at(p, 102, 104);
+    }
+}
+
+func tss_set_rsp0(tss_addr: int, rsp0: int) {
+    unsafe {
+        let p = int_to_ptr(tss_addr);
+        ptr_write_at(p, 4, rsp0);
+    }
+}
+
+func tss_get_rsp0(tss_addr: int) -> int {
+    unsafe {
+        let p = int_to_ptr(tss_addr);
+        return ptr_read_at(p, 4);
+    }
+}
+
+func tss_set_ist(tss_addr: int, ist_idx: int, stack_top: int) -> bool {
+    if ist_idx >= 1 {
+        if ist_idx <= 7 {
+            let offset = 36 + ((ist_idx - 1) * 8);
+            unsafe {
+                let p = int_to_ptr(tss_addr);
+                ptr_write_at(p, offset, stack_top);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+func tss_get_ist(tss_addr: int, ist_idx: int) -> int {
+    if ist_idx >= 1 {
+        if ist_idx <= 7 {
+            let offset = 36 + ((ist_idx - 1) * 8);
+            unsafe {
+                let p = int_to_ptr(tss_addr);
+                return ptr_read_at(p, offset);
+            }
+        }
+    }
+    return 0;
+}
+
+class TssManager {
+    tss_addr: int,
+}
+
+func tss_manager_new(tss_addr: int, rsp0: int) -> TssManager {
+    tss_init(tss_addr, rsp0);
+    return new TssManager(tss_addr);
+}
+
+func tss_manager_set_rsp0(mgr: TssManager, rsp0: int) {
+    tss_set_rsp0(mgr.tss_addr, rsp0);
+}
+
+func tss_manager_get_rsp0(mgr: TssManager) -> int {
+    return tss_get_rsp0(mgr.tss_addr);
+}
+
+func tss_manager_set_ist(mgr: TssManager, ist_idx: int, stack_top: int) -> bool {
+    return tss_set_ist(mgr.tss_addr, ist_idx, stack_top);
+}
+
+func tss_manager_get_ist(mgr: TssManager, ist_idx: int) -> int {
+    return tss_get_ist(mgr.tss_addr, ist_idx);
+}
+
+class GdtManager {
+    table_addr: int,
+    count: int,
+}
+
+func gdt_manager_new(table_addr: int, count: int) -> GdtManager {
+    // Initialize standard Null, Kernel Code, Kernel Data, User Data, User Code
+    gdt_set_entry(table_addr, 0, 0, 0, 0, 0);                            // Null
+    gdt_set_entry(table_addr, 1, 0, 1048575, 154, 2);                   // Kernel Code (0x08)
+    gdt_set_entry(table_addr, 2, 0, 1048575, 146, 0);                   // Kernel Data (0x10)
+    gdt_set_entry(table_addr, 3, 0, 1048575, 242, 0);                   // User Data   (0x18)
+    gdt_set_entry(table_addr, 4, 0, 1048575, 250, 2);                   // User Code   (0x20)
+
+    return new GdtManager(table_addr, count);
+}
+
+func gdt_manager_set_entry(mgr: GdtManager, idx: int, base: int, limit: int, access: int, flags: int) {
+    gdt_set_entry(mgr.table_addr, idx, base, limit, access, flags);
+}
+
+func gdt_manager_set_tss(mgr: GdtManager, idx: int, tss_base: int, tss_limit: int) {
+    gdt_set_tss(mgr.table_addr, idx, tss_base, tss_limit);
+}
+
+func gdt_manager_load(mgr: GdtManager) {
+    gdt_load(mgr.table_addr, mgr.count);
+}
+
+func gdt_manager_load_tss(mgr: GdtManager, selector: int) {
+    ltr(selector);
+}
+
+// ==============================================================================
+// 3. Interrupt Descriptor Table (IDT) Manipulator
+// ==============================================================================
+
+func idt_set_gate(table_addr: int, vector: int, handler_addr: int, selector: int, type_attr: int, ist: int) {
+    let entry_offset = vector * 16;
+    unsafe {
+        let p = int_to_ptr(table_addr + entry_offset);
+        let off_low = bit_and(handler_addr, 65535);
+        let off_mid = bit_and(bit_shr(handler_addr, 16), 65535);
+        let off_high = bit_and(bit_shr(handler_addr, 32), 4294967295);
+
+        // Byte 0..1: offset_low
+        ptr_write_u8_at(p, 0, bit_and(off_low, 255));
+        ptr_write_u8_at(p, 1, bit_and(bit_shr(off_low, 8), 255));
+
+        // Byte 2..3: selector
+        ptr_write_u8_at(p, 2, bit_and(selector, 255));
+        ptr_write_u8_at(p, 3, bit_and(bit_shr(selector, 8), 255));
+
+        // Byte 4: ist
+        ptr_write_u8_at(p, 4, bit_and(ist, 7));
+
+        // Byte 5: type_attributes
+        ptr_write_u8_at(p, 5, bit_and(type_attr, 255));
+
+        // Byte 6..7: offset_mid
+        ptr_write_u8_at(p, 6, bit_and(off_mid, 255));
+        ptr_write_u8_at(p, 7, bit_and(bit_shr(off_mid, 8), 255));
+
+        // Byte 8..11: offset_high
+        ptr_write_u8_at(p, 8, bit_and(off_high, 255));
+        ptr_write_u8_at(p, 9, bit_and(bit_shr(off_high, 8), 255));
+        ptr_write_u8_at(p, 10, bit_and(bit_shr(off_high, 16), 255));
+        ptr_write_u8_at(p, 11, bit_and(bit_shr(off_high, 24), 255));
+
+        // Byte 12..15: reserved
+        ptr_write_u8_at(p, 12, 0);
+        ptr_write_u8_at(p, 13, 0);
+        ptr_write_u8_at(p, 14, 0);
+        ptr_write_u8_at(p, 15, 0);
+    }
+}
+
+func idt_get_gate_selector(table_addr: int, vector: int) -> int {
+    let entry_offset = vector * 16;
+    unsafe {
+        let p = int_to_ptr(table_addr + entry_offset);
+        let b0 = ptr_read_u8_at(p, 2);
+        let b1 = ptr_read_u8_at(p, 3);
+        return bit_or(b0, bit_shl(b1, 8));
+    }
+}
+
+func idt_get_gate_type(table_addr: int, vector: int) -> int {
+    let entry_offset = vector * 16;
+    unsafe {
+        let p = int_to_ptr(table_addr + entry_offset);
+        return ptr_read_u8_at(p, 5);
+    }
+}
+
+func idt_get_gate_ist(table_addr: int, vector: int) -> int {
+    let entry_offset = vector * 16;
+    unsafe {
+        let p = int_to_ptr(table_addr + entry_offset);
+        return ptr_read_u8_at(p, 4);
+    }
+}
+
+func idt_get_gate_offset(table_addr: int, vector: int) -> int {
+    let entry_offset = vector * 16;
+    unsafe {
+        let p = int_to_ptr(table_addr + entry_offset);
+        let b0 = ptr_read_u8_at(p, 0);
+        let b1 = ptr_read_u8_at(p, 1);
+        let b2 = ptr_read_u8_at(p, 6);
+        let b3 = ptr_read_u8_at(p, 7);
+        let b4 = ptr_read_u8_at(p, 8);
+        let b5 = ptr_read_u8_at(p, 9);
+        let b6 = ptr_read_u8_at(p, 10);
+        let b7 = ptr_read_u8_at(p, 11);
+
+        let off_low = bit_or(b0, bit_shl(b1, 8));
+        let off_mid = bit_or(b2, bit_shl(b3, 8));
+        let off_high = bit_or(bit_or(b4, bit_shl(b5, 8)), bit_or(bit_shl(b6, 16), bit_shl(b7, 24)));
+
+        return bit_or(bit_or(off_low, bit_shl(off_mid, 16)), bit_shl(off_high, 32));
+    }
+}
+
+func idt_is_gate_present(table_addr: int, vector: int) -> bool {
+    let entry_offset = vector * 16;
+    unsafe {
+        let p = int_to_ptr(table_addr + entry_offset);
+        let attr = ptr_read_u8_at(p, 5);
+        return bit_and(attr, 128) != 0;
+    }
+}
+
+func idt_load(table_addr: int, count: int) {
+    let limit = (count * 16) - 1;
+    lidt(table_addr, limit);
+}
+
+class IdtManager {
+    table_addr: int,
+    count: int,
+}
+
+func idt_manager_new(table_addr: int, count: int) -> IdtManager {
+    return new IdtManager(table_addr, count);
+}
+
+func idt_manager_set_gate(mgr: IdtManager, vector: int, handler_addr: int, selector: int, type_attr: int, ist: int) {
+    idt_set_gate(mgr.table_addr, vector, handler_addr, selector, type_attr, ist);
+}
+
+func idt_manager_get_gate_selector(mgr: IdtManager, vector: int) -> int {
+    return idt_get_gate_selector(mgr.table_addr, vector);
+}
+
+func idt_manager_get_gate_type(mgr: IdtManager, vector: int) -> int {
+    return idt_get_gate_type(mgr.table_addr, vector);
+}
+
+func idt_manager_get_gate_ist(mgr: IdtManager, vector: int) -> int {
+    return idt_get_gate_ist(mgr.table_addr, vector);
+}
+
+func idt_manager_get_gate_offset(mgr: IdtManager, vector: int) -> int {
+    return idt_get_gate_offset(mgr.table_addr, vector);
+}
+
+func idt_manager_is_gate_present(mgr: IdtManager, vector: int) -> bool {
+    return idt_is_gate_present(mgr.table_addr, vector);
+}
+
+func idt_manager_load(mgr: IdtManager) {
+    idt_load(mgr.table_addr, mgr.count);
+}
+
+// ==============================================================================
+// 4. Exception Handlers & Diagnostic Decoders
+// ==============================================================================
+
+class PageFaultInfo {
+    fault_addr: int,
+    error_code: int,
+    is_present: bool,
+    is_write: bool,
+    is_user: bool,
+    is_reserved: bool,
+    is_instruction_fetch: bool,
+}
+
+func decode_page_fault(fault_addr: int, error_code: int) -> PageFaultInfo {
+    let pres = bit_and(error_code, 1) != 0;
+    let wr = bit_and(error_code, 2) != 0;
+    let us = bit_and(error_code, 4) != 0;
+    let rsvd = bit_and(error_code, 8) != 0;
+    let ifetch = bit_and(error_code, 16) != 0;
+
+    return new PageFaultInfo(fault_addr, error_code, pres, wr, us, rsvd, ifetch);
+}
+
+class GpfInfo {
+    error_code: int,
+    is_external: bool,
+    table_type: int,
+    selector_index: int,
+}
+
+func decode_gpf(error_code: int) -> GpfInfo {
+    let ext = bit_and(error_code, 1) != 0;
+    let tbl = bit_and(bit_shr(error_code, 1), 3);
+    let sel_idx = bit_and(bit_shr(error_code, 3), 8191);
+
+    return new GpfInfo(error_code, ext, tbl, sel_idx);
+}
+
+// ==============================================================================
+// 5. 8259 Programmable Interrupt Controller (PIC) Driver
+// ==============================================================================
+
+func pic_driver_init(master_off: int, slave_off: int) {
+    pic_remap(master_off, slave_off);
+}
+
+func pic_driver_send_eoi(irq: int) {
+    pic_send_eoi(irq);
+}
+
+func pic_driver_mask(irq: int) {
+    pic_mask_irq(irq);
+}
+
+func pic_driver_unmask(irq: int) {
+    pic_unmask_irq(irq);
+}
+
+func pic_driver_is_masked(irq: int) -> bool {
+    return pic_is_masked(irq);
+}
+
+func pic_driver_disable() {
+    pic_disable();
+}
+
+class PicDriver {
+    master_offset: int,
+    slave_offset: int,
+    is_active: bool,
+}
+
+func pic_driver_new() -> PicDriver {
+    return new PicDriver(32, 40, false);
+}
+
+func pic_driver_init_dev(driver: PicDriver, master_off: int, slave_off: int) {
+    driver.master_offset = master_off;
+    driver.slave_offset = slave_off;
+    driver.is_active = true;
+    pic_driver_init(master_off, slave_off);
+}
+
+func pic_driver_send_eoi_irq(driver: PicDriver, irq: int) {
+    pic_driver_send_eoi(irq);
+}
+
+func pic_driver_mask_irq(driver: PicDriver, irq: int) {
+    pic_driver_mask(irq);
+}
+
+func pic_driver_unmask_irq(driver: PicDriver, irq: int) {
+    pic_driver_unmask(irq);
+}
+
+func pic_driver_query_masked(driver: PicDriver, irq: int) -> bool {
+    return pic_driver_is_masked(irq);
+}
+
+func pic_driver_disable_dev(driver: PicDriver) {
+    driver.is_active = false;
+    pic_driver_disable();
+}
+
+// ==============================================================================
+// 6. Local Advanced Programmable Interrupt Controller (APIC) Driver
+// ==============================================================================
+
+func apic_driver_detect_base() -> int {
+    let msr_val = read_msr(27); // IA32_APIC_BASE = 0x1B
+    if msr_val == 0 {
+        return apic_base_default();
+    }
+    let base = bit_and(msr_val, 4294963200); // 0xFFFFF000
+    if base == 0 {
+        return apic_base_default();
+    }
+    return base;
+}
+
+func apic_driver_init(base_addr: int) {
+    apic_init(base_addr);
+}
+
+func apic_driver_enable(base_addr: int) {
+    apic_init(base_addr);
+    apic_enable();
+}
+
+func apic_driver_send_eoi(base_addr: int) {
+    apic_send_eoi();
+}
+
+func apic_driver_read_reg(base_addr: int, offset: int) -> int {
+    unsafe {
+        return mmio_read32(base_addr + offset);
+    }
+}
+
+func apic_driver_write_reg(base_addr: int, offset: int, val: int) {
+    unsafe {
+        mmio_write32(base_addr + offset, val);
+    }
+}
+
+func apic_driver_get_id(base_addr: int) -> int {
+    let raw_val = apic_driver_read_reg(base_addr, 32);
+    return bit_and(bit_shr(raw_val, 24), 255);
+}
+
+func apic_driver_get_version(base_addr: int) -> int {
+    return apic_driver_read_reg(base_addr, 48);
+}
+
+func apic_driver_set_timer(base_addr: int, vector: int, initial_count: int, periodic: bool, divide: int) {
+    // 1. Set divide configuration register at 0x3E0
+    apic_driver_write_reg(base_addr, 992, divide);
+
+    // 2. Set LVT Timer register at 0x320
+    let mut_mode = 0;
+    if periodic {
+        mut_mode = 131072; // Bit 17: Periodic mode
+    }
+    let lvt_val = bit_or(bit_and(vector, 255), mut_mode);
+    apic_driver_write_reg(base_addr, 800, lvt_val);
+
+    // 3. Set Initial Count at 0x380
+    apic_driver_write_reg(base_addr, 896, initial_count);
+}
+
+class ApicDriver {
+    base_addr: int,
+    is_enabled: bool,
+}
+
+func apic_driver_new(base_addr: int) -> ApicDriver {
+    return new ApicDriver(base_addr, false);
+}
+
+func apic_driver_init_dev(driver: ApicDriver, base_addr: int) {
+    driver.base_addr = base_addr;
+    apic_driver_init(base_addr);
+}
+
+func apic_driver_enable_dev(driver: ApicDriver) {
+    driver.is_enabled = true;
+    apic_driver_enable(driver.base_addr);
+}
+
+func apic_driver_send_eoi_dev(driver: ApicDriver) {
+    apic_driver_send_eoi(driver.base_addr);
+}
+
+func apic_driver_get_dev_id(driver: ApicDriver) -> int {
+    return apic_driver_get_id(driver.base_addr);
+}
+
+func apic_driver_get_dev_version(driver: ApicDriver) -> int {
+    return apic_driver_get_version(driver.base_addr);
+}
+
+func apic_driver_set_dev_timer(driver: ApicDriver, vector: int, initial_count: int, periodic: bool, divide: int) {
+    apic_driver_set_timer(driver.base_addr, vector, initial_count, periodic, divide);
+}
+
+func apic_driver_read_dev_reg(driver: ApicDriver, offset: int) -> int {
+    return apic_driver_read_reg(driver.base_addr, offset);
+}
+
+func apic_driver_write_dev_reg(driver: ApicDriver, offset: int, val: int) {
+    apic_driver_write_reg(driver.base_addr, offset, val);
+}
+
+// ==============================================================================
+// 7. High-Level Hardware CPU Interrupt State Control
+// ==============================================================================
+
+func interrupts_disable() { cli(); }
+func interrupts_enable() { sti(); }
+func interrupts_are_enabled() -> bool { return are_interrupts_enabled(); }
+func interrupt_get_rflags() -> int { return read_rflags(); }
+func interrupt_get_cr2() -> int { return read_cr2(); }
+func interrupt_set_cr2(val: int) { write_cr2(val); }
+func interrupt_trigger(vector: int, error_code: int) { trigger_interrupt(vector, error_code); }
+func interrupt_get_last_vector() -> int { return get_last_interrupt_vector(); }
+func interrupt_get_last_error_code() -> int { return get_last_interrupt_error_code(); }
+func interrupt_get_last_fault_addr() -> int { return get_last_interrupt_fault_addr(); }
+func interrupt_get_count(vector: int) -> int { return get_interrupt_count(vector); }

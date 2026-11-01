@@ -13,8 +13,8 @@ use colored::*;
 use crate::cache::PackageCache;
 use crate::crypto::sha256_dir;
 use crate::git::{GitDependency, GitFetcher};
-use crate::lockfile::{LockFile, LOCKFILE_NAME};
-use crate::project::{DependencyValue, ProjectConfig};
+use crate::lockfile::{LockFile, LEGACY_LOCKFILE_NAME, LOCKFILE_NAME};
+use crate::project::{DependencyValue, ProjectConfig, LEGACY_MANIFEST_NAME, MANIFEST_NAME};
 use crate::registry::RegistryClient;
 use crate::resolver::{DependencyResolver, DependencySpec};
 use crate::semver::{Version, VersionReq};
@@ -75,11 +75,28 @@ impl DependencyManager {
     }
 
     pub fn manifest_path(&self) -> PathBuf {
-        self.project_dir.join("roze.toml")
+        if let Some(path) = ProjectConfig::find_manifest(&self.project_dir) {
+            path
+        } else {
+            self.project_dir.join(MANIFEST_NAME)
+        }
     }
 
     pub fn lockfile_path(&self) -> PathBuf {
-        self.project_dir.join(LOCKFILE_NAME)
+        let bsr_lock = self.project_dir.join(LOCKFILE_NAME);
+        if bsr_lock.exists() {
+            return bsr_lock;
+        }
+        let legacy_lock = self.project_dir.join(LEGACY_LOCKFILE_NAME);
+        if legacy_lock.exists() {
+            return legacy_lock;
+        }
+        let manifest = self.manifest_path();
+        if manifest.file_name().and_then(|s| s.to_str()) == Some(LEGACY_MANIFEST_NAME) {
+            legacy_lock
+        } else {
+            bsr_lock
+        }
     }
 
     pub fn libs_dir(&self) -> PathBuf {
@@ -455,5 +472,37 @@ main = "src/main.roze"
         // Check libs/ installed directory
         assert!(dir.join("libs").join("std::web").join("lib.roze").exists());
         assert!(dir.join("libs").join("std::json").join("lib.roze").exists());
+    }
+
+    #[test]
+    fn full_install_with_bsr_manifest_and_lock() {
+        let (dir, _holder) = temp_project("install_bsr_mfz");
+        fs::write(
+            dir.join("bsr.mfz"),
+            r#"# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
+name = "bsr_demo"
+version = "0.1.0"
+main = "src/main.roze"
+
+[dependencies]
+"std::web" = "^1.0.0"
+"#,
+        ).unwrap();
+
+        let mut mgr = DependencyManager::new(dir.clone());
+        assert_eq!(mgr.manifest_path(), dir.join("bsr.mfz"));
+        assert_eq!(mgr.lockfile_path(), dir.join("bsr.lock"));
+
+        mgr.install_all().unwrap();
+
+        let lock_file = dir.join("bsr.lock");
+        assert!(lock_file.exists(), "bsr.lock should be created");
+
+        let lock = LockFile::load(&lock_file).unwrap();
+        let web = lock.find_package("std::web").unwrap();
+        assert_eq!(web.version, "1.0.0");
+        assert!(web.checksum.is_some());
+
+        assert!(dir.join("libs").join("std::web").join("lib.roze").exists());
     }
 }

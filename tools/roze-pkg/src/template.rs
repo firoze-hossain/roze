@@ -37,14 +37,14 @@ func main() {
     println("Welcome to Roze programming language!");
     println("Created by " + author);
 
-    let message = "This project was created with `roze new`";
+    let message = "This project was created with `bsr new`";
     println(message);
 }
 "#.to_string(),
                 },
                 TemplateFile {
-                    path: "roze.toml".to_string(),
-                    content: r#"# Roze project configuration
+                    path: "bsr.mfz".to_string(),
+                    content: r#"# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
 name = "{{project_name}}"
 version = "0.1.0"
 description = "A Roze project"
@@ -57,21 +57,21 @@ main = "src/main.roze"
                     content: vec![
                         "# {{project_name}}",
                         "",
-                        "A Roze project created with `roze new`.",
+                        "A Roze project created with `bsr new`.",
                         "",
                         "## Build",
                         "```bash",
-                        "roze-pkg build",
+                        "bsr build",
                         "```",
                         "",
                         "## Run",
                         "```bash",
-                        "roze-pkg run",
+                        "bsr run",
                         "```",
                         "",
                         "## Test",
                         "```bash",
-                        "roze-pkg test",
+                        "bsr test",
                         "```",
                     ].join("\n"),
                 },
@@ -106,8 +106,9 @@ func main() {
 "#.to_string(),
                 },
                 TemplateFile {
-                    path: "roze.toml".to_string(),
-                    content: r#"name = "{{project_name}}"
+                    path: "bsr.mfz".to_string(),
+                    content: r#"# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
+name = "{{project_name}}"
 version = "0.1.0"
 description = "A Roze web application"
 authors = ["{{author}}"]
@@ -126,7 +127,7 @@ std::web = "0.1"
                         "",
                         "## Run",
                         "```bash",
-                        "roze-pkg run",
+                        "bsr run",
                         "```",
                         "",
                         "Visit http://localhost:8080",
@@ -156,8 +157,9 @@ func add(a: int, b: int) -> int {
 "#.to_string(),
                 },
                 TemplateFile {
-                    path: "roze.toml".to_string(),
-                    content: r#"name = "{{project_name}}"
+                    path: "bsr.mfz".to_string(),
+                    content: r#"# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
+name = "{{project_name}}"
 version = "0.1.0"
 description = "A Roze library"
 authors = ["{{author}}"]

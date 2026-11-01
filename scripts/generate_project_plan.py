@@ -53,7 +53,7 @@ wb_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <sheets>
     <sheet name="1. 6-Month Master Plan" sheetId="1" r:id="rId1"/>
     <sheet name="2. StdLib Architecture" sheetId="2" r:id="rId2"/>
-    <sheet name="3. 7-Domain Matrix" sheetId="3" r:id="rId3"/>
+    <sheet name="3. 10-Domain Universal Matrix" sheetId="3" r:id="rId3"/>
     <sheet name="4. Self-Hosting Roadmap" sheetId="4" r:id="rId4"/>
     <sheet name="5. Sprint Schedule &amp; Gates" sheetId="5" r:id="rId5"/>
   </sheets>
@@ -575,19 +575,31 @@ s1_rows = [
         "Developer Experience, Tooling", "6 Days", ("High", 14), ("Planned", 12)
     ],
     [
-        ("M6-T08", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Package Registry", "Production 'roze-pkg' & Cloud Registry Hub",
-        "Deploy production package manager and registry: cryptographic package signing (Ed25519), SAT-based semver dependency solver, lockfiles, and registry server.",
-        "Parity with crates.io and npm with built-in security auditing.",
-        "Ecosystem Growth, Community", "7 Days", ("High", 14), ("Planned", 12)
+        ("M6-T08", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Package Ecosystem", "Basir ('bsr') Package Manager & '.mfz' Ecosystem",
+        "Deploy production 'bsr' (Basir - The All-Perceiving / Discerner) package manager with proprietary 'bsr.mfz' (Mohammad Firoze) manifest format and deterministic 'bsr.lock'. Ed25519 cryptographic package signing, SAT-based semantic dependency solver, decentralized Git & HTTPS registry resolution, and global package cache.",
+        "Parity with Rust Cargo and modern package managers using Roze's own .mfz format and bsr CLI.",
+        "Package Ecosystem, Community, Tooling", "7 Days", ("High", 14), ("Planned", 12)
     ],
     [
-        ("M6-T09", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "IDE Ecosystem", "Production LSP Server & VS Code Marketplace",
+        ("M6-T09", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "WebAssembly Target", "WebAssembly Compiler Target (--target wasm32 / wasi) & 'roze-bindgen'",
+        "WASM32 code generation backend in native Cranelift engine (--target wasm32, --target wasm32-wasi). WebAssembly System Interface (WASI snapshot-preview1) POSIX runtime calls (fd_read, fd_write, clock_time_get), memory linear buffer export, and 'roze-bindgen' JS/TS interface binding generator for browser DOM and Node.js.",
+        "Full parity with Rust wasm32-wasi / wasm-bindgen and Go WebAssembly syscall/js target; runs directly in browsers and edge clouds (Cloudflare Workers, Fastly).",
+        "WebAssembly, Edge Serverless, Browser Applications", "8 Days", ("Critical", 14), ("Planned", 12)
+    ],
+    [
+        ("M6-T10", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Microcontroller IoT", "Microcontroller IoT Targets & 'embedded-hal' Architecture",
+        "Embedded cross-compilation targets for ARM Cortex-M (thumbv6m-none-eabi, thumbv7m-none-eabi, thumbv7em-none-eabihf) and RISC-V (riscv32i, riscv32imc, riscv64gc). Peripheral Access Crate (PAC) SVD parser and standard 'embedded-hal' peripheral trait library: GPIO (InputPin, OutputPin), I2C master, SPI bus, UART, PWM, and ADC with zero heap allocation.",
+        "Parity with Rust embedded-hal and C CMSIS/HAL micro-firmware architectures; direct flash programming on STM32, ESP32, and RP2040.",
+        "Microcontrollers, IoT Edge, Automotive, Robotics", "8 Days", ("Critical", 14), ("Planned", 12)
+    ],
+    [
+        ("M6-T11", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "IDE Ecosystem", "Production LSP Server & VS Code Marketplace",
         "Language Server Protocol engine in pure Roze: semantic highlighting, smart completion, go-to-definition, type hover, rename, and formatting in VS Code and JetBrains.",
         "World-class developer tooling experience.",
         "IDE, Developer Productivity", "6 Days", ("High", 14), ("Planned", 12)
     ],
     [
-        ("M6-T10", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Final Release M6", "Official Roze v2.0 'Prometheus' Production Launch",
+        ("M6-T12", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Final Release M6", "Official Roze v2.0 'Prometheus' Production Launch",
         "Official launch: Finalized grammar specification, 1,000-page standard library documentation, installer packages (deb, rpm, Homebrew, MSI), and RozeHub portal.",
         "Roze v2.0 officially released as an autonomous, general-purpose programming language on par with Java 25 & Rust 1.99.1.",
         "Global Release & Production Ecosystem", "5 Days", ("Critical", 14), ("Milestone Gate", 15)
@@ -681,6 +693,16 @@ s2_rows = [
         "Time & Serialization", "roze::time / roze::serialize", "Instant, Duration, DateTime, ZonedDateTime, Json, Yaml, Toml, MsgPack, Protobuf",
         "now, elapsed, duration_since, parse_iso8601, format_date, json_serialize, json_deserialize, toml_parse, yaml_parse, protobuf_encode, protobuf_decode",
         "java.time (JSR-310), Jackson, SnakeYAML", "chrono, serde_json, toml, rmp", "Universal Data Interchange"
+    ],
+    [
+        "Microcontroller & IoT", "roze::embedded", "GpioPin, I2cMaster, SpiBus, PwmChannel, AdcChannel, DelayTimer, Register32",
+        "pin_mode, write_digital, read_digital, i2c_write, i2c_read, spi_transfer, pwm_set_duty, adc_read_raw, delay_ms, delay_us",
+        "N/A (Java lacks bare-metal PAC)", "embedded-hal, cortex-m, riscv", "Microcontrollers & IoT Devices"
+    ],
+    [
+        "WebAssembly & WASI", "roze::wasm / roze::wasi", "WasmBuffer, JsValue, JsFunction, WasiFd, WasiClock, WasmExport",
+        "wasm_export, wasm_import, js_eval, js_call, wasi_fd_write, wasi_clock_time, mem_view, to_js_string, from_js_string",
+        "TeaVM, WebAssembly Java", "wasm-bindgen, wasi-common", "Browser Apps & Edge Functions"
     ]
 ]
 
@@ -748,13 +770,40 @@ s3_rows = [
         ("100% - Native Desktop GUI Ready", 16)
     ],
     [
-        "Embedded & Systems Hardware",
+        "Embedded & Microcontroller IoT",
         "Deterministic real-time microcontrollers, IoT devices, automotive systems, and custom hardware peripheral control.",
-        "Basic FFI calling convention.",
-        "Zero-overhead freestanding target, memory-mapped I/O register abstractions, interrupt service routines, UART/I2C/SPI drivers, bit-manipulation primitives.",
-        "M2-T01, M2-T05, M2-T07, M2-T08, M2-T09 (Sprint 3, 4)",
-        "C, Rust (embedded-hal), Zig",
-        ("100% - Bare-Metal Embedded Ready", 16)
+        "Bare-metal freestanding target (--target freestanding) with UART, PS/2, PIT, HPET, and GOP drivers.",
+        "ARM Cortex-M (thumbv6m/thumbv7em) and RISC-V targets, SVD/PAC register generation, zero-allocation embedded-hal traits (GPIO, I2C, SPI, PWM, ADC).",
+        "M2-T01, M2-T05, M2-T06, M2-T07, M2-T08, M2-T09, M6-T10 (Sprint 3, 4, 12)",
+        "C (CMSIS/HAL), Rust (embedded-hal), Zig",
+        ("100% - Microcontroller IoT Ready", 16)
+    ],
+    [
+        "WebAssembly & Edge Serverless",
+        "Run high-performance Roze modules in web browsers, Node.js runtimes, and edge serverless clouds (Cloudflare Workers, Fastly Compute@Edge).",
+        "Native Cranelift backend engine with initial target triple infrastructure.",
+        "wasm32 and wasm32-wasi targets, WASI snapshot-preview1 POSIX syscall abstraction, linear memory buffer export, roze-bindgen JS/TS glue generator.",
+        "M1-T05, M2-T01, M2-T03, M5-T08, M6-T09 (Sprint 2, 3, 10, 12)",
+        "Rust (wasm-bindgen / WASI), Go (syscall/js), C++ (Emscripten)",
+        ("100% - WebAssembly & WASI Ready", 16)
+    ],
+    [
+        "Package & Dependency Ecosystem",
+        "Decentralized, mathematically verified dependency resolution, cryptographic package signing, and reproducible builds across all architectures.",
+        "Production 'bsr' (Basir) package manager with '.mfz' (Mohammad Firoze) manifest format.",
+        "Basir ('bsr') package manager, proprietary 'bsr.mfz' (Mohammad Firoze) project manifest, deterministic 'bsr.lock', Ed25519 signatures, SAT solver.",
+        "M5-T08, M6-T07, M6-T08 (Sprint 10, 12)",
+        "Rust (Cargo / crates.io), Go (go modules), Node (npm)",
+        ("100% - Basir (.mfz) Ecosystem Ready", 16)
+    ],
+    [
+        "Pure Roze Self-Hosting Compiler",
+        "100% pure Roze-in-Roze autonomous compiler and toolchain with zero external host compiler dependencies (full Rust decommissioning).",
+        "3-stage bootstrap fixpoint prototype verified with 0-byte difference between roze_stage2 and roze_stage3.",
+        "Pure Roze frontend, semantic analyzer, monomorphizer, SSA IR optimizer, native Cranelift/machine-code backend, monolithic 'roze' CLI, LSP server.",
+        "M6-T01, M6-T02, M6-T03, M6-T04, M6-T05, M6-T06, M6-T07, M6-T11, M6-T12 (Sprint 11, 12)",
+        "Rust (rustc self-hosting), Go (gc self-hosting), Zig",
+        ("100% - Autonomous Self-Hosted Language", 16)
     ]
 ]
 
@@ -885,9 +934,10 @@ s5_rows = [
         ("Gate 11: Self-Host Frontend Pass", 12)
     ],
     [
-        ("Sprint 12", 11), "W23 - W26", "Production Launch Milestone M6", "Fixpoint Closure (0 Diff), Monolithic CLI, Registry, VS Code, Docs",
-        "3-Stage bootstrap fixpoint verified (0 bytes diff). Official Roze v2.0 'Prometheus' public production release.",
-        "Risk: Packaging regressions. Mitigation: Multi-platform automated CI packaging pipeline.",
+        ("Sprint 12", 11), "W23 - W26", "Production Launch & Universal Targets Milestone M6",
+        "WASM Target (wasm32/wasi), Microcontroller IoT (Cortex-M/RISC-V/embedded-hal), Basir (bsr) .mfz Package Manager, Monolithic CLI, VS Code LSP, 3-Stage Fixpoint (0 Diff), Prometheus v2.0 Launch",
+        "3-Stage bootstrap fixpoint verified (0 bytes diff). Browser WASM demo, Cortex-M/RISC-V QEMU board boot, bsr package resolution, Official Roze v2.0 'Prometheus' public production release.",
+        "Risk: Multi-target platform regressions. Mitigation: Multi-platform automated CI test matrix covering x86_64, aarch64, wasm32, cortex-m, and riscv32.",
         ("Gate 12: Production Launch Sign-Off", 15)
     ]
 ]

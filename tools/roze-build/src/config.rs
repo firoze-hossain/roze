@@ -50,8 +50,18 @@ impl Default for BuildConfig {
 
 impl BuildConfig {
     pub fn load() -> Result<Self, anyhow::Error> {
-        let config_path = std::env::current_dir()?.join("build.roze.toml");
-        if config_path.exists() {
+        let cur = std::env::current_dir()?;
+        let mfz_path = cur.join("build.mfz");
+        let toml_path = cur.join("build.roze.toml");
+        let target_path = if mfz_path.exists() {
+            Some(mfz_path)
+        } else if toml_path.exists() {
+            Some(toml_path)
+        } else {
+            None
+        };
+
+        if let Some(config_path) = target_path {
             let content = fs::read_to_string(config_path)?;
             let config: BuildConfig = toml::from_str(&content)?;
             Ok(config)
@@ -61,9 +71,16 @@ impl BuildConfig {
     }
 
     pub fn save(&self) -> Result<(), anyhow::Error> {
-        let config_path = std::env::current_dir()?.join("build.roze.toml");
+        let cur = std::env::current_dir()?;
+        let mfz_path = cur.join("build.mfz");
+        let toml_path = cur.join("build.roze.toml");
+        let target_path = if toml_path.exists() {
+            toml_path
+        } else {
+            mfz_path
+        };
         let content = toml::to_string_pretty(self)?;
-        fs::write(config_path, content)?;
+        fs::write(target_path, content)?;
         Ok(())
     }
 

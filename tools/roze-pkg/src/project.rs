@@ -2,8 +2,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use anyhow::Result;
+
+pub const MANIFEST_NAME: &str = "bsr.mfz";
+pub const ALTERNATIVE_MANIFEST_NAME: &str = "roze.mfz";
+pub const LEGACY_MANIFEST_NAME: &str = "roze.toml";
+pub const MANIFEST_HEADER: &str = "# bsr.mfz - Basir Project Manifest (Mohammad Firoze)\n\n";
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(untagged)]
@@ -54,6 +59,22 @@ impl Default for ProjectConfig {
 }
 
 impl ProjectConfig {
+    pub fn find_manifest(dir: &Path) -> Option<PathBuf> {
+        let bsr = dir.join(MANIFEST_NAME);
+        if bsr.exists() {
+            return Some(bsr);
+        }
+        let rz_mfz = dir.join(ALTERNATIVE_MANIFEST_NAME);
+        if rz_mfz.exists() {
+            return Some(rz_mfz);
+        }
+        let legacy = dir.join(LEGACY_MANIFEST_NAME);
+        if legacy.exists() {
+            return Some(legacy);
+        }
+        None
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)?;
         let config: ProjectConfig = toml::from_str(&content)?;
@@ -63,7 +84,12 @@ impl ProjectConfig {
     #[allow(dead_code)]
     pub fn save(&self, path: &Path) -> Result<()> {
         let content = toml::to_string_pretty(self)?;
-        fs::write(path, content)?;
+        let mut final_content = String::new();
+        if path.file_name().and_then(|s| s.to_str()) == Some(MANIFEST_NAME) {
+            final_content.push_str(MANIFEST_HEADER);
+        }
+        final_content.push_str(&content);
+        fs::write(path, final_content)?;
         Ok(())
     }
 }

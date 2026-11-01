@@ -1,14 +1,14 @@
-// tools/roze-pkg/src/main.rs
-mod cache;
-mod crypto;
-mod dependency;
-mod git;
-mod lockfile;
-mod project;
-mod registry;
-mod resolver;
-mod semver;
-mod template;
+// tools/roze-pkg/src/lib.rs
+pub mod cache;
+pub mod crypto;
+pub mod dependency;
+pub mod git;
+pub mod lockfile;
+pub mod project;
+pub mod registry;
+pub mod resolver;
+pub mod semver;
+pub mod template;
 
 use clap::{Parser, Subcommand};
 use colored::*;
@@ -23,9 +23,9 @@ use project::{DependencyValue, DetailedDependency, ProjectConfig};
 use template::Template;
 
 #[derive(Parser)]
-#[command(name = "roze-pkg")]
+#[command(name = "bsr")]
 #[command(version = "1.0.0")]
-#[command(about = "🌹 Roze Package Manager & Dependency Resolver")]
+#[command(about = "🌹 Basir (bsr) - Roze Package Manager & Dependency Resolver (.mfz)")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -41,7 +41,7 @@ enum Commands {
         #[arg(short, long, default_value = "default")]
         template: String,
         /// Author name
-        #[arg(short, long, default_value = "Firoze")]
+        #[arg(short, long, default_value = "Mohammad Firoze")]
         author: String,
         /// Path to create project in
         #[arg(short, long)]
@@ -58,7 +58,7 @@ enum Commands {
         /// Arguments to pass to the program
         args: Vec<String>,
     },
-    /// Add a dependency to roze.toml
+    /// Add a dependency to bsr.mfz
     Add {
         /// Package name (e.g., std::web, json)
         name: String,
@@ -78,7 +78,7 @@ enum Commands {
         #[arg(long)]
         path: Option<String>,
     },
-    /// Remove a dependency from roze.toml
+    /// Remove a dependency from bsr.mfz
     Remove {
         /// Package name
         name: String,
@@ -94,9 +94,9 @@ enum Commands {
         /// Optional specific package to update
         package: Option<String>,
     },
-    /// Generate or inspect roze.lock
+    /// Generate or inspect bsr.lock
     Lock {
-        /// Check whether roze.lock is strictly up to date
+        /// Check whether bsr.lock is strictly up to date
         #[arg(long)]
         check: bool,
     },
@@ -131,7 +131,7 @@ enum CacheCommands {
     Clean,
 }
 
-fn main() {
+pub fn run_cli() {
     let cli = Cli::parse();
 
     let result = match cli.command {
@@ -180,8 +180,8 @@ fn cmd_new(name: &str, template_name: &str, author: &str, path: Option<PathBuf>)
     println!("✅ Project created at: {}", project_path.display());
     println!("\nNext steps:");
     println!("  cd {}", name);
-    println!("  roze-pkg install  # Install dependencies");
-    println!("  roze-pkg run      # Run the project");
+    println!("  bsr install  # Install dependencies");
+    println!("  bsr run      # Run the project");
 
     Ok(())
 }
@@ -278,7 +278,7 @@ fn cmd_install(frozen: bool) -> Result<()> {
     if frozen {
         let lock_path = dep_manager.lockfile_path();
         if !lock_path.exists() {
-            return Err(anyhow!("--frozen specified but roze.lock does not exist"));
+            return Err(anyhow!("--frozen specified but {} does not exist", lock_path.display()));
         }
     }
 
@@ -295,23 +295,24 @@ fn cmd_update(_package: Option<&str>) -> Result<()> {
 fn cmd_lock(check: bool) -> Result<()> {
     let project_dir = std::env::current_dir()?;
     let mut dep_manager = DependencyManager::new(project_dir);
+    let lock_path = dep_manager.lockfile_path();
+    let lock_filename = lock_path.file_name().and_then(|s| s.to_str()).unwrap_or("bsr.lock");
 
     if check {
-        let lock_path = dep_manager.lockfile_path();
         if !lock_path.exists() {
-            return Err(anyhow!("roze.lock does not exist"));
+            return Err(anyhow!("{} does not exist", lock_filename));
         }
         let lock = LockFile::load(&lock_path)?;
         for dep_name in dep_manager.dependencies.keys() {
             if lock.find_package(dep_name).is_none() {
-                return Err(anyhow!("roze.lock is out of date: missing '{}'", dep_name));
+                return Err(anyhow!("{} is out of date: missing '{}'", lock_filename, dep_name));
             }
         }
-        println!("✅ {}", "roze.lock is up to date".bright_green());
+        println!("✅ {}", format!("{} is up to date", lock_filename).bright_green());
     } else {
-        println!("🔒 {}", "Generating roze.lock...".bright_cyan());
+        println!("🔒 {}", format!("Generating {}...", lock_filename).bright_cyan());
         dep_manager.resolve_and_lock(false)?;
-        println!("✅ {}", "roze.lock updated successfully".bright_green());
+        println!("✅ {}", format!("{} updated successfully", lock_filename).bright_green());
     }
     Ok(())
 }
@@ -367,11 +368,11 @@ fn cmd_test() -> Result<()> {
 }
 
 fn load_project_config() -> Result<ProjectConfig> {
-    let config_path = std::env::current_dir()?.join("roze.toml");
-    if config_path.exists() {
+    let cur = std::env::current_dir()?;
+    if let Some(config_path) = ProjectConfig::find_manifest(&cur) {
         ProjectConfig::load(&config_path)
     } else {
-        Err(anyhow!("No roze.toml found. Are you in a Roze project?"))
+        Err(anyhow!("No bsr.mfz (or roze.mfz / roze.toml) found. Are you in a Roze project?"))
     }
 }
 

@@ -4,9 +4,17 @@ version = "1.0.0"
 edition = "2021"
 description = "Package manager for Roze programming language"
 
+[lib]
+name = "roze_pkg"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bsr"
+path = "src/bin/bsr.rs"
+
 [[bin]]
 name = "roze-pkg"
-path = "src/main.rs"
+path = "src/bin/roze_pkg.rs"
 
 [dependencies]
 anyhow = "1.0"

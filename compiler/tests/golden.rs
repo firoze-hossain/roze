@@ -1500,6 +1500,30 @@ fn kernel_hardware_drivers_suite() {
     assert!(stdout.contains(">> ALL HARDWARE DRIVER TESTS PASSED (100% SUCCESS) <<"));
 }
 
+#[test]
+fn native_inline_assembly_suite() {
+    let (stdout, stderr, ok) = run_fixture("inline_asm.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== Roze Native Inline Assembly Suite (M2-T09) ==="));
+    assert!(stdout.contains("--- Test 1: Port I/O with Register Constraints ---"));
+    assert!(stdout.contains("65"));
+    assert!(stdout.contains("4660"));
+    assert!(stdout.contains("--- Test 2: CPU Interrupts & Control ---"));
+    assert!(stdout.contains("cli executed"));
+    assert!(stdout.contains("sti executed"));
+    assert!(stdout.contains("--- Test 3: Register Constraints & InOut Operands ---"));
+    assert!(stdout.contains("12345"));
+    assert!(stdout.contains("150"));
+    assert!(stdout.contains("125"));
+    assert!(stdout.contains("85"));
+    assert!(stdout.contains("777"));
+    assert!(stdout.contains("--- Test 4: Time-Stamp Counter (RDTSC) ---"));
+    assert!(stdout.contains("true"));
+    assert!(stdout.contains("--- Test 5: Inline Assembly Expression ---"));
+    assert!(stdout.contains("asm expression ok"));
+    assert!(stdout.contains("=== All Inline Assembly Tests Passed Successfully ==="));
+}
+
 
 
 

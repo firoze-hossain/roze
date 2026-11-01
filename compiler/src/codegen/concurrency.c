@@ -1864,6 +1864,26 @@ __attribute__((weak)) int64_t freestanding_is_float_enabled(void) { return 1; }
 __attribute__((weak)) int64_t freestanding_get_heap_used(void) { return 0; }
 __attribute__((weak)) int64_t freestanding_get_heap_capacity(void) { return 1048576; }
 __attribute__((weak)) void freestanding_halt(void) { }
+__attribute__((weak)) int64_t __roze_asm_rdtsc(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+    unsigned int lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((int64_t)hi << 32) | lo;
+#elif defined(__aarch64__)
+    int64_t val;
+    __asm__ volatile ("mrs %0, cntvct_el0" : "=r"(val));
+    return val;
+#else
+    return 1000000LL;
+#endif
+}
+__attribute__((weak)) void __roze_asm_pause(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+    __asm__ volatile ("pause");
+#elif defined(__aarch64__)
+    __asm__ volatile ("yield");
+#endif
+}
 
 static unsigned long __roze_hosted_cr3 = 0x200000;
 __attribute__((weak)) int64_t read_cr3(void) { return (int64_t)__roze_hosted_cr3; }

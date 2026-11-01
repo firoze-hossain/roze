@@ -44,6 +44,14 @@ impl Parser {
         }
     }
 
+    fn peek_is_not(&self) -> bool {
+        if self.position + 1 < self.tokens.len() {
+            self.tokens[self.position + 1].token == Token::Not
+        } else {
+            false
+        }
+    }
+
     /// Builds a parse error pointing at whatever token is currently
     /// unconsumed, with the underline sized to that token's width.
     fn error(&self, message: impl Into<String>) -> anyhow::Error {
@@ -119,6 +127,8 @@ impl Parser {
             Token::Extern => self.parse_extern_function(),
             Token::Unsafe => self.parse_unsafe_block(),
             Token::Comptime => self.parse_comptime_statement(),
+            Token::AsmBang => self.parse_asm_statement(),
+            Token::Identifier(id) if id == "asm" && self.peek_is_not() => self.parse_asm_statement(),
             _ => {
                 // Parse a full expression first, then decide: if `=`
                 // follows, this is an assignment (either to a bare name
@@ -1310,6 +1320,269 @@ impl Parser {
         }
     }
 
+    fn parse_asm_statement(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        let asm_block = self.parse_asm_block()?;
+        if self.match_token(&Token::Semicolon) {}
+        Ok(Statement::Asm { asm_block, location })
+    }
+
+    fn parse_asm_expression(&mut self) -> Result<Expression> {
+        let location = Location::new(self.current().line, self.current().column);
+        let asm_block = self.parse_asm_block()?;
+        Ok(Expression::Asm { asm_block, location })
+    }
+
+    fn parse_asm_block(&mut self) -> Result<AsmBlock> {
+        let location = Location::new(self.current().line, self.current().column);
+        // Consume AsmBang or (Identifier("asm") + Not)
+        if self.check(&Token::AsmBang) {
+            self.advance();
+        } else if let Token::Identifier(id) = &self.current().token {
+            if id == "asm" {
+                self.advance();
+                if self.check(&Token::Not) {
+                    self.advance();
+                } else {
+                    return Err(self.error("Expected '!' after 'asm'"));
+                }
+            } else {
+                return Err(self.error("Expected 'asm!'"));
+            }
+        } else {
+            return Err(self.error("Expected 'asm!'"));
+        }
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let is_brace = if self.check(&Token::LeftBrace) {
+            self.advance();
+            true
+        } else if self.check(&Token::LeftParen) {
+            self.advance();
+            false
+        } else {
+            return Err(self.error("Expected '{' or '(' after 'asm!'"));
+        };
+
+        let closing = if is_brace { Token::RightBrace } else { Token::RightParen };
+        let mut templates = Vec::new();
+        let mut operands = Vec::new();
+
+        while !self.check(&closing) && !self.check(&Token::EOF) {
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+            if self.check(&closing) {
+                break;
+            }
+
+            match &self.current().token {
+                Token::String(s) => {
+                    templates.push(s.clone());
+                    self.advance();
+                }
+                Token::Identifier(ident) => {
+                    let op_kind = ident.clone();
+                    self.advance();
+                    while self.check(&Token::Newline) {
+                        self.advance();
+                    }
+
+                    match op_kind.as_str() {
+                        "in" => {
+                            if !self.check(&Token::LeftParen) {
+                                return Err(self.error("Expected '(' after 'in'"));
+                            }
+                            self.advance();
+                            while self.check(&Token::Newline) { self.advance(); }
+                            let reg = self.parse_register_name()?;
+                            while self.check(&Token::Newline) { self.advance(); }
+                            if !self.check(&Token::RightParen) {
+                                return Err(self.error("Expected ')' after register in 'in(...)'"));
+                            }
+                            self.advance();
+                            while self.check(&Token::Newline) { self.advance(); }
+                            let expr = self.parse_expression()?;
+                            operands.push(AsmOperand::In { reg, expr });
+                        }
+                        "out" => {
+                            if !self.check(&Token::LeftParen) {
+                                return Err(self.error("Expected '(' after 'out'"));
+                            }
+                            self.advance();
+                            while self.check(&Token::Newline) { self.advance(); }
+                            let reg = self.parse_register_name()?;
+                            while self.check(&Token::Newline) { self.advance(); }
+                            if !self.check(&Token::RightParen) {
+                                return Err(self.error("Expected ')' after register in 'out(...)'"));
+                            }
+                            self.advance();
+                            while self.check(&Token::Newline) { self.advance(); }
+                            let variable = self.parse_identifier_or_wildcard()?;
+                            operands.push(AsmOperand::Out { reg, variable, late: false });
+                        }
+                        "lateout" => {
+                            if !self.check(&Token::LeftParen) {
+                                return Err(self.error("Expected '(' after 'lateout'"));
+                            }
+                            self.advance();
+                            while self.check(&Token::Newline) { self.advance(); }
+                            let reg = self.parse_register_name()?;
+                            while self.check(&Token::Newline) { self.advance(); }
+                            if !self.check(&Token::RightParen) {
+                                return Err(self.error("Expected ')' after register in 'lateout(...)'"));
+                            }
+                            self.advance();
+                            while self.check(&Token::Newline) { self.advance(); }
+                            let variable = self.parse_identifier_or_wildcard()?;
+                            operands.push(AsmOperand::Out { reg, variable, late: true });
+                        }
+                        "inout" => {
+                            if !self.check(&Token::LeftParen) {
+                                return Err(self.error("Expected '(' after 'inout'"));
+                            }
+                            self.advance();
+                            while self.check(&Token::Newline) { self.advance(); }
+                            let reg = self.parse_register_name()?;
+                            while self.check(&Token::Newline) { self.advance(); }
+                            if !self.check(&Token::RightParen) {
+                                return Err(self.error("Expected ')' after register in 'inout(...)'"));
+                            }
+                            self.advance();
+                            while self.check(&Token::Newline) { self.advance(); }
+                            let expr = self.parse_expression()?;
+                            let mut out_var = None;
+                            if self.check(&Token::FatArrow) {
+                                self.advance(); // consume '=>'
+                                while self.check(&Token::Newline) { self.advance(); }
+                                out_var = Some(self.parse_identifier_or_wildcard()?);
+                            }
+                            operands.push(AsmOperand::InOut { reg, expr, out_var, late: false });
+                        }
+                        "options" => {
+                            if !self.check(&Token::LeftParen) {
+                                return Err(self.error("Expected '(' after 'options'"));
+                            }
+                            self.advance();
+                            let mut opts = Vec::new();
+                            while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                                while self.check(&Token::Newline) { self.advance(); }
+                                if self.check(&Token::RightParen) { break; }
+                                let opt_name = match &self.current().token {
+                                    Token::Identifier(n) => n.clone(),
+                                    Token::String(s) => s.clone(),
+                                    other => return Err(self.error(format!("Expected option name, found {}", other))),
+                                };
+                                self.advance();
+                                opts.push(opt_name);
+                                while self.check(&Token::Newline) { self.advance(); }
+                                if !self.check(&Token::Comma) { break; }
+                                self.advance(); // consume ','
+                            }
+                            if !self.check(&Token::RightParen) {
+                                return Err(self.error("Expected ')' after options list"));
+                            }
+                            self.advance();
+                            operands.push(AsmOperand::Options(opts));
+                        }
+                        "clobber" | "clobbers" | "clobber_abi" => {
+                            if !self.check(&Token::LeftParen) {
+                                return Err(self.error(format!("Expected '(' after '{}'", op_kind)));
+                            }
+                            self.advance();
+                            let mut clobs = Vec::new();
+                            while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                                while self.check(&Token::Newline) { self.advance(); }
+                                if self.check(&Token::RightParen) { break; }
+                                let clob_name = match &self.current().token {
+                                    Token::Identifier(n) => n.clone(),
+                                    Token::String(s) => s.clone(),
+                                    other => return Err(self.error(format!("Expected register/ABI name in clobber, found {}", other))),
+                                };
+                                self.advance();
+                                clobs.push(clob_name);
+                                while self.check(&Token::Newline) { self.advance(); }
+                                if !self.check(&Token::Comma) { break; }
+                                self.advance(); // consume ','
+                            }
+                            if !self.check(&Token::RightParen) {
+                                return Err(self.error("Expected ')' after clobber list"));
+                            }
+                            self.advance();
+                            operands.push(AsmOperand::Clobber(clobs));
+                        }
+                        other => {
+                            return Err(self.error(format!("Unexpected asm operand kind '{}'. Expected 'in', 'out', 'lateout', 'inout', 'options', or 'clobber'", other)));
+                        }
+                    }
+                }
+                other => {
+                    return Err(self.error(format!("Unexpected token in asm! block: {}. Expected template string or operand (in, out, options, clobber)", other)));
+                }
+            }
+
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+
+            if self.check(&Token::Comma) {
+                self.advance(); // consume ','
+            } else if !self.check(&closing) {
+                // Comma is optional before closing brace/paren or if separated by newline
+            }
+        }
+
+        if !self.check(&closing) {
+            return Err(self.error(format!("Expected '{}' to close asm! block", closing)));
+        }
+        self.advance(); // consume closing brace or paren
+
+        Ok(AsmBlock {
+            templates,
+            operands,
+            location,
+        })
+    }
+
+    fn parse_register_name(&mut self) -> Result<String> {
+        match &self.current().token {
+            Token::Identifier(r) => {
+                let r = r.clone();
+                self.advance();
+                Ok(r)
+            }
+            Token::String(s) => {
+                let s = s.clone();
+                self.advance();
+                Ok(s)
+            }
+            Token::Char(c) => {
+                let s = c.to_string();
+                self.advance();
+                Ok(s)
+            }
+            other => Err(self.error(format!("Expected register name (e.g. 'rax', 'dx', 'al', reg), found {}", other))),
+        }
+    }
+
+    fn parse_identifier_or_wildcard(&mut self) -> Result<String> {
+        match &self.current().token {
+            Token::Identifier(n) => {
+                let n = n.clone();
+                self.advance();
+                Ok(n)
+            }
+            Token::Underscore => {
+                self.advance();
+                Ok("_".to_string())
+            }
+            other => Err(self.error(format!("Expected variable name or '_', found {}", other))),
+        }
+    }
+
     fn parse_pattern(&mut self) -> Result<Pattern> {
         let location = Location::new(self.current().line, self.current().column);
         match &self.current().token {
@@ -2235,6 +2508,8 @@ impl Parser {
                     location,
                 })
             }
+            Token::AsmBang => self.parse_asm_expression(),
+            Token::Identifier(ref name) if name == "asm" && self.peek_is_not() => self.parse_asm_expression(),
             Token::Identifier(name) => {
                 self.advance();
 

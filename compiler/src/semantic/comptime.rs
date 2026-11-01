@@ -438,6 +438,9 @@ impl<'a> ComptimeEvaluator<'a> {
             Expression::Await { location, .. } => {
                 Err(RozeError::type_error("Cannot 'await' an asynchronous expression at compile time (comptime)", location.line, location.column).into())
             }
+            Expression::Asm { location, .. } => {
+                Err(RozeError::type_error("Cannot execute inline assembly 'asm!' at compile time (comptime)", location.line, location.column).into())
+            }
         }
     }
 

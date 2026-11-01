@@ -148,6 +148,15 @@ fn collect_closures_and_refs_from_stmt(
         TypedStatement::Comptime { body, .. } => {
             collect_closures_and_refs_from_stmt(body, closures, func_refs);
         }
+        TypedStatement::Asm { asm_block, .. } => {
+            for op in &asm_block.operands {
+                match op {
+                    crate::ir::TypedAsmOperand::In { expr, .. } => collect_closures_and_refs_from_expr(expr, closures, func_refs),
+                    crate::ir::TypedAsmOperand::InOut { expr, .. } => collect_closures_and_refs_from_expr(expr, closures, func_refs),
+                    _ => {}
+                }
+            }
+        }
         TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } | TypedStatement::TraitDecl { .. } | TypedStatement::ExternFunction { .. } => {}
     }
 }
@@ -221,6 +230,15 @@ fn collect_closures_and_refs_from_expr(
         | TypedExpressionKind::Identifier(_)
         | TypedExpressionKind::Boolean(_)
         | TypedExpressionKind::Null => {}
+        TypedExpressionKind::Asm(asm_block) => {
+            for op in &asm_block.operands {
+                match op {
+                    crate::ir::TypedAsmOperand::In { expr, .. } => collect_closures_and_refs_from_expr(expr, closures, func_refs),
+                    crate::ir::TypedAsmOperand::InOut { expr, .. } => collect_closures_and_refs_from_expr(expr, closures, func_refs),
+                    _ => {}
+                }
+            }
+        }
     }
 }
 
@@ -634,6 +652,28 @@ long inl(long port) {
 
 void qemu_exit(long code) {
     outb_internal(0xf4, (unsigned char)code);
+}
+
+long __roze_asm_rdtsc(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+    unsigned int lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((long)hi << 32) | lo;
+#elif defined(__aarch64__)
+    long val;
+    __asm__ volatile ("mrs %0, cntvct_el0" : "=r"(val));
+    return val;
+#else
+    return 1000000L;
+#endif
+}
+
+void __roze_asm_pause(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+    __asm__ volatile ("pause");
+#elif defined(__aarch64__)
+    __asm__ volatile ("yield");
+#endif
 }
 
 long freestanding_is_heap_enabled(void) {
@@ -4201,6 +4241,8 @@ pub struct KernelRuntime {
     pub outl_id: FuncId,
     pub mmio_read64_id: FuncId,
     pub mmio_write64_id: FuncId,
+    pub rdtsc_id: FuncId,
+    pub pause_id: FuncId,
 }
 
 fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
@@ -4337,6 +4379,10 @@ fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
         .map_err(|e| anyhow!(e.to_string()))?;
     let mmio_write64_id = module.declare_function("mmio_write64", Linkage::Import, &i64_i64_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
+    let rdtsc_id = module.declare_function("__roze_asm_rdtsc", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let pause_id = module.declare_function("__roze_asm_pause", Linkage::Import, &void_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
 
     Ok(KernelRuntime {
         multiboot2_get_magic_id,
@@ -4397,6 +4443,8 @@ fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
         outl_id,
         mmio_read64_id,
         mmio_write64_id,
+        rdtsc_id,
+        pause_id,
     })
 }
 
@@ -7827,6 +7875,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             TypedStatement::Comptime { body, .. } => {
                 self.compile_statement(body)
             }
+            TypedStatement::Asm { asm_block, .. } => {
+                self.compile_asm_block(asm_block)?;
+                Ok(false)
+            }
         }
     }
 
@@ -8134,7 +8186,243 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.release_if_fresh(inner, fut_val)?;
                 Ok(result)
             }
+            TypedExpressionKind::Asm(asm_block) => {
+                self.compile_asm_block(asm_block)?;
+                Ok(self.builder.ins().iconst(VALUE_TYPE, 0))
+            }
         }
+    }
+
+    fn compile_asm_block(&mut self, asm_block: &crate::ir::TypedAsmBlock) -> Result<()> {
+        let mut in_values: HashMap<String, Value> = HashMap::new();
+        let mut out_vars: HashMap<String, String> = HashMap::new();
+        let mut inout_vars: HashMap<String, (Value, String)> = HashMap::new();
+
+        for op in &asm_block.operands {
+            match op {
+                crate::ir::TypedAsmOperand::In { reg, expr } => {
+                    let val = self.compile_expression(expr)?;
+                    in_values.insert(reg.trim().to_ascii_lowercase(), val);
+                }
+                crate::ir::TypedAsmOperand::Out { reg, variable, .. } => {
+                    out_vars.insert(reg.trim().to_ascii_lowercase(), variable.clone());
+                }
+                crate::ir::TypedAsmOperand::InOut { reg, expr, out_var, .. } => {
+                    let val = self.compile_expression(expr)?;
+                    let out_name = if let Some(ov) = out_var {
+                        ov.clone()
+                    } else if let crate::ir::TypedExpressionKind::Identifier(id) = &expr.kind {
+                        id.clone()
+                    } else {
+                        "_".to_string()
+                    };
+                    inout_vars.insert(reg.trim().to_ascii_lowercase(), (val, out_name));
+                }
+                _ => {}
+            }
+        }
+
+        let get_in_val = |in_v: &HashMap<String, Value>, inout_v: &HashMap<String, (Value, String)>, r: &str, builder: &mut FunctionBuilder| -> Value {
+            let r_low = r.trim().to_ascii_lowercase();
+            if let Some(&val) = in_v.get(&r_low) {
+                return val;
+            }
+            if let Some(&(val, _)) = inout_v.get(&r_low) {
+                return val;
+            }
+            if let Some(&val) = in_v.get("reg").or_else(|| in_v.get("r")) {
+                return val;
+            }
+            if let Some(&(val, _)) = inout_v.get("reg").or_else(|| inout_v.get("r")) {
+                return val;
+            }
+            builder.ins().iconst(VALUE_TYPE, 0)
+        };
+
+        let get_out_var = |out_v: &HashMap<String, String>, inout_v: &HashMap<String, (Value, String)>, r: &str| -> Option<String> {
+            let r_low = r.trim().to_ascii_lowercase();
+            if let Some(var) = out_v.get(&r_low) {
+                return Some(var.clone());
+            }
+            if let Some((_, var)) = inout_v.get(&r_low) {
+                return Some(var.clone());
+            }
+            if let Some(var) = out_v.get("reg").or_else(|| out_v.get("r")) {
+                return Some(var.clone());
+            }
+            if let Some((_, var)) = inout_v.get("reg").or_else(|| inout_v.get("r")) {
+                return Some(var.clone());
+            }
+            None
+        };
+
+        for template in &asm_block.templates {
+            for raw_line in template.split(&['\n', ';'][..]) {
+                let line = raw_line.trim();
+                if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
+                    continue;
+                }
+
+                let parts: Vec<&str> = line.splitn(2, |c: char| c.is_whitespace()).collect();
+                let mnemonic = parts[0].to_ascii_lowercase();
+                let args_str = if parts.len() > 1 { parts[1].trim() } else { "" };
+                let args: Vec<&str> = if !args_str.is_empty() {
+                    args_str.split(',').map(|s| s.trim()).collect()
+                } else {
+                    Vec::new()
+                };
+
+                match mnemonic.as_str() {
+                    "out" | "outb" | "outw" | "outl" => {
+                        let (port_reg, val_reg) = if args.len() >= 2 {
+                            (args[0], args[1])
+                        } else {
+                            ("dx", "al")
+                        };
+                        let port_val = get_in_val(&in_values, &inout_vars, port_reg, &mut self.builder);
+                        let data_val = get_in_val(&in_values, &inout_vars, val_reg, &mut self.builder);
+
+                        if mnemonic == "outl" || val_reg.eq_ignore_ascii_case("eax") {
+                            let func_ref = self.module.declare_func_in_func(self.kernel.outl_id, self.builder.func);
+                            self.builder.ins().call(func_ref, &[port_val, data_val]);
+                        } else if mnemonic == "outw" || val_reg.eq_ignore_ascii_case("ax") {
+                            let func_ref = self.module.declare_func_in_func(self.kernel.outw_id, self.builder.func);
+                            self.builder.ins().call(func_ref, &[port_val, data_val]);
+                        } else {
+                            let func_ref = self.module.declare_func_in_func(self.kernel.outb_id, self.builder.func);
+                            self.builder.ins().call(func_ref, &[port_val, data_val]);
+                        }
+                    }
+                    "in" | "inb" | "inw" | "inl" => {
+                        let (val_reg, port_reg) = if args.len() >= 2 {
+                            (args[0], args[1])
+                        } else {
+                            ("al", "dx")
+                        };
+                        let port_val = get_in_val(&in_values, &inout_vars, port_reg, &mut self.builder);
+                        let func_id = if mnemonic == "inl" || val_reg.eq_ignore_ascii_case("eax") {
+                            self.kernel.inl_id
+                        } else if mnemonic == "inw" || val_reg.eq_ignore_ascii_case("ax") {
+                            self.kernel.inw_id
+                        } else {
+                            self.kernel.inb_id
+                        };
+                        let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                        let call = self.builder.ins().call(func_ref, &[port_val]);
+                        let res = self.builder.inst_results(call)[0];
+                        if let Some(target_var) = get_out_var(&out_vars, &inout_vars, val_reg) {
+                            self.assign_local_var(&target_var, res)?;
+                        }
+                    }
+                    "cli" => {
+                        let func_ref = self.module.declare_func_in_func(self.kernel.cli_id, self.builder.func);
+                        self.builder.ins().call(func_ref, &[]);
+                    }
+                    "sti" => {
+                        let func_ref = self.module.declare_func_in_func(self.kernel.sti_id, self.builder.func);
+                        self.builder.ins().call(func_ref, &[]);
+                    }
+                    "hlt" => {
+                        let func_ref = self.module.declare_func_in_func(self.kernel.halt_id, self.builder.func);
+                        self.builder.ins().call(func_ref, &[]);
+                    }
+                    "pause" => {
+                        let func_ref = self.module.declare_func_in_func(self.kernel.pause_id, self.builder.func);
+                        self.builder.ins().call(func_ref, &[]);
+                    }
+                    "nop" => {}
+                    "rdtsc" => {
+                        let func_ref = self.module.declare_func_in_func(self.kernel.rdtsc_id, self.builder.func);
+                        let call = self.builder.ins().call(func_ref, &[]);
+                        let res = self.builder.inst_results(call)[0];
+                        if let Some(target_var) = get_out_var(&out_vars, &inout_vars, "rax")
+                            .or_else(|| get_out_var(&out_vars, &inout_vars, "eax"))
+                            .or_else(|| get_out_var(&out_vars, &inout_vars, "reg"))
+                        {
+                            self.assign_local_var(&target_var, res)?;
+                        }
+                    }
+                    "mov" if args.len() >= 2 => {
+                        let dst_reg = args[0];
+                        let src_reg = args[1];
+                        let src_val = get_in_val(&in_values, &inout_vars, src_reg, &mut self.builder);
+                        if let Some(target_var) = get_out_var(&out_vars, &inout_vars, dst_reg) {
+                            self.assign_local_var(&target_var, src_val)?;
+                        }
+                    }
+                    "add" if args.len() >= 2 => {
+                        let dst_reg = args[0];
+                        let src_reg = args[1];
+                        let src_val = get_in_val(&in_values, &inout_vars, src_reg, &mut self.builder);
+                        if let Some(target_var) = get_out_var(&out_vars, &inout_vars, dst_reg) {
+                            let curr_val = self.get_local_var_val(&target_var)?;
+                            let new_val = self.builder.ins().iadd(curr_val, src_val);
+                            self.assign_local_var(&target_var, new_val)?;
+                        }
+                    }
+                    "sub" if args.len() >= 2 => {
+                        let dst_reg = args[0];
+                        let src_reg = args[1];
+                        let src_val = get_in_val(&in_values, &inout_vars, src_reg, &mut self.builder);
+                        if let Some(target_var) = get_out_var(&out_vars, &inout_vars, dst_reg) {
+                            let curr_val = self.get_local_var_val(&target_var)?;
+                            let new_val = self.builder.ins().isub(curr_val, src_val);
+                            self.assign_local_var(&target_var, new_val)?;
+                        }
+                    }
+                    "xor" if args.len() >= 2 => {
+                        let dst_reg = args[0];
+                        let src_reg = args[1];
+                        let src_val = get_in_val(&in_values, &inout_vars, src_reg, &mut self.builder);
+                        if let Some(target_var) = get_out_var(&out_vars, &inout_vars, dst_reg) {
+                            let curr_val = self.get_local_var_val(&target_var)?;
+                            let new_val = self.builder.ins().bxor(curr_val, src_val);
+                            self.assign_local_var(&target_var, new_val)?;
+                        }
+                    }
+                    "and" if args.len() >= 2 => {
+                        let dst_reg = args[0];
+                        let src_reg = args[1];
+                        let src_val = get_in_val(&in_values, &inout_vars, src_reg, &mut self.builder);
+                        if let Some(target_var) = get_out_var(&out_vars, &inout_vars, dst_reg) {
+                            let curr_val = self.get_local_var_val(&target_var)?;
+                            let new_val = self.builder.ins().band(curr_val, src_val);
+                            self.assign_local_var(&target_var, new_val)?;
+                        }
+                    }
+                    "or" if args.len() >= 2 => {
+                        let dst_reg = args[0];
+                        let src_reg = args[1];
+                        let src_val = get_in_val(&in_values, &inout_vars, src_reg, &mut self.builder);
+                        if let Some(target_var) = get_out_var(&out_vars, &inout_vars, dst_reg) {
+                            let curr_val = self.get_local_var_val(&target_var)?;
+                            let new_val = self.builder.ins().bor(curr_val, src_val);
+                            self.assign_local_var(&target_var, new_val)?;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn assign_local_var(&mut self, name: &str, val: Value) -> Result<()> {
+        if name == "_" {
+            return Ok(());
+        }
+        let (var, ty) = self.lookup_local(name);
+        let coerced = self.coerce_for_target_type(val, &Type::Int, &ty);
+        let old_val = self.builder.use_var(var);
+        self.emit_release_for_type(&ty, old_val)?;
+        self.builder.def_var(var, coerced);
+        Ok(())
+    }
+
+    fn get_local_var_val(&mut self, name: &str) -> Result<Value> {
+        let (var, _) = self.lookup_local(name);
+        Ok(self.builder.use_var(var))
     }
 
     fn compile_cmp(&mut self, cc: IntCC, l: Value, r: Value) -> Value {

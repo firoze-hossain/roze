@@ -148,6 +148,10 @@ pub enum TypedStatement {
         body: Box<TypedStatement>,
         location: Location,
     },
+    Asm {
+        asm_block: TypedAsmBlock,
+        location: Location,
+    },
     // Deliberately no `Import` variant: imports are resolved into real
     // functions before type-checking ever runs (see
     // imports::resolve_imports), so by the time this IR exists, no
@@ -306,4 +310,37 @@ pub enum TypedExpressionKind {
     },
     /// `await <expr>` -- await completion of a Future / asynchronous task
     Await(Box<TypedExpression>),
+    /// `asm! { ... }` inline assembly block expression
+    Asm(TypedAsmBlock),
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum TypedAsmOperand {
+    In {
+        reg: String,
+        expr: TypedExpression,
+    },
+    Out {
+        reg: String,
+        variable: String,
+        type_: Type,
+        late: bool,
+    },
+    InOut {
+        reg: String,
+        expr: TypedExpression,
+        out_var: Option<String>,
+        late: bool,
+    },
+    Options(Vec<String>),
+    Clobber(Vec<String>),
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct TypedAsmBlock {
+    pub templates: Vec<String>,
+    pub operands: Vec<TypedAsmOperand>,
+    pub location: Location,
 }

@@ -180,6 +180,39 @@ pub enum Statement {
         statement: Box<Statement>,
         location: Location,
     },
+    /// `asm! { ... }` inline assembly block statement
+    Asm {
+        asm_block: AsmBlock,
+        location: Location,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum AsmOperand {
+    In {
+        reg: String,
+        expr: Expression,
+    },
+    Out {
+        reg: String,
+        variable: String,
+        late: bool,
+    },
+    InOut {
+        reg: String,
+        expr: Expression,
+        out_var: Option<String>,
+        late: bool,
+    },
+    Options(Vec<String>),
+    Clobber(Vec<String>),
+}
+
+#[derive(Debug, Clone)]
+pub struct AsmBlock {
+    pub templates: Vec<String>,
+    pub operands: Vec<AsmOperand>,
+    pub location: Location,
 }
 
 #[derive(Debug, Clone)]
@@ -371,6 +404,11 @@ pub enum Expression {
     /// `await <expr>` -- await completion of a Future / asynchronous task
     Await {
         expr: Box<Expression>,
+        location: Location,
+    },
+    /// `asm! { ... }` inline assembly expression
+    Asm {
+        asm_block: AsmBlock,
         location: Location,
     },
 }

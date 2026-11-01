@@ -170,6 +170,7 @@ fn collect_statement(stmt: &Statement, ast: &mut Ast) {
         Statement::Comptime { statement, .. } => {
             collect_statement(statement, ast);
         }
+        Statement::Asm { .. } => {}
     }
 }
 

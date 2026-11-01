@@ -1,4 +1,5 @@
-use crate::ir::{TypedExpression, TypedExpressionKind, TypedPattern, TypedProgram, TypedStatement};
+use crate::ir::{TypedAsmBlock, TypedAsmOperand, TypedExpression, TypedExpressionKind, TypedPattern, TypedProgram, TypedStatement};
+use std::collections::HashMap;
 use crate::parser::ast::{BinaryOperator, UnaryOperator};
 use crate::semantic::Type;
 use anyhow::Result;
@@ -5636,7 +5637,12 @@ impl JavaSourceGenerator {
                 let val = self.hoist_try_expr(value, &mut hoisted, &indent_str, return_type)?;
                 source.push_str(&hoisted);
 
-                source.push_str(&format!("{}{} {} = ", indent_str, java_type_name(type_), escape_java_identifier(name)));
+                let var_type_name = if type_ == &Type::Void {
+                    "Object".to_string()
+                } else {
+                    java_type_name(type_)
+                };
+                source.push_str(&format!("{}{} {} = ", indent_str, var_type_name, escape_java_identifier(name)));
                 if type_ != &Type::Unknown && val.type_ == Type::Unknown {
                     let mut val_str = String::new();
                     self.generate_expression(&mut val_str, &val)?;
@@ -5780,6 +5786,9 @@ impl JavaSourceGenerator {
             }
             TypedStatement::Comptime { body, .. } => {
                 self.generate_statement(source, body, indent, return_type, is_closure)?;
+            }
+            TypedStatement::Asm { asm_block, .. } => {
+                self.generate_asm_block(source, asm_block, &indent_str)?;
             }
             TypedStatement::TraitDecl { .. } | TypedStatement::ImplDecl { .. } | TypedStatement::ExternFunction { .. } => {}
         }
@@ -6401,6 +6410,223 @@ impl JavaSourceGenerator {
                     source.push_str(&java_unbox(&expr.type_, &await_buf));
                 } else {
                     source.push_str(&await_buf);
+                }
+            }
+            TypedExpressionKind::Asm(asm_block) => {
+                let mut buf = String::new();
+                self.generate_asm_block(&mut buf, asm_block, "")?;
+                source.push_str("((java.util.function.Supplier<Object>)() -> { ");
+                source.push_str(&buf);
+                source.push_str(" return null; }).get()");
+            }
+        }
+
+        Ok(())
+    }
+
+    fn generate_asm_block(&self, source: &mut String, asm_block: &TypedAsmBlock, indent_str: &str) -> Result<()> {
+        let mut in_map: HashMap<String, String> = HashMap::new();
+        let mut out_map: HashMap<String, String> = HashMap::new();
+        let mut inout_map: HashMap<String, (String, String)> = HashMap::new();
+
+        for op in &asm_block.operands {
+            match op {
+                TypedAsmOperand::In { reg, expr } => {
+                    let mut buf = String::new();
+                    self.generate_expression(&mut buf, expr)?;
+                    in_map.insert(reg.trim().to_ascii_lowercase(), buf);
+                }
+                TypedAsmOperand::Out { reg, variable, .. } => {
+                    out_map.insert(reg.trim().to_ascii_lowercase(), escape_java_identifier(variable));
+                }
+                TypedAsmOperand::InOut { reg, expr, out_var, .. } => {
+                    let mut buf = String::new();
+                    self.generate_expression(&mut buf, expr)?;
+                    let out_name = if let Some(ov) = out_var {
+                        escape_java_identifier(ov)
+                    } else if let TypedExpressionKind::Identifier(id) = &expr.kind {
+                        escape_java_identifier(id)
+                    } else {
+                        "_".to_string()
+                    };
+                    inout_map.insert(reg.trim().to_ascii_lowercase(), (buf, out_name));
+                }
+                _ => {}
+            }
+        }
+
+        let get_in_val = |r: &str| -> Option<String> {
+            let r_low = r.trim().to_ascii_lowercase();
+            if let Some(val) = in_map.get(&r_low) {
+                return Some(val.clone());
+            }
+            if let Some((val, _)) = inout_map.get(&r_low) {
+                return Some(val.clone());
+            }
+            if let Some(val) = in_map.get("reg").or_else(|| in_map.get("r")) {
+                return Some(val.clone());
+            }
+            if let Some((val, _)) = inout_map.get("reg").or_else(|| inout_map.get("r")) {
+                return Some(val.clone());
+            }
+            None
+        };
+
+        let get_out_var = |r: &str| -> Option<String> {
+            let r_low = r.trim().to_ascii_lowercase();
+            if let Some(var) = out_map.get(&r_low) {
+                return Some(var.clone());
+            }
+            if let Some((_, var)) = inout_map.get(&r_low) {
+                return Some(var.clone());
+            }
+            if let Some(var) = out_map.get("reg").or_else(|| out_map.get("r")) {
+                return Some(var.clone());
+            }
+            if let Some((_, var)) = inout_map.get("reg").or_else(|| inout_map.get("r")) {
+                return Some(var.clone());
+            }
+            None
+        };
+
+        for template in &asm_block.templates {
+            for raw_line in template.split(&['\n', ';'][..]) {
+                let line = raw_line.trim();
+                if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
+                    continue;
+                }
+
+                let parts: Vec<&str> = line.splitn(2, |c: char| c.is_whitespace()).collect();
+                let mnemonic = parts[0].to_ascii_lowercase();
+                let args_str = if parts.len() > 1 { parts[1].trim() } else { "" };
+                let args: Vec<&str> = if !args_str.is_empty() {
+                    args_str.split(',').map(|s| s.trim()).collect()
+                } else {
+                    Vec::new()
+                };
+
+                match mnemonic.as_str() {
+                    "out" | "outb" | "outw" | "outl" => {
+                        let (port_reg, val_reg) = if args.len() >= 2 {
+                            (args[0], args[1])
+                        } else {
+                            ("dx", "al")
+                        };
+                        let port_expr = get_in_val(port_reg).unwrap_or_else(|| "0".to_string());
+                        let val_expr = get_in_val(val_reg).unwrap_or_else(|| "0".to_string());
+
+                        if mnemonic == "outl" || val_reg.eq_ignore_ascii_case("eax") {
+                            source.push_str(&format!("{}__roze_outl((long)({}), (long)({}));\n", indent_str, port_expr, val_expr));
+                        } else if mnemonic == "outw" || val_reg.eq_ignore_ascii_case("ax") {
+                            source.push_str(&format!("{}__roze_outw((long)({}), (long)({}));\n", indent_str, port_expr, val_expr));
+                        } else {
+                            source.push_str(&format!("{}__roze_outb((long)({}), (long)({}));\n", indent_str, port_expr, val_expr));
+                        }
+                    }
+                    "in" | "inb" | "inw" | "inl" => {
+                        let (val_reg, port_reg) = if args.len() >= 2 {
+                            (args[0], args[1])
+                        } else {
+                            ("al", "dx")
+                        };
+                        let port_expr = get_in_val(port_reg).unwrap_or_else(|| "0".to_string());
+                        if let Some(target_var) = get_out_var(val_reg) {
+                            if target_var != "_" {
+                                if mnemonic == "inl" || val_reg.eq_ignore_ascii_case("eax") {
+                                    source.push_str(&format!("{}{} = (int)__roze_inl((long)({}));\n", indent_str, target_var, port_expr));
+                                } else if mnemonic == "inw" || val_reg.eq_ignore_ascii_case("ax") {
+                                    source.push_str(&format!("{}{} = (int)__roze_inw((long)({}));\n", indent_str, target_var, port_expr));
+                                } else {
+                                    source.push_str(&format!("{}{} = (int)__roze_inb((long)({}));\n", indent_str, target_var, port_expr));
+                                }
+                            }
+                        }
+                    }
+                    "cli" => {
+                        source.push_str(&format!("{}__roze_cli();\n", indent_str));
+                    }
+                    "sti" => {
+                        source.push_str(&format!("{}__roze_sti();\n", indent_str));
+                    }
+                    "hlt" => {
+                        source.push_str(&format!("{}__roze_freestanding_halt();\n", indent_str));
+                    }
+                    "pause" | "nop" => {
+                        source.push_str(&format!("{}/* asm: {} */;\n", indent_str, line));
+                    }
+                    "rdtsc" => {
+                        if let Some(target_var) = get_out_var("rax")
+                            .or_else(|| get_out_var("eax"))
+                            .or_else(|| get_out_var("reg"))
+                        {
+                            if target_var != "_" {
+                                source.push_str(&format!("{}{} = (int)System.nanoTime();\n", indent_str, target_var));
+                            }
+                        }
+                    }
+                    "mov" if args.len() >= 2 => {
+                        let dst_reg = args[0];
+                        let src_reg = args[1];
+                        let src_val = get_in_val(src_reg).unwrap_or_else(|| "0".to_string());
+                        if let Some(target_var) = get_out_var(dst_reg) {
+                            if target_var != "_" {
+                                source.push_str(&format!("{}{} = {};\n", indent_str, target_var, src_val));
+                            }
+                        }
+                    }
+                    "add" if args.len() >= 2 => {
+                        let dst_reg = args[0];
+                        let src_reg = args[1];
+                        let src_val = get_in_val(src_reg).unwrap_or_else(|| "0".to_string());
+                        if let Some(target_var) = get_out_var(dst_reg) {
+                            if target_var != "_" {
+                                source.push_str(&format!("{}{} = {} + {};\n", indent_str, target_var, target_var, src_val));
+                            }
+                        }
+                    }
+                    "sub" if args.len() >= 2 => {
+                        let dst_reg = args[0];
+                        let src_reg = args[1];
+                        let src_val = get_in_val(src_reg).unwrap_or_else(|| "0".to_string());
+                        if let Some(target_var) = get_out_var(dst_reg) {
+                            if target_var != "_" {
+                                source.push_str(&format!("{}{} = {} - {};\n", indent_str, target_var, target_var, src_val));
+                            }
+                        }
+                    }
+                    "xor" if args.len() >= 2 => {
+                        let dst_reg = args[0];
+                        let src_reg = args[1];
+                        let src_val = get_in_val(src_reg).unwrap_or_else(|| "0".to_string());
+                        if let Some(target_var) = get_out_var(dst_reg) {
+                            if target_var != "_" {
+                                source.push_str(&format!("{}{} = {} ^ {};\n", indent_str, target_var, target_var, src_val));
+                            }
+                        }
+                    }
+                    "and" if args.len() >= 2 => {
+                        let dst_reg = args[0];
+                        let src_reg = args[1];
+                        let src_val = get_in_val(src_reg).unwrap_or_else(|| "0".to_string());
+                        if let Some(target_var) = get_out_var(dst_reg) {
+                            if target_var != "_" {
+                                source.push_str(&format!("{}{} = {} & {};\n", indent_str, target_var, target_var, src_val));
+                            }
+                        }
+                    }
+                    "or" if args.len() >= 2 => {
+                        let dst_reg = args[0];
+                        let src_reg = args[1];
+                        let src_val = get_in_val(src_reg).unwrap_or_else(|| "0".to_string());
+                        if let Some(target_var) = get_out_var(dst_reg) {
+                            if target_var != "_" {
+                                source.push_str(&format!("{}{} = {} | {};\n", indent_str, target_var, target_var, src_val));
+                            }
+                        }
+                    }
+                    _ => {
+                        source.push_str(&format!("{}/* asm: {} */;\n", indent_str, line));
+                    }
                 }
             }
         }

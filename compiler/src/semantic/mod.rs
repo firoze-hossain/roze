@@ -4,8 +4,8 @@ pub use comptime::{ComptimeEvaluator, ComptimeValue, comptime_value_to_ast};
 
 use crate::error::RozeError;
 use crate::ir::{
-    TypedExpression, TypedExpressionKind, TypedFunctionParam, TypedMatchArm, TypedPattern,
-    TypedProgram, TypedStatement,
+    TypedAsmBlock, TypedAsmOperand, TypedExpression, TypedExpressionKind, TypedFunctionParam,
+    TypedMatchArm, TypedPattern, TypedProgram, TypedStatement,
 };
 use crate::parser::ast::*;
 use std::collections::{HashMap, HashSet};
@@ -1573,6 +1573,50 @@ fn substitute_statement(stmt: &Statement, map: &HashMap<String, String>) -> Stat
             statement: Box::new(substitute_statement(statement, map)),
             location: location.clone(),
         },
+        Statement::Asm { asm_block, location } => Statement::Asm {
+            asm_block: substitute_asm_block(asm_block, map),
+            location: location.clone(),
+        },
+    }
+}
+
+fn substitute_asm_block(asm_block: &AsmBlock, map: &HashMap<String, String>) -> AsmBlock {
+    let mut operands = Vec::new();
+    for op in &asm_block.operands {
+        match op {
+            AsmOperand::In { reg, expr } => {
+                operands.push(AsmOperand::In {
+                    reg: reg.clone(),
+                    expr: substitute_expression(expr, map),
+                });
+            }
+            AsmOperand::Out { reg, variable, late } => {
+                operands.push(AsmOperand::Out {
+                    reg: reg.clone(),
+                    variable: variable.clone(),
+                    late: *late,
+                });
+            }
+            AsmOperand::InOut { reg, expr, out_var, late } => {
+                operands.push(AsmOperand::InOut {
+                    reg: reg.clone(),
+                    expr: substitute_expression(expr, map),
+                    out_var: out_var.clone(),
+                    late: *late,
+                });
+            }
+            AsmOperand::Options(opts) => {
+                operands.push(AsmOperand::Options(opts.clone()));
+            }
+            AsmOperand::Clobber(clobs) => {
+                operands.push(AsmOperand::Clobber(clobs.clone()));
+            }
+        }
+    }
+    AsmBlock {
+        templates: asm_block.templates.clone(),
+        operands,
+        location: asm_block.location.clone(),
     }
 }
 
@@ -1656,6 +1700,10 @@ fn substitute_expression(expr: &Expression, map: &HashMap<String, String>) -> Ex
         },
         Expression::Await { expr, location } => Expression::Await {
             expr: Box::new(substitute_expression(expr, map)),
+            location: location.clone(),
+        },
+        Expression::Asm { asm_block, location } => Expression::Asm {
+            asm_block: substitute_asm_block(asm_block, map),
             location: location.clone(),
         },
     }
@@ -3249,7 +3297,163 @@ impl TypeChecker {
                     location: location.clone(),
                 }))
             }
+            Statement::Asm { asm_block, location } => {
+                let typed_asm = self.check_asm_block(asm_block, location)?;
+                Ok(Some(TypedStatement::Asm {
+                    asm_block: typed_asm,
+                    location: location.clone(),
+                }))
+            }
         }
+    }
+
+    pub fn check_asm_block(&mut self, block: &AsmBlock, location: &Location) -> Result<TypedAsmBlock> {
+        let mut typed_operands = Vec::new();
+
+        for operand in &block.operands {
+            match operand {
+                AsmOperand::In { reg, expr } => {
+                    let reg_norm = reg.trim().to_ascii_lowercase();
+                    if !is_valid_asm_register(&reg_norm) {
+                        return Err(RozeError::type_error(
+                            format!("Invalid or unsupported assembly register '{}' in asm! operand", reg),
+                            location.line,
+                            location.column,
+                        ).with_hint("use a valid x86_64 register (rax, rbx, rcx, rdx, al, dx, xmm0...) or ARM64 register (x0-x30, w0-w30, sp...) or generic class (reg)").into());
+                    }
+
+                    if (self.in_isr || self.disable_float_registers) && is_float_or_simd_reg(&reg_norm) {
+                        return Err(RozeError::type_error(
+                            format!("Floating-point and SIMD vector registers are disabled in ISR (register '{}' cannot be used)", reg),
+                            location.line,
+                            location.column,
+                        ).with_hint("interrupt service routines must preserve FPU/SIMD state; use integer registers").into());
+                    }
+
+                    let typed_expr = self.check_expression(expr)?;
+                    if (self.in_isr || self.disable_float_registers) && (typed_expr.type_.is_float() || typed_expr.type_.is_simd_vector()) {
+                        return Err(RozeError::type_error(
+                            format!("Floating-point and SIMD vector types are disabled in ISR for asm! operand (type is {})", typed_expr.type_),
+                            location.line,
+                            location.column,
+                        ).with_hint("interrupt service routines must preserve FPU/SIMD state; use integer types").into());
+                    }
+
+                    typed_operands.push(TypedAsmOperand::In {
+                        reg: reg.clone(),
+                        expr: typed_expr,
+                    });
+                }
+                AsmOperand::Out { reg, variable, late } => {
+                    let reg_norm = reg.trim().to_ascii_lowercase();
+                    if !is_valid_asm_register(&reg_norm) {
+                        return Err(RozeError::type_error(
+                            format!("Invalid or unsupported assembly register '{}' in asm! operand", reg),
+                            location.line,
+                            location.column,
+                        ).with_hint("use a valid x86_64 or ARM64 register or generic class (reg)").into());
+                    }
+
+                    if (self.in_isr || self.disable_float_registers) && is_float_or_simd_reg(&reg_norm) {
+                        return Err(RozeError::type_error(
+                            format!("Floating-point and SIMD vector registers are disabled in ISR (register '{}' cannot be used)", reg),
+                            location.line,
+                            location.column,
+                        ).with_hint("interrupt service routines must preserve FPU/SIMD state; use integer registers").into());
+                    }
+
+                    let ty = if variable == "_" {
+                        asm_reg_to_type(&reg_norm)
+                    } else if let Some(sym) = self.symbol_table.lookup(variable) {
+                        sym.type_.clone()
+                    } else {
+                        return Err(RozeError::type_error(
+                            format!("Cannot bind asm! output to undefined variable '{}'", variable),
+                            location.line,
+                            location.column,
+                        ).with_hint("declare the variable before using it as an asm! output").into());
+                    };
+
+                    typed_operands.push(TypedAsmOperand::Out {
+                        reg: reg.clone(),
+                        variable: variable.clone(),
+                        type_: ty,
+                        late: *late,
+                    });
+                }
+                AsmOperand::InOut { reg, expr, out_var, late } => {
+                    let reg_norm = reg.trim().to_ascii_lowercase();
+                    if !is_valid_asm_register(&reg_norm) {
+                        return Err(RozeError::type_error(
+                            format!("Invalid or unsupported assembly register '{}' in asm! operand", reg),
+                            location.line,
+                            location.column,
+                        ).with_hint("use a valid x86_64 or ARM64 register or generic class (reg)").into());
+                    }
+
+                    if (self.in_isr || self.disable_float_registers) && is_float_or_simd_reg(&reg_norm) {
+                        return Err(RozeError::type_error(
+                            format!("Floating-point and SIMD vector registers are disabled in ISR (register '{}' cannot be used)", reg),
+                            location.line,
+                            location.column,
+                        ).with_hint("interrupt service routines must preserve FPU/SIMD state; use integer registers").into());
+                    }
+
+                    let typed_expr = self.check_expression(expr)?;
+
+                    match out_var {
+                        Some(var_name) => {
+                            if var_name != "_" && self.symbol_table.lookup(var_name).is_none() {
+                                return Err(RozeError::type_error(
+                                    format!("Cannot bind asm! inout output to undefined variable '{}'", var_name),
+                                    location.line,
+                                    location.column,
+                                ).with_hint("declare the variable before using it as an asm! output").into());
+                            }
+                        }
+                        None => {
+                            if let Expression::Identifier { name, location: ident_loc } = expr {
+                                if name != "_" && self.symbol_table.lookup(name).is_none() {
+                                    return Err(RozeError::type_error(
+                                        format!("Cannot bind asm! inout to undefined variable '{}'", name),
+                                        ident_loc.line,
+                                        ident_loc.column,
+                                    ).with_hint(format!("declare '{}' before using it as an asm! inout operand", name)).into());
+                                }
+                            }
+                        }
+                    }
+
+                    typed_operands.push(TypedAsmOperand::InOut {
+                        reg: reg.clone(),
+                        expr: typed_expr,
+                        out_var: out_var.clone(),
+                        late: *late,
+                    });
+                }
+                AsmOperand::Options(opts) => {
+                    for opt in opts {
+                        if !is_valid_asm_option(opt) {
+                            return Err(RozeError::type_error(
+                                format!("Unknown asm! option '{}'", opt),
+                                location.line,
+                                location.column,
+                            ).with_hint("valid options are: nomem, nostack, preserves_flags, noreturn, pure, readonly, att_syntax, raw, may_exit").into());
+                        }
+                    }
+                    typed_operands.push(TypedAsmOperand::Options(opts.clone()));
+                }
+                AsmOperand::Clobber(clobs) => {
+                    typed_operands.push(TypedAsmOperand::Clobber(clobs.clone()));
+                }
+            }
+        }
+
+        Ok(TypedAsmBlock {
+            templates: block.templates.clone(),
+            operands: typed_operands,
+            location: location.clone(),
+        })
     }
 
     pub fn is_unsafe_intrinsic(name: &str) -> bool {
@@ -5064,7 +5268,99 @@ impl TypeChecker {
                     location: location.clone(),
                 })
             }
+            Expression::Asm { asm_block, location } => {
+                let typed_asm = self.check_asm_block(asm_block, location)?;
+                Ok(TypedExpression {
+                    kind: TypedExpressionKind::Asm(typed_asm),
+                    type_: Type::Void,
+                    location: location.clone(),
+                })
+            }
         }
+    }
+}
+
+pub fn is_valid_asm_register(reg: &str) -> bool {
+    let r = reg.trim().to_ascii_lowercase();
+    let r = r.as_str();
+
+    // Generic classes and constraints
+    if matches!(r, "reg" | "reg_byte" | "reg_abcd" | "xmm_reg" | "ymm_reg" | "zmm_reg" | "vreg" | "vreg_low16" | "r" | "m" | "i" | "g" | "a" | "b" | "c" | "d" | "s" | "d_reg") {
+        return true;
+    }
+
+    // x86 registers
+    let x86_regs = [
+        "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp",
+        "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+        "eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp",
+        "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d",
+        "ax", "bx", "cx", "dx", "si", "di", "bp", "sp",
+        "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w",
+        "al", "bl", "cl", "dl", "ah", "bh", "ch", "dh",
+        "sil", "dil", "bpl", "spl",
+        "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b",
+        "flags", "rflags", "eflags",
+        "cr0", "cr2", "cr3", "cr4", "cr8",
+    ];
+    if x86_regs.contains(&r) {
+        return true;
+    }
+
+    if (r.starts_with("xmm") || r.starts_with("ymm")) && r[3..].parse::<u32>().map(|n| n <= 15).unwrap_or(false) {
+        return true;
+    }
+    if r.starts_with("zmm") && r[3..].parse::<u32>().map(|n| n <= 31).unwrap_or(false) {
+        return true;
+    }
+
+    // ARM64 registers
+    if (r.starts_with('x') || r.starts_with('w')) && r[1..].parse::<u32>().map(|n| n <= 30).unwrap_or(false) {
+        return true;
+    }
+    if matches!(r, "sp" | "xzr" | "wzr" | "lr" | "fp") {
+        return true;
+    }
+    if matches!(r.chars().next(), Some('v' | 'q' | 'd' | 's' | 'h' | 'b')) {
+        if r[1..].parse::<u32>().map(|n| n <= 31).unwrap_or(false) {
+            return true;
+        }
+    }
+
+    false
+}
+
+pub fn is_float_or_simd_reg(reg: &str) -> bool {
+    let r = reg.trim().to_ascii_lowercase();
+    let r = r.as_str();
+    if r.starts_with("xmm") || r.starts_with("ymm") || r.starts_with("zmm") || matches!(r, "xmm_reg" | "ymm_reg" | "zmm_reg" | "vreg" | "vreg_low16") {
+        return true;
+    }
+    if matches!(r.chars().next(), Some('v' | 'q' | 'd' | 's' | 'h' | 'b')) && r[1..].parse::<u32>().map(|n| n <= 31).unwrap_or(false) {
+        return true;
+    }
+    false
+}
+
+pub fn is_valid_asm_option(opt: &str) -> bool {
+    matches!(opt.trim().to_ascii_lowercase().as_str(),
+        "nomem" | "nostack" | "preserves_flags" | "noreturn" | "pure" | "readonly" | "att_syntax" | "raw" | "may_exit"
+    )
+}
+
+pub fn asm_reg_to_type(reg: &str) -> Type {
+    let r = reg.trim().to_ascii_lowercase();
+    let r = r.as_str();
+    if matches!(r, "al" | "bl" | "cl" | "dl" | "ah" | "bh" | "ch" | "dh" | "sil" | "dil" | "bpl" | "spl" | "r8b" | "r9b" | "r10b" | "r11b" | "r12b" | "r13b" | "r14b" | "r15b" | "reg_byte" | "b0" | "b1") {
+        Type::U8
+    } else if matches!(r, "ax" | "bx" | "cx" | "dx" | "si" | "di" | "bp" | "sp" | "r8w" | "r9w" | "r10w" | "r11w" | "r12w" | "r13w" | "r14w" | "r15w" | "h0" | "h1") {
+        Type::U16
+    } else if matches!(r, "eax" | "ebx" | "ecx" | "edx" | "esi" | "edi" | "ebp" | "esp" | "r8d" | "r9d" | "r10d" | "r11d" | "r12d" | "r13d" | "r14d" | "r15d" | "eflags" | "s0" | "s1") || ((r.starts_with('w')) && r[1..].parse::<u32>().is_ok()) {
+        Type::I32
+    } else if r.starts_with("xmm") || r.starts_with("ymm") || r.starts_with("zmm") || r.starts_with('v') || r.starts_with('q') {
+        Type::Vec4f
+    } else {
+        Type::I64
     }
 }
 
@@ -5113,6 +5409,27 @@ fn collect_referenced_identifiers(stmt: &TypedStatement, idents: &mut Vec<String
                 collect_referenced_identifiers(&arm.body, idents);
             }
         }
+        TypedStatement::Asm { asm_block, .. } => {
+            for op in &asm_block.operands {
+                match op {
+                    TypedAsmOperand::In { expr, .. } => collect_from_expr(expr, idents),
+                    TypedAsmOperand::Out { variable, .. } => {
+                        if variable != "_" {
+                            idents.push(variable.clone());
+                        }
+                    }
+                    TypedAsmOperand::InOut { expr, out_var, .. } => {
+                        collect_from_expr(expr, idents);
+                        if let Some(v) = out_var {
+                            if v != "_" {
+                                idents.push(v.clone());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -5151,6 +5468,27 @@ fn collect_from_expr(expr: &TypedExpression, idents: &mut Vec<String>) {
         TypedExpressionKind::Closure { captures, .. } => {
             for (cap, _) in captures {
                 idents.push(cap.clone());
+            }
+        }
+        TypedExpressionKind::Asm(asm_block) => {
+            for op in &asm_block.operands {
+                match op {
+                    TypedAsmOperand::In { expr, .. } => collect_from_expr(expr, idents),
+                    TypedAsmOperand::Out { variable, .. } => {
+                        if variable != "_" {
+                            idents.push(variable.clone());
+                        }
+                    }
+                    TypedAsmOperand::InOut { expr, out_var, .. } => {
+                        collect_from_expr(expr, idents);
+                        if let Some(v) = out_var {
+                            if v != "_" {
+                                idents.push(v.clone());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         _ => {}
@@ -5757,5 +6095,66 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("expects 1 argument(s), but pattern has 2"), "{}", err);
+    }
+
+    #[test]
+    fn asm_syntax_and_registers_validate_correctly() {
+        let result = check_source(
+            "func main() { \
+                 let port = 1016; \
+                 let val = 65; \
+                 let read_val = 0; \
+                 asm! { \
+                     'out dx, al', \
+                     in('dx') port, \
+                     in('al') val, \
+                     options(nomem, nostack) \
+                 } \
+                 asm! { \
+                     'in al, dx', \
+                     in('dx') port, \
+                     out('al') read_val \
+                 } \
+             }"
+        );
+        assert!(result.is_ok(), "failed: {:?}", result);
+    }
+
+    #[test]
+    fn asm_rejects_invalid_register_name() {
+        let result = check_source(
+            "func main() { \
+                 let val = 10; \
+                 asm! { 'nop', in('invalid_reg') val } \
+             }"
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Invalid or unsupported assembly register 'invalid_reg'"), "{}", err);
+    }
+
+    #[test]
+    fn asm_rejects_float_simd_in_isr() {
+        let result = check_source(
+            "func isr_timer() { \
+                 let val = 10; \
+                 asm! { 'nop', in('xmm0') val } \
+             }"
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Floating-point and SIMD vector registers are disabled in ISR"), "{}", err);
+    }
+
+    #[test]
+    fn asm_rejects_invalid_options() {
+        let result = check_source(
+            "func main() { \
+                 asm! { 'nop', options(invalid_option_xyz) } \
+             }"
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unknown asm! option 'invalid_option_xyz'"), "{}", err);
     }
 }

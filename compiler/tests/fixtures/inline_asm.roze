@@ -1,0 +1,144 @@
+// compiler/tests/fixtures/inline_asm.roze
+// M2-T09: Native asm! Macro & Register Constraints Verification
+
+func test_port_io() {
+    println("--- Test 1: Port I/O with Register Constraints ---");
+    let port = 1016; // COM1 port 0x3F8
+    let send_val = 65; // ASCII 'A'
+    let read_val = 0;
+
+    // Output byte to port using exact M2-T09 prompt syntax:
+    // asm! { 'out dx, al', in('dx') port, in('al') val, options(nomem, nostack) }
+    asm! {
+        'out dx, al',
+        in('dx') port,
+        in('al') send_val,
+        options(nomem, nostack)
+    }
+
+    // Input byte from port using single quote register names:
+    asm! {
+        'in al, dx',
+        in('dx') port,
+        out('al') read_val
+    }
+
+    println(read_val);
+
+    // 16-bit word port I/O:
+    let read_word = 0;
+    asm! {
+        'out dx, ax',
+        in('dx') 46,
+        in('ax') 4660,
+        options(nomem)
+    }
+    asm! {
+        'in ax, dx',
+        in('dx') 46,
+        out('ax') read_word
+    }
+    println(read_word);
+
+    // 32-bit dword port I/O:
+    let read_dword = 0;
+    asm! {
+        'out dx, eax',
+        in('dx') 3320,
+        in('eax') 2147483648,
+        options(nomem)
+    }
+    asm! {
+        'in eax, dx',
+        in('dx') 3320,
+        out('eax') read_dword
+    }
+    println(read_dword);
+}
+
+func test_cpu_control() {
+    println("--- Test 2: CPU Interrupts & Control ---");
+    asm! { 'cli', options(nomem) }
+    println("cli executed");
+
+    asm! { 'sti', options(nomem) }
+    println("sti executed");
+
+    asm! { 'pause' }
+    asm! { 'nop', clobber('memory', 'flags') }
+    println("pause and nop executed");
+}
+
+func test_registers_and_inout() {
+    println("--- Test 3: Register Constraints & InOut Operands ---");
+    let moved = 0;
+    asm! {
+        'mov rax, rbx',
+        in('rbx') 12345,
+        out('rax') moved,
+        options(pure, readonly)
+    }
+    println(moved);
+
+    // InOut accumulator modification:
+    let acc = 100;
+    asm! {
+        'add rax, rbx',
+        inout('rax') acc,
+        in('rbx') 50
+    }
+    println(acc);
+
+    // Subtraction:
+    asm! {
+        'sub rax, rbx',
+        inout('rax') acc,
+        in('rbx') 25
+    }
+    println(acc);
+
+    // Bitwise XOR:
+    let bits = 170; // 0xAA
+    asm! {
+        'xor rax, rbx',
+        inout('rax') bits,
+        in('rbx') 255 // 0xFF
+    }
+    println(bits); // 85 (0x55)
+
+    // Generic 'reg' class:
+    let reg_res = 0;
+    asm! {
+        'mov {0}, {1}',
+        in('reg') 777,
+        out('reg') reg_res
+    }
+    println(reg_res);
+}
+
+func test_rdtsc() {
+    println("--- Test 4: Time-Stamp Counter (RDTSC) ---");
+    let tsc1 = 0;
+    asm! {
+        'rdtsc',
+        out('rax') tsc1
+    }
+    println(tsc1 > 0);
+}
+
+func test_expression_asm() {
+    println("--- Test 5: Inline Assembly Expression ---");
+    // asm! used as an expression
+    let dummy = asm! { 'nop' };
+    println("asm expression ok");
+}
+
+func main() {
+    println("=== Roze Native Inline Assembly Suite (M2-T09) ===");
+    test_port_io();
+    test_cpu_control();
+    test_registers_and_inout();
+    test_rdtsc();
+    test_expression_asm();
+    println("=== All Inline Assembly Tests Passed Successfully ===");
+}

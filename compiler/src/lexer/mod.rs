@@ -131,10 +131,14 @@ impl<'a> Lexer<'a> {
         number
     }
 
-    fn read_char(&mut self) -> char {
+    fn read_char_or_string(&mut self) -> Token {
         self.advance(); // Skip opening '\''
-        let ch = match self.current_char {
-            Some('\\') => {
+        let mut s = String::new();
+        while let Some(c) = self.current_char {
+            if c == '\'' {
+                self.advance(); // Skip closing '\''
+                break;
+            } else if c == '\\' {
                 self.advance();
                 let escaped = match self.current_char {
                     Some('n') => '\n',
@@ -143,22 +147,23 @@ impl<'a> Lexer<'a> {
                     Some('0') => '\0',
                     Some('\'') => '\'',
                     Some('\\') => '\\',
-                    Some(c) => c,
+                    Some(ch) => ch,
                     None => '\0',
                 };
+                s.push(escaped);
                 self.advance();
-                escaped
-            }
-            Some(c) => {
+            } else if c == '\n' {
+                break;
+            } else {
+                s.push(c);
                 self.advance();
-                c
             }
-            None => '\0',
-        };
-        if self.current_char == Some('\'') {
-            self.advance(); // Skip closing '\''
         }
-        ch
+        if s.chars().count() == 1 {
+            Token::Char(s.chars().next().unwrap())
+        } else {
+            Token::String(s)
+        }
     }
 
     fn read_identifier(&mut self) -> String {
@@ -319,8 +324,7 @@ impl<'a> Lexer<'a> {
                     Token::String(string)
                 }
                 '\'' => {
-                    let ch = self.read_char();
-                    Token::Char(ch)
+                    self.read_char_or_string()
                 }
                 _ => {
                     if c.is_digit(10) {
@@ -329,6 +333,10 @@ impl<'a> Lexer<'a> {
                     } else if c.is_alphabetic() || c == '_' {
                         let ident = self.read_identifier();
                         match ident.as_str() {
+                            "asm" if self.current_char == Some('!') && self.peek_char() != Some('=') => {
+                                self.advance();
+                                Token::AsmBang
+                            }
                             "let" => Token::Let,
                             "mut" => Token::Mut,
                             "func" => Token::Func,
@@ -491,5 +499,16 @@ mod tests {
         assert!(non_eof.contains(&&Token::ColonColon));
         assert!(non_eof.contains(&&Token::FatArrow));
         assert!(non_eof.contains(&&Token::Underscore));
+    }
+
+    #[test]
+    fn asm_and_single_quote_strings_lex_correctly() {
+        let tokens = tokenize("asm! { 'out dx, al', in('dx') port, in('al') val, options(nomem, nostack) }");
+        let non_eof: Vec<&Token> = tokens.iter().map(|t| &t.token).filter(|t| **t != Token::EOF).collect();
+        assert_eq!(non_eof[0], &Token::AsmBang);
+        assert_eq!(non_eof[1], &Token::LeftBrace);
+        assert_eq!(non_eof[2], &Token::String("out dx, al".to_string()));
+        assert!(non_eof.contains(&&Token::String("dx".to_string())));
+        assert!(non_eof.contains(&&Token::String("al".to_string())));
     }
 }

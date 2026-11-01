@@ -4020,6 +4020,67 @@ fn native_kernel_hardware_drivers_suite() {
     assert!(u_out.is_empty(), "expected zero undefined symbols, got:\n{}", u_out);
 }
 
+#[test]
+fn native_inline_assembly_suite() {
+    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/inline_asm.roze");
+    let source = std::fs::read_to_string(&fixture_path).expect("failed to read inline_asm.roze");
+
+    let (stdout, stderr, ok) = run_native_source("inline_asm", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== Roze Native Inline Assembly Suite (M2-T09) ==="));
+    assert!(stdout.contains("--- Test 1: Port I/O with Register Constraints ---"));
+    assert!(stdout.contains("65"));
+    assert!(stdout.contains("4660"));
+    assert!(stdout.contains("--- Test 2: CPU Interrupts & Control ---"));
+    assert!(stdout.contains("cli executed"));
+    assert!(stdout.contains("sti executed"));
+    assert!(stdout.contains("--- Test 3: Register Constraints & InOut Operands ---"));
+    assert!(stdout.contains("12345"));
+    assert!(stdout.contains("150"));
+    assert!(stdout.contains("125"));
+    assert!(stdout.contains("85"));
+    assert!(stdout.contains("777"));
+    assert!(stdout.contains("--- Test 4: Time-Stamp Counter (RDTSC) ---"));
+    assert!(stdout.contains("true"));
+    assert!(stdout.contains("--- Test 5: Inline Assembly Expression ---"));
+    assert!(stdout.contains("asm expression ok"));
+    assert!(stdout.contains("=== All Inline Assembly Tests Passed Successfully ==="));
+
+    // Also compile freestanding target to guarantee freestanding bare-metal compatibility:
+    let dir = scratch_dir("freestanding_inline_asm");
+    let file_name = "asm_kernel.roze";
+    std::fs::write(dir.join(file_name), &source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run roze build --target freestanding");
+
+    assert!(
+        build_output.status.success(),
+        "freestanding asm build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("asm_kernel");
+    assert!(kernel_bin.exists());
+
+    let nm_u = Command::new("nm")
+        .arg("-u")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run nm -u");
+    assert!(nm_u.status.success());
+    let u_out = String::from_utf8_lossy(&nm_u.stdout).trim().to_string();
+    assert!(u_out.is_empty(), "expected zero undefined symbols, got:\n{}", u_out);
+}
+
 
 
 

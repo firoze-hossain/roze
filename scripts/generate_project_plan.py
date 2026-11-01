@@ -318,7 +318,7 @@ s1_rows = [
         ("M2-T09", 8), ("Month 2", 4), ("Sprint 4 (W07-W08)", 8), "Inline Assembly", "Native asm! Macro & Register Constraints",
         "Inline assembly syntax: asm! { 'out dx, al', in('dx') port, in('al') val, options(nomem, nostack) } with x86_64 and ARM64 register constraints.",
         "Parity with Rust core::arch::asm! and GCC inline assembly.",
-        "Operating Systems, Security Exploits", "6 Days", ("Critical", 14), ("Planned", 12)
+        "Operating Systems, Security Exploits", "6 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M2-T10", 8), ("Month 2", 4), ("Sprint 4 (W07-W08)", 8), "Milestone Gate M2", "Month 2 Bootable OS Kernel Verification",

@@ -1477,6 +1477,29 @@ fn kernel_hardware_interrupts_and_core_suite() {
     assert!(stdout.contains("=== All Kernel Core & Interrupt Subsystem Tests Passed Successfully ==="));
 }
 
+#[test]
+fn kernel_hardware_drivers_suite() {
+    let (stdout, stderr, ok) = run_fixture("kernel_drivers.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("ROZE HARDWARE DEVICE DRIVERS TEST SUITE (M2-T08)"));
+    assert!(stdout.contains("--- 1. 16550 UART Serial Driver ---"));
+    assert!(stdout.contains("[PASS] COM1 UART Initialized successfully at 115200 8N1"));
+    assert!(stdout.contains("[PASS] UART Scratch Register 0x55 / 0xAA test verified"));
+    assert!(stdout.contains("--- 2. PS/2 Keyboard & Mouse Driver ---"));
+    assert!(stdout.contains("[PASS] PS/2 Keyboard: Scancode 30 Make -> 'a' (ASCII 97)"));
+    assert!(stdout.contains("[PASS] PS/2 Mouse Packet 1: Left Button Pressed"));
+    assert!(stdout.contains("--- 3. High-Resolution Timers: PIT & HPET ---"));
+    assert!(stdout.contains("[PASS] PIT Timer: 250 ticks @ 100Hz = 2500 ms uptime verified"));
+    assert!(stdout.contains("[PASS] HPET Femtosecond to Nanosecond conversion verified (5000 ns)"));
+    assert!(stdout.contains("--- 4. UEFI GOP Linear Framebuffer Graphics ---"));
+    assert!(stdout.contains("[PASS] Color RGB packing and channel extraction verified"));
+    assert!(stdout.contains("[PASS] Framebuffer put_pixel and get_pixel verified at (100, 100)"));
+    assert!(stdout.contains("[PASS] Bresenham's line algorithm rasterization verified"));
+    assert!(stdout.contains("[PASS] Midpoint circle algorithm rasterization verified"));
+    assert!(stdout.contains("[PASS] 8x16 Bitmap Font: Glyph 'A' row 3 bitmask verified (24)"));
+    assert!(stdout.contains(">> ALL HARDWARE DRIVER TESTS PASSED (100% SUCCESS) <<"));
+}
+
 
 
 

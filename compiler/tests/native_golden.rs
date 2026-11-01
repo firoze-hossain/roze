@@ -222,15 +222,13 @@ func main() {
 
 #[test]
 fn intrinsic_call_is_rejected_with_a_clear_message() {
-    // list_*, then map_*, were each in turn the go-to still-unsupported
+    // list_*, then map_*, then string_length were each in turn the go-to still-unsupported
     // intrinsic for this test until support for them landed -- a Core
-    // (JVM-only) intrinsic like string_length is a stable choice here,
-    // since Core is a whole separate JVM-standard-library-backed
-    // family, not a native-backend heap type that might get ARC support
-    // next.
+    // (JVM-only) intrinsic like string_to_upper is a stable choice here,
+    // since it delegates to Java's toUpperCase().
     let (_stdout, stderr, ok) = run_native_source(
         "reject_intrinsic",
-        "func main() {\n    println(string_length(\"hi\"));\n}\n",
+        "func main() {\n    println(string_to_upper(\"hi\"));\n}\n",
     );
     assert!(!ok, "expected the native backend to reject an intrinsic call");
     assert!(stderr.contains("native backend"), "expected a clear native-backend-specific message, got:\n{}", stderr);
@@ -3955,6 +3953,61 @@ fn native_kernel_hardware_interrupts_and_core_suite() {
     );
 
     let kernel_bin = dir.join("interrupts_kernel");
+    assert!(kernel_bin.exists());
+
+    let nm_u = Command::new("nm")
+        .arg("-u")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run nm -u");
+    assert!(nm_u.status.success());
+    let u_out = String::from_utf8_lossy(&nm_u.stdout).trim().to_string();
+    assert!(u_out.is_empty(), "expected zero undefined symbols, got:\n{}", u_out);
+}
+
+#[test]
+fn native_kernel_hardware_drivers_suite() {
+    let source = std::fs::read_to_string("tests/fixtures/kernel_drivers.roze")
+        .or_else(|_| std::fs::read_to_string("compiler/tests/fixtures/kernel_drivers.roze"))
+        .expect("read kernel_drivers fixture");
+
+    let (stdout, stderr, ok) = run_native_source("native_kernel_drivers", &source);
+    assert!(ok, "native build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("ROZE HARDWARE DEVICE DRIVERS TEST SUITE (M2-T08)"));
+    assert!(stdout.contains("--- 1. 16550 UART Serial Driver ---"));
+    assert!(stdout.contains("[PASS] COM1 UART Initialized successfully at 115200 8N1"));
+    assert!(stdout.contains("--- 2. PS/2 Keyboard & Mouse Driver ---"));
+    assert!(stdout.contains("[PASS] PS/2 Keyboard: Scancode 30 Make -> 'a' (ASCII 97)"));
+    assert!(stdout.contains("--- 3. High-Resolution Timers: PIT & HPET ---"));
+    assert!(stdout.contains("[PASS] PIT Timer: 250 ticks @ 100Hz = 2500 ms uptime verified"));
+    assert!(stdout.contains("--- 4. UEFI GOP Linear Framebuffer Graphics ---"));
+    assert!(stdout.contains("[PASS] Color RGB packing and channel extraction verified"));
+    assert!(stdout.contains("[PASS] Bresenham's line algorithm rasterization verified"));
+    assert!(stdout.contains("[PASS] 8x16 Bitmap Font: Glyph 'A' row 3 bitmask verified (24)"));
+    assert!(stdout.contains(">> ALL HARDWARE DRIVER TESTS PASSED (100% SUCCESS) <<"));
+
+    // Also verify standalone freestanding kernel binary compilation with zero undefined symbols
+    let dir = scratch_dir("freestanding_drivers_kernel");
+    let file_name = "drivers_kernel.roze";
+    std::fs::write(dir.join(file_name), &source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run roze build --target freestanding");
+
+    assert!(
+        build_output.status.success(),
+        "freestanding build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("drivers_kernel");
     assert!(kernel_bin.exists());
 
     let nm_u = Command::new("nm")

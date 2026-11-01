@@ -1813,11 +1813,48 @@ __attribute__((weak)) int64_t multiboot2_get_magic(void) { return 0x36D76289LL; 
 __attribute__((weak)) void* multiboot2_get_info_ptr(void) { return NULL; }
 
 static unsigned char __roze_hosted_io_ports[65536] = {0};
+static int __roze_hosted_io_ports_init = 0;
+static void ensure_hosted_io_ports_init(void) {
+    if (!__roze_hosted_io_ports_init) {
+        __roze_hosted_io_ports_init = 1;
+        __roze_hosted_io_ports[0x3F8 + 5] = 0x20; // COM1 LSR: TX empty
+        __roze_hosted_io_ports[0x2F8 + 5] = 0x20; // COM2 LSR: TX empty
+    }
+}
 __attribute__((weak)) void outb(int64_t port, int64_t val) {
+    ensure_hosted_io_ports_init();
     __roze_hosted_io_ports[(unsigned short)port] = (unsigned char)val;
 }
 __attribute__((weak)) int64_t inb(int64_t port) {
+    ensure_hosted_io_ports_init();
     return (int64_t)__roze_hosted_io_ports[(unsigned short)port];
+}
+__attribute__((weak)) void outw(int64_t port, int64_t val) {
+    ensure_hosted_io_ports_init();
+    unsigned short p = (unsigned short)port;
+    __roze_hosted_io_ports[p] = (unsigned char)(val & 0xFF);
+    __roze_hosted_io_ports[p + 1] = (unsigned char)((val >> 8) & 0xFF);
+}
+__attribute__((weak)) int64_t inw(int64_t port) {
+    ensure_hosted_io_ports_init();
+    unsigned short p = (unsigned short)port;
+    return (int64_t)(__roze_hosted_io_ports[p] | (__roze_hosted_io_ports[p + 1] << 8));
+}
+__attribute__((weak)) void outl(int64_t port, int64_t val) {
+    ensure_hosted_io_ports_init();
+    unsigned short p = (unsigned short)port;
+    __roze_hosted_io_ports[p] = (unsigned char)(val & 0xFF);
+    __roze_hosted_io_ports[p + 1] = (unsigned char)((val >> 8) & 0xFF);
+    __roze_hosted_io_ports[p + 2] = (unsigned char)((val >> 16) & 0xFF);
+    __roze_hosted_io_ports[p + 3] = (unsigned char)((val >> 24) & 0xFF);
+}
+__attribute__((weak)) int64_t inl(int64_t port) {
+    ensure_hosted_io_ports_init();
+    unsigned short p = (unsigned short)port;
+    return (int64_t)(__roze_hosted_io_ports[p] |
+                    (__roze_hosted_io_ports[p + 1] << 8) |
+                    (__roze_hosted_io_ports[p + 2] << 16) |
+                    (__roze_hosted_io_ports[p + 3] << 24));
 }
 __attribute__((weak)) void qemu_exit(int64_t code) { (void)code; }
 __attribute__((weak)) void serial_print(const char* s) { if (s) fputs(s, stdout); }
@@ -1934,18 +1971,52 @@ __attribute__((weak)) int64_t apic_is_enabled(void) {
     return __roze_hosted_apic_enabled;
 }
 
+static unsigned int __roze_hosted_hpet_mmio[1024] = {0};
+static int __roze_hosted_hpet_init_done = 0;
+#define HOSTED_FB_BASE 0xFD000000LL
+#define HOSTED_FB_SIZE (1024 * 768 * 4)
+static unsigned char __roze_hosted_fb[HOSTED_FB_SIZE] = {0};
+static void ensure_hosted_hpet_init(void) {
+    if (!__roze_hosted_hpet_init_done) {
+        __roze_hosted_hpet_init_done = 1;
+        __roze_hosted_hpet_mmio[0x000 / 4] = 0x00008201; // Cap ID low: 64-bit capable, 3 timers
+        __roze_hosted_hpet_mmio[0x004 / 4] = 0x00989680; // Cap ID high: Period = 10,000,000 fs
+        __roze_hosted_hpet_mmio[0x010 / 4] = 0x00000001; // Config: enabled
+        __roze_hosted_hpet_mmio[0x0F0 / 4] = 0x00010000; // Main Counter low
+        __roze_hosted_hpet_mmio[0x0F4 / 4] = 0x00000000; // Main Counter high
+    }
+}
+
 __attribute__((weak)) int64_t mmio_read32(int64_t addr) {
     ensure_hosted_apic_init();
-    if (addr >= 0xFEE00000LL && addr < 0xFEE01000LL) {
-        return (int64_t)__roze_hosted_apic_mmio[(addr - 0xFEE00000LL) / 4];
+    ensure_hosted_hpet_init();
+    uint64_t uaddr = (uint64_t)addr & 0xFFFFFFFFULL;
+    if (uaddr >= HOSTED_FB_BASE && uaddr < (HOSTED_FB_BASE + HOSTED_FB_SIZE)) {
+        return (int64_t)(*(unsigned int *)(__roze_hosted_fb + (uaddr - HOSTED_FB_BASE)));
+    }
+    if (uaddr >= 0xFEE00000ULL && uaddr < 0xFEE01000ULL) {
+        return (int64_t)__roze_hosted_apic_mmio[(uaddr - 0xFEE00000ULL) / 4];
+    }
+    if (uaddr >= 0xFED00000ULL && uaddr < 0xFED01000ULL) {
+        return (int64_t)__roze_hosted_hpet_mmio[(uaddr - 0xFED00000ULL) / 4];
     }
     return (int64_t)(*(volatile unsigned int *)addr);
 }
 
 __attribute__((weak)) void mmio_write32(int64_t addr, int64_t val) {
     ensure_hosted_apic_init();
-    if (addr >= 0xFEE00000LL && addr < 0xFEE01000LL) {
-        __roze_hosted_apic_mmio[(addr - 0xFEE00000LL) / 4] = (unsigned int)val;
+    ensure_hosted_hpet_init();
+    uint64_t uaddr = (uint64_t)addr & 0xFFFFFFFFULL;
+    if (uaddr >= HOSTED_FB_BASE && uaddr < (HOSTED_FB_BASE + HOSTED_FB_SIZE)) {
+        *(unsigned int *)(__roze_hosted_fb + (uaddr - HOSTED_FB_BASE)) = (unsigned int)val;
+        return;
+    }
+    if (uaddr >= 0xFEE00000ULL && uaddr < 0xFEE01000ULL) {
+        __roze_hosted_apic_mmio[(uaddr - 0xFEE00000ULL) / 4] = (unsigned int)val;
+        return;
+    }
+    if (uaddr >= 0xFED00000ULL && uaddr < 0xFED01000ULL) {
+        __roze_hosted_hpet_mmio[(uaddr - 0xFED00000ULL) / 4] = (unsigned int)val;
         return;
     }
     *(volatile unsigned int *)addr = (unsigned int)val;
@@ -1965,6 +2036,17 @@ __attribute__((weak)) int64_t mmio_read8(int64_t addr) {
 
 __attribute__((weak)) void mmio_write8(int64_t addr, int64_t val) {
     *(volatile unsigned char *)addr = (unsigned char)val;
+}
+
+__attribute__((weak)) int64_t mmio_read64(int64_t addr) {
+    int64_t low = (int64_t)(unsigned int)mmio_read32(addr);
+    int64_t high = (int64_t)(unsigned int)mmio_read32(addr + 4);
+    return (low | (high << 32));
+}
+
+__attribute__((weak)) void mmio_write64(int64_t addr, int64_t val) {
+    mmio_write32(addr, val & 0xFFFFFFFFLL);
+    mmio_write32(addr + 4, (val >> 32) & 0xFFFFFFFFLL);
 }
 
 __attribute__((weak)) int64_t ptr_read_u32_at(void *ptr, int64_t offset) {
@@ -2000,6 +2082,8 @@ __attribute__((weak)) void* jwt_decode_header(const char* token) { (void)token; 
 __attribute__((weak)) int64_t time_now(void) { return (int64_t)time(NULL); }
 __attribute__((weak)) int64_t time_now_millis(void) { return (int64_t)time(NULL) * 1000LL; }
 __attribute__((weak)) void* map_keys(void* m) { (void)m; return NULL; }
+__attribute__((weak)) int64_t string_length(const char* s) { return s ? (int64_t)strlen(s) : 0; }
+__attribute__((weak)) int64_t string_char_at(const char* s, int64_t idx) { return (s && idx >= 0 && idx < (int64_t)strlen(s)) ? (int64_t)(unsigned char)s[idx] : 0; }
 __attribute__((weak)) const char* substring(const char* s, int64_t start, int64_t end) { (void)start; (void)end; return s ? s : ""; }
 __attribute__((weak)) const char* string_substring(const char* s, int64_t start, int64_t end) { (void)start; (void)end; return s ? s : ""; }
 __attribute__((weak)) int64_t string_contains(const char* s, const char* sub) { (void)s; (void)sub; return 0; }

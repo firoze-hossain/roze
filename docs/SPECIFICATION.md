@@ -807,6 +807,39 @@ Roze provides a complete, low-level OS kernel interrupt management architecture 
 
 ---
 
+### 3.12 Hardware Drivers: UART, Keyboard, Timer & GOP Framebuffer
+
+Roze provides a comprehensive, production-grade hardware device driver library written in pure Roze (`import "drivers";` or `import "uart";` / `import "keyboard";` / `import "mouse";` / `import "ps2";` / `import "timer";` / `import "pit";` / `import "hpet";` / `import "gop";` / `import "framebuffer";`):
+
+#### 16550 UART Serial Communication Driver
+- **Base Ports**: Standard COM1 (`0x3F8`), COM2 (`0x2F8`), COM3 (`0x3E8`), and COM4 (`0x2E8`).
+- **Registers & 8N1 Protocol**: Divisor Latch Access Bit (DLAB = 1) for 16-bit baud divisor programming (`115200 / baud`), Line Control Register (`0x03` for 8 data bits, no parity, 1 stop bit), FIFO Control Register (`0xC7` for 14-byte FIFO trigger threshold), and Modem Control Register (`0x0B` for DTR/RTS/OUT2).
+- **Driver Functions & Class**: `uart_init_port`, `uart_can_tx` (LSR bit 5 THRE), `uart_has_rx` (LSR bit 0 DR), `uart_putc`, `uart_puts`, `uart_getc`, `uart_test_scratch`, `uart_test_loopback`, and `UartDriver` object wrapper (`uart_driver_new`, `uart_driver_init`, `uart_driver_putc`, `uart_driver_puts`, `uart_driver_can_tx`).
+
+#### PS/2 Keyboard & Mouse Interrupt Driver
+- **Controller Ports & Registers**: Data Port (`0x60`), Status/Command Port (`0x64`).
+- **Scancode Set 1 Decoder**: Decodes key presses (make) and key releases (break = make + 128), tracks modifier keys (Left/Right Shift, Ctrl, Alt, CapsLock toggle), and handles extended multi-byte scancodes (`0xE0` prefix for arrow keys, home, end, pgup, pgdn).
+- **ASCII Translation**: Complete printable ASCII lookup supporting QWERTY rows, numbers, punctuation, Shift inversion, and CapsLock.
+- **PS/2 Mouse 3-Byte Packet Decoder**: Decodes standard PS/2 packets: Left/Right/Middle button flags, signed X/Y displacements with 2's complement sign-bit extension, screen boundary clamping, and inverted Y-axis translation.
+- **Data Structures**: `KeyEvent`, `Ps2Keyboard` (`ps2_keyboard_new`, `ps2_keyboard_process_scancode`), `MouseEvent`, `Ps2Mouse` (`ps2_mouse_new`, `ps2_mouse_process_byte`, `ps2_mouse_get_event`).
+
+#### High-Resolution Timers (PIT & HPET)
+- **8253/8254 Programmable Interval Timer (PIT)**: Channel 0 square-wave mode 3 generator (`0x36`), 16-bit divisor calculation (`1193182 / hz`), and `PitTimer` driver tracking system ticks and uptime milliseconds (`pit_timer_new`, `pit_tick`, `pit_uptime_ms`, `pit_sleep_ticks`).
+- **High Precision Event Timer (HPET)**: Memory-mapped I/O timer (`0xFED00000`). Reads 64-bit main counter, extracts tick period in femtoseconds (`period_fs`), converts elapsed ticks to nanoseconds and microseconds, and verifies 64-bit counter capability (`hpet_init`, `hpet_read_counter`, `hpet_elapsed_ticks`, `hpet_elapsed_nanos`, `hpet_elapsed_micros`).
+
+#### UEFI GOP Linear Framebuffer Graphics Driver
+- **32-bpp BGRA/RGBA Framebuffer**: `GopFramebuffer` struct with width, height, pitch, bits-per-pixel, and base address.
+- **Color Engine**: `color_rgb`, `color_rgba`, color channel decomposition (`color_get_r`, `color_get_g`, `color_get_b`, `color_get_a`), and standard palette constants (`color_roze`, `color_black`, `color_white`, etc.).
+- **Drawing Primitives**:
+  - Bounds-checked pixel reading and writing (`framebuffer_put_pixel`, `framebuffer_get_pixel`).
+  - Solid screen clearing (`framebuffer_clear`).
+  - Filled and outlined rectangles (`framebuffer_fill_rect`, `framebuffer_draw_rect`).
+  - Bresenham's integer-only line algorithm (`framebuffer_draw_line`).
+  - Midpoint integer circle rasterization (`framebuffer_draw_circle`, `framebuffer_fill_circle`).
+- **Embedded 8x16 Bitmap Font Engine**: Complete ASCII glyph renderer with zero font asset dependencies (`gop_font_glyph_row`, `framebuffer_draw_char`, `framebuffer_draw_string`).
+
+---
+
 ## 4. Error Handling (`Result`, `Option`, `?`)
 
 Roze replaces unchecked exceptions with explicit sum types:

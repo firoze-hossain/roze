@@ -14,6 +14,10 @@ extern "C" func serial_print(s: string);
 extern "C" func serial_putchar(ch: int);
 extern "C" func outb(port: int, val: int);
 extern "C" func inb(port: int) -> int;
+extern "C" func outw(port: int, val: int);
+extern "C" func inw(port: int) -> int;
+extern "C" func outl(port: int, val: int);
+extern "C" func inl(port: int) -> int;
 extern "C" func qemu_exit(code: int);
 
 // Hardware Paging & Virtual Memory Intrinsics (M2-T06)
@@ -53,6 +57,8 @@ extern "C" func apic_init(base: int);
 extern "C" func apic_enable();
 extern "C" func apic_send_eoi();
 extern "C" func apic_is_enabled() -> bool;
+extern "C" func mmio_read64(addr: int) -> int;
+extern "C" func mmio_write64(addr: int, val: int);
 extern "C" func mmio_read32(addr: int) -> int;
 extern "C" func mmio_write32(addr: int, val: int);
 extern "C" func mmio_read16(addr: int) -> int;

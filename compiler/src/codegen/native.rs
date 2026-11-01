@@ -596,6 +596,42 @@ long inb(long port) {
     return (long)inb_internal((unsigned short)port);
 }
 
+static inline void outw_internal(unsigned short port, unsigned short val) {
+    __asm__ volatile ("outw %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline unsigned short inw_internal(unsigned short port) {
+    unsigned short ret;
+    __asm__ volatile ("inw %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
+static inline void outl_internal(unsigned short port, unsigned int val) {
+    __asm__ volatile ("outl %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline unsigned int inl_internal(unsigned short port) {
+    unsigned int ret;
+    __asm__ volatile ("inl %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
+void outw(long port, long val) {
+    outw_internal((unsigned short)port, (unsigned short)val);
+}
+
+long inw(long port) {
+    return (long)inw_internal((unsigned short)port);
+}
+
+void outl(long port, long val) {
+    outl_internal((unsigned short)port, (unsigned int)val);
+}
+
+long inl(long port) {
+    return (long)inl_internal((unsigned short)port);
+}
+
 void qemu_exit(long code) {
     outb_internal(0xf4, (unsigned char)code);
 }
@@ -810,6 +846,14 @@ long mmio_read8(long addr) {
 
 void mmio_write8(long addr, long val) {
     *(volatile unsigned char *)addr = (unsigned char)val;
+}
+
+long mmio_read64(long addr) {
+    return (long)(*(volatile unsigned long *)addr);
+}
+
+void mmio_write64(long addr, long val) {
+    *(volatile unsigned long *)addr = (unsigned long)val;
 }
 
 long ptr_read_u32_at(void *ptr, long offset) {
@@ -4151,6 +4195,12 @@ pub struct KernelRuntime {
     pub mmio_write16_id: FuncId,
     pub mmio_read8_id: FuncId,
     pub mmio_write8_id: FuncId,
+    pub inw_id: FuncId,
+    pub outw_id: FuncId,
+    pub inl_id: FuncId,
+    pub outl_id: FuncId,
+    pub mmio_read64_id: FuncId,
+    pub mmio_write64_id: FuncId,
 }
 
 fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
@@ -4275,6 +4325,18 @@ fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
         .map_err(|e| anyhow!(e.to_string()))?;
     let mmio_write8_id = module.declare_function("mmio_write8", Linkage::Import, &i64_i64_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
+    let inw_id = module.declare_function("inw", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let outw_id = module.declare_function("outw", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let inl_id = module.declare_function("inl", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let outl_id = module.declare_function("outl", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mmio_read64_id = module.declare_function("mmio_read64", Linkage::Import, &i64_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let mmio_write64_id = module.declare_function("mmio_write64", Linkage::Import, &i64_i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
 
     Ok(KernelRuntime {
         multiboot2_get_magic_id,
@@ -4329,6 +4391,12 @@ fn declare_kernel_runtime(module: &mut ObjectModule) -> Result<KernelRuntime> {
         mmio_write16_id,
         mmio_read8_id,
         mmio_write8_id,
+        inw_id,
+        outw_id,
+        inl_id,
+        outl_id,
+        mmio_read64_id,
+        mmio_write64_id,
     })
 }
 
@@ -9224,6 +9292,34 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let results = self.builder.inst_results(call_inst);
                 return Ok(results[0]);
             }
+            "outw" if arguments.len() == 2 => {
+                let port = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.outw_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[port, val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "inw" if arguments.len() == 1 => {
+                let port = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.inw_id, self.builder.func);
+                let call_inst = self.builder.ins().call(func_ref, &[port]);
+                let results = self.builder.inst_results(call_inst);
+                return Ok(results[0]);
+            }
+            "outl" if arguments.len() == 2 => {
+                let port = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.outl_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[port, val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "inl" if arguments.len() == 1 => {
+                let port = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.inl_id, self.builder.func);
+                let call_inst = self.builder.ins().call(func_ref, &[port]);
+                let results = self.builder.inst_results(call_inst);
+                return Ok(results[0]);
+            }
             "qemu_exit" if arguments.len() == 1 => {
                 let code = self.compile_expression(&arguments[0])?;
                 let func_ref = self.module.declare_func_in_func(self.kernel.qemu_exit_id, self.builder.func);
@@ -9539,6 +9635,38 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let func_ref = self.module.declare_func_in_func(self.kernel.mmio_write8_id, self.builder.func);
                 self.builder.ins().call(func_ref, &[addr, val]);
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "mmio_read64" if arguments.len() == 1 => {
+                let addr = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.mmio_read64_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[addr]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "mmio_write64" if arguments.len() == 2 => {
+                let addr = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.kernel.mmio_write64_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[addr, val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "string_length" if arguments.len() == 1 => {
+                let str_val = self.compile_expression(&arguments[0])?;
+                let len = self.builder.ins().load(VALUE_TYPE, MemFlags::trusted(), str_val, -8);
+                if !expression_is_borrowed(&arguments[0]) {
+                    self.emit_string_release(str_val)?;
+                }
+                return Ok(len);
+            }
+            "string_char_at" if arguments.len() == 2 => {
+                let str_val = self.compile_expression(&arguments[0])?;
+                let idx_val = self.compile_expression(&arguments[1])?;
+                let addr = self.builder.ins().iadd(str_val, idx_val);
+                let byte_val = self.builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+                let char_val = self.builder.ins().uextend(VALUE_TYPE, byte_val);
+                if !expression_is_borrowed(&arguments[0]) {
+                    self.emit_string_release(str_val)?;
+                }
+                return Ok(char_val);
             }
 
             // ---- Fixed-Width Conversions ----

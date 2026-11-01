@@ -2562,6 +2562,39 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
         }
         return 0;
     }
+    private static void __roze_outw(long port, long val) {
+        int p = (int)(port & 0xFFFF);
+        if (p >= 0 && p + 1 < __roze_io_ports.length) {
+            __roze_io_ports[p] = (int)(val & 0xFF);
+            __roze_io_ports[p + 1] = (int)((val >> 8) & 0xFF);
+        }
+    }
+    private static int __roze_inw(long port) {
+        int p = (int)(port & 0xFFFF);
+        if (p >= 0 && p + 1 < __roze_io_ports.length) {
+            return (__roze_io_ports[p] & 0xFF) | ((__roze_io_ports[p + 1] & 0xFF) << 8);
+        }
+        return 0;
+    }
+    private static void __roze_outl(long port, long val) {
+        int p = (int)(port & 0xFFFF);
+        if (p >= 0 && p + 3 < __roze_io_ports.length) {
+            __roze_io_ports[p] = (int)(val & 0xFF);
+            __roze_io_ports[p + 1] = (int)((val >> 8) & 0xFF);
+            __roze_io_ports[p + 2] = (int)((val >> 16) & 0xFF);
+            __roze_io_ports[p + 3] = (int)((val >> 24) & 0xFF);
+        }
+    }
+    private static int __roze_inl(long port) {
+        int p = (int)(port & 0xFFFF);
+        if (p >= 0 && p + 3 < __roze_io_ports.length) {
+            return (__roze_io_ports[p] & 0xFF) |
+                   ((__roze_io_ports[p + 1] & 0xFF) << 8) |
+                   ((__roze_io_ports[p + 2] & 0xFF) << 16) |
+                   ((__roze_io_ports[p + 3] & 0xFF) << 24);
+        }
+        return 0;
+    }
     private static void __roze_qemu_exit(long code) {}
     private static void __roze_serial_print(String s) { System.out.print(s); }
     private static void __roze_serial_putchar(long ch) { System.out.print((char)ch); }
@@ -2598,10 +2631,17 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     private static int __roze_pic_slave_offset = 40;
 
     static {
+        __roze_io_ports[0x3F8 + 5] = 0x20; // COM1 LSR Transmitter Empty
+        __roze_io_ports[0x2F8 + 5] = 0x20; // COM2 LSR Transmitter Empty
         __roze_simulated_msrs.put(0x1BL, 0xFEE00900L); // IA32_APIC_BASE
         __roze_simulated_mmio.put(0xFEE00020L, 0x00000000); // APIC ID
         __roze_simulated_mmio.put(0xFEE00030L, 0x00050014); // APIC Version
         __roze_simulated_mmio.put(0xFEE000F0L, 0x000001FF); // SVR
+        __roze_simulated_mmio.put(0xFED00000L, 0x00008201); // HPET Cap ID low (64-bit capable, 3 timers)
+        __roze_simulated_mmio.put(0xFED00004L, 0x00989680); // HPET Cap ID high (period = 10,000,000 fs)
+        __roze_simulated_mmio.put(0xFED00010L, 0x00000001); // HPET Config (enabled)
+        __roze_simulated_mmio.put(0xFED000F0L, 0x00010000); // HPET Main Counter low
+        __roze_simulated_mmio.put(0xFED000F4L, 0x00000000); // HPET Main Counter high
     }
 
     private static void __roze_cli() { __roze_simulated_rflags &= ~(1L << 9); }
@@ -2693,6 +2733,10 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
                    ((__ROZE_SIMULATED_RAM[idx + 2] & 0xFF) << 16) |
                    ((__ROZE_SIMULATED_RAM[idx + 3] & 0xFF) << 24);
         }
+        long uaddr = addr & 0xFFFFFFFFL;
+        if (__roze_simulated_mmio.containsKey(uaddr)) {
+            return __roze_simulated_mmio.get(uaddr);
+        }
         if (__roze_simulated_mmio.containsKey(addr)) {
             return __roze_simulated_mmio.get(addr);
         }
@@ -2709,6 +2753,7 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
             __ROZE_SIMULATED_RAM[idx + 3] = (byte)((val >> 24) & 0xFF);
             return;
         }
+        __roze_simulated_mmio.put(addr & 0xFFFFFFFFL, (int)val);
         __roze_simulated_mmio.put(addr, (int)val);
     }
 
@@ -2737,6 +2782,15 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     private static void __roze_mmio_write16(long addr, long val) { __roze_ptr_write_u16_at(addr, 0, val); }
     private static int __roze_mmio_read8(long addr) { return __roze_ptr_read_u8(addr); }
     private static void __roze_mmio_write8(long addr, long val) { __roze_ptr_write_u8(addr, (int)val); }
+    private static int __roze_mmio_read64(long addr) {
+        long low = (long)__roze_mmio_read32(addr) & 0xFFFFFFFFL;
+        long high = (long)__roze_mmio_read32(addr + 4) & 0xFFFFFFFFL;
+        return (int)(low | (high << 32));
+    }
+    private static void __roze_mmio_write64(long addr, long val) {
+        __roze_mmio_write32(addr, val & 0xFFFFFFFFL);
+        __roze_mmio_write32(addr + 4, (val >>> 32) & 0xFFFFFFFFL);
+    }
 
 "#;
 
@@ -4176,7 +4230,7 @@ const MEMORY_HELPER_METHODS: &str = r#"
 /// `semantic::builtin_signatures`.
 fn intrinsic_return_type(name: &str) -> Option<&'static str> {
     match name {
-        "string_length" => Some("int"),
+        "string_length" | "string_char_at" => Some("int"),
         "string_concat" => Some("String"),
         "string_to_upper" => Some("String"),
         "string_to_lower" => Some("String"),
@@ -4396,11 +4450,13 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "are_interrupts_enabled" | "pic_is_masked" | "apic_is_enabled" => Some("boolean"),
         "read_rflags" | "read_cr2" | "read_msr" | "get_last_interrupt_vector" | "get_last_interrupt_error_code"
         | "get_last_interrupt_fault_addr" | "get_interrupt_count" | "gdt_init_default" | "idt_init_default"
-        | "ptr_read_u32_at" | "ptr_read_u16_at" | "mmio_read32" | "mmio_read16" | "mmio_read8" => Some("int"),
+        | "ptr_read_u32_at" | "ptr_read_u16_at" | "mmio_read32" | "mmio_read16" | "mmio_read8"
+        | "mmio_read64" | "inw" | "inl" => Some("int"),
         "cli" | "sti" | "write_cr2" | "write_msr" | "lidt" | "lgdt" | "ltr" | "int_invoke" | "trigger_interrupt"
         | "pic_remap" | "pic_send_eoi" | "pic_mask_irq" | "pic_unmask_irq" | "pic_disable"
         | "apic_init" | "apic_enable" | "apic_send_eoi"
-        | "ptr_write_u32_at" | "ptr_write_u16_at" | "mmio_write32" | "mmio_write16" | "mmio_write8" => Some("void"),
+        | "ptr_write_u32_at" | "ptr_write_u16_at" | "mmio_write32" | "mmio_write16" | "mmio_write8"
+        | "mmio_write64" | "outw" | "outl" => Some("void"),
 
         // Fixed-Width Numeric Suite (M2-T01)
         "i8" => Some("byte"),
@@ -6362,6 +6418,13 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str(")).length()");
             }
+            "string_char_at" if arguments.len() == 2 => {
+                source.push_str("((int)(((String)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")).charAt((int)(");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str("))))");
+            }
             "string_to_upper" if arguments.len() == 1 => {
                 source.push_str("((String)(");
                 self.generate_expression(source, &arguments[0])?;
@@ -8158,6 +8221,30 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[0])?;
                 source.push(')');
             }
+            "outw" if arguments.len() == 2 => {
+                source.push_str("__roze_outw(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "inw" if arguments.len() == 1 => {
+                source.push_str("__roze_inw(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "outl" if arguments.len() == 2 => {
+                source.push_str("__roze_outl(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "inl" if arguments.len() == 1 => {
+                source.push_str("__roze_inl(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
             "qemu_exit" if arguments.len() == 1 => {
                 source.push_str("__roze_qemu_exit(");
                 self.generate_expression(source, &arguments[0])?;
@@ -8416,6 +8503,18 @@ impl JavaSourceGenerator {
             }
             "mmio_write8" if arguments.len() == 2 => {
                 source.push_str("__roze_mmio_write8(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "mmio_read64" if arguments.len() == 1 => {
+                source.push_str("__roze_mmio_read64(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "mmio_write64" if arguments.len() == 2 => {
+                source.push_str("__roze_mmio_write64(");
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str(", ");
                 self.generate_expression(source, &arguments[1])?;

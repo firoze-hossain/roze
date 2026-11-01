@@ -1,0 +1,1172 @@
+// stdlib/src/drivers.roze
+//
+// 🌹 Roze Hardware Driver Subsystem (M2-T08)
+// Hardware I/O driver library in pure Roze for Operating Systems & Embedded Firmware:
+//   1. 16550 UART Serial Driver (COM1..COM4, 8N1 mode, divisor baud generator, FIFO, loopback)
+//   2. PS/2 Keyboard & Mouse Interrupt Driver (Scancode Set 1 make/break, modifiers, 3-byte mouse packets)
+//   3. High-Resolution Timers (8253/8254 PIT square-wave generator & HPET 64-bit main counter)
+//   4. UEFI GOP Linear Framebuffer Driver (32-bpp BGRA/RGBA graphics primitives & 8x16 font renderer)
+//
+// Zero host OS dependencies. Full parity across JVM, Native Cranelift, and Bare-Metal Freestanding.
+
+import "freestanding";
+
+// ==============================================================================
+// 1. 16550 UART Serial Communication Driver
+// ==============================================================================
+
+// Standard COM I/O Port Base Addresses
+func uart_com1() -> int { return 1016; } // 0x3F8
+func uart_com2() -> int { return 760; }  // 0x2F8
+func uart_com3() -> int { return 1000; } // 0x3E8
+func uart_com4() -> int { return 744; }  // 0x2E8
+
+// Register Offsets
+func uart_reg_data() -> int { return 0; }
+func uart_reg_ier() -> int { return 1; }
+func uart_reg_fcr() -> int { return 2; }
+func uart_reg_lcr() -> int { return 3; }
+func uart_reg_mcr() -> int { return 4; }
+func uart_reg_lsr() -> int { return 5; }
+func uart_reg_msr() -> int { return 6; }
+func uart_reg_scratch() -> int { return 7; }
+
+// Line Status Register (LSR) Flags
+func uart_lsr_data_ready() -> int { return 1; }       // Bit 0: DR
+func uart_lsr_overrun_err() -> int { return 2; }      // Bit 1: OE
+func uart_lsr_parity_err() -> int { return 4; }       // Bit 2: PE
+func uart_lsr_framing_err() -> int { return 8; }      // Bit 3: FE
+func uart_lsr_break_int() -> int { return 16; }       // Bit 4: BI
+func uart_lsr_tx_empty() -> int { return 32; }        // Bit 5: THRE (Transmitter Holding Register Empty)
+func uart_lsr_tx_idle() -> int { return 64; }         // Bit 6: TEMT (Transmitter Empty)
+
+// Computes 16-bit baud rate divisor from 115,200 Hz base clock
+func uart_calc_divisor(baud: int) -> int {
+    if baud <= 0 {
+        return 1;
+    }
+    let d = 115200 / baud;
+    if d <= 0 {
+        return 1;
+    }
+    if d > 65535 {
+        return 65535;
+    }
+    return d;
+}
+
+// Initializes a 16550 UART serial port (baud rate, 8N1, FIFO enabled, DTR/RTS set)
+func uart_init_port(base: int, baud: int) -> bool {
+    let divisor = uart_calc_divisor(baud);
+    let div_low = bit_and(divisor, 255);
+    let div_high = bit_and(bit_shr(divisor, 8), 255);
+
+    // 1. Disable all interrupts
+    outb(base + uart_reg_ier(), 0);
+
+    // 2. Enable DLAB (Divisor Latch Access Bit = 1) in Line Control Register
+    outb(base + uart_reg_lcr(), 128); // 0x80
+
+    // 3. Set baud rate divisor
+    outb(base + uart_reg_data(), div_low);
+    outb(base + uart_reg_ier(), div_high);
+
+    // 4. Set 8 bits, no parity, one stop bit (8N1 = 0x03) and clear DLAB
+    outb(base + uart_reg_lcr(), 3);
+
+    // 5. Enable FIFO, clear TX/RX FIFOs, 14-byte trigger threshold (0xC7)
+    outb(base + uart_reg_fcr(), 199);
+
+    // 6. Set Modem Control Register (DTR, RTS, OUT2 = 0x0B)
+    outb(base + uart_reg_mcr(), 11);
+
+    return true;
+}
+
+// Checks if the transmitter is ready to accept a new character
+func uart_can_tx(base: int) -> bool {
+    let lsr = inb(base + uart_reg_lsr());
+    return bit_and(lsr, uart_lsr_tx_empty()) != 0;
+}
+
+// Checks if a received byte is available in the receiver FIFO
+func uart_has_rx(base: int) -> bool {
+    let lsr = inb(base + uart_reg_lsr());
+    return bit_and(lsr, uart_lsr_data_ready()) != 0;
+}
+
+// Transmits a single character over the UART line
+func uart_putc(base: int, ch: int) {
+    let mut_spin = 0;
+    while mut_spin < 100000 {
+        if uart_can_tx(base) {
+            outb(base + uart_reg_data(), bit_and(ch, 255));
+            return;
+        }
+        mut_spin = mut_spin + 1;
+    }
+    // Timeout fallback: send byte anyway
+    outb(base + uart_reg_data(), bit_and(ch, 255));
+}
+
+// Transmits a null-terminated string over the UART line
+func uart_puts(base: int, s: string) {
+    let len = string_length(s);
+    let i = 0;
+    while i < len {
+        let ch = string_char_at(s, i);
+        if ch == 10 { // LF -> CR + LF
+            uart_putc(base, 13);
+        }
+        uart_putc(base, ch);
+        i = i + 1;
+    }
+}
+
+// Reads a character from the UART receiver if available, returns -1 if empty
+func uart_getc(base: int) -> int {
+    if uart_has_rx(base) {
+        return inb(base + uart_reg_data());
+    }
+    return 0 - 1;
+}
+
+// Tests the UART Scratch Register (Offset 7)
+func uart_test_scratch(base: int, val: int) -> bool {
+    let pattern = bit_and(val, 255);
+    outb(base + uart_reg_scratch(), pattern);
+    let readback = inb(base + uart_reg_scratch());
+    return readback == pattern;
+}
+
+// Tests UART hardware using local loopback mode
+func uart_test_loopback(base: int) -> bool {
+    // Enable loopback mode (MCR bit 4 = 1, RTS, DTR = 0x1E)
+    outb(base + uart_reg_mcr(), 30);
+    let test_byte = 174; // 0xAE
+    outb(base + uart_reg_data(), test_byte);
+    let readback = inb(base + uart_reg_data());
+    // Restore normal operation (MCR = 0x0F)
+    outb(base + uart_reg_mcr(), 15);
+    return readback == test_byte;
+}
+
+// UART Device Driver Class
+class UartDriver {
+    base_port: int,
+    baud_rate: int,
+    is_initialized: bool,
+}
+
+func uart_driver_new(base: int, baud: int) -> UartDriver {
+    let drv = new UartDriver(base, baud, false);
+    uart_driver_init(drv);
+    return drv;
+}
+
+func uart_driver_init(drv: UartDriver) -> bool {
+    let ok = uart_init_port(drv.base_port, drv.baud_rate);
+    drv.is_initialized = ok;
+    return ok;
+}
+
+func uart_driver_putc(drv: UartDriver, ch: int) {
+    uart_putc(drv.base_port, ch);
+}
+
+func uart_driver_puts(drv: UartDriver, s: string) {
+    uart_puts(drv.base_port, s);
+}
+
+func uart_driver_can_tx(drv: UartDriver) -> bool {
+    return uart_can_tx(drv.base_port);
+}
+
+func uart_driver_has_data(drv: UartDriver) -> bool {
+    return uart_has_rx(drv.base_port);
+}
+
+func uart_driver_getc(drv: UartDriver) -> int {
+    return uart_getc(drv.base_port);
+}
+
+// ==============================================================================
+// 2. PS/2 Keyboard & Mouse Interrupt Driver
+// ==============================================================================
+
+// PS/2 Controller I/O Ports
+func ps2_port_data() -> int { return 96; }     // 0x60
+func ps2_port_status() -> int { return 100; }  // 0x64 (Read)
+func ps2_port_command() -> int { return 100; } // 0x64 (Write)
+
+// PS/2 Status Register Bits
+func ps2_status_obuf_full() -> int { return 1; }     // Bit 0: Output buffer full (CPU can read)
+func ps2_status_ibuf_full() -> int { return 2; }     // Bit 1: Input buffer full (Do not write)
+func ps2_status_sys_flag() -> int { return 4; }      // Bit 2: System flag
+func ps2_status_cmd_data() -> int { return 8; }      // Bit 3: Command/data flag
+func ps2_status_mouse_full() -> int { return 32; }   // Bit 5: Mouse output buffer full
+func ps2_status_timeout() -> int { return 64; }      // Bit 6: Timeout error
+func ps2_status_parity_err() -> int { return 128; }  // Bit 7: Parity error
+
+func ps2_can_read() -> bool {
+    let status = inb(ps2_port_status());
+    return bit_and(status, ps2_status_obuf_full()) != 0;
+}
+
+func ps2_can_write() -> bool {
+    let status = inb(ps2_port_status());
+    return bit_and(status, ps2_status_ibuf_full()) == 0;
+}
+
+func ps2_read_data() -> int {
+    return inb(ps2_port_data());
+}
+
+func ps2_write_data(val: int) {
+    outb(ps2_port_data(), bit_and(val, 255));
+}
+
+func ps2_write_command(cmd: int) {
+    outb(ps2_port_command(), bit_and(cmd, 255));
+}
+
+// Scancode Set 1 Key Event
+class KeyEvent {
+    scancode: int,
+    ascii: int,
+    pressed: bool,
+    is_extended: bool,
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+    caps_lock: bool,
+}
+
+// Scancode to ASCII Mapping for Printable Keys (Scancode Set 1)
+func ps2_scancode_to_ascii(scancode: int, shift: bool, caps: bool) -> int {
+    // Digits row
+    if scancode == 2 { if shift { return 33; } return 49; }  // 1 / !
+    if scancode == 3 { if shift { return 64; } return 50; }  // 2 / @
+    if scancode == 4 { if shift { return 35; } return 51; }  // 3 / #
+    if scancode == 5 { if shift { return 36; } return 52; }  // 4 / $
+    if scancode == 6 { if shift { return 37; } return 53; }  // 5 / %
+    if scancode == 7 { if shift { return 94; } return 54; }  // 6 / ^
+    if scancode == 8 { if shift { return 38; } return 55; }  // 7 / &
+    if scancode == 9 { if shift { return 42; } return 56; }  // 8 / *
+    if scancode == 10 { if shift { return 40; } return 57; } // 9 / (
+    if scancode == 11 { if shift { return 41; } return 48; } // 0 / )
+    if scancode == 12 { if shift { return 95; } return 45; } // - / _
+    if scancode == 13 { if shift { return 43; } return 61; } // = / +
+
+    // Whitespace / Control
+    if scancode == 14 { return 8; }   // Backspace
+    if scancode == 15 { return 9; }   // Tab
+    if scancode == 28 { return 10; }  // Enter
+    if scancode == 57 { return 32; }  // Space
+    if scancode == 1 { return 27; }   // Escape
+
+    // Punctuation
+    if scancode == 26 { if shift { return 123; } return 91; }  // [ / {
+    if scancode == 27 { if shift { return 125; } return 93; }  // ] / }
+    if scancode == 39 { if shift { return 58; } return 59; }   // ; / :
+    if scancode == 40 { if shift { return 34; } return 39; }   // ' / "
+    if scancode == 41 { if shift { return 126; } return 96; }  // ` / ~
+    if scancode == 43 { if shift { return 124; } return 92; }  // \ / |
+    if scancode == 51 { if shift { return 60; } return 44; }   // , / <
+    if scancode == 52 { if shift { return 62; } return 46; }   // . / >
+    if scancode == 53 { if shift { return 63; } return 47; }   // / / ?
+
+    // Letters: Determine if uppercase (Shift XOR CapsLock)
+    let is_upper = false;
+    if shift {
+        if caps == false { is_upper = true; }
+    } else {
+        if caps { is_upper = true; }
+    }
+
+    // Top letter row (Q..P)
+    if scancode == 16 { if is_upper { return 81; } return 113; } // Q
+    if scancode == 17 { if is_upper { return 87; } return 119; } // W
+    if scancode == 18 { if is_upper { return 69; } return 101; } // E
+    if scancode == 19 { if is_upper { return 82; } return 114; } // R
+    if scancode == 20 { if is_upper { return 84; } return 116; } // T
+    if scancode == 21 { if is_upper { return 89; } return 121; } // Y
+    if scancode == 22 { if is_upper { return 85; } return 117; } // U
+    if scancode == 23 { if is_upper { return 73; } return 105; } // I
+    if scancode == 24 { if is_upper { return 79; } return 111; } // O
+    if scancode == 25 { if is_upper { return 80; } return 112; } // P
+
+    // Middle letter row (A..L)
+    if scancode == 30 { if is_upper { return 65; } return 97; }  // A
+    if scancode == 31 { if is_upper { return 83; } return 115; } // S
+    if scancode == 32 { if is_upper { return 68; } return 100; } // D
+    if scancode == 33 { if is_upper { return 70; } return 102; } // F
+    if scancode == 34 { if is_upper { return 71; } return 103; } // G
+    if scancode == 35 { if is_upper { return 72; } return 104; } // H
+    if scancode == 36 { if is_upper { return 74; } return 106; } // J
+    if scancode == 37 { if is_upper { return 75; } return 107; } // K
+    if scancode == 38 { if is_upper { return 76; } return 108; } // L
+
+    // Bottom letter row (Z..M)
+    if scancode == 44 { if is_upper { return 90; } return 122; } // Z
+    if scancode == 45 { if is_upper { return 88; } return 120; } // X
+    if scancode == 46 { if is_upper { return 67; } return 99; }  // C
+    if scancode == 47 { if is_upper { return 86; } return 118; } // V
+    if scancode == 48 { if is_upper { return 66; } return 98; }  // B
+    if scancode == 49 { if is_upper { return 78; } return 110; } // N
+    if scancode == 50 { if is_upper { return 77; } return 109; } // M
+
+    return 0; // Non-printable or unhandled
+}
+
+// PS/2 Keyboard State Machine
+class Ps2Keyboard {
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+    caps_lock: bool,
+    extended: bool,
+    last_scancode: int,
+}
+
+func ps2_keyboard_new() -> Ps2Keyboard {
+    return new Ps2Keyboard(false, false, false, false, false, 0);
+}
+
+// Processes a raw byte received from PS/2 Port 0x60
+func ps2_keyboard_process_scancode(kbd: Ps2Keyboard, scancode: int) -> KeyEvent {
+    kbd.last_scancode = scancode;
+
+    // Handle Extended Prefix (0xE0)
+    if scancode == 224 { // 0xE0
+        kbd.extended = true;
+        return new KeyEvent(224, 0, false, true, kbd.shift, kbd.ctrl, kbd.alt, kbd.caps_lock);
+    }
+
+    let is_extended = kbd.extended;
+    kbd.extended = false;
+
+    // Determine Make (press) vs Break (release)
+    let is_break = bit_and(scancode, 128) != 0;
+    let code = bit_and(scancode, 127);
+    let pressed = !is_break;
+
+    // Update Modifiers
+    if code == 42 || code == 54 { // LShift (42) or RShift (54)
+        kbd.shift = pressed;
+    }
+    if code == 29 { // Ctrl
+        kbd.ctrl = pressed;
+    }
+    if code == 56 { // Alt
+        kbd.alt = pressed;
+    }
+    if code == 58 && pressed { // CapsLock toggle
+        kbd.caps_lock = !kbd.caps_lock;
+    }
+
+    let ascii = 0;
+    if is_extended == false {
+        ascii = ps2_scancode_to_ascii(code, kbd.shift, kbd.caps_lock);
+    }
+
+    return new KeyEvent(code, ascii, pressed, is_extended, kbd.shift, kbd.ctrl, kbd.alt, kbd.caps_lock);
+}
+
+// PS/2 Mouse Event
+class MouseEvent {
+    left_button: bool,
+    right_button: bool,
+    middle_button: bool,
+    dx: int,
+    dy: int,
+    x: int,
+    y: int,
+}
+
+// PS/2 Standard 3-Byte Packet Decoder State Machine
+class Ps2Mouse {
+    x: int,
+    y: int,
+    max_x: int,
+    max_y: int,
+    packet_step: int,
+    byte0: int,
+    byte1: int,
+    byte2: int,
+    left_pressed: bool,
+    right_pressed: bool,
+    middle_pressed: bool,
+    dx: int,
+    dy: int,
+}
+
+func ps2_mouse_new(max_x: int, max_y: int) -> Ps2Mouse {
+    return new Ps2Mouse(max_x / 2, max_y / 2, max_x, max_y, 0, 0, 0, 0, false, false, false, 0, 0);
+}
+
+// Feeds one byte into the mouse packet decoder. Returns true when a full 3-byte packet is parsed.
+func ps2_mouse_process_byte(mouse: Ps2Mouse, b: int) -> bool {
+    let byte_val = bit_and(b, 255);
+
+    if mouse.packet_step == 0 {
+        // Bit 3 of byte 0 must always be 1 in standard PS/2 mouse packets
+        if bit_and(byte_val, 8) == 0 {
+            // Discard out-of-sync byte
+            return false;
+        }
+        mouse.byte0 = byte_val;
+        mouse.packet_step = 1;
+        return false;
+    }
+
+    if mouse.packet_step == 1 {
+        mouse.byte1 = byte_val;
+        mouse.packet_step = 2;
+        return false;
+    }
+
+    if mouse.packet_step == 2 {
+        mouse.byte2 = byte_val;
+        mouse.packet_step = 0;
+
+        // Parse Buttons
+        mouse.left_pressed = bit_and(mouse.byte0, 1) != 0;
+        mouse.right_pressed = bit_and(mouse.byte0, 2) != 0;
+        mouse.middle_pressed = bit_and(mouse.byte0, 4) != 0;
+
+        // Parse signed X delta (bit 4 is sign bit)
+        let raw_dx = mouse.byte1;
+        let dx = raw_dx;
+        if bit_and(mouse.byte0, 16) != 0 {
+            dx = raw_dx - 256;
+        }
+
+        // Parse signed Y delta (bit 5 is sign bit)
+        let raw_dy = mouse.byte2;
+        let dy = raw_dy;
+        if bit_and(mouse.byte0, 32) != 0 {
+            dy = raw_dy - 256;
+        }
+
+        mouse.dx = dx;
+        mouse.dy = dy;
+
+        // Update Position with Clamping
+        let mut_nx = mouse.x + dx;
+        if mut_nx < 0 { mut_nx = 0; }
+        if mut_nx > mouse.max_x { mut_nx = mouse.max_x; }
+        mouse.x = mut_nx;
+
+        // Screen coordinates: mouse delta UP -> decrement screen Y
+        let mut_ny = mouse.y - dy;
+        if mut_ny < 0 { mut_ny = 0; }
+        if mut_ny > mouse.max_y { mut_ny = mouse.max_y; }
+        mouse.y = mut_ny;
+
+        return true;
+    }
+
+    return false;
+}
+
+func ps2_mouse_get_event(mouse: Ps2Mouse) -> MouseEvent {
+    return new MouseEvent(mouse.left_pressed, mouse.right_pressed, mouse.middle_pressed, mouse.dx, mouse.dy, mouse.x, mouse.y);
+}
+
+// ==============================================================================
+// 3. High-Resolution Timers (8253/8254 PIT & 64-Bit HPET)
+// ==============================================================================
+
+// Standard PIT Ports & Frequencies
+func pit_freq_base() -> int { return 1193182; } // 1.193182 MHz
+func pit_port_channel0() -> int { return 64; } // 0x40
+func pit_port_channel1() -> int { return 65; } // 0x41
+func pit_port_channel2() -> int { return 66; } // 0x42
+func pit_port_command() -> int { return 67; }  // 0x43
+
+// Calculates 16-bit PIT divisor for a target frequency in Hz
+func pit_calc_divisor(hz: int) -> int {
+    if hz <= 0 {
+        return 65535;
+    }
+    let d = pit_freq_base() / hz;
+    if d <= 0 {
+        return 1;
+    }
+    if d > 65535 {
+        return 65535;
+    }
+    return d;
+}
+
+// Initializes PIT Channel 0 in Mode 3 (Square Wave Generator)
+func pit_init_hw(hz: int) -> int {
+    let divisor = pit_calc_divisor(hz);
+    let div_low = bit_and(divisor, 255);
+    let div_high = bit_and(bit_shr(divisor, 8), 255);
+
+    // Channel 0, lobyte/hibyte, Mode 3 (Square Wave), Binary Mode (0x36 = 54)
+    outb(pit_port_command(), 54);
+    outb(pit_port_channel0(), div_low);
+    outb(pit_port_channel0(), div_high);
+
+    return divisor;
+}
+
+// Programmable Interval Timer (PIT) Driver Class
+class PitTimer {
+    frequency_hz: int,
+    divisor: int,
+    ticks: int,
+    uptime_ms: int,
+}
+
+func pit_timer_new(target_hz: int) -> PitTimer {
+    let div = pit_init_hw(target_hz);
+    return new PitTimer(target_hz, div, 0, 0);
+}
+
+func pit_tick(pit: PitTimer) {
+    pit.ticks = pit.ticks + 1;
+    if pit.frequency_hz > 0 {
+        pit.uptime_ms = (pit.ticks * 1000) / pit.frequency_hz;
+    }
+}
+
+func pit_uptime_ms(pit: PitTimer) -> int {
+    return pit.uptime_ms;
+}
+
+func pit_sleep_ticks(pit: PitTimer, count: int) {
+    let target = pit.ticks + count;
+    while pit.ticks < target {
+        pit_tick(pit);
+    }
+}
+
+// HPET (High Precision Event Timer) Base & Offsets
+func hpet_default_base() -> int { return 4275044352; } // 0xFED00000
+func hpet_reg_cap_id() -> int { return 0; }            // 0x000 (Capabilities / Period in fs)
+func hpet_reg_config() -> int { return 16; }           // 0x010 (General Configuration)
+func hpet_reg_counter() -> int { return 240; }         // 0x0F0 (64-Bit Main Counter)
+
+// HPET Hardware Driver Class
+class HpetTimer {
+    base_addr: int,
+    period_fs: int,
+    frequency_hz: int,
+    is_64bit: bool,
+    start_counter: int,
+}
+
+// Initializes HPET controller and starts the 64-bit main counter
+func hpet_init(base: int) -> HpetTimer {
+    let mut_cap = 0;
+    let mut_period = 0;
+    let mut_start = 0;
+    unsafe {
+        mut_cap = mmio_read32(base + hpet_reg_cap_id());
+        mut_period = mmio_read32(base + hpet_reg_cap_id() + 4);
+        // Enable HPET main counter and legacy replacement route (bits 0 and 1 = 0x03)
+        let cfg = mmio_read32(base + hpet_reg_config());
+        mmio_write32(base + hpet_reg_config(), bit_or(cfg, 3));
+        mut_start = mmio_read64(base + hpet_reg_counter());
+    }
+    let cap = mut_cap;
+    let period_fs = mut_period;
+    // Bit 13 specifies if counter is 64-bit capable
+    let is_64 = bit_and(bit_shr(cap, 13), 1) != 0;
+
+    let mut_freq = 0;
+    if period_fs >= 1000000 {
+        let period_ns = period_fs / 1000000;
+        if period_ns > 0 {
+            mut_freq = 1000000000 / period_ns; // Frequency in Hz
+        }
+    }
+
+    return new HpetTimer(base, period_fs, mut_freq, is_64, mut_start);
+}
+
+func hpet_read_counter(hpet: HpetTimer) -> int {
+    let mut_val = 0;
+    unsafe {
+        mut_val = mmio_read64(hpet.base_addr + hpet_reg_counter());
+    }
+    return mut_val;
+}
+
+func hpet_elapsed_ticks(hpet: HpetTimer) -> int {
+    let curr = hpet_read_counter(hpet);
+    if curr >= hpet.start_counter {
+        return curr - hpet.start_counter;
+    }
+    return curr;
+}
+
+func hpet_elapsed_nanos(hpet: HpetTimer) -> int {
+    let ticks = hpet_elapsed_ticks(hpet);
+    if hpet.period_fs <= 0 {
+        return 0;
+    }
+    let period_ns = hpet.period_fs / 1000000;
+    return ticks * period_ns;
+}
+
+func hpet_elapsed_micros(hpet: HpetTimer) -> int {
+    let nanos = hpet_elapsed_nanos(hpet);
+    return nanos / 1000;
+}
+
+// ==============================================================================
+// 4. UEFI GOP Linear Framebuffer Graphics Driver
+// ==============================================================================
+
+// Color Construction & Decomposition (32-Bit BGRA/RGBA)
+func color_rgb(r: int, g: int, b: int) -> int {
+    let r_part = bit_shl(bit_and(r, 255), 16);
+    let g_part = bit_shl(bit_and(g, 255), 8);
+    let b_part = bit_and(b, 255);
+    return bit_or(bit_or(r_part, g_part), b_part);
+}
+
+func color_rgba(r: int, g: int, b: int, a: int) -> int {
+    let a_part = bit_shl(bit_and(a, 255), 24);
+    return bit_or(a_part, color_rgb(r, g, b));
+}
+
+func color_get_r(c: int) -> int { return bit_and(bit_shr(c, 16), 255); }
+func color_get_g(c: int) -> int { return bit_and(bit_shr(c, 8), 255); }
+func color_get_b(c: int) -> int { return bit_and(c, 255); }
+func color_get_a(c: int) -> int { return bit_and(bit_shr(c, 24), 255); }
+
+// Standard Palette
+func color_black() -> int { return 0; }
+func color_white() -> int { return 16777215; }     // 0xFFFFFF
+func color_red() -> int { return 16711680; }       // 0xFF0000
+func color_green() -> int { return 65280; }        // 0x00FF00
+func color_blue() -> int { return 255; }           // 0x0000FF
+func color_yellow() -> int { return 16776960; }    // 0xFFFF00
+func color_cyan() -> int { return 65535; }         // 0x00FFFF
+func color_magenta() -> int { return 16711935; }   // 0xFF00FF
+func color_dark_gray() -> int { return 4210752; }  // 0x404040
+func color_light_gray() -> int { return 12632256; }// 0xC0C0C0
+func color_roze() -> int { return 16716947; }      // 0xFF1493 (DeepPink / Roze)
+
+// GOP Framebuffer Representation
+class GopFramebuffer {
+    base_addr: int,
+    width: int,
+    height: int,
+    pitch: int,
+    bpp: int,
+}
+
+func framebuffer_new(base: int, width: int, height: int, pitch: int, bpp: int) -> GopFramebuffer {
+    return new GopFramebuffer(base, width, height, pitch, bpp);
+}
+
+// Writes a single 32-bit pixel with strict bounds checking
+func framebuffer_put_pixel(fb: GopFramebuffer, x: int, y: int, color: int) {
+    if x >= 0 {
+        if x < fb.width {
+            if y >= 0 {
+                if y < fb.height {
+                    let addr = fb.base_addr + (y * fb.pitch) + (x * 4);
+                    unsafe {
+                        mmio_write32(addr, color);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Reads a single 32-bit pixel from the framebuffer
+func framebuffer_get_pixel(fb: GopFramebuffer, x: int, y: int) -> int {
+    if x >= 0 {
+        if x < fb.width {
+            if y >= 0 {
+                if y < fb.height {
+                    let addr = fb.base_addr + (y * fb.pitch) + (x * 4);
+                    let mut_res = 0;
+                    unsafe {
+                        mut_res = mmio_read32(addr);
+                    }
+                    return mut_res;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+// Clears the entire framebuffer with a solid color
+func framebuffer_clear(fb: GopFramebuffer, color: int) {
+    let y = 0;
+    while y < fb.height {
+        let x = 0;
+        while x < fb.width {
+            framebuffer_put_pixel(fb, x, y, color);
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+}
+
+// Draws a filled rectangle
+func framebuffer_fill_rect(fb: GopFramebuffer, x: int, y: int, w: int, h: int, color: int) {
+    let py = y;
+    while py < y + h {
+        let px = x;
+        while px < x + w {
+            framebuffer_put_pixel(fb, px, py, color);
+            px = px + 1;
+        }
+        py = py + 1;
+    }
+}
+
+// Draws a rectangle outline
+func framebuffer_draw_rect(fb: GopFramebuffer, x: int, y: int, w: int, h: int, color: int) {
+    let px = x;
+    while px < x + w {
+        framebuffer_put_pixel(fb, px, y, color);
+        framebuffer_put_pixel(fb, px, y + h - 1, color);
+        px = px + 1;
+    }
+    let py = y;
+    while py < y + h {
+        framebuffer_put_pixel(fb, x, py, color);
+        framebuffer_put_pixel(fb, x + w - 1, py, color);
+        py = py + 1;
+    }
+}
+
+// Draws a line using Bresenham's Line Algorithm
+func framebuffer_draw_line(fb: GopFramebuffer, x0: int, y0: int, x1: int, y1: int, color: int) {
+    let mut_dx = x1 - x0;
+    if mut_dx < 0 { mut_dx = 0 - mut_dx; }
+    let mut_dy = y1 - y0;
+    if mut_dy < 0 { mut_dy = 0 - mut_dy; }
+
+    let mut_sx = 1;
+    if x0 > x1 { mut_sx = 0 - 1; }
+    let mut_sy = 1;
+    if y0 > y1 { mut_sy = 0 - 1; }
+
+    let mut_err = mut_dx - mut_dy;
+    let mut_cx = x0;
+    let mut_cy = y0;
+    let mut_done = false;
+
+    while mut_done == false {
+        framebuffer_put_pixel(fb, mut_cx, mut_cy, color);
+        if mut_cx == x1 {
+            if mut_cy == y1 {
+                mut_done = true;
+            }
+        }
+        if mut_done == false {
+            let e2 = mut_err * 2;
+            if e2 > (0 - mut_dy) {
+                mut_err = mut_err - mut_dy;
+                mut_cx = mut_cx + mut_sx;
+            }
+            if e2 < mut_dx {
+                mut_err = mut_err + mut_dx;
+                mut_cy = mut_cy + mut_sy;
+            }
+        }
+    }
+}
+
+// Draws a circle outline using the Midpoint Circle Algorithm
+func framebuffer_draw_circle(fb: GopFramebuffer, cx: int, cy: int, radius: int, color: int) {
+    let mut_x = 0;
+    let mut_y = radius;
+    let mut_d = 3 - (2 * radius);
+
+    while mut_y >= mut_x {
+        framebuffer_put_pixel(fb, cx + mut_x, cy + mut_y, color);
+        framebuffer_put_pixel(fb, cx - mut_x, cy + mut_y, color);
+        framebuffer_put_pixel(fb, cx + mut_x, cy - mut_y, color);
+        framebuffer_put_pixel(fb, cx - mut_x, cy - mut_y, color);
+        framebuffer_put_pixel(fb, cx + mut_y, cy + mut_x, color);
+        framebuffer_put_pixel(fb, cx - mut_y, cy + mut_x, color);
+        framebuffer_put_pixel(fb, cx + mut_y, cy - mut_x, color);
+        framebuffer_put_pixel(fb, cx - mut_y, cy - mut_x, color);
+
+        mut_x = mut_x + 1;
+        if mut_d > 0 {
+            mut_y = mut_y - 1;
+            mut_d = mut_d + 4 * (mut_x - mut_y) + 10;
+        } else {
+            mut_d = mut_d + 4 * mut_x + 6;
+        }
+    }
+}
+
+// Draws a filled circle
+func framebuffer_fill_circle(fb: GopFramebuffer, cx: int, cy: int, radius: int, color: int) {
+    let mut_y = 0 - radius;
+    while mut_y <= radius {
+        let mut_x = 0 - radius;
+        while mut_x <= radius {
+            if (mut_x * mut_x) + (mut_y * mut_y) <= (radius * radius) {
+                framebuffer_put_pixel(fb, cx + mut_x, cy + mut_y, color);
+            }
+            mut_x = mut_x + 1;
+        }
+        mut_y = mut_y + 1;
+    }
+}
+
+// ==============================================================================
+// 5. Embedded 8x16 ASCII Font & Text Rendering Engine
+// ==============================================================================
+
+// Returns the 8-bit row pattern for an 8x16 ASCII glyph (row index 0..15)
+func gop_font_glyph_row(ch: int, row: int) -> int {
+    if row < 0 || row >= 16 { return 0; }
+
+    // Space (32)
+    if ch == 32 { return 0; }
+
+    // Exclamation mark '!' (33)
+    if ch == 33 {
+        if row >= 3 && row <= 9 { return 24; }
+        if row == 12 || row == 13 { return 24; }
+        return 0;
+    }
+
+    // Digits '0'..'9' (48..57)
+    if ch == 48 { // '0'
+        if row == 3 || row == 12 { return 60; }
+        if row >= 4 && row <= 11 { return 102; }
+        return 0;
+    }
+    if ch == 49 { // '1'
+        if row == 3 { return 24; }
+        if row == 4 { return 56; }
+        if row >= 5 && row <= 11 { return 24; }
+        if row == 12 { return 126; }
+        return 0;
+    }
+    if ch == 50 { // '2'
+        if row == 3 { return 60; }
+        if row == 4 || row == 5 { return 102; }
+        if row == 6 { return 12; }
+        if row == 7 { return 24; }
+        if row == 8 { return 48; }
+        if row == 9 { return 96; }
+        if row == 10 { return 102; }
+        if row == 11 || row == 12 { return 126; }
+        return 0;
+    }
+    if ch == 51 { // '3'
+        if row == 3 || row == 12 { return 60; }
+        if row == 4 || row == 11 { return 102; }
+        if row == 5 || row == 10 { return 6; }
+        if row == 6 || row == 8 { return 12; }
+        if row == 7 { return 28; }
+        if row == 9 { return 6; }
+        return 0;
+    }
+    if ch == 52 { // '4'
+        if row == 3 || row == 4 { return 12; }
+        if row == 5 { return 28; }
+        if row == 6 { return 60; }
+        if row == 7 { return 108; }
+        if row == 8 { return 108; }
+        if row == 9 { return 126; }
+        if row == 10 || row == 11 || row == 12 { return 12; }
+        return 0;
+    }
+    if ch == 53 { // '5'
+        if row == 3 || row == 4 { return 126; }
+        if row == 5 || row == 6 { return 96; }
+        if row == 7 { return 124; }
+        if row == 8 || row == 9 || row == 10 { return 6; }
+        if row == 11 { return 102; }
+        if row == 12 { return 60; }
+        return 0;
+    }
+    if ch == 54 { // '6'
+        if row == 3 { return 28; }
+        if row == 4 || row == 5 { return 48; }
+        if row == 6 { return 96; }
+        if row == 7 { return 124; }
+        if row == 8 || row == 9 || row == 10 || row == 11 { return 102; }
+        if row == 12 { return 60; }
+        return 0;
+    }
+    if ch == 55 { // '7'
+        if row == 3 || row == 4 { return 126; }
+        if row == 5 || row == 6 { return 6; }
+        if row == 7 { return 12; }
+        if row == 8 { return 24; }
+        if row == 9 || row == 10 || row == 11 || row == 12 { return 48; }
+        return 0;
+    }
+    if ch == 56 { // '8'
+        if row == 3 || row == 7 || row == 12 { return 60; }
+        if row >= 4 && row <= 6 { return 102; }
+        if row >= 8 && row <= 11 { return 102; }
+        return 0;
+    }
+    if ch == 57 { // '9'
+        if row == 3 { return 60; }
+        if row >= 4 && row <= 6 { return 102; }
+        if row == 7 { return 62; }
+        if row == 8 || row == 9 { return 6; }
+        if row == 10 || row == 11 { return 12; }
+        if row == 12 { return 56; }
+        return 0;
+    }
+
+    // Uppercase 'A'..'Z' (65..90)
+    if ch == 65 { // 'A'
+        if row == 3 { return 24; }
+        if row == 4 || row == 5 { return 60; }
+        if row == 6 || row == 7 { return 102; }
+        if row == 8 { return 126; }
+        if row >= 9 && row <= 12 { return 102; }
+        return 0;
+    }
+    if ch == 66 { // 'B'
+        if row == 3 || row == 7 || row == 12 { return 124; }
+        if row >= 4 && row <= 6 { return 102; }
+        if row >= 8 && row <= 11 { return 102; }
+        return 0;
+    }
+    if ch == 67 { // 'C'
+        if row == 3 || row == 12 { return 60; }
+        if row == 4 || row == 11 { return 102; }
+        if row >= 5 && row <= 10 { return 96; }
+        return 0;
+    }
+    if ch == 68 { // 'D'
+        if row == 3 || row == 12 { return 120; }
+        if row >= 4 && row <= 11 { return 102; }
+        return 0;
+    }
+    if ch == 69 { // 'E'
+        if row == 3 || row == 12 { return 126; }
+        if row == 7 { return 120; }
+        if row >= 4 && row <= 11 { return 96; }
+        return 0;
+    }
+    if ch == 70 { // 'F'
+        if row == 3 { return 126; }
+        if row == 7 { return 120; }
+        if row >= 4 && row <= 12 { return 96; }
+        return 0;
+    }
+    if ch == 71 { // 'G'
+        if row == 3 || row == 12 { return 60; }
+        if row == 4 || row == 11 { return 102; }
+        if row >= 5 && row <= 7 { return 96; }
+        if row == 8 { return 110; }
+        if row >= 9 && row <= 10 { return 102; }
+        return 0;
+    }
+    if ch == 72 { // 'H'
+        if row == 7 { return 126; }
+        if row >= 3 && row <= 12 { return 102; }
+        return 0;
+    }
+    if ch == 73 { // 'I'
+        if row == 3 || row == 12 { return 126; }
+        if row >= 4 && row <= 11 { return 24; }
+        return 0;
+    }
+    if ch == 74 { // 'J'
+        if row == 3 { return 30; }
+        if row >= 4 && row <= 10 { return 12; }
+        if row == 11 { return 108; }
+        if row == 12 { return 56; }
+        return 0;
+    }
+    if ch == 75 { // 'K'
+        if row == 3 || row == 12 { return 102; }
+        if row == 4 || row == 11 { return 108; }
+        if row == 5 || row == 10 { return 120; }
+        if row == 6 || row == 7 || row == 8 || row == 9 { return 112; }
+        return 0;
+    }
+    if ch == 76 { // 'L'
+        if row >= 3 && row <= 11 { return 96; }
+        if row == 12 { return 126; }
+        return 0;
+    }
+    if ch == 77 { // 'M'
+        if row == 3 { return 99; }
+        if row == 4 { return 119; }
+        if row == 5 { return 127; }
+        if row == 6 { return 107; }
+        if row >= 7 && row <= 12 { return 99; }
+        return 0;
+    }
+    if ch == 78 { // 'N'
+        if row == 3 { return 102; }
+        if row == 4 { return 118; }
+        if row == 5 { return 118; }
+        if row == 6 || row == 7 { return 110; }
+        if row == 8 || row == 9 { return 106; }
+        if row == 10 || row == 11 { return 102; }
+        if row == 12 { return 102; }
+        return 0;
+    }
+    if ch == 79 { // 'O'
+        if row == 3 || row == 12 { return 60; }
+        if row >= 4 && row <= 11 { return 102; }
+        return 0;
+    }
+    if ch == 80 { // 'P'
+        if row == 3 || row == 7 { return 124; }
+        if row >= 4 && row <= 6 { return 102; }
+        if row >= 8 && row <= 12 { return 96; }
+        return 0;
+    }
+    if ch == 82 { // 'R'
+        if row == 3 || row == 7 { return 124; }
+        if row >= 4 && row <= 6 { return 102; }
+        if row == 8 { return 108; }
+        if row == 9 { return 108; }
+        if row >= 10 && row <= 12 { return 102; }
+        return 0;
+    }
+    if ch == 83 { // 'S'
+        if row == 3 || row == 12 { return 60; }
+        if row == 4 || row == 5 { return 96; }
+        if row == 6 || row == 7 { return 60; }
+        if row >= 8 && row <= 10 { return 6; }
+        if row == 11 { return 102; }
+        return 0;
+    }
+    if ch == 84 { // 'T'
+        if row == 3 { return 126; }
+        if row >= 4 && row <= 12 { return 24; }
+        return 0;
+    }
+    if ch == 85 { // 'U'
+        if row >= 3 && row <= 11 { return 102; }
+        if row == 12 { return 60; }
+        return 0;
+    }
+    if ch == 86 { // 'V'
+        if row >= 3 && row <= 8 { return 102; }
+        if row == 9 || row == 10 { return 60; }
+        if row == 11 || row == 12 { return 24; }
+        return 0;
+    }
+    if ch == 87 { // 'W'
+        if row >= 3 && row <= 8 { return 99; }
+        if row == 9 { return 107; }
+        if row == 10 { return 127; }
+        if row == 11 { return 119; }
+        if row == 12 { return 99; }
+        return 0;
+    }
+    if ch == 88 { // 'X'
+        if row == 3 || row == 12 { return 102; }
+        if row == 4 || row == 11 { return 102; }
+        if row == 5 || row == 10 { return 60; }
+        if row >= 6 && row <= 9 { return 24; }
+        return 0;
+    }
+    if ch == 89 { // 'Y'
+        if row == 3 || row == 4 { return 102; }
+        if row == 5 || row == 6 { return 60; }
+        if row >= 7 && row <= 12 { return 24; }
+        return 0;
+    }
+    if ch == 90 { // 'Z'
+        if row == 3 || row == 12 { return 126; }
+        if row == 4 || row == 5 { return 6; }
+        if row == 6 || row == 7 { return 12; }
+        if row == 8 || row == 9 { return 24; }
+        if row == 10 || row == 11 { return 48; }
+        return 0;
+    }
+
+    // Lowercase 'a'..'z' (97..122) - route to uppercase glyphs shifted down 2 rows
+    if ch >= 97 && ch <= 122 {
+        let upper_ch = ch - 32;
+        if row >= 2 {
+            return gop_font_glyph_row(upper_ch, row - 1);
+        }
+        return 0;
+    }
+
+    // Symbols
+    if ch == 58 { // ':'
+        if row == 6 || row == 7 || row == 10 || row == 11 { return 24; }
+        return 0;
+    }
+    if ch == 45 { // '-'
+        if row == 7 || row == 8 { return 126; }
+        return 0;
+    }
+    if ch == 46 { // '.'
+        if row == 11 || row == 12 { return 24; }
+        return 0;
+    }
+    if ch == 47 { // '/'
+        if row == 3 || row == 4 { return 6; }
+        if row == 5 || row == 6 { return 12; }
+        if row == 7 || row == 8 { return 24; }
+        if row == 9 || row == 10 { return 48; }
+        if row == 11 || row == 12 { return 96; }
+        return 0;
+    }
+    if ch == 91 { // '['
+        if row == 3 || row == 12 { return 60; }
+        if row >= 4 && row <= 11 { return 48; }
+        return 0;
+    }
+    if ch == 93 { // ']'
+        if row == 3 || row == 12 { return 60; }
+        if row >= 4 && row <= 11 { return 12; }
+        return 0;
+    }
+
+    // Default: solid block outline
+    if row == 3 || row == 12 { return 126; }
+    if row >= 4 && row <= 11 { return 66; }
+    return 0;
+}
+
+// Draws a single 8x16 character at (x, y)
+func framebuffer_draw_char(fb: GopFramebuffer, x: int, y: int, ch: int, fg: int, bg: int) {
+    let r = 0;
+    while r < 16 {
+        let pattern = gop_font_glyph_row(ch, r);
+        let c = 0;
+        while c < 8 {
+            let bit_mask = bit_shl(1, 7 - c);
+            if bit_and(pattern, bit_mask) != 0 {
+                framebuffer_put_pixel(fb, x + c, y + r, fg);
+            } else {
+                if bg >= 0 {
+                    framebuffer_put_pixel(fb, x + c, y + r, bg);
+                }
+            }
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+}
+
+// Draws a string on the framebuffer at (x, y) using the 8x16 font
+func framebuffer_draw_string(fb: GopFramebuffer, x: int, y: int, s: string, fg: int, bg: int) {
+    let len = string_length(s);
+    let i = 0;
+    while i < len {
+        let ch = string_char_at(s, i);
+        framebuffer_draw_char(fb, x + (i * 8), y, ch, fg, bg);
+        i = i + 1;
+    }
+}

@@ -665,6 +665,7 @@ pub struct FunctionSig {
 fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
     vec![
         ("string_length", vec![Type::String], Type::Int),
+        ("string_char_at", vec![Type::String, Type::Int], Type::Int),
         ("string_concat", vec![Type::String, Type::String], Type::String),
         ("string_to_upper", vec![Type::String], Type::String),
         ("string_to_lower", vec![Type::String], Type::String),
@@ -1046,6 +1047,12 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("mmio_write16", vec![Type::Int, Type::Int], Type::Void),
         ("mmio_read8", vec![Type::Int], Type::Int),
         ("mmio_write8", vec![Type::Int, Type::Int], Type::Void),
+        ("mmio_read64", vec![Type::Int], Type::Int),
+        ("mmio_write64", vec![Type::Int, Type::Int], Type::Void),
+        ("inw", vec![Type::Int], Type::Int),
+        ("outw", vec![Type::Int, Type::Int], Type::Void),
+        ("inl", vec![Type::Int], Type::Int),
+        ("outl", vec![Type::Int, Type::Int], Type::Void),
 
         // ---- Fixed-Width Numeric Suite (M2-T01) ----
         // Type conversion constructors
@@ -3253,6 +3260,7 @@ impl TypeChecker {
             "ptr_write_u8" | "ptr_write" | "ptr_write_i64" | "ptr_write_at" | "ptr_write_u8_at" |
             "ptr_write_u16_at" | "ptr_write_u32_at" |
             "mmio_read32" | "mmio_write32" | "mmio_read16" | "mmio_write16" | "mmio_read8" | "mmio_write8" |
+            "mmio_read64" | "mmio_write64" |
             "ptr_add" | "ptr_offset" | "ptr_diff" | "ptr_to_int" | "int_to_ptr" |
             "ptr_is_null" | "mem_copy" | "mem_set"
         )

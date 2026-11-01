@@ -312,7 +312,7 @@ s1_rows = [
         ("M2-T08", 8), ("Month 2", 4), ("Sprint 4 (W07-W08)", 8), "Hardware Drivers", "UART, Keyboard, Timer & GOP Framebuffer",
         "16550 UART serial driver, PS/2 keyboard/mouse interrupt driver, PIT/HPET high-res timer, and UEFI GOP linear framebuffer graphics.",
         "Hardware I/O driver library in pure Roze.",
-        "Operating Systems, Embedded Firmware", "6 Days", ("High", 14), ("Planned", 12)
+        "Operating Systems, Embedded Firmware", "6 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M2-T09", 8), ("Month 2", 4), ("Sprint 4 (W07-W08)", 8), "Inline Assembly", "Native asm! Macro & Register Constraints",

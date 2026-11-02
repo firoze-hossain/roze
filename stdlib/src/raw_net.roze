@@ -28,6 +28,7 @@ func eth_p_all() -> int { return 3; }          // 0x0003 (ETH_P_ALL)
 func ipproto_icmp() -> int { return 1; }
 func ipproto_tcp() -> int { return 6; }
 func ipproto_udp() -> int { return 17; }
+func ipproto_icmpv6() -> int { return 58; }
 func ipproto_raw() -> int { return 255; }
 
 // ARP Opcodes
@@ -265,6 +266,87 @@ func ipv4_read(ptr: *raw u8, offset: int) -> Ipv4Address {
     }
 }
 
+// IPv6 Network Address (128-bit / 16-byte)
+class Ipv6Address {
+    b0: int, b1: int, b2: int, b3: int,
+    b4: int, b5: int, b6: int, b7: int,
+    b8: int, b9: int, b10: int, b11: int,
+    b12: int, b13: int, b14: int, b15: int,
+}
+
+func ipv6_new(b0: int, b1: int, b2: int, b3: int, b4: int, b5: int, b6: int, b7: int,
+              b8: int, b9: int, b10: int, b11: int, b12: int, b13: int, b14: int, b15: int) -> Ipv6Address {
+    return new Ipv6Address(
+        bit_and(b0, 255), bit_and(b1, 255), bit_and(b2, 255), bit_and(b3, 255),
+        bit_and(b4, 255), bit_and(b5, 255), bit_and(b6, 255), bit_and(b7, 255),
+        bit_and(b8, 255), bit_and(b9, 255), bit_and(b10, 255), bit_and(b11, 255),
+        bit_and(b12, 255), bit_and(b13, 255), bit_and(b14, 255), bit_and(b15, 255)
+    );
+}
+
+func ipv6_loopback() -> Ipv6Address {
+    return new Ipv6Address(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
+}
+
+func ipv6_zero() -> Ipv6Address {
+    return new Ipv6Address(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+}
+
+func ipv6_equals(a: Ipv6Address, b: Ipv6Address) -> bool {
+    return a.b0 == b.b0 && a.b1 == b.b1 && a.b2 == b.b2 && a.b3 == b.b3 &&
+           a.b4 == b.b4 && a.b5 == b.b5 && a.b6 == b.b6 && a.b7 == b.b7 &&
+           a.b8 == b.b8 && a.b9 == b.b9 && a.b10 == b.b10 && a.b11 == b.b11 &&
+           a.b12 == b.b12 && a.b13 == b.b13 && a.b14 == b.b14 && a.b15 == b.b15;
+}
+
+func hex_u16(hi: int, lo: int) -> string {
+    return hex_char(bit_shr(hi, 4)) + hex_char(hi) + hex_char(bit_shr(lo, 4)) + hex_char(lo);
+}
+
+func ipv6_to_string(ip: Ipv6Address) -> string {
+    return hex_u16(ip.b0, ip.b1) + ":" + hex_u16(ip.b2, ip.b3) + ":" +
+           hex_u16(ip.b4, ip.b5) + ":" + hex_u16(ip.b6, ip.b7) + ":" +
+           hex_u16(ip.b8, ip.b9) + ":" + hex_u16(ip.b10, ip.b11) + ":" +
+           hex_u16(ip.b12, ip.b13) + ":" + hex_u16(ip.b14, ip.b15);
+}
+
+func ipv6_write(ip: Ipv6Address, ptr: *raw u8, offset: int) {
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 0, ip.b0);
+        ptr_write_u8_at(ptr, offset + 1, ip.b1);
+        ptr_write_u8_at(ptr, offset + 2, ip.b2);
+        ptr_write_u8_at(ptr, offset + 3, ip.b3);
+        ptr_write_u8_at(ptr, offset + 4, ip.b4);
+        ptr_write_u8_at(ptr, offset + 5, ip.b5);
+        ptr_write_u8_at(ptr, offset + 6, ip.b6);
+        ptr_write_u8_at(ptr, offset + 7, ip.b7);
+        ptr_write_u8_at(ptr, offset + 8, ip.b8);
+        ptr_write_u8_at(ptr, offset + 9, ip.b9);
+        ptr_write_u8_at(ptr, offset + 10, ip.b10);
+        ptr_write_u8_at(ptr, offset + 11, ip.b11);
+        ptr_write_u8_at(ptr, offset + 12, ip.b12);
+        ptr_write_u8_at(ptr, offset + 13, ip.b13);
+        ptr_write_u8_at(ptr, offset + 14, ip.b14);
+        ptr_write_u8_at(ptr, offset + 15, ip.b15);
+    }
+}
+
+func ipv6_read(ptr: *raw u8, offset: int) -> Ipv6Address {
+    unsafe {
+        return new Ipv6Address(
+            ptr_read_u8_at(ptr, offset + 0), ptr_read_u8_at(ptr, offset + 1),
+            ptr_read_u8_at(ptr, offset + 2), ptr_read_u8_at(ptr, offset + 3),
+            ptr_read_u8_at(ptr, offset + 4), ptr_read_u8_at(ptr, offset + 5),
+            ptr_read_u8_at(ptr, offset + 6), ptr_read_u8_at(ptr, offset + 7),
+            ptr_read_u8_at(ptr, offset + 8), ptr_read_u8_at(ptr, offset + 9),
+            ptr_read_u8_at(ptr, offset + 10), ptr_read_u8_at(ptr, offset + 11),
+            ptr_read_u8_at(ptr, offset + 12), ptr_read_u8_at(ptr, offset + 13),
+            ptr_read_u8_at(ptr, offset + 14), ptr_read_u8_at(ptr, offset + 15)
+        );
+    }
+}
+
+
 // ==============================================================================
 // 3. Raw Packet Buffer Abstraction
 // ==============================================================================
@@ -500,6 +582,106 @@ func tcp_checksum(src_ip: Ipv4Address, dst_ip: Ipv4Address, ptr: *raw u8, offset
     }
     return csum;
 }
+
+// RFC 8200 IPv6 Pseudo-Header Checksum Engine
+func ipv6_pseudo_checksum(src: Ipv6Address, dst: Ipv6Address, next_hdr: int, length: int, payload_ptr: *raw u8, payload_offset: int) -> int {
+    let mut_sum = 0;
+    // Source IPv6 (8 16-bit words)
+    mut_sum = mut_sum + bit_or(bit_shl(src.b0, 8), src.b1);
+    mut_sum = mut_sum + bit_or(bit_shl(src.b2, 8), src.b3);
+    mut_sum = mut_sum + bit_or(bit_shl(src.b4, 8), src.b5);
+    mut_sum = mut_sum + bit_or(bit_shl(src.b6, 8), src.b7);
+    mut_sum = mut_sum + bit_or(bit_shl(src.b8, 8), src.b9);
+    mut_sum = mut_sum + bit_or(bit_shl(src.b10, 8), src.b11);
+    mut_sum = mut_sum + bit_or(bit_shl(src.b12, 8), src.b13);
+    mut_sum = mut_sum + bit_or(bit_shl(src.b14, 8), src.b15);
+
+    // Destination IPv6 (8 16-bit words)
+    mut_sum = mut_sum + bit_or(bit_shl(dst.b0, 8), dst.b1);
+    mut_sum = mut_sum + bit_or(bit_shl(dst.b2, 8), dst.b3);
+    mut_sum = mut_sum + bit_or(bit_shl(dst.b4, 8), dst.b5);
+    mut_sum = mut_sum + bit_or(bit_shl(dst.b6, 8), dst.b7);
+    mut_sum = mut_sum + bit_or(bit_shl(dst.b8, 8), dst.b9);
+    mut_sum = mut_sum + bit_or(bit_shl(dst.b10, 8), dst.b11);
+    mut_sum = mut_sum + bit_or(bit_shl(dst.b12, 8), dst.b13);
+    mut_sum = mut_sum + bit_or(bit_shl(dst.b14, 8), dst.b15);
+
+    // Upper layer length (32-bit = two 16-bit words)
+    mut_sum = mut_sum + bit_and(bit_shr(length, 16), 65535);
+    mut_sum = mut_sum + bit_and(length, 65535);
+
+    // Next header (16-bit word: 0x00 and next_hdr)
+    mut_sum = mut_sum + bit_and(next_hdr, 255);
+
+    // Payload words
+    let mut_i = 0;
+    unsafe {
+        while mut_i < length - 1 {
+            let w = bit_or(bit_shl(ptr_read_u8_at(payload_ptr, payload_offset + mut_i), 8),
+                           ptr_read_u8_at(payload_ptr, payload_offset + mut_i + 1));
+            mut_sum = mut_sum + w;
+            mut_i = mut_i + 2;
+        }
+        if mut_i < length {
+            let odd_w = bit_shl(ptr_read_u8_at(payload_ptr, payload_offset + mut_i), 8);
+            mut_sum = mut_sum + odd_w;
+        }
+    }
+
+    // Fold 32-bit to 16-bit
+    while mut_sum > 65535 {
+        mut_sum = bit_and(mut_sum, 65535) + bit_shr(mut_sum, 16);
+    }
+    let res = bit_and(bit_not(mut_sum), 65535);
+    if res == 0 { return 65535; }
+    return res;
+}
+
+func udp_ipv6_checksum(src: Ipv6Address, dst: Ipv6Address, ptr: *raw u8, offset: int, udp_len: int) -> int {
+    let orig_csum = 0;
+    unsafe {
+        orig_csum = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 6), 8), ptr_read_u8_at(ptr, offset + 7));
+        ptr_write_u8_at(ptr, offset + 6, 0);
+        ptr_write_u8_at(ptr, offset + 7, 0);
+    }
+    let csum = ipv6_pseudo_checksum(src, dst, 17, udp_len, ptr, offset);
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 6, bit_shr(orig_csum, 8));
+        ptr_write_u8_at(ptr, offset + 7, bit_and(orig_csum, 255));
+    }
+    return csum;
+}
+
+func tcp_ipv6_checksum(src: Ipv6Address, dst: Ipv6Address, ptr: *raw u8, offset: int, tcp_len: int) -> int {
+    let orig_csum = 0;
+    unsafe {
+        orig_csum = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 16), 8), ptr_read_u8_at(ptr, offset + 17));
+        ptr_write_u8_at(ptr, offset + 16, 0);
+        ptr_write_u8_at(ptr, offset + 17, 0);
+    }
+    let csum = ipv6_pseudo_checksum(src, dst, 6, tcp_len, ptr, offset);
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 16, bit_shr(orig_csum, 8));
+        ptr_write_u8_at(ptr, offset + 17, bit_and(orig_csum, 255));
+    }
+    return csum;
+}
+
+func icmpv6_checksum(src: Ipv6Address, dst: Ipv6Address, ptr: *raw u8, offset: int, icmp_len: int) -> int {
+    let orig_csum = 0;
+    unsafe {
+        orig_csum = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 2), 8), ptr_read_u8_at(ptr, offset + 3));
+        ptr_write_u8_at(ptr, offset + 2, 0);
+        ptr_write_u8_at(ptr, offset + 3, 0);
+    }
+    let csum = ipv6_pseudo_checksum(src, dst, 58, icmp_len, ptr, offset);
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 2, bit_shr(orig_csum, 8));
+        ptr_write_u8_at(ptr, offset + 3, bit_and(orig_csum, 255));
+    }
+    return csum;
+}
+
 
 // ==============================================================================
 // 5. Layer 2-4 Protocol Headers
@@ -817,6 +999,744 @@ func tcp_read(ptr: *raw u8, offset: int) -> TcpHeader {
     }
 }
 
+// Layer 3: IPv6 Header (40 Bytes)
+class Ipv6Header {
+    version: int,
+    traffic_class: int,
+    flow_label: int,
+    payload_length: int,
+    next_header: int,
+    hop_limit: int,
+    src: Ipv6Address,
+    dst: Ipv6Address,
+}
+
+func ipv6_header_new(src: Ipv6Address, dst: Ipv6Address, next_header: int, hop_limit: int, payload_len: int) -> Ipv6Header {
+    return new Ipv6Header(6, 0, 0, payload_len, next_header, hop_limit, src, dst);
+}
+
+func ipv6_header_write(hdr: Ipv6Header, ptr: *raw u8, offset: int) {
+    unsafe {
+        // Version (4 bits = 6) + Traffic Class hi (4 bits = 0)
+        let b0 = bit_or(bit_shl(6, 4), bit_and(bit_shr(hdr.traffic_class, 4), 15));
+        // Traffic Class lo (4 bits) + Flow Label hi (4 bits)
+        let b1 = bit_or(bit_shl(hdr.traffic_class, 4), bit_and(bit_shr(hdr.flow_label, 16), 15));
+        let b2 = bit_and(bit_shr(hdr.flow_label, 8), 255);
+        let b3 = bit_and(hdr.flow_label, 255);
+
+        ptr_write_u8_at(ptr, offset + 0, b0);
+        ptr_write_u8_at(ptr, offset + 1, b1);
+        ptr_write_u8_at(ptr, offset + 2, b2);
+        ptr_write_u8_at(ptr, offset + 3, b3);
+
+        ptr_write_u8_at(ptr, offset + 4, bit_and(bit_shr(hdr.payload_length, 8), 255));
+        ptr_write_u8_at(ptr, offset + 5, bit_and(hdr.payload_length, 255));
+        ptr_write_u8_at(ptr, offset + 6, hdr.next_header);
+        ptr_write_u8_at(ptr, offset + 7, hdr.hop_limit);
+
+        ipv6_write(hdr.src, ptr, offset + 8);
+        ipv6_write(hdr.dst, ptr, offset + 24);
+    }
+}
+
+func ipv6_header_read(ptr: *raw u8, offset: int) -> Ipv6Header {
+    unsafe {
+        let b0 = ptr_read_u8_at(ptr, offset + 0);
+        let b1 = ptr_read_u8_at(ptr, offset + 1);
+        let b2 = ptr_read_u8_at(ptr, offset + 2);
+        let b3 = ptr_read_u8_at(ptr, offset + 3);
+
+        let ver = bit_shr(b0, 4);
+        let tc = bit_or(bit_shl(bit_and(b0, 15), 4), bit_shr(b1, 4));
+        let fl = bit_or(bit_or(bit_shl(bit_and(b1, 15), 16), bit_shl(b2, 8)), b3);
+        let plen = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 4), 8), ptr_read_u8_at(ptr, offset + 5));
+        let nh = ptr_read_u8_at(ptr, offset + 6);
+        let hl = ptr_read_u8_at(ptr, offset + 7);
+
+        let src = ipv6_read(ptr, offset + 8);
+        let dst = ipv6_read(ptr, offset + 24);
+
+        return new Ipv6Header(ver, tc, fl, plen, nh, hl, src, dst);
+    }
+}
+
+// Layer 4: ICMPv6 Header (8 Bytes)
+func icmpv6_type_echo_request() -> int { return 128; }
+func icmpv6_type_echo_reply() -> int { return 129; }
+
+class Icmpv6Header {
+    type_: int,
+    code: int,
+    checksum: int,
+    id: int,
+    seq: int,
+}
+
+func icmpv6_header_new(type_: int, code: int, id: int, seq: int) -> Icmpv6Header {
+    return new Icmpv6Header(type_, code, 0, id, seq);
+}
+
+func icmpv6_write(hdr: Icmpv6Header, ptr: *raw u8, offset: int) {
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 0, hdr.type_);
+        ptr_write_u8_at(ptr, offset + 1, hdr.code);
+        ptr_write_u8_at(ptr, offset + 2, 0); // Checksum calculated later
+        ptr_write_u8_at(ptr, offset + 3, 0);
+        ptr_write_u8_at(ptr, offset + 4, bit_and(bit_shr(hdr.id, 8), 255));
+        ptr_write_u8_at(ptr, offset + 5, bit_and(hdr.id, 255));
+        ptr_write_u8_at(ptr, offset + 6, bit_and(bit_shr(hdr.seq, 8), 255));
+        ptr_write_u8_at(ptr, offset + 7, bit_and(hdr.seq, 255));
+    }
+}
+
+func icmpv6_read(ptr: *raw u8, offset: int) -> Icmpv6Header {
+    unsafe {
+        let t = ptr_read_u8_at(ptr, offset + 0);
+        let c = ptr_read_u8_at(ptr, offset + 1);
+        let csum = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 2), 8), ptr_read_u8_at(ptr, offset + 3));
+        let id = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 4), 8), ptr_read_u8_at(ptr, offset + 5));
+        let seq = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 6), 8), ptr_read_u8_at(ptr, offset + 7));
+        return new Icmpv6Header(t, c, csum, id, seq);
+    }
+}
+
+// ==============================================================================
+// 5.1 DNS Protocol Framing & Codec (RFC 1035)
+// ==============================================================================
+
+func dns_flag_rd() -> int { return 256; }          // 0x0100 Recursion Desired
+func dns_flag_qr_response() -> int { return 32768; } // 0x8000 Query/Response flag
+func dns_flag_aa() -> int { return 1024; }         // 0x0400 Authoritative Answer
+func dns_flag_ra() -> int { return 128; }          // 0x0080 Recursion Available
+
+func dns_qtype_a() -> int { return 1; }
+func dns_qtype_ns() -> int { return 2; }
+func dns_qtype_cname() -> int { return 5; }
+func dns_qtype_mx() -> int { return 15; }
+func dns_qtype_txt() -> int { return 16; }
+func dns_qtype_aaaa() -> int { return 28; }
+func dns_qtype_any() -> int { return 255; }
+func dns_qclass_in() -> int { return 1; }
+
+func ascii_to_char(c: int) -> string {
+    if c >= 97 && c <= 122 {
+        if c == 97 { return "a"; }
+        if c == 98 { return "b"; }
+        if c == 99 { return "c"; }
+        if c == 100 { return "d"; }
+        if c == 101 { return "e"; }
+        if c == 102 { return "f"; }
+        if c == 103 { return "g"; }
+        if c == 104 { return "h"; }
+        if c == 105 { return "i"; }
+        if c == 106 { return "j"; }
+        if c == 107 { return "k"; }
+        if c == 108 { return "l"; }
+        if c == 109 { return "m"; }
+        if c == 110 { return "n"; }
+        if c == 111 { return "o"; }
+        if c == 112 { return "p"; }
+        if c == 113 { return "q"; }
+        if c == 114 { return "r"; }
+        if c == 115 { return "s"; }
+        if c == 116 { return "t"; }
+        if c == 117 { return "u"; }
+        if c == 118 { return "v"; }
+        if c == 119 { return "w"; }
+        if c == 120 { return "x"; }
+        if c == 121 { return "y"; }
+        return "z";
+    }
+    if c >= 65 && c <= 90 {
+        if c == 65 { return "A"; }
+        if c == 66 { return "B"; }
+        if c == 67 { return "C"; }
+        if c == 68 { return "D"; }
+        if c == 69 { return "E"; }
+        if c == 70 { return "F"; }
+        if c == 71 { return "G"; }
+        if c == 72 { return "H"; }
+        if c == 73 { return "I"; }
+        if c == 74 { return "J"; }
+        if c == 75 { return "K"; }
+        if c == 76 { return "L"; }
+        if c == 77 { return "M"; }
+        if c == 78 { return "N"; }
+        if c == 79 { return "O"; }
+        if c == 80 { return "P"; }
+        if c == 81 { return "Q"; }
+        if c == 82 { return "R"; }
+        if c == 83 { return "S"; }
+        if c == 84 { return "T"; }
+        if c == 85 { return "U"; }
+        if c == 86 { return "V"; }
+        if c == 87 { return "W"; }
+        if c == 88 { return "X"; }
+        if c == 89 { return "Y"; }
+        return "Z";
+    }
+    if c >= 48 && c <= 57 {
+        if c == 48 { return "0"; }
+        if c == 49 { return "1"; }
+        if c == 50 { return "2"; }
+        if c == 51 { return "3"; }
+        if c == 52 { return "4"; }
+        if c == 53 { return "5"; }
+        if c == 54 { return "6"; }
+        if c == 55 { return "7"; }
+        if c == 56 { return "8"; }
+        return "9";
+    }
+    if c == 46 { return "."; }
+    if c == 45 { return "-"; }
+    if c == 95 { return "_"; }
+    return "?";
+}
+
+func char_to_ascii(s: string, idx: int) -> int {
+    return string_char_at(s, idx);
+}
+
+func dns_name_wire_length(domain: string) -> int {
+    let d_len = string_length(domain);
+    if d_len == 0 { return 1; }
+    return d_len + 2;
+}
+
+func dns_encode_name(domain: string, ptr: *raw u8, offset: int) -> int {
+    let d_len = string_length(domain);
+    if d_len == 0 {
+        unsafe { ptr_write_u8_at(ptr, offset, 0); }
+        return 1;
+    }
+
+    let mut_cur_out = offset;
+    let mut_label_start = 0;
+    let mut_i = 0;
+
+    unsafe {
+        while mut_i <= d_len {
+            let is_dot_or_end = (mut_i == d_len) || (string_char_at(domain, mut_i) == 46);
+            if is_dot_or_end {
+                let label_len = mut_i - mut_label_start;
+                if label_len > 0 {
+                    ptr_write_u8_at(ptr, mut_cur_out, label_len);
+                    mut_cur_out = mut_cur_out + 1;
+                    let mut_k = 0;
+                    while mut_k < label_len {
+                        let c = string_char_at(domain, mut_label_start + mut_k);
+                        ptr_write_u8_at(ptr, mut_cur_out, c);
+                        mut_cur_out = mut_cur_out + 1;
+                        mut_k = mut_k + 1;
+                    }
+                }
+                mut_label_start = mut_i + 1;
+            }
+            mut_i = mut_i + 1;
+        }
+        ptr_write_u8_at(ptr, mut_cur_out, 0); // null terminator
+        mut_cur_out = mut_cur_out + 1;
+    }
+    return mut_cur_out - offset;
+}
+
+func dns_decode_name(ptr: *raw u8, base_offset: int, offset: int, max_offset: int) -> string {
+    let res = "";
+    let mut_cur = offset;
+    let mut_first = true;
+    let mut_depth = 0;
+    let mut_done = false;
+
+    unsafe {
+        while mut_depth < 20 && !mut_done && mut_cur < max_offset {
+            let len = ptr_read_u8_at(ptr, mut_cur);
+            if len == 0 {
+                mut_done = true;
+            } else if bit_and(len, 192) == 192 {
+                // Compression pointer (14 bits offset from base_offset)
+                if mut_cur + 1 < max_offset {
+                    let b1 = ptr_read_u8_at(ptr, mut_cur + 1);
+                    let rel_off = bit_or(bit_shl(bit_and(len, 63), 8), b1);
+                    let target_off = base_offset + rel_off;
+                    if target_off < max_offset && target_off < mut_cur {
+                        mut_cur = target_off;
+                        mut_depth = mut_depth + 1;
+                    } else {
+                        mut_done = true;
+                    }
+                } else {
+                    mut_done = true;
+                }
+            } else {
+                if len > 63 || mut_cur + 1 + len > max_offset {
+                    mut_done = true;
+                } else {
+                    if !mut_first {
+                        res = res + ".";
+                    }
+                    mut_first = false;
+                    mut_cur = mut_cur + 1;
+                    let mut_i = 0;
+                    while mut_i < len {
+                        let b = ptr_read_u8_at(ptr, mut_cur);
+                        res = res + ascii_to_char(b);
+                        mut_cur = mut_cur + 1;
+                        mut_i = mut_i + 1;
+                    }
+                    mut_depth = mut_depth + 1;
+                }
+            }
+        }
+    }
+    return res;
+}
+
+class DnsMessage {
+    id: int,
+    flags: int,
+    is_response: bool,
+    qdcount: int,
+    ancount: int,
+    qname: string,
+    qtype: int,
+    has_answer: bool,
+    ans_ip: Ipv4Address,
+    ans_ttl: int,
+}
+
+func dns_message_empty() -> DnsMessage {
+    let dummy_ip = ipv4_zero();
+    return new DnsMessage(0, 0, false, 0, 0, "", 0, false, dummy_ip, 0);
+}
+
+func dns_craft_query_payload(id: int, domain: string, qtype: int, ptr: *raw u8, offset: int) -> int {
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 0, bit_and(bit_shr(id, 8), 255));
+        ptr_write_u8_at(ptr, offset + 1, bit_and(id, 255));
+        ptr_write_u8_at(ptr, offset + 2, 1); // Flags: RD=1 (Recursion Desired)
+        ptr_write_u8_at(ptr, offset + 3, 0);
+        ptr_write_u8_at(ptr, offset + 4, 0); // QDCOUNT = 1
+        ptr_write_u8_at(ptr, offset + 5, 1);
+        ptr_write_u8_at(ptr, offset + 6, 0); // ANCOUNT = 0
+        ptr_write_u8_at(ptr, offset + 7, 0);
+        ptr_write_u8_at(ptr, offset + 8, 0); // NSCOUNT = 0
+        ptr_write_u8_at(ptr, offset + 9, 0);
+        ptr_write_u8_at(ptr, offset + 10, 0); // ARCOUNT = 0
+        ptr_write_u8_at(ptr, offset + 11, 0);
+
+        let name_len = dns_encode_name(domain, ptr, offset + 12);
+        let q_off = offset + 12 + name_len;
+        ptr_write_u8_at(ptr, q_off + 0, bit_and(bit_shr(qtype, 8), 255));
+        ptr_write_u8_at(ptr, q_off + 1, bit_and(qtype, 255));
+        ptr_write_u8_at(ptr, q_off + 2, 0); // QCLASS = IN (1)
+        ptr_write_u8_at(ptr, q_off + 3, 1);
+
+        return 12 + name_len + 4;
+    }
+}
+
+func dns_craft_response_a_payload(id: int, domain: string, ip: Ipv4Address, ttl: int, ptr: *raw u8, offset: int) -> int {
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 0, bit_and(bit_shr(id, 8), 255));
+        ptr_write_u8_at(ptr, offset + 1, bit_and(id, 255));
+        // Flags: QR=1 (0x80), AA=1 (0x04), RA=1 (0x80) -> 0x85 0x80
+        ptr_write_u8_at(ptr, offset + 2, 133); // 0x85
+        ptr_write_u8_at(ptr, offset + 3, 128); // 0x80
+        ptr_write_u8_at(ptr, offset + 4, 0);   // QDCOUNT = 1
+        ptr_write_u8_at(ptr, offset + 5, 1);
+        ptr_write_u8_at(ptr, offset + 6, 0);   // ANCOUNT = 1
+        ptr_write_u8_at(ptr, offset + 7, 1);
+        ptr_write_u8_at(ptr, offset + 8, 0);
+        ptr_write_u8_at(ptr, offset + 9, 0);
+        ptr_write_u8_at(ptr, offset + 10, 0);
+        ptr_write_u8_at(ptr, offset + 11, 0);
+
+        // Question
+        let name_len = dns_encode_name(domain, ptr, offset + 12);
+        let q_off = offset + 12 + name_len;
+        ptr_write_u8_at(ptr, q_off + 0, 0); // QTYPE = A (1)
+        ptr_write_u8_at(ptr, q_off + 1, 1);
+        ptr_write_u8_at(ptr, q_off + 2, 0); // QCLASS = IN (1)
+        ptr_write_u8_at(ptr, q_off + 3, 1);
+
+        // Answer
+        let a_off = q_off + 4;
+        // Compression pointer to question name at 12: 0xC00C
+        ptr_write_u8_at(ptr, a_off + 0, 192); // 0xC0
+        ptr_write_u8_at(ptr, a_off + 1, 12);  // 0x0C
+        ptr_write_u8_at(ptr, a_off + 2, 0);   // TYPE = A (1)
+        ptr_write_u8_at(ptr, a_off + 3, 1);
+        ptr_write_u8_at(ptr, a_off + 4, 0);   // CLASS = IN (1)
+        ptr_write_u8_at(ptr, a_off + 5, 1);
+        ptr_write_u8_at(ptr, a_off + 6, bit_and(bit_shr(ttl, 24), 255));
+        ptr_write_u8_at(ptr, a_off + 7, bit_and(bit_shr(ttl, 16), 255));
+        ptr_write_u8_at(ptr, a_off + 8, bit_and(bit_shr(ttl, 8), 255));
+        ptr_write_u8_at(ptr, a_off + 9, bit_and(ttl, 255));
+        ptr_write_u8_at(ptr, a_off + 10, 0);  // RDLENGTH = 4
+        ptr_write_u8_at(ptr, a_off + 11, 4);
+        ptr_write_u8_at(ptr, a_off + 12, ip.b0);
+        ptr_write_u8_at(ptr, a_off + 13, ip.b1);
+        ptr_write_u8_at(ptr, a_off + 14, ip.b2);
+        ptr_write_u8_at(ptr, a_off + 15, ip.b3);
+
+        return 12 + name_len + 4 + 16;
+    }
+}
+
+func dns_dissect(ptr: *raw u8, offset: int, length: int) -> DnsMessage {
+    if length < 12 { return dns_message_empty(); }
+    unsafe {
+        let id = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 0), 8), ptr_read_u8_at(ptr, offset + 1));
+        let flags = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 2), 8), ptr_read_u8_at(ptr, offset + 3));
+        let is_resp = bit_and(flags, dns_flag_qr_response()) != 0;
+        let qd = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 4), 8), ptr_read_u8_at(ptr, offset + 5));
+        let an = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 6), 8), ptr_read_u8_at(ptr, offset + 7));
+
+        if qd > 20 || an > 50 {
+            return dns_message_empty();
+        }
+
+        let qname = "";
+        let qtype = 0;
+        let ans_ip = ipv4_zero();
+        let ans_ttl = 0;
+        let has_ans = false;
+
+        let max_off = offset + length;
+        let cur = offset + 12;
+        if qd > 0 && cur < max_off {
+            qname = dns_decode_name(ptr, offset, cur, max_off);
+            let name_len = dns_name_wire_length(qname);
+            let qtype_off = cur + name_len;
+            if qtype_off + 4 <= max_off {
+                qtype = bit_or(bit_shl(ptr_read_u8_at(ptr, qtype_off + 0), 8), ptr_read_u8_at(ptr, qtype_off + 1));
+                cur = qtype_off + 4;
+            }
+        }
+
+        if an > 0 && cur + 12 <= max_off {
+            let r_tag = ptr_read_u8_at(ptr, cur);
+            let r_off = cur;
+            if bit_and(r_tag, 192) == 192 {
+                r_off = cur + 2;
+            }
+            if r_off + 10 <= max_off {
+                let rtype = bit_or(bit_shl(ptr_read_u8_at(ptr, r_off + 0), 8), ptr_read_u8_at(ptr, r_off + 1));
+                let ttl0 = ptr_read_u8_at(ptr, r_off + 4);
+                let ttl1 = ptr_read_u8_at(ptr, r_off + 5);
+                let ttl2 = ptr_read_u8_at(ptr, r_off + 6);
+                let ttl3 = ptr_read_u8_at(ptr, r_off + 7);
+                ans_ttl = bit_or(bit_or(bit_or(bit_shl(ttl0, 24), bit_shl(ttl1, 16)), bit_shl(ttl2, 8)), ttl3);
+                let rdlen = bit_or(bit_shl(ptr_read_u8_at(ptr, r_off + 8), 8), ptr_read_u8_at(ptr, r_off + 9));
+                if rtype == 1 && rdlen == 4 && r_off + 10 + 4 <= max_off {
+                    ans_ip = ipv4_read(ptr, r_off + 10);
+                    has_ans = true;
+                }
+            }
+        }
+
+        return new DnsMessage(id, flags, is_resp, qd, an, qname, qtype, has_ans, ans_ip, ans_ttl);
+    }
+}
+
+// ==============================================================================
+// 5.2 DHCP Protocol Framing & Codec (RFC 2131)
+// ==============================================================================
+
+func dhcp_op_request() -> int { return 1; }
+func dhcp_op_reply() -> int { return 2; }
+
+func dhcp_msg_discover() -> int { return 1; }
+func dhcp_msg_offer() -> int { return 2; }
+func dhcp_msg_request() -> int { return 3; }
+func dhcp_msg_decline() -> int { return 4; }
+func dhcp_msg_ack() -> int { return 5; }
+func dhcp_msg_nak() -> int { return 6; }
+func dhcp_msg_release() -> int { return 7; }
+func dhcp_msg_inform() -> int { return 8; }
+
+class DhcpMessage {
+    op: int,
+    htype: int,
+    hlen: int,
+    hops: int,
+    xid: int,
+    secs: int,
+    flags: int,
+    ciaddr: Ipv4Address,
+    yiaddr: Ipv4Address,
+    siaddr: Ipv4Address,
+    giaddr: Ipv4Address,
+    client_mac: MacAddress,
+    msg_type: int,
+    server_id: Ipv4Address,
+    req_ip: Ipv4Address,
+    lease_time: int,
+    subnet_mask: Ipv4Address,
+    router: Ipv4Address,
+    dns_server: Ipv4Address,
+}
+
+func dhcp_message_empty() -> DhcpMessage {
+    let dummy_ip = ipv4_zero();
+    let dummy_mac = mac_zero();
+    return new DhcpMessage(
+        0, 0, 0, 0, 0, 0, 0,
+        dummy_ip, dummy_ip, dummy_ip, dummy_ip,
+        dummy_mac,
+        0, dummy_ip, dummy_ip, 0, dummy_ip, dummy_ip, dummy_ip
+    );
+}
+
+func dhcp_craft_discover_payload(xid: int, client_mac: MacAddress, ptr: *raw u8, offset: int) -> int {
+    unsafe {
+        mem_set(ptr_add(ptr, offset), 0, 260);
+        ptr_write_u8_at(ptr, offset + 0, 1); // op = BOOTREQUEST
+        ptr_write_u8_at(ptr, offset + 1, 1); // htype = Ethernet (1)
+        ptr_write_u8_at(ptr, offset + 2, 6); // hlen = 6
+        ptr_write_u8_at(ptr, offset + 3, 0); // hops = 0
+
+        ptr_write_u8_at(ptr, offset + 4, bit_and(bit_shr(xid, 24), 255));
+        ptr_write_u8_at(ptr, offset + 5, bit_and(bit_shr(xid, 16), 255));
+        ptr_write_u8_at(ptr, offset + 6, bit_and(bit_shr(xid, 8), 255));
+        ptr_write_u8_at(ptr, offset + 7, bit_and(xid, 255));
+
+        // Client MAC at chaddr (offset 28)
+        mac_write(client_mac, ptr, offset + 28);
+
+        // Magic Cookie at offset 236: 0x63, 0x82, 0x53, 0x63 (99, 130, 83, 99)
+        ptr_write_u8_at(ptr, offset + 236, 99);
+        ptr_write_u8_at(ptr, offset + 237, 130);
+        ptr_write_u8_at(ptr, offset + 238, 83);
+        ptr_write_u8_at(ptr, offset + 239, 99);
+
+        // Option 53: DHCP Message Type = Discover (1)
+        ptr_write_u8_at(ptr, offset + 240, 53);
+        ptr_write_u8_at(ptr, offset + 241, 1);
+        ptr_write_u8_at(ptr, offset + 242, 1);
+
+        // Option 255: End
+        ptr_write_u8_at(ptr, offset + 243, 255);
+
+        return 244;
+    }
+}
+
+func dhcp_craft_offer_payload(xid: int, client_mac: MacAddress, yiaddr: Ipv4Address, server_id: Ipv4Address, lease: int, subnet: Ipv4Address, router: Ipv4Address, dns: Ipv4Address, ptr: *raw u8, offset: int) -> int {
+    unsafe {
+        mem_set(ptr_add(ptr, offset), 0, 280);
+        ptr_write_u8_at(ptr, offset + 0, 2); // op = BOOTREPLY
+        ptr_write_u8_at(ptr, offset + 1, 1); // htype = Ethernet
+        ptr_write_u8_at(ptr, offset + 2, 6); // hlen = 6
+        ptr_write_u8_at(ptr, offset + 3, 0); // hops = 0
+
+        ptr_write_u8_at(ptr, offset + 4, bit_and(bit_shr(xid, 24), 255));
+        ptr_write_u8_at(ptr, offset + 5, bit_and(bit_shr(xid, 16), 255));
+        ptr_write_u8_at(ptr, offset + 6, bit_and(bit_shr(xid, 8), 255));
+        ptr_write_u8_at(ptr, offset + 7, bit_and(xid, 255));
+
+        ipv4_write(yiaddr, ptr, offset + 16); // yiaddr (offered IP)
+        ipv4_write(server_id, ptr, offset + 20); // siaddr
+        mac_write(client_mac, ptr, offset + 28); // chaddr
+
+        // Magic Cookie
+        ptr_write_u8_at(ptr, offset + 236, 99);
+        ptr_write_u8_at(ptr, offset + 237, 130);
+        ptr_write_u8_at(ptr, offset + 238, 83);
+        ptr_write_u8_at(ptr, offset + 239, 99);
+
+        let mut_opt = offset + 240;
+        // Option 53: DHCP Message Type = Offer (2)
+        ptr_write_u8_at(ptr, mut_opt + 0, 53);
+        ptr_write_u8_at(ptr, mut_opt + 1, 1);
+        ptr_write_u8_at(ptr, mut_opt + 2, 2);
+        mut_opt = mut_opt + 3;
+
+        // Option 54: Server Identifier
+        ptr_write_u8_at(ptr, mut_opt + 0, 54);
+        ptr_write_u8_at(ptr, mut_opt + 1, 4);
+        ipv4_write(server_id, ptr, mut_opt + 2);
+        mut_opt = mut_opt + 6;
+
+        // Option 51: Lease Time
+        ptr_write_u8_at(ptr, mut_opt + 0, 51);
+        ptr_write_u8_at(ptr, mut_opt + 1, 4);
+        ptr_write_u8_at(ptr, mut_opt + 2, bit_and(bit_shr(lease, 24), 255));
+        ptr_write_u8_at(ptr, mut_opt + 3, bit_and(bit_shr(lease, 16), 255));
+        ptr_write_u8_at(ptr, mut_opt + 4, bit_and(bit_shr(lease, 8), 255));
+        ptr_write_u8_at(ptr, mut_opt + 5, bit_and(lease, 255));
+        mut_opt = mut_opt + 6;
+
+        // Option 1: Subnet Mask
+        ptr_write_u8_at(ptr, mut_opt + 0, 1);
+        ptr_write_u8_at(ptr, mut_opt + 1, 4);
+        ipv4_write(subnet, ptr, mut_opt + 2);
+        mut_opt = mut_opt + 6;
+
+        // Option 3: Router
+        ptr_write_u8_at(ptr, mut_opt + 0, 3);
+        ptr_write_u8_at(ptr, mut_opt + 1, 4);
+        ipv4_write(router, ptr, mut_opt + 2);
+        mut_opt = mut_opt + 6;
+
+        // Option 6: DNS Server
+        ptr_write_u8_at(ptr, mut_opt + 0, 6);
+        ptr_write_u8_at(ptr, mut_opt + 1, 4);
+        ipv4_write(dns, ptr, mut_opt + 2);
+        mut_opt = mut_opt + 6;
+
+        // Option 255: End
+        ptr_write_u8_at(ptr, mut_opt + 0, 255);
+        mut_opt = mut_opt + 1;
+
+        return mut_opt - offset;
+    }
+}
+
+func dhcp_craft_request_payload(xid: int, client_mac: MacAddress, req_ip: Ipv4Address, server_id: Ipv4Address, ptr: *raw u8, offset: int) -> int {
+    unsafe {
+        mem_set(ptr_add(ptr, offset), 0, 260);
+        ptr_write_u8_at(ptr, offset + 0, 1); // op = BOOTREQUEST
+        ptr_write_u8_at(ptr, offset + 1, 1); // htype = Ethernet
+        ptr_write_u8_at(ptr, offset + 2, 6); // hlen = 6
+        ptr_write_u8_at(ptr, offset + 3, 0); // hops = 0
+
+        ptr_write_u8_at(ptr, offset + 4, bit_and(bit_shr(xid, 24), 255));
+        ptr_write_u8_at(ptr, offset + 5, bit_and(bit_shr(xid, 16), 255));
+        ptr_write_u8_at(ptr, offset + 6, bit_and(bit_shr(xid, 8), 255));
+        ptr_write_u8_at(ptr, offset + 7, bit_and(xid, 255));
+
+        mac_write(client_mac, ptr, offset + 28); // chaddr
+
+        // Magic Cookie
+        ptr_write_u8_at(ptr, offset + 236, 99);
+        ptr_write_u8_at(ptr, offset + 237, 130);
+        ptr_write_u8_at(ptr, offset + 238, 83);
+        ptr_write_u8_at(ptr, offset + 239, 99);
+
+        let mut_opt = offset + 240;
+        // Option 53: DHCP Message Type = Request (3)
+        ptr_write_u8_at(ptr, mut_opt + 0, 53);
+        ptr_write_u8_at(ptr, mut_opt + 1, 1);
+        ptr_write_u8_at(ptr, mut_opt + 2, 3);
+        mut_opt = mut_opt + 3;
+
+        // Option 50: Requested IP
+        ptr_write_u8_at(ptr, mut_opt + 0, 50);
+        ptr_write_u8_at(ptr, mut_opt + 1, 4);
+        ipv4_write(req_ip, ptr, mut_opt + 2);
+        mut_opt = mut_opt + 6;
+
+        // Option 54: Server ID
+        ptr_write_u8_at(ptr, mut_opt + 0, 54);
+        ptr_write_u8_at(ptr, mut_opt + 1, 4);
+        ipv4_write(server_id, ptr, mut_opt + 2);
+        mut_opt = mut_opt + 6;
+
+        // Option 255: End
+        ptr_write_u8_at(ptr, mut_opt + 0, 255);
+        mut_opt = mut_opt + 1;
+
+        return mut_opt - offset;
+    }
+}
+
+func dhcp_craft_ack_payload(xid: int, client_mac: MacAddress, yiaddr: Ipv4Address, server_id: Ipv4Address, lease: int, subnet: Ipv4Address, router: Ipv4Address, dns: Ipv4Address, ptr: *raw u8, offset: int) -> int {
+    let len = dhcp_craft_offer_payload(xid, client_mac, yiaddr, server_id, lease, subnet, router, dns, ptr, offset);
+    unsafe {
+        // Change Option 53 value to DHCP ACK (5)
+        ptr_write_u8_at(ptr, offset + 242, 5);
+    }
+    return len;
+}
+
+func dhcp_dissect(ptr: *raw u8, offset: int, length: int) -> DhcpMessage {
+    if length < 240 { return dhcp_message_empty(); }
+    unsafe {
+        let op = ptr_read_u8_at(ptr, offset + 0);
+        let htype = ptr_read_u8_at(ptr, offset + 1);
+        let hlen = ptr_read_u8_at(ptr, offset + 2);
+        let hops = ptr_read_u8_at(ptr, offset + 3);
+
+        let xid = bit_or(bit_or(bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 4), 24),
+                                        bit_shl(ptr_read_u8_at(ptr, offset + 5), 16)),
+                                 bit_shl(ptr_read_u8_at(ptr, offset + 6), 8)),
+                          ptr_read_u8_at(ptr, offset + 7));
+        let secs = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 8), 8), ptr_read_u8_at(ptr, offset + 9));
+        let flags = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 10), 8), ptr_read_u8_at(ptr, offset + 11));
+
+        let ciaddr = ipv4_read(ptr, offset + 12);
+        let yiaddr = ipv4_read(ptr, offset + 16);
+        let siaddr = ipv4_read(ptr, offset + 20);
+        let giaddr = ipv4_read(ptr, offset + 24);
+        let cmac = mac_read(ptr, offset + 28);
+
+        // Verify Magic Cookie (99, 130, 83, 99)
+        let m0 = ptr_read_u8_at(ptr, offset + 236);
+        let m1 = ptr_read_u8_at(ptr, offset + 237);
+        let m2 = ptr_read_u8_at(ptr, offset + 238);
+        let m3 = ptr_read_u8_at(ptr, offset + 239);
+
+        let msg_type = 0;
+        let server_id = ipv4_zero();
+        let req_ip = ipv4_zero();
+        let lease_time = 0;
+        let subnet_mask = ipv4_zero();
+        let router = ipv4_zero();
+        let dns_server = ipv4_zero();
+
+        if m0 == 99 && m1 == 130 && m2 == 83 && m3 == 99 {
+            let mut_cur = offset + 240;
+            let end = offset + length;
+            let mut_done = false;
+            while mut_cur < end && !mut_done {
+                let opt_type = ptr_read_u8_at(ptr, mut_cur);
+                if opt_type == 255 {
+                    mut_done = true;
+                } else if opt_type == 0 {
+                    mut_cur = mut_cur + 1; // Pad
+                } else {
+                    if mut_cur + 1 < end {
+                        let opt_len = ptr_read_u8_at(ptr, mut_cur + 1);
+                        let val_off = mut_cur + 2;
+                        if val_off + opt_len <= end {
+                            if opt_type == 53 && opt_len >= 1 {
+                                msg_type = ptr_read_u8_at(ptr, val_off);
+                            } else if opt_type == 54 && opt_len >= 4 {
+                                server_id = ipv4_read(ptr, val_off);
+                            } else if opt_type == 50 && opt_len >= 4 {
+                                req_ip = ipv4_read(ptr, val_off);
+                            } else if opt_type == 51 && opt_len >= 4 {
+                                lease_time = bit_or(bit_or(bit_or(bit_shl(ptr_read_u8_at(ptr, val_off), 24),
+                                                                   bit_shl(ptr_read_u8_at(ptr, val_off + 1), 16)),
+                                                            bit_shl(ptr_read_u8_at(ptr, val_off + 2), 8)),
+                                                     ptr_read_u8_at(ptr, val_off + 3));
+                            } else if opt_type == 1 && opt_len >= 4 {
+                                subnet_mask = ipv4_read(ptr, val_off);
+                            } else if opt_type == 3 && opt_len >= 4 {
+                                router = ipv4_read(ptr, val_off);
+                            } else if opt_type == 6 && opt_len >= 4 {
+                                dns_server = ipv4_read(ptr, val_off);
+                            }
+                        }
+                        mut_cur = val_off + opt_len;
+                    } else {
+                        mut_done = true;
+                    }
+                }
+            }
+        }
+
+        return new DhcpMessage(
+            op, htype, hlen, hops, xid, secs, flags,
+            ciaddr, yiaddr, siaddr, giaddr, cmac,
+            msg_type, server_id, req_ip, lease_time,
+            subnet_mask, router, dns_server
+        );
+    }
+}
+
+
 // ==============================================================================
 // 6. Full Packet Dissector Engine (ParsedPacket)
 // ==============================================================================
@@ -830,12 +1750,20 @@ class ParsedPacket {
     arp: ArpHeader,
     has_ipv4: bool,
     ip: Ipv4Header,
+    has_ipv6: bool,
+    ipv6: Ipv6Header,
     has_icmp: bool,
     icmp: IcmpHeader,
+    has_icmpv6: bool,
+    icmpv6: Icmpv6Header,
     has_udp: bool,
     udp: UdpHeader,
     has_tcp: bool,
     tcp: TcpHeader,
+    has_dns: bool,
+    dns: DnsMessage,
+    has_dhcp: bool,
+    dhcp: DhcpMessage,
     payload_offset: int,
     payload_len: int,
 }
@@ -843,15 +1771,33 @@ class ParsedPacket {
 func parsed_packet_empty() -> ParsedPacket {
     let dummy_mac = mac_zero();
     let dummy_ip = ipv4_zero();
+    let dummy_ip6 = ipv6_zero();
     let eth = new EthernetHeader(dummy_mac, dummy_mac, 0);
     let arp = new ArpHeader(0, 0, 0, 0, 0, dummy_mac, dummy_ip, dummy_mac, dummy_ip);
     let ip = new Ipv4Header(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, dummy_ip, dummy_ip);
+    let ip6 = new Ipv6Header(0, 0, 0, 0, 0, 0, dummy_ip6, dummy_ip6);
     let icmp = new IcmpHeader(0, 0, 0, 0, 0);
+    let icmp6 = new Icmpv6Header(0, 0, 0, 0, 0);
     let udp = new UdpHeader(0, 0, 0, 0);
     let tcp = new TcpHeader(0, 0, 0, 0, 0, 0, 0, 0, 0);
+    let dns = dns_message_empty();
+    let dhcp = dhcp_message_empty();
     unsafe {
         let null_ptr: *raw u8 = int_to_ptr(0);
-        return new ParsedPacket(null_ptr, 0, false, eth, false, arp, false, ip, false, icmp, false, udp, false, tcp, 0, 0);
+        return new ParsedPacket(
+            null_ptr, 0,
+            false, eth,
+            false, arp,
+            false, ip,
+            false, ip6,
+            false, icmp,
+            false, icmp6,
+            false, udp,
+            false, tcp,
+            false, dns,
+            false, dhcp,
+            0, 0
+        );
     }
 }
 
@@ -866,59 +1812,87 @@ func dissect_packet(ptr: *raw u8, length: int) -> ParsedPacket {
 
     parsed.has_ethernet = true;
     parsed.eth = ethernet_read(ptr, 0);
+    let etype = parsed.eth.ethertype;
+    let mut_offset = 14;
 
-    // ARP Packet
-    if parsed.eth.ethertype == ethertype_arp() && length >= 42 {
+    if etype == ethertype_arp() && length >= 42 {
         parsed.has_arp = true;
-        parsed.arp = arp_read(ptr, 14);
-        parsed.payload_offset = 42;
-        parsed.payload_len = length - 42;
+        parsed.arp = arp_read(ptr, mut_offset);
         return parsed;
     }
 
-    // IPv4 Packet
-    if parsed.eth.ethertype == ethertype_ipv4() && length >= 34 {
+    if etype == ethertype_ipv4() && length >= mut_offset + 20 {
         parsed.has_ipv4 = true;
-        parsed.ip = ipv4_header_read(ptr, 14);
+        parsed.ip = ipv4_header_read(ptr, mut_offset);
         let ihl_bytes = parsed.ip.ihl * 4;
-        let l4_offset = 14 + ihl_bytes;
+        let proto = parsed.ip.protocol;
+        mut_offset = mut_offset + ihl_bytes;
 
-        // ICMP
-        if parsed.ip.protocol == ipproto_icmp() && length >= l4_offset + 8 {
+        if proto == ipproto_icmp() && length >= mut_offset + 8 {
             parsed.has_icmp = true;
-            parsed.icmp = icmp_read(ptr, l4_offset);
-            parsed.payload_offset = l4_offset + 8;
+            parsed.icmp = icmp_read(ptr, mut_offset);
+            parsed.payload_offset = mut_offset + 8;
             parsed.payload_len = length - parsed.payload_offset;
-            return parsed;
-        }
-
-        // UDP
-        if parsed.ip.protocol == ipproto_udp() && length >= l4_offset + 8 {
+        } else if proto == ipproto_udp() && length >= mut_offset + 8 {
             parsed.has_udp = true;
-            parsed.udp = udp_read(ptr, l4_offset);
-            parsed.payload_offset = l4_offset + 8;
+            parsed.udp = udp_read(ptr, mut_offset);
+            parsed.payload_offset = mut_offset + 8;
             parsed.payload_len = length - parsed.payload_offset;
-            return parsed;
-        }
 
-        // TCP
-        if parsed.ip.protocol == ipproto_tcp() && length >= l4_offset + 20 {
+            // Higher Layer Dissection over UDP
+            if parsed.udp.src_port == 53 || parsed.udp.dst_port == 53 {
+                let dns_msg = dns_dissect(ptr, parsed.payload_offset, parsed.payload_len);
+                if dns_msg.qdcount > 0 || dns_msg.ancount > 0 {
+                    parsed.has_dns = true;
+                    parsed.dns = dns_msg;
+                }
+            } else if (parsed.udp.src_port == 67 || parsed.udp.src_port == 68) &&
+                      (parsed.udp.dst_port == 67 || parsed.udp.dst_port == 68) {
+                let dhcp_msg = dhcp_dissect(ptr, parsed.payload_offset, parsed.payload_len);
+                if dhcp_msg.msg_type > 0 {
+                    parsed.has_dhcp = true;
+                    parsed.dhcp = dhcp_msg;
+                }
+            }
+        } else if proto == ipproto_tcp() && length >= mut_offset + 20 {
             parsed.has_tcp = true;
-            parsed.tcp = tcp_read(ptr, l4_offset);
+            parsed.tcp = tcp_read(ptr, mut_offset);
             let tcp_hdr_len = parsed.tcp.data_offset * 4;
-            if tcp_hdr_len < 20 { tcp_hdr_len = 20; }
-            parsed.payload_offset = l4_offset + tcp_hdr_len;
+            parsed.payload_offset = mut_offset + tcp_hdr_len;
             parsed.payload_len = length - parsed.payload_offset;
-            return parsed;
         }
+    } else if etype == ethertype_ipv6() && length >= mut_offset + 40 {
+        parsed.has_ipv6 = true;
+        parsed.ipv6 = ipv6_header_read(ptr, mut_offset);
+        let next_hdr = parsed.ipv6.next_header;
+        mut_offset = mut_offset + 40;
 
-        parsed.payload_offset = l4_offset;
-        parsed.payload_len = length - l4_offset;
-        return parsed;
+        if next_hdr == ipproto_icmpv6() && length >= mut_offset + 8 {
+            parsed.has_icmpv6 = true;
+            parsed.icmpv6 = icmpv6_read(ptr, mut_offset);
+            parsed.payload_offset = mut_offset + 8;
+            parsed.payload_len = length - parsed.payload_offset;
+        } else if next_hdr == ipproto_udp() && length >= mut_offset + 8 {
+            parsed.has_udp = true;
+            parsed.udp = udp_read(ptr, mut_offset);
+            parsed.payload_offset = mut_offset + 8;
+            parsed.payload_len = length - parsed.payload_offset;
+            if parsed.udp.src_port == 53 || parsed.udp.dst_port == 53 {
+                let dns_msg = dns_dissect(ptr, parsed.payload_offset, parsed.payload_len);
+                if dns_msg.qdcount > 0 || dns_msg.ancount > 0 {
+                    parsed.has_dns = true;
+                    parsed.dns = dns_msg;
+                }
+            }
+        } else if next_hdr == ipproto_tcp() && length >= mut_offset + 20 {
+            parsed.has_tcp = true;
+            parsed.tcp = tcp_read(ptr, mut_offset);
+            let tcp_hdr_len = parsed.tcp.data_offset * 4;
+            parsed.payload_offset = mut_offset + tcp_hdr_len;
+            parsed.payload_len = length - parsed.payload_offset;
+        }
     }
 
-    parsed.payload_offset = 14;
-    parsed.payload_len = length - 14;
     return parsed;
 }
 
@@ -944,6 +1918,14 @@ func parsed_packet_summary(pkt: ParsedPacket) -> string {
     if pkt.has_ipv4 {
         let src_ip = ipv4_to_string(pkt.ip.src);
         let dst_ip = ipv4_to_string(pkt.ip.dst);
+        if pkt.has_dns {
+            let role = "Query";
+            if pkt.dns.is_response { role = "Response"; }
+            return "[UDP] [DNS " + role + "] " + src_ip + ":" + int_to_str(pkt.udp.src_port) + " -> " + dst_ip + ":" + int_to_str(pkt.udp.dst_port) + " '" + pkt.dns.qname + "'";
+        }
+        if pkt.has_dhcp {
+            return "[UDP] [DHCP msg=" + int_to_str(pkt.dhcp.msg_type) + "] xid=" + int_to_str(pkt.dhcp.xid) + " client=" + mac_to_string(pkt.dhcp.client_mac);
+        }
         if pkt.has_icmp {
             let mut_t_name = "Echo Request";
             if pkt.icmp.icmp_type == 0 {
@@ -959,11 +1941,77 @@ func parsed_packet_summary(pkt: ParsedPacket) -> string {
         }
         return "[IPv4] " + src_ip + " -> " + dst_ip + " proto=" + int_to_str(pkt.ip.protocol);
     }
+    if pkt.has_ipv6 {
+        let src_ip6 = ipv6_to_string(pkt.ipv6.src);
+        let dst_ip6 = ipv6_to_string(pkt.ipv6.dst);
+        if pkt.has_icmpv6 {
+            let mut_t6_name = "Echo Request";
+            if pkt.icmpv6.type_ == 129 {
+                mut_t6_name = "Echo Reply";
+            }
+            return "[ICMPv6] " + src_ip6 + " -> " + dst_ip6 + " " + mut_t6_name + " id=" + int_to_str(pkt.icmpv6.id) + " seq=" + int_to_str(pkt.icmpv6.seq);
+        }
+        if pkt.has_tcp {
+            return "[IPv6 TCP] " + src_ip6 + ":" + int_to_str(pkt.tcp.src_port) + " -> " + dst_ip6 + ":" + int_to_str(pkt.tcp.dst_port) + " [" + tcp_flags_summary(pkt.tcp.flags) + "]";
+        }
+        if pkt.has_udp {
+            return "[IPv6 UDP] " + src_ip6 + ":" + int_to_str(pkt.udp.src_port) + " -> " + dst_ip6 + ":" + int_to_str(pkt.udp.dst_port);
+        }
+        return "[IPv6] " + src_ip6 + " -> " + dst_ip6 + " next_hdr=" + int_to_str(pkt.ipv6.next_header);
+    }
     if pkt.has_ethernet {
         return "[Ethernet] " + mac_to_string(pkt.eth.src) + " -> " + mac_to_string(pkt.eth.dst) + " type=" + int_to_str(pkt.eth.ethertype);
     }
     return "[RawFrame] length=" + int_to_str(pkt.length);
 }
+
+// Scapy-style single-line packet inspector summary
+func packet_inspect_summary(pkt: RawPacket) -> string {
+    let parsed = dissect_packet(pkt.ptr, pkt.length);
+    return parsed_packet_summary(parsed);
+}
+
+// Multi-line detailed inspection breakdown
+func packet_inspect_detail(pkt: RawPacket) {
+    let parsed = dissect_packet(pkt.ptr, pkt.length);
+    println("### Packet Inspection Details (length=" + int_to_str(pkt.length) + " bytes) ###");
+    if parsed.has_ethernet {
+        println("  -> Ethernet II: src=" + mac_to_string(parsed.eth.src) + " dst=" + mac_to_string(parsed.eth.dst) + " ethertype=" + int_to_str(parsed.eth.ethertype));
+    }
+    if parsed.has_arp {
+        println("  -> ARP: opcode=" + int_to_str(parsed.arp.opcode) + " sender_ip=" + ipv4_to_string(parsed.arp.sender_ip) + " target_ip=" + ipv4_to_string(parsed.arp.target_ip));
+    }
+    if parsed.has_ipv4 {
+        println("  -> IPv4: src=" + ipv4_to_string(parsed.ip.src) + " dst=" + ipv4_to_string(parsed.ip.dst) + " proto=" + int_to_str(parsed.ip.protocol) + " ttl=" + int_to_str(parsed.ip.ttl));
+    }
+    if parsed.has_ipv6 {
+        println("  -> IPv6: src=" + ipv6_to_string(parsed.ipv6.src) + " dst=" + ipv6_to_string(parsed.ipv6.dst) + " next_hdr=" + int_to_str(parsed.ipv6.next_header));
+    }
+    if parsed.has_tcp {
+        println("  -> TCP: src_port=" + int_to_str(parsed.tcp.src_port) + " dst_port=" + int_to_str(parsed.tcp.dst_port) + " flags=[" + tcp_flags_summary(parsed.tcp.flags) + "] seq=" + int_to_str(parsed.tcp.seq_num));
+    }
+    if parsed.has_udp {
+        println("  -> UDP: src_port=" + int_to_str(parsed.udp.src_port) + " dst_port=" + int_to_str(parsed.udp.dst_port) + " len=" + int_to_str(parsed.udp.length));
+    }
+    if parsed.has_icmp {
+        println("  -> ICMP: type=" + int_to_str(parsed.icmp.icmp_type) + " code=" + int_to_str(parsed.icmp.code) + " id=" + int_to_str(parsed.icmp.id) + " seq=" + int_to_str(parsed.icmp.seq));
+    }
+    if parsed.has_icmpv6 {
+        println("  -> ICMPv6: type=" + int_to_str(parsed.icmpv6.type_) + " code=" + int_to_str(parsed.icmpv6.code) + " id=" + int_to_str(parsed.icmpv6.id));
+    }
+    if parsed.has_dns {
+        let is_resp_int = 0;
+        if parsed.dns.is_response {
+            is_resp_int = 1;
+        }
+        println("  -> DNS: id=" + int_to_str(parsed.dns.id) + " qname='" + parsed.dns.qname + "' is_response=" + int_to_str(is_resp_int));
+    }
+    if parsed.has_dhcp {
+        println("  -> DHCP: msg_type=" + int_to_str(parsed.dhcp.msg_type) + " xid=" + int_to_str(parsed.dhcp.xid));
+    }
+    println("------------------------------------------------------------------");
+}
+
 
 // ==============================================================================
 // 7. Scapy-Style Packet Builders & Crafters
@@ -1134,6 +2182,492 @@ func craft_tcp_syn_ack(src_mac: MacAddress, dst_mac: MacAddress, src_ip: Ipv4Add
         ptr_write_u8_at(pkt.ptr, 25, bit_and(ip_csum, 255));
     }
 
+    return pkt;
+}
+
+
+// Crafts an ICMPv6 Echo Request frame
+func craft_ipv6_icmp_echo(src_mac: MacAddress, dst_mac: MacAddress, src: Ipv6Address, dst: Ipv6Address, id: int, seq: int, payload: string) -> RawPacket {
+    let b = packet_builder_new();
+    packet_builder_ethernet(b, dst_mac, src_mac, ethertype_ipv6());
+    packet_builder_ipv6(b, src, dst, ipproto_icmpv6(), 64);
+    packet_builder_icmpv6_echo(b, id, seq);
+    if string_length(payload) > 0 {
+        packet_builder_payload(b, payload);
+    }
+    return packet_builder_build(b);
+}
+
+// Crafts an IPv6 TCP SYN frame
+func craft_ipv6_tcp_syn(src_mac: MacAddress, dst_mac: MacAddress, src: Ipv6Address, dst: Ipv6Address, src_port: int, dst_port: int, seq: int) -> RawPacket {
+    let b = packet_builder_new();
+    packet_builder_ethernet(b, dst_mac, src_mac, ethertype_ipv6());
+    packet_builder_ipv6(b, src, dst, ipproto_tcp(), 64);
+    packet_builder_tcp(b, src_port, dst_port, seq, 0, tcp_flag_syn(), 64240);
+    return packet_builder_build(b);
+}
+
+// Crafts a DNS Query frame (RFC 1035 UDP Port 53)
+func craft_dns_query(src_mac: MacAddress, dst_mac: MacAddress, src_ip: Ipv4Address, dst_ip: Ipv4Address, src_port: int, id: int, domain: string, qtype: int) -> RawPacket {
+    let b = packet_builder_new();
+    packet_builder_ethernet(b, dst_mac, src_mac, ethertype_ipv4());
+    packet_builder_ipv4(b, src_ip, dst_ip, ipproto_udp(), 64);
+    packet_builder_udp(b, src_port, 53);
+    packet_builder_dns_query(b, id, domain, qtype);
+    return packet_builder_build(b);
+}
+
+// Crafts a DNS Response frame with Answer section (RFC 1035 UDP Port 53)
+func craft_dns_response_a(src_mac: MacAddress, dst_mac: MacAddress, src_ip: Ipv4Address, dst_ip: Ipv4Address, dst_port: int, id: int, domain: string, ans_ip: Ipv4Address, ttl: int) -> RawPacket {
+    let b = packet_builder_new();
+    packet_builder_ethernet(b, dst_mac, src_mac, ethertype_ipv4());
+    packet_builder_ipv4(b, src_ip, dst_ip, ipproto_udp(), 64);
+    packet_builder_udp(b, 53, dst_port);
+    packet_builder_dns_response_a(b, id, domain, ans_ip, ttl);
+    return packet_builder_build(b);
+}
+
+// Crafts a DHCP Discover frame (RFC 2131 UDP Port 67)
+func craft_dhcp_discover(src_mac: MacAddress, xid: int) -> RawPacket {
+    let b = packet_builder_new();
+    packet_builder_ethernet(b, mac_broadcast(), src_mac, ethertype_ipv4());
+    packet_builder_ipv4(b, ipv4_zero(), ipv4_broadcast(), ipproto_udp(), 64);
+    packet_builder_udp(b, 68, 67);
+    packet_builder_dhcp_discover(b, xid, src_mac);
+    return packet_builder_build(b);
+}
+
+// Crafts a DHCP Offer frame (RFC 2131 UDP Port 68)
+func craft_dhcp_offer(src_mac: MacAddress, client_mac: MacAddress, server_ip: Ipv4Address, offered_ip: Ipv4Address, xid: int, lease: int, subnet: Ipv4Address, router: Ipv4Address, dns: Ipv4Address) -> RawPacket {
+    let b = packet_builder_new();
+    packet_builder_ethernet(b, mac_broadcast(), src_mac, ethertype_ipv4());
+    packet_builder_ipv4(b, server_ip, ipv4_broadcast(), ipproto_udp(), 64);
+    packet_builder_udp(b, 67, 68);
+    packet_builder_dhcp_offer(b, xid, client_mac, offered_ip, server_ip, lease, subnet, router, dns);
+    return packet_builder_build(b);
+}
+
+// Crafts a DHCP Ack frame (RFC 2131 UDP Port 68)
+func craft_dhcp_ack(src_mac: MacAddress, client_mac: MacAddress, server_ip: Ipv4Address, offered_ip: Ipv4Address, xid: int, lease: int, subnet: Ipv4Address, router: Ipv4Address, dns: Ipv4Address) -> RawPacket {
+    let b = packet_builder_new();
+    packet_builder_ethernet(b, mac_broadcast(), src_mac, ethertype_ipv4());
+    packet_builder_ipv4(b, server_ip, ipv4_broadcast(), ipproto_udp(), 64);
+    packet_builder_udp(b, 67, 68);
+    packet_builder_dhcp_ack(b, xid, client_mac, offered_ip, server_ip, lease, subnet, router, dns);
+    return packet_builder_build(b);
+}
+
+// Scapy-Style Layer Stacker & Protocol Builder
+class PacketBuilder {
+    has_ethernet: bool,
+    eth: EthernetHeader,
+    has_arp: bool,
+    arp: ArpHeader,
+    has_ipv4: bool,
+    ip: Ipv4Header,
+    has_ipv6: bool,
+    ipv6: Ipv6Header,
+    has_icmp: bool,
+    icmp: IcmpHeader,
+    has_icmpv6: bool,
+    icmpv6: Icmpv6Header,
+    has_udp: bool,
+    udp: UdpHeader,
+    has_tcp: bool,
+    tcp: TcpHeader,
+    has_dns: bool,
+    dns: DnsMessage,
+    has_dhcp: bool,
+    dhcp: DhcpMessage,
+    has_payload: bool,
+    payload: string,
+}
+
+// Creates an empty PacketBuilder instance
+func packet_builder_new() -> PacketBuilder {
+    let dummy_mac = mac_zero();
+    let dummy_ip = ipv4_zero();
+    let dummy_ip6 = ipv6_zero();
+    let eth = new EthernetHeader(dummy_mac, dummy_mac, 0);
+    let arp = new ArpHeader(0, 0, 0, 0, 0, dummy_mac, dummy_ip, dummy_mac, dummy_ip);
+    let ip = new Ipv4Header(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, dummy_ip, dummy_ip);
+    let ip6 = new Ipv6Header(0, 0, 0, 0, 0, 0, dummy_ip6, dummy_ip6);
+    let icmp = new IcmpHeader(0, 0, 0, 0, 0);
+    let icmp6 = new Icmpv6Header(0, 0, 0, 0, 0);
+    let udp = new UdpHeader(0, 0, 0, 0);
+    let tcp = new TcpHeader(0, 0, 0, 0, 0, 0, 0, 0, 0);
+    let dns = dns_message_empty();
+    let dhcp = dhcp_message_empty();
+    return new PacketBuilder(
+        false, eth,
+        false, arp,
+        false, ip,
+        false, ip6,
+        false, icmp,
+        false, icmp6,
+        false, udp,
+        false, tcp,
+        false, dns,
+        false, dhcp,
+        false, ""
+    );
+}
+
+func packet_builder_ethernet(b: PacketBuilder, dst: MacAddress, src: MacAddress, ethertype: int) -> PacketBuilder {
+    b.has_ethernet = true;
+    b.eth = ethernet_header_new(dst, src, ethertype);
+    return b;
+}
+
+func packet_builder_arp(b: PacketBuilder, op: int, sender_mac: MacAddress, sender_ip: Ipv4Address, target_mac: MacAddress, target_ip: Ipv4Address) -> PacketBuilder {
+    b.has_arp = true;
+    b.arp = arp_header_new(op, sender_mac, sender_ip, target_mac, target_ip);
+    b.eth.ethertype = ethertype_arp();
+    return b;
+}
+
+func packet_builder_ipv4(b: PacketBuilder, src_ip: Ipv4Address, dst_ip: Ipv4Address, proto: int, ttl: int) -> PacketBuilder {
+    b.has_ipv4 = true;
+    b.has_ipv6 = false;
+    b.ip = ipv4_header_new(proto, src_ip, dst_ip, 0);
+    b.ip.ttl = ttl;
+    b.eth.ethertype = ethertype_ipv4();
+    return b;
+}
+
+func packet_builder_ipv6(b: PacketBuilder, src: Ipv6Address, dst: Ipv6Address, next_header: int, hop_limit: int) -> PacketBuilder {
+    b.has_ipv6 = true;
+    b.has_ipv4 = false;
+    b.ipv6 = ipv6_header_new(src, dst, next_header, hop_limit, 0);
+    b.eth.ethertype = ethertype_ipv6();
+    return b;
+}
+
+func packet_builder_icmp_echo(b: PacketBuilder, id: int, seq: int) -> PacketBuilder {
+    b.has_icmp = true;
+    b.icmp = icmp_header_new(icmp_type_echo_request(), 0, id, seq);
+    b.ip.protocol = ipproto_icmp();
+    return b;
+}
+
+func packet_builder_icmp_reply(b: PacketBuilder, id: int, seq: int) -> PacketBuilder {
+    b.has_icmp = true;
+    b.icmp = icmp_header_new(icmp_type_echo_reply(), 0, id, seq);
+    b.ip.protocol = ipproto_icmp();
+    return b;
+}
+
+func packet_builder_icmpv6_echo(b: PacketBuilder, id: int, seq: int) -> PacketBuilder {
+    b.has_icmpv6 = true;
+    b.icmpv6 = icmpv6_header_new(icmpv6_type_echo_request(), 0, id, seq);
+    b.ipv6.next_header = ipproto_icmpv6();
+    return b;
+}
+
+func packet_builder_icmpv6_reply(b: PacketBuilder, id: int, seq: int) -> PacketBuilder {
+    b.has_icmpv6 = true;
+    b.icmpv6 = icmpv6_header_new(icmpv6_type_echo_reply(), 0, id, seq);
+    b.ipv6.next_header = ipproto_icmpv6();
+    return b;
+}
+
+func packet_builder_udp(b: PacketBuilder, src_port: int, dst_port: int) -> PacketBuilder {
+    b.has_udp = true;
+    b.udp = udp_header_new(src_port, dst_port, 0);
+    if b.has_ipv4 {
+        b.ip.protocol = ipproto_udp();
+    }
+    if b.has_ipv6 {
+        b.ipv6.next_header = ipproto_udp();
+    }
+    return b;
+}
+
+func packet_builder_tcp(b: PacketBuilder, src_port: int, dst_port: int, seq: int, ack: int, flags: int, window: int) -> PacketBuilder {
+    b.has_tcp = true;
+    b.tcp = tcp_header_new(src_port, dst_port, seq, ack, flags, window);
+    if b.has_ipv4 {
+        b.ip.protocol = ipproto_tcp();
+    }
+    if b.has_ipv6 {
+        b.ipv6.next_header = ipproto_tcp();
+    }
+    return b;
+}
+
+func packet_builder_dns_query(b: PacketBuilder, id: int, domain: string, qtype: int) -> PacketBuilder {
+    b.has_dns = true;
+    b.dns.id = id;
+    b.dns.flags = dns_flag_rd();
+    b.dns.is_response = false;
+    b.dns.qdcount = 1;
+    b.dns.ancount = 0;
+    b.dns.qname = domain;
+    b.dns.qtype = qtype;
+    return b;
+}
+
+func packet_builder_dns_response_a(b: PacketBuilder, id: int, domain: string, ip: Ipv4Address, ttl: int) -> PacketBuilder {
+    b.has_dns = true;
+    b.dns.id = id;
+    b.dns.flags = bit_or(bit_or(dns_flag_qr_response(), dns_flag_aa()), dns_flag_ra());
+    b.dns.is_response = true;
+    b.dns.qdcount = 1;
+    b.dns.ancount = 1;
+    b.dns.qname = domain;
+    b.dns.qtype = dns_qtype_a();
+    b.dns.has_answer = true;
+    b.dns.ans_ip = ip;
+    b.dns.ans_ttl = ttl;
+    return b;
+}
+
+func packet_builder_dhcp_discover(b: PacketBuilder, xid: int, client_mac: MacAddress) -> PacketBuilder {
+    b.has_dhcp = true;
+    b.dhcp.op = dhcp_op_request();
+    b.dhcp.xid = xid;
+    b.dhcp.client_mac = client_mac;
+    b.dhcp.msg_type = dhcp_msg_discover();
+    return b;
+}
+
+func packet_builder_dhcp_offer(b: PacketBuilder, xid: int, client_mac: MacAddress, yiaddr: Ipv4Address, server_id: Ipv4Address, lease: int, subnet: Ipv4Address, router: Ipv4Address, dns: Ipv4Address) -> PacketBuilder {
+    b.has_dhcp = true;
+    b.dhcp.op = dhcp_op_reply();
+    b.dhcp.xid = xid;
+    b.dhcp.client_mac = client_mac;
+    b.dhcp.yiaddr = yiaddr;
+    b.dhcp.server_id = server_id;
+    b.dhcp.lease_time = lease;
+    b.dhcp.subnet_mask = subnet;
+    b.dhcp.router = router;
+    b.dhcp.dns_server = dns;
+    b.dhcp.msg_type = dhcp_msg_offer();
+    return b;
+}
+
+func packet_builder_dhcp_request(b: PacketBuilder, xid: int, client_mac: MacAddress, req_ip: Ipv4Address, server_id: Ipv4Address) -> PacketBuilder {
+    b.has_dhcp = true;
+    b.dhcp.op = dhcp_op_request();
+    b.dhcp.xid = xid;
+    b.dhcp.client_mac = client_mac;
+    b.dhcp.req_ip = req_ip;
+    b.dhcp.server_id = server_id;
+    b.dhcp.msg_type = dhcp_msg_request();
+    return b;
+}
+
+func packet_builder_dhcp_ack(b: PacketBuilder, xid: int, client_mac: MacAddress, yiaddr: Ipv4Address, server_id: Ipv4Address, lease: int, subnet: Ipv4Address, router: Ipv4Address, dns: Ipv4Address) -> PacketBuilder {
+    b.has_dhcp = true;
+    b.dhcp.op = dhcp_op_reply();
+    b.dhcp.xid = xid;
+    b.dhcp.client_mac = client_mac;
+    b.dhcp.yiaddr = yiaddr;
+    b.dhcp.server_id = server_id;
+    b.dhcp.lease_time = lease;
+    b.dhcp.subnet_mask = subnet;
+    b.dhcp.router = router;
+    b.dhcp.dns_server = dns;
+    b.dhcp.msg_type = dhcp_msg_ack();
+    return b;
+}
+
+func packet_builder_payload(b: PacketBuilder, payload: string) -> PacketBuilder {
+    b.has_payload = true;
+    b.payload = payload;
+    return b;
+}
+
+// Builds the finalized wire frame with automated checksum calculation
+func packet_builder_build(b: PacketBuilder) -> RawPacket {
+    let l2_len = 0;
+    if b.has_ethernet {
+        l2_len = 14;
+    }
+
+    if b.has_arp {
+        let total_arp_len = l2_len + 28;
+        let pkt = raw_packet_new(total_arp_len + 16);
+        if b.has_ethernet {
+            b.eth.ethertype = ethertype_arp();
+            ethernet_write(b.eth, pkt.ptr, 0);
+        }
+        arp_write(b.arp, pkt.ptr, l2_len);
+        pkt.length = total_arp_len;
+        return pkt;
+    }
+
+    // Determine L7 Payload Length
+    let l7_len = 0;
+    if b.has_dns {
+        if b.dns.is_response {
+            l7_len = 12 + dns_name_wire_length(b.dns.qname) + 4 + 16;
+        } else {
+            l7_len = 12 + dns_name_wire_length(b.dns.qname) + 4;
+        }
+    } else if b.has_dhcp {
+        if b.dhcp.msg_type == dhcp_msg_discover() {
+            l7_len = 244;
+        } else if b.dhcp.msg_type == dhcp_msg_offer() {
+            l7_len = 274;
+        } else if b.dhcp.msg_type == dhcp_msg_request() {
+            l7_len = 256;
+        } else if b.dhcp.msg_type == dhcp_msg_ack() {
+            l7_len = 274;
+        } else {
+            l7_len = 244;
+        }
+    } else if b.has_payload {
+        l7_len = string_length(b.payload);
+    }
+
+    // Determine L4 Header Length
+    let l4_hdr_len = 0;
+    if b.has_icmp {
+        l4_hdr_len = 8;
+    } else if b.has_icmpv6 {
+        l4_hdr_len = 8;
+    } else if b.has_udp {
+        l4_hdr_len = 8;
+    } else if b.has_tcp {
+        l4_hdr_len = 20;
+    }
+
+    let l4_total_len = l4_hdr_len + l7_len;
+
+    // Determine L3 Header Length
+    let l3_hdr_len = 0;
+    if b.has_ipv4 {
+        l3_hdr_len = 20;
+    } else if b.has_ipv6 {
+        l3_hdr_len = 40;
+    }
+
+    let frame_len = l2_len + l3_hdr_len + l4_total_len;
+    let pkt = raw_packet_new(frame_len + 32);
+
+    // 1. Write L2 Ethernet Header
+    if b.has_ethernet {
+        if b.has_ipv4 {
+            b.eth.ethertype = ethertype_ipv4();
+        } else if b.has_ipv6 {
+            b.eth.ethertype = ethertype_ipv6();
+        }
+        ethernet_write(b.eth, pkt.ptr, 0);
+    }
+
+    // 2. Write L3 Network Header
+    let l3_offset = l2_len;
+    if b.has_ipv4 {
+        let proto = 0;
+        if b.has_icmp { proto = ipproto_icmp(); }
+        else if b.has_udp { proto = ipproto_udp(); }
+        else if b.has_tcp { proto = ipproto_tcp(); }
+        b.ip.protocol = proto;
+        b.ip.total_len = 20 + l4_total_len;
+        ipv4_header_write(b.ip, pkt.ptr, l3_offset);
+    } else if b.has_ipv6 {
+        let next_hdr = 0;
+        if b.has_icmpv6 { next_hdr = ipproto_icmpv6(); }
+        else if b.has_udp { next_hdr = ipproto_udp(); }
+        else if b.has_tcp { next_hdr = ipproto_tcp(); }
+        b.ipv6.next_header = next_hdr;
+        b.ipv6.payload_length = l4_total_len;
+        ipv6_header_write(b.ipv6, pkt.ptr, l3_offset);
+    }
+
+    // 3. Write L4 Transport Header and L7 Payload
+    let l4_offset = l3_offset + l3_hdr_len;
+    let l7_offset = l4_offset + l4_hdr_len;
+
+    // Serialize L7 Payload
+    if b.has_dns {
+        if b.dns.is_response {
+            dns_craft_response_a_payload(b.dns.id, b.dns.qname, b.dns.ans_ip, b.dns.ans_ttl, pkt.ptr, l7_offset);
+        } else {
+            dns_craft_query_payload(b.dns.id, b.dns.qname, b.dns.qtype, pkt.ptr, l7_offset);
+        }
+    } else if b.has_dhcp {
+        if b.dhcp.msg_type == dhcp_msg_discover() {
+            dhcp_craft_discover_payload(b.dhcp.xid, b.dhcp.client_mac, pkt.ptr, l7_offset);
+        } else if b.dhcp.msg_type == dhcp_msg_offer() {
+            dhcp_craft_offer_payload(b.dhcp.xid, b.dhcp.client_mac, b.dhcp.yiaddr, b.dhcp.server_id, b.dhcp.lease_time, b.dhcp.subnet_mask, b.dhcp.router, b.dhcp.dns_server, pkt.ptr, l7_offset);
+        } else if b.dhcp.msg_type == dhcp_msg_request() {
+            dhcp_craft_request_payload(b.dhcp.xid, b.dhcp.client_mac, b.dhcp.req_ip, b.dhcp.server_id, pkt.ptr, l7_offset);
+        } else if b.dhcp.msg_type == dhcp_msg_ack() {
+            dhcp_craft_ack_payload(b.dhcp.xid, b.dhcp.client_mac, b.dhcp.yiaddr, b.dhcp.server_id, b.dhcp.lease_time, b.dhcp.subnet_mask, b.dhcp.router, b.dhcp.dns_server, pkt.ptr, l7_offset);
+        }
+    } else if b.has_payload {
+        if l7_len > 0 {
+            raw_packet_write_string(pkt, l7_offset, b.payload);
+        }
+    }
+
+    // Serialize L4 Transport Header
+    if b.has_icmp {
+        icmp_write(b.icmp, pkt.ptr, l4_offset);
+    } else if b.has_icmpv6 {
+        icmpv6_write(b.icmpv6, pkt.ptr, l4_offset);
+    } else if b.has_udp {
+        b.udp.length = l4_total_len;
+        udp_write(b.udp, pkt.ptr, l4_offset);
+    } else if b.has_tcp {
+        tcp_write(b.tcp, pkt.ptr, l4_offset);
+    }
+
+    // 4. Automated Checksum Calculation Engine
+    if b.has_ipv4 {
+        // IPv4 Header Checksum
+        let ip_csum = ipv4_header_checksum(pkt.ptr, l3_offset, 20);
+        unsafe {
+            ptr_write_u8_at(pkt.ptr, l3_offset + 10, bit_shr(ip_csum, 8));
+            ptr_write_u8_at(pkt.ptr, l3_offset + 11, bit_and(ip_csum, 255));
+        }
+
+        // L4 Checksum over IPv4 Pseudo Header
+        if b.has_icmp {
+            let icmp_csum = icmp_checksum(pkt.ptr, l4_offset, l4_total_len);
+            unsafe {
+                ptr_write_u8_at(pkt.ptr, l4_offset + 2, bit_shr(icmp_csum, 8));
+                ptr_write_u8_at(pkt.ptr, l4_offset + 3, bit_and(icmp_csum, 255));
+            }
+        } else if b.has_udp {
+            let udp_csum = udp_checksum(b.ip.src, b.ip.dst, pkt.ptr, l4_offset, l4_total_len);
+            unsafe {
+                ptr_write_u8_at(pkt.ptr, l4_offset + 6, bit_shr(udp_csum, 8));
+                ptr_write_u8_at(pkt.ptr, l4_offset + 7, bit_and(udp_csum, 255));
+            }
+        } else if b.has_tcp {
+            let tcp_csum = tcp_checksum(b.ip.src, b.ip.dst, pkt.ptr, l4_offset, l4_total_len);
+            unsafe {
+                ptr_write_u8_at(pkt.ptr, l4_offset + 16, bit_shr(tcp_csum, 8));
+                ptr_write_u8_at(pkt.ptr, l4_offset + 17, bit_and(tcp_csum, 255));
+            }
+        }
+    } else if b.has_ipv6 {
+        // L4 Checksum over IPv6 Pseudo Header
+        if b.has_icmpv6 {
+            let icmp6_csum = icmpv6_checksum(b.ipv6.src, b.ipv6.dst, pkt.ptr, l4_offset, l4_total_len);
+            unsafe {
+                ptr_write_u8_at(pkt.ptr, l4_offset + 2, bit_shr(icmp6_csum, 8));
+                ptr_write_u8_at(pkt.ptr, l4_offset + 3, bit_and(icmp6_csum, 255));
+            }
+        } else if b.has_udp {
+            let udp6_csum = udp_ipv6_checksum(b.ipv6.src, b.ipv6.dst, pkt.ptr, l4_offset, l4_total_len);
+            unsafe {
+                ptr_write_u8_at(pkt.ptr, l4_offset + 6, bit_shr(udp6_csum, 8));
+                ptr_write_u8_at(pkt.ptr, l4_offset + 7, bit_and(udp6_csum, 255));
+            }
+        } else if b.has_tcp {
+            let tcp6_csum = tcp_ipv6_checksum(b.ipv6.src, b.ipv6.dst, pkt.ptr, l4_offset, l4_total_len);
+            unsafe {
+                ptr_write_u8_at(pkt.ptr, l4_offset + 16, bit_shr(tcp6_csum, 8));
+                ptr_write_u8_at(pkt.ptr, l4_offset + 17, bit_and(tcp6_csum, 255));
+            }
+        }
+    }
+
+    pkt.length = frame_len;
     return pkt;
 }
 
@@ -1597,6 +3131,18 @@ func raw_socket_receive(sock: RawSocket, max_len: int) -> RawPacket {
         pkt.length = 0;
     }
     return pkt;
+}
+
+// Injects/transmits a RawPacket frame onto the network interface (or mock queue)
+func packet_inject(sock: RawSocket, pkt: RawPacket) -> int {
+    if !sock.is_open || pkt.length <= 0 { return 0; }
+    return raw_socket_transmit(sock, pkt);
+}
+
+// Injects a RawPacket frame directly into the socket's receive buffer for testing
+func packet_inject_receive(sock: RawSocket, pkt: RawPacket) -> int {
+    if !sock.is_open || pkt.length <= 0 { return 0; }
+    return raw_socket_inject(sock, pkt);
 }
 
 // Injects a mock packet into the socket's receive buffer (for sniffing / unit tests)

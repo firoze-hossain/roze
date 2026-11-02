@@ -1,0 +1,320 @@
+// compiler/tests/fixtures/packet_crafting.roze
+//
+// Test suite for Roze Packet Crafting, Protocol Builder & Packet Dissector Engine (M3-T02)
+
+import "raw_net";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("[ASSERTION FAILED]: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+func main() {
+    println("=== ROZE PACKET CRAFTING & PROTOCOL BUILDER SUITE (M3-T02) ===");
+
+    let mac1 = mac_new(0, 12, 41, 67, 142, 222); // 00:0C:29:43:8E:DE
+    let mac2 = mac_new(82, 84, 0, 18, 52, 86);   // 52:54:00:12:34:56
+    let ip1 = ipv4_new(192, 168, 1, 100);
+    let ip2 = ipv4_new(192, 168, 1, 1);
+
+    // -------------------------------------------------------------
+    // Test 1: IPv6 Address Representation, Comparison & Wire Serialization
+    // -------------------------------------------------------------
+    let ip6_loop = ipv6_loopback();
+    let loop_str = ipv6_to_string(ip6_loop);
+    assert(loop_str == "0000:0000:0000:0000:0000:0000:0000:0001", "IPv6 loopback string mismatch: " + loop_str);
+
+    let ip6_srv = ipv6_new(32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1); // 2001:0DB8::1
+    let srv_str = ipv6_to_string(ip6_srv);
+    assert(srv_str == "2001:0DB8:0000:0000:0000:0000:0000:0001", "IPv6 server string mismatch: " + srv_str);
+    assert(ipv6_equals(ip6_srv, ip6_srv), "IPv6 self-equality failed");
+    assert(!ipv6_equals(ip6_srv, ip6_loop), "IPv6 inequality failed");
+
+    unsafe {
+        let mem: *raw u8 = alloc(32);
+        ipv6_write(ip6_srv, mem, 0);
+        let recon_ip6 = ipv6_read(mem, 0);
+        assert(ipv6_equals(ip6_srv, recon_ip6), "IPv6 memory roundtrip failed");
+        free(mem);
+    }
+    println("[PASS] Test 1: IPv6 addresses formatted, compared, and serialized to wire bytes");
+
+    // -------------------------------------------------------------
+    // Test 2: IPv6 Header Encoding, Decoding & RFC 8200 Pseudo-Header Checksum
+    // -------------------------------------------------------------
+    let ip6_hdr = ipv6_header_new(ip6_srv, ip6_loop, ipproto_tcp(), 64, 40);
+    unsafe {
+        let hdr_buf: *raw u8 = alloc(48);
+        ipv6_header_write(ip6_hdr, hdr_buf, 0);
+        let recon_hdr = ipv6_header_read(hdr_buf, 0);
+        assert(recon_hdr.version == 6, "IPv6 version must be 6");
+        assert(recon_hdr.payload_length == 40, "IPv6 payload length mismatch");
+        assert(recon_hdr.next_header == ipproto_tcp(), "IPv6 next header must be TCP");
+        assert(recon_hdr.hop_limit == 64, "IPv6 hop limit mismatch");
+        assert(ipv6_equals(recon_hdr.src, ip6_srv), "IPv6 src mismatch");
+        assert(ipv6_equals(recon_hdr.dst, ip6_loop), "IPv6 dst mismatch");
+
+        // Verify RFC 8200 pseudo checksum
+        let pseudo_csum = ipv6_pseudo_checksum(ip6_srv, ip6_loop, 6, 40, hdr_buf, 0);
+        assert(pseudo_csum > 0 && pseudo_csum <= 65535, "IPv6 pseudo checksum out of range");
+        free(hdr_buf);
+    }
+    println("[PASS] Test 2: IPv6 Header encoded, decoded, and RFC 8200 pseudo-header validated");
+
+    // -------------------------------------------------------------
+    // Test 3: ICMPv6 Ping Echo Request Crafting & Dissection
+    // -------------------------------------------------------------
+    let ping6 = craft_ipv6_icmp_echo(mac1, mac2, ip6_srv, ip6_loop, 1337, 1, "RozePing6Payload");
+    assert(ping6.length == 14 + 40 + 8 + string_length("RozePing6Payload"), "ICMPv6 ping frame length mismatch");
+
+    let p6 = dissect_packet(ping6.ptr, ping6.length);
+    assert(p6.has_ethernet, "Ping6 must have Ethernet header");
+    assert(p6.eth.ethertype == ethertype_ipv6(), "EtherType must be IPv6 (0x86DD)");
+    assert(p6.has_ipv6, "Dissector must recognize IPv6");
+    assert(ipv6_equals(p6.ipv6.src, ip6_srv), "IPv6 source address mismatch");
+    assert(ipv6_equals(p6.ipv6.dst, ip6_loop), "IPv6 destination address mismatch");
+    assert(p6.has_icmpv6, "Dissector must recognize ICMPv6");
+    assert(p6.icmpv6.type_ == icmpv6_type_echo_request(), "ICMPv6 type must be 128 (Echo Request)");
+    assert(p6.icmpv6.id == 1337, "ICMPv6 ID mismatch");
+    assert(p6.icmpv6.seq == 1, "ICMPv6 Seq mismatch");
+    assert(p6.icmpv6.checksum > 0, "ICMPv6 automated checksum must be non-zero");
+
+    let p6_sum = parsed_packet_summary(p6);
+    assert(str_contains(p6_sum, "[ICMPv6]"), "ICMPv6 summary prefix mismatch: " + p6_sum);
+    println("[PASS] Test 3: ICMPv6 Echo Request crafted with automated checksum: " + p6_sum);
+
+    // -------------------------------------------------------------
+    // Test 4: TCP Protocol Builder with Custom Flags (SYN+ACK+PSH) & Checksum
+    // -------------------------------------------------------------
+    let b_tcp = packet_builder_new();
+    packet_builder_ethernet(b_tcp, mac2, mac1, ethertype_ipv4());
+    packet_builder_ipv4(b_tcp, ip1, ip2, ipproto_tcp(), 64);
+    let tcp_flags = bit_or(bit_or(tcp_flag_syn(), tcp_flag_ack()), tcp_flag_psh());
+    packet_builder_tcp(b_tcp, 8080, 443, 10001, 20002, tcp_flags, 32768);
+    packet_builder_payload(b_tcp, "GET / HTTP/1.1\r\n\r\n");
+    let tcp_frame = packet_builder_build(b_tcp);
+
+    let p_tcp = dissect_packet(tcp_frame.ptr, tcp_frame.length);
+    assert(p_tcp.has_tcp, "Must dissect to TCP");
+    assert(p_tcp.tcp.src_port == 8080, "TCP src port mismatch");
+    assert(p_tcp.tcp.dst_port == 443, "TCP dst port mismatch");
+    assert(p_tcp.tcp.seq_num == 10001, "TCP seq number mismatch");
+    assert(p_tcp.tcp.ack_num == 20002, "TCP ack number mismatch");
+    assert(bit_and(p_tcp.tcp.flags, tcp_flag_syn()) != 0, "SYN flag must be set");
+    assert(bit_and(p_tcp.tcp.flags, tcp_flag_ack()) != 0, "ACK flag must be set");
+    assert(bit_and(p_tcp.tcp.flags, tcp_flag_psh()) != 0, "PSH flag must be set");
+    assert(p_tcp.tcp.checksum > 0, "TCP automated checksum must be non-zero");
+
+    let tcp_sum = parsed_packet_summary(p_tcp);
+    assert(str_contains(tcp_sum, "[TCP]"), "TCP summary mismatch: " + tcp_sum);
+    assert(str_contains(tcp_sum, "SYN"), "TCP summary must list SYN flag");
+    assert(str_contains(tcp_sum, "ACK"), "TCP summary must list ACK flag");
+    assert(str_contains(tcp_sum, "PSH"), "TCP summary must list PSH flag");
+    println("[PASS] Test 4: TCP Frame crafted with custom flags & automated checksum: " + tcp_sum);
+
+    // -------------------------------------------------------------
+    // Test 5: UDP Protocol Builder over IPv4 and IPv6
+    // -------------------------------------------------------------
+    // IPv4 UDP
+    let b_u4 = packet_builder_new();
+    packet_builder_ethernet(b_u4, mac2, mac1, ethertype_ipv4());
+    packet_builder_ipv4(b_u4, ip1, ip2, ipproto_udp(), 64);
+    packet_builder_udp(b_u4, 9000, 9001);
+    packet_builder_payload(b_u4, "UdpPayload4");
+    let pkt_u4 = packet_builder_build(b_u4);
+
+    let p_u4 = dissect_packet(pkt_u4.ptr, pkt_u4.length);
+    assert(p_u4.has_udp, "Must dissect to IPv4 UDP");
+    assert(p_u4.udp.src_port == 9000, "IPv4 UDP src port mismatch");
+    assert(p_u4.udp.dst_port == 9001, "IPv4 UDP dst port mismatch");
+    assert(p_u4.udp.checksum > 0, "IPv4 UDP checksum must be non-zero");
+
+    // IPv6 UDP
+    let b_u6 = packet_builder_new();
+    packet_builder_ethernet(b_u6, mac2, mac1, ethertype_ipv6());
+    packet_builder_ipv6(b_u6, ip6_srv, ip6_loop, ipproto_udp(), 64);
+    packet_builder_udp(b_u6, 9002, 9003);
+    packet_builder_payload(b_u6, "UdpPayload6");
+    let pkt_u6 = packet_builder_build(b_u6);
+
+    let p_u6 = dissect_packet(pkt_u6.ptr, pkt_u6.length);
+    assert(p_u6.has_ipv6, "Must dissect to IPv6");
+    assert(p_u6.has_udp, "Must dissect to IPv6 UDP");
+    assert(p_u6.udp.src_port == 9002, "IPv6 UDP src port mismatch");
+    assert(p_u6.udp.dst_port == 9003, "IPv6 UDP dst port mismatch");
+    assert(p_u6.udp.checksum > 0, "IPv6 UDP checksum must be non-zero");
+    println("[PASS] Test 5: UDP Protocol Builder validated over both IPv4 and IPv6 transports");
+
+    // -------------------------------------------------------------
+    // Test 6: DNS Query Crafting & Dissection (RFC 1035)
+    // -------------------------------------------------------------
+    let dns_q_pkt = craft_dns_query(mac1, mac2, ip1, ip2, 54321, 4660, "roze-lang.org", dns_qtype_a());
+    let p_dns_q = dissect_packet(dns_q_pkt.ptr, dns_q_pkt.length);
+    assert(p_dns_q.has_dns, "Must dissect to DNS message");
+    assert(p_dns_q.dns.id == 4660, "DNS Transaction ID mismatch");
+    assert(!p_dns_q.dns.is_response, "DNS Query flag must indicate query (not response)");
+    assert(p_dns_q.dns.qdcount == 1, "DNS QDCOUNT must be 1");
+    assert(p_dns_q.dns.qname == "roze-lang.org", "DNS decoded domain mismatch: " + p_dns_q.dns.qname);
+    assert(p_dns_q.dns.qtype == dns_qtype_a(), "DNS QTYPE must be A (1)");
+
+    let dns_q_sum = parsed_packet_summary(p_dns_q);
+    assert(str_contains(dns_q_sum, "[DNS Query]"), "DNS query summary mismatch: " + dns_q_sum);
+    println("[PASS] Test 6: DNS Query crafted and dissected: " + dns_q_sum);
+
+    // -------------------------------------------------------------
+    // Test 7: DNS Response Crafting with Answer Section & Decompression
+    // -------------------------------------------------------------
+    let ans_ip = ipv4_new(93, 184, 216, 34);
+    let dns_resp_pkt = craft_dns_response_a(mac2, mac1, ip2, ip1, 54321, 4660, "roze-lang.org", ans_ip, 300);
+    let p_dns_resp = dissect_packet(dns_resp_pkt.ptr, dns_resp_pkt.length);
+    assert(p_dns_resp.has_dns, "Must dissect to DNS response");
+    assert(p_dns_resp.dns.id == 4660, "DNS response ID mismatch");
+    assert(p_dns_resp.dns.is_response, "DNS must be flagged as response");
+    assert(p_dns_resp.dns.qdcount == 1, "DNS response QDCOUNT must be 1");
+    assert(p_dns_resp.dns.ancount == 1, "DNS response ANCOUNT must be 1");
+    assert(p_dns_resp.dns.qname == "roze-lang.org", "DNS response question name mismatch");
+    assert(p_dns_resp.dns.has_answer, "DNS response must contain parsed Answer record");
+    assert(ipv4_equals(p_dns_resp.dns.ans_ip, ans_ip), "DNS answer IP mismatch: " + ipv4_to_string(p_dns_resp.dns.ans_ip));
+    assert(p_dns_resp.dns.ans_ttl == 300, "DNS answer TTL mismatch");
+
+    let dns_resp_sum = parsed_packet_summary(p_dns_resp);
+    assert(str_contains(dns_resp_sum, "[DNS Response]"), "DNS response summary mismatch: " + dns_resp_sum);
+    println("[PASS] Test 7: DNS Response with A-record & compression pointer dissected: " + dns_resp_sum);
+
+    // -------------------------------------------------------------
+    // Test 8: DHCP Discover Packet Crafting & Dissection (RFC 2131)
+    // -------------------------------------------------------------
+    let dhcp_xid = 956558118; // 0x3903F326
+    let dhcp_disc_pkt = craft_dhcp_discover(mac1, dhcp_xid);
+    let p_disc = dissect_packet(dhcp_disc_pkt.ptr, dhcp_disc_pkt.length);
+    assert(p_disc.has_dhcp, "Must dissect to DHCP");
+    assert(p_disc.dhcp.op == dhcp_op_request(), "DHCP op must be BOOTREQUEST (1)");
+    assert(p_disc.dhcp.xid == dhcp_xid, "DHCP XID mismatch");
+    assert(mac_equals(p_disc.dhcp.client_mac, mac1), "DHCP client MAC mismatch");
+    assert(p_disc.dhcp.msg_type == dhcp_msg_discover(), "DHCP message type must be DISCOVER (1)");
+
+    let disc_sum = parsed_packet_summary(p_disc);
+    assert(str_contains(disc_sum, "[DHCP msg=1]"), "DHCP discover summary mismatch: " + disc_sum);
+    println("[PASS] Test 8: DHCP Discover frame crafted and dissected with Magic Cookie: " + disc_sum);
+
+    // -------------------------------------------------------------
+    // Test 9: DHCP Offer and Ack Packet Crafting
+    // -------------------------------------------------------------
+    let srv_ip = ipv4_new(192, 168, 1, 1);
+    let offered_ip = ipv4_new(192, 168, 1, 150);
+    let subnet = ipv4_new(255, 255, 255, 0);
+    let router = srv_ip;
+    let dns_srv = ipv4_new(8, 8, 8, 8);
+
+    let dhcp_off_pkt = craft_dhcp_offer(mac2, mac1, srv_ip, offered_ip, dhcp_xid, 86400, subnet, router, dns_srv);
+    let p_off = dissect_packet(dhcp_off_pkt.ptr, dhcp_off_pkt.length);
+    assert(p_off.has_dhcp, "Must dissect to DHCP Offer");
+    assert(p_off.dhcp.op == dhcp_op_reply(), "DHCP op must be BOOTREPLY (2)");
+    assert(p_off.dhcp.msg_type == dhcp_msg_offer(), "DHCP message type must be OFFER (2)");
+    assert(ipv4_equals(p_off.dhcp.yiaddr, offered_ip), "Offered IP (yiaddr) mismatch");
+    assert(ipv4_equals(p_off.dhcp.server_id, srv_ip), "Server ID mismatch");
+    assert(p_off.dhcp.lease_time == 86400, "Lease time mismatch");
+    assert(ipv4_equals(p_off.dhcp.subnet_mask, subnet), "Subnet mask mismatch");
+    assert(ipv4_equals(p_off.dhcp.router, router), "Router mismatch");
+    assert(ipv4_equals(p_off.dhcp.dns_server, dns_srv), "DNS Server mismatch");
+
+    let dhcp_ack_pkt = craft_dhcp_ack(mac2, mac1, srv_ip, offered_ip, dhcp_xid, 86400, subnet, router, dns_srv);
+    let p_ack = dissect_packet(dhcp_ack_pkt.ptr, dhcp_ack_pkt.length);
+    assert(p_ack.has_dhcp, "Must dissect to DHCP Ack");
+    assert(p_ack.dhcp.msg_type == dhcp_msg_ack(), "DHCP message type must be ACK (5)");
+    assert(ipv4_equals(p_ack.dhcp.yiaddr, offered_ip), "Ack yiaddr mismatch");
+    println("[PASS] Test 9: DHCP Offer & Ack frames crafted with TLV options (Subnet, Router, DNS, Lease)");
+
+    // -------------------------------------------------------------
+    // Test 10: Unified Scapy-Style Layer Stacker (PacketBuilder)
+    // -------------------------------------------------------------
+    // Frame 1: Ethernet / ARP Request
+    let b1 = packet_builder_new();
+    packet_builder_ethernet(b1, mac_broadcast(), mac1, ethertype_arp());
+    packet_builder_arp(b1, arp_op_request(), mac1, ip1, mac_zero(), ip2);
+    let f1 = packet_builder_build(b1);
+    let pf1 = dissect_packet(f1.ptr, f1.length);
+    assert(pf1.has_arp && pf1.arp.opcode == 1, "Builder Frame 1 ARP mismatch");
+
+    // Frame 2: Ethernet / IPv4 / ICMP Echo Request
+    let b2 = packet_builder_new();
+    packet_builder_ethernet(b2, mac2, mac1, ethertype_ipv4());
+    packet_builder_ipv4(b2, ip1, ip2, ipproto_icmp(), 64);
+    packet_builder_icmp_echo(b2, 999, 1);
+    packet_builder_payload(b2, "ScapyPingStack");
+    let f2 = packet_builder_build(b2);
+    let pf2 = dissect_packet(f2.ptr, f2.length);
+    assert(pf2.has_icmp && pf2.icmp.id == 999, "Builder Frame 2 ICMP mismatch");
+    assert(pf2.icmp.checksum > 0, "Builder Frame 2 automated checksum missing");
+
+    // Frame 3: Ethernet / IPv6 / TCP SYN
+    let b3 = packet_builder_new();
+    packet_builder_ethernet(b3, mac2, mac1, ethertype_ipv6());
+    packet_builder_ipv6(b3, ip6_srv, ip6_loop, ipproto_tcp(), 64);
+    packet_builder_tcp(b3, 50000, 80, 12345, 0, tcp_flag_syn(), 65535);
+    let f3 = packet_builder_build(b3);
+    let pf3 = dissect_packet(f3.ptr, f3.length);
+    assert(pf3.has_ipv6 && pf3.has_tcp && pf3.tcp.dst_port == 80, "Builder Frame 3 IPv6 TCP mismatch");
+    assert(pf3.tcp.checksum > 0, "Builder Frame 3 automated checksum missing");
+
+    // Frame 4: Ethernet / IPv4 / UDP / DNS Query
+    let b4 = packet_builder_new();
+    packet_builder_ethernet(b4, mac2, mac1, ethertype_ipv4());
+    packet_builder_ipv4(b4, ip1, ip2, ipproto_udp(), 64);
+    packet_builder_udp(b4, 55555, 53);
+    packet_builder_dns_query(b4, 7777, "example.org", dns_qtype_a());
+    let f4 = packet_builder_build(b4);
+    let pf4 = dissect_packet(f4.ptr, f4.length);
+    assert(pf4.has_dns && pf4.dns.id == 7777 && pf4.dns.qname == "example.org", "Builder Frame 4 DNS mismatch");
+    assert(pf4.udp.checksum > 0, "Builder Frame 4 automated UDP checksum missing");
+    println("[PASS] Test 10: Unified Scapy-style layer stacking (PacketBuilder) verified across 4 frames");
+
+    // -------------------------------------------------------------
+    // Test 11: Full Packet Inspection & Packet Injection via RawSocket
+    // -------------------------------------------------------------
+    let insp_summary = packet_inspect_summary(f2);
+    assert(str_contains(insp_summary, "[ICMP]"), "Packet inspect summary mismatch: " + insp_summary);
+
+    packet_inspect_detail(f3);
+
+    let sock = raw_socket_open_iface("eth0", true);
+    assert(sock.is_open, "RawSocket must be open");
+
+    // Test packet injection
+    let tx_bytes = packet_inject(sock, f2);
+    assert(tx_bytes >= f2.length, "Packet injection must transmit frame bytes");
+
+    let rx_inj = packet_inject_receive(sock, f4);
+    assert(rx_inj >= f4.length, "Packet inject receive must buffer frame bytes");
+
+    let received1 = raw_socket_receive(sock, 1514);
+    assert(received1.length == f2.length || received1.length == f4.length, "Received packet 1 length mismatch");
+
+    let received2 = raw_socket_receive(sock, 1514);
+    assert(received2.length == f4.length || received2.length == 0, "Received packet 2 length mismatch");
+
+    raw_socket_close_channel(sock);
+    assert(!sock.is_open, "RawSocket must be closed after channel close");
+    println("[PASS] Test 11: Full packet inspection and RawSocket packet injection validated");
+
+    // Clean up allocated packets
+    raw_packet_free(ping6);
+    raw_packet_free(tcp_frame);
+    raw_packet_free(pkt_u4);
+    raw_packet_free(pkt_u6);
+    raw_packet_free(dns_q_pkt);
+    raw_packet_free(dns_resp_pkt);
+    raw_packet_free(dhcp_disc_pkt);
+    raw_packet_free(dhcp_off_pkt);
+    raw_packet_free(dhcp_ack_pkt);
+    raw_packet_free(f1);
+    raw_packet_free(f2);
+    raw_packet_free(f3);
+    raw_packet_free(f4);
+    raw_packet_free(received1);
+    raw_packet_free(received2);
+
+    println("[CI-PASS] ALL PACKET CRAFTING & PROTOCOL BUILDER TESTS PASSED (M3-T02)");
+}

@@ -212,7 +212,8 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "drivers" || path == "uart" || path == "keyboard" || path == "mouse" || path == "ps2" || path == "timer" || path == "pit" || path == "hpet" || path == "gop" || path == "framebuffer" {
         return Ok((DRIVERS_SOURCE.to_string(), DRIVERS_DISPLAY_NAME.to_string()));
     }
-    if path == "raw_net" || path == "net" || path == "packet" || path == "pcap" || path == "roze::net::raw" {
+    if path == "raw_net" || path == "net" || path == "packet" || path == "pcap" || path == "roze::net::raw"
+        || path == "packet_crafting" || path == "protocol" || path == "dissector" || path == "dns" || path == "dhcp" {
         return Ok((RAW_NET_SOURCE.to_string(), RAW_NET_DISPLAY_NAME.to_string()));
     }
 

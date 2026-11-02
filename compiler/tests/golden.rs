@@ -1581,6 +1581,25 @@ fn raw_networking_promiscuous_sniffing_suite() {
     assert!(stdout.contains("[CI-PASS] ALL RAW NETWORKING & PROMISCUOUS SNIFFING TESTS PASSED (M3-T01)"));
 }
 
+#[test]
+fn packet_crafting_and_dissector_suite() {
+    let (stdout, stderr, ok) = run_fixture("packet_crafting.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== ROZE PACKET CRAFTING & PROTOCOL BUILDER SUITE (M3-T02) ==="));
+    assert!(stdout.contains("[PASS] Test 1: IPv6 addresses formatted, compared, and serialized to wire bytes"));
+    assert!(stdout.contains("[PASS] Test 2: IPv6 Header encoded, decoded, and RFC 8200 pseudo-header validated"));
+    assert!(stdout.contains("[PASS] Test 3: ICMPv6 Echo Request crafted with automated checksum"));
+    assert!(stdout.contains("[PASS] Test 4: TCP Frame crafted with custom flags & automated checksum"));
+    assert!(stdout.contains("[PASS] Test 5: UDP Protocol Builder validated over both IPv4 and IPv6 transports"));
+    assert!(stdout.contains("[PASS] Test 6: DNS Query crafted and dissected"));
+    assert!(stdout.contains("[PASS] Test 7: DNS Response with A-record & compression pointer dissected"));
+    assert!(stdout.contains("[PASS] Test 8: DHCP Discover frame crafted and dissected with Magic Cookie"));
+    assert!(stdout.contains("[PASS] Test 9: DHCP Offer & Ack frames crafted with TLV options"));
+    assert!(stdout.contains("[PASS] Test 10: Unified Scapy-style layer stacking (PacketBuilder) verified across 4 frames"));
+    assert!(stdout.contains("[PASS] Test 11: Full packet inspection and RawSocket packet injection validated"));
+    assert!(stdout.contains("[CI-PASS] ALL PACKET CRAFTING & PROTOCOL BUILDER TESTS PASSED (M3-T02)"));
+}
+
 
 
 

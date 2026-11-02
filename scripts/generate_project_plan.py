@@ -338,7 +338,7 @@ s1_rows = [
         ("M3-T02", 8), ("Month 3", 5), ("Sprint 5 (W09-W10)", 8), "Packet Crafting", "Protocol Builder & Packet Dissector",
         "Packet crafting and dissection engine for Ethernet, ARP, IPv4, IPv6, ICMP, TCP (custom flags/SYN/ACK), UDP, DNS, and DHCP. Automated checksum calculation.",
         "Full packet injection and inspection framework.",
-        "Cybersecurity, Network Engineering", "7 Days", ("High", 14), ("Planned", 12)
+        "Cybersecurity, Network Engineering", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M3-T03", 8), ("Month 3", 5), ("Sprint 5 (W09-W10)", 8), "Security Scanning", "Ultra-Fast SYN Port & Banner Scanner",

@@ -1462,6 +1462,8 @@ void __roze_cancel_token_cancel(long tok) { (void)tok; }
 long __roze_cancel_token_is_cancelled(long tok) { (void)tok; return 0; }
 void __roze_cancel_token_retain(long tok) { (void)tok; }
 void __roze_cancel_token_release(long tok) { (void)tok; }
+long __roze_time_now(void) { return 0; }
+long __roze_time_now_millis(void) { return 0; }
 
 // Collections Stubs (M2-T03)
 long __roze_vec_deque_new(void) { return 0; }
@@ -3773,6 +3775,8 @@ struct ConcurrencyRuntime {
     cancel_token_is_cancelled_id: FuncId,
     cancel_token_retain_id: FuncId,
     cancel_token_release_id: FuncId,
+    time_now_id: FuncId,
+    time_now_millis_id: FuncId,
 }
 
 fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyRuntime> {
@@ -3987,6 +3991,11 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
     let cancel_token_release_id = module.declare_function("__roze_cancel_token_release", Linkage::Import, &i64_to_void)
         .map_err(|e| anyhow!(e.to_string()))?;
 
+    let time_now_id = module.declare_function("__roze_time_now", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let time_now_millis_id = module.declare_function("__roze_time_now_millis", Linkage::Import, &void_to_i64)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
     Ok(ConcurrencyRuntime {
         thread_spawn_id,
         thread_join_id,
@@ -4073,6 +4082,8 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
         cancel_token_is_cancelled_id,
         cancel_token_retain_id,
         cancel_token_release_id,
+        time_now_id,
+        time_now_millis_id,
     })
 }
 
@@ -9439,6 +9450,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let result = self.builder.inst_results(call)[0];
                 self.release_if_fresh(&arguments[0], tok_val)?;
                 return Ok(result);
+            }
+            "time_now" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.time_now_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "time_now_millis" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.time_now_millis_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
             }
 
             // Direct memory intrinsics (MED-05)

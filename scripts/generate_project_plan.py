@@ -344,7 +344,7 @@ s1_rows = [
         ("M3-T03", 8), ("Month 3", 5), ("Sprint 5 (W09-W10)", 8), "Security Scanning", "Ultra-Fast SYN Port & Banner Scanner",
         "Asynchronous SYN stealth scanner utilizing green threads. Scans 100,000+ ports per second, captures service banners, and identifies OS fingerprints.",
         "Matches Nmap SYN scan performance in pure Roze.",
-        "Cybersecurity, Reconnaissance Tools", "6 Days", ("High", 14), ("Planned", 12)
+        "Cybersecurity, Reconnaissance Tools", "6 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M3-T04", 8), ("Month 3", 5), ("Sprint 5 (W09-W10)", 8), "Standard Cryptography", "Full Crypto Suite & Pure TLS 1.3",

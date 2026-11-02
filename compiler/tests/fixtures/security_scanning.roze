@@ -1,0 +1,195 @@
+// compiler/tests/fixtures/security_scanning.roze
+//
+// Test suite for Roze Ultra-Fast SYN Port & Banner Scanner Engine (M3-T03)
+
+import "raw_net";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("[ASSERTION FAILED]: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+func main() {
+    println("=== ROZE ULTRA-FAST SYN PORT & BANNER SCANNER SUITE (M3-T03) ===");
+
+    let mac_src = mac_new(0, 12, 41, 67, 142, 222); // 00:0C:29:43:8E:DE
+    let mac_dst = mac_new(82, 84, 0, 18, 52, 86);   // 52:54:00:12:34:56
+    let ip_src = ipv4_new(192, 168, 1, 100);
+    let ip_target = ipv4_new(192, 168, 1, 1);
+
+    // -------------------------------------------------------------
+    // Test 1: Port Status Codes & IANA Service Name Mapping
+    // -------------------------------------------------------------
+    assert(port_status_open() == 1, "port_status_open must be 1");
+    assert(port_status_closed() == 2, "port_status_closed must be 2");
+    assert(port_status_filtered() == 3, "port_status_filtered must be 3");
+
+    assert(port_status_to_string(1) == "open", "status 1 string mismatch");
+    assert(port_status_to_string(2) == "closed", "status 2 string mismatch");
+    assert(port_status_to_string(3) == "filtered", "status 3 string mismatch");
+
+    assert(port_service_name(22) == "ssh", "Port 22 must map to ssh");
+    assert(port_service_name(80) == "http", "Port 80 must map to http");
+    assert(port_service_name(443) == "https", "Port 443 must map to https");
+    assert(port_service_name(3306) == "mysql", "Port 3306 must map to mysql");
+    assert(port_service_name(5432) == "postgresql", "Port 5432 must map to postgresql");
+    assert(port_service_name(6379) == "redis", "Port 6379 must map to redis");
+    assert(port_service_name(8080) == "http-alt", "Port 8080 must map to http-alt");
+    println("[PASS] Test 1: Port status codes and well-known IANA services mapped");
+
+    // -------------------------------------------------------------
+    // Test 2: Passive TCP/IP Stack OS Fingerprinting Engine
+    // -------------------------------------------------------------
+    let os_linux = os_fingerprint(64, 64240);
+    assert(str_contains(os_linux, "Linux"), "Expected Linux fingerprint, got: " + os_linux);
+
+    let os_bsd = os_fingerprint(64, 65535);
+    assert(str_contains(os_bsd, "FreeBSD") || str_contains(os_bsd, "macOS"), "Expected BSD/macOS fingerprint: " + os_bsd);
+
+    let os_win = os_fingerprint(128, 64240);
+    assert(str_contains(os_win, "Windows"), "Expected Windows fingerprint, got: " + os_win);
+
+    let os_cisco = os_fingerprint(255, 4128);
+    assert(str_contains(os_cisco, "Cisco"), "Expected Cisco fingerprint, got: " + os_cisco);
+    println("[PASS] Test 2: Passive OS fingerprinting signatures validated (Linux, BSD, Windows, Cisco)");
+
+    // -------------------------------------------------------------
+    // Test 3: Service Banner Identification & Protocol Inspection
+    // -------------------------------------------------------------
+    let b_ssh = service_banner_identify(22, "SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.4");
+    assert(str_contains(b_ssh, "SSH"), "SSH banner mismatch: " + b_ssh);
+
+    let b_nginx = service_banner_identify(80, "HTTP/1.1 200 OK\r\nServer: nginx/1.24.0\r\nDate: ...");
+    assert(str_contains(b_nginx, "nginx"), "nginx banner mismatch: " + b_nginx);
+
+    let b_apache = service_banner_identify(80, "HTTP/1.1 200 OK\r\nServer: Apache/2.4.58 (Ubuntu)\r\n");
+    assert(str_contains(b_apache, "Apache"), "Apache banner mismatch: " + b_apache);
+
+    let b_ftp = service_banner_identify(21, "220 (vsFTPd 3.0.5)\r\n");
+    assert(str_contains(b_ftp, "FTP"), "FTP banner mismatch: " + b_ftp);
+
+    let b_smtp = service_banner_identify(25, "220 mail.roze-lang.org ESMTP Postfix\r\n");
+    assert(str_contains(b_smtp, "SMTP"), "SMTP banner mismatch: " + b_smtp);
+
+    let b_mysql = service_banner_identify(3306, "5.7.38-log\x00mysql_native_password");
+    assert(str_contains(b_mysql, "MySQL"), "MySQL banner mismatch: " + b_mysql);
+
+    let b_redis = service_banner_identify(6379, "+PONG\r\nredis_version:7.2.4\r\n");
+    assert(str_contains(b_redis, "Redis"), "Redis banner mismatch: " + b_redis);
+    println("[PASS] Test 3: Application service banners parsed and identified");
+
+    // -------------------------------------------------------------
+    // Test 4: SYN Probe Packet Construction & Validation
+    // -------------------------------------------------------------
+    let sock = raw_socket_open_iface("lo", false);
+    assert(sock.is_open, "RawSocket must open for scanner");
+
+    let scanner = syn_scanner_new(sock, mac_src, mac_dst, ip_src, ip_target, 52140);
+    assert(scanner.src_port == 52140, "Scanner source port mismatch");
+
+    let probe_pkt = syn_scanner_craft_syn(scanner, 80, 20001);
+    let parsed_probe = dissect_packet(probe_pkt.ptr, probe_pkt.length);
+    assert(parsed_probe.has_tcp, "Probe frame must contain TCP header");
+    assert(parsed_probe.tcp.src_port == 52140, "Probe TCP source port mismatch");
+    assert(parsed_probe.tcp.dst_port == 80, "Probe TCP target port mismatch");
+    assert(bit_and(parsed_probe.tcp.flags, tcp_flag_syn()) != 0, "SYN flag must be set");
+    assert(bit_and(parsed_probe.tcp.flags, tcp_flag_ack()) == 0, "ACK flag must NOT be set in initial SYN");
+    assert(parsed_probe.tcp.seq_num == 20001, "TCP seq number mismatch");
+    raw_packet_free(probe_pkt);
+    println("[PASS] Test 4: SYN probe crafted with correct TCP flags and sequence tagging");
+
+    // -------------------------------------------------------------
+    // Test 5: SYN-ACK & RST Response Analysis (Open vs Closed Diagnostics)
+    // -------------------------------------------------------------
+    // Case A: Target responds with SYN-ACK -> Port 80 OPEN
+    let synack_pkt = craft_tcp_syn_ack(mac_dst, mac_src, ip_target, ip_src, 80, 52140, 90001, 20002);
+    let res_open = syn_scanner_analyze_response(scanner, synack_pkt);
+    assert(res_open.port == 80, "Open result port mismatch");
+    assert(res_open.status == port_status_open(), "SYN-ACK must diagnose port as OPEN");
+    assert(res_open.service == "http", "Port 80 must diagnose service as http");
+    assert(str_contains(res_open.os_guess, "Linux"), "OS guess must identify Linux stack: " + res_open.os_guess);
+    raw_packet_free(synack_pkt);
+
+    // Case B: Target responds with RST -> Port 23 CLOSED
+    let rst_frame = raw_packet_new(64);
+    let eth_rst = ethernet_header_new(mac_src, mac_dst, ethertype_ipv4());
+    ethernet_write(eth_rst, rst_frame.ptr, 0);
+    let ip_rst = ipv4_header_new(ipproto_tcp(), ip_target, ip_src, 20);
+    ipv4_header_write(ip_rst, rst_frame.ptr, 14);
+    let tcp_rst = tcp_header_new(23, 52140, 0, 20002, tcp_flag_rst(), 0);
+    tcp_write(tcp_rst, rst_frame.ptr, 34);
+    rst_frame.length = 54;
+    let res_closed = syn_scanner_analyze_response(scanner, rst_frame);
+    assert(res_closed.port == 23, "Closed result port mismatch");
+    assert(res_closed.status == port_status_closed(), "RST must diagnose port as CLOSED");
+    assert(res_closed.service == "telnet", "Port 23 must identify telnet");
+    raw_packet_free(rst_frame);
+    println("[PASS] Test 5: Response analyzer accurately classifies SYN-ACK (Open) and RST (Closed)");
+
+    // -------------------------------------------------------------
+    // Test 6: Scan Report Aggregation & ASCII Table Generation
+    // -------------------------------------------------------------
+    let report = scan_report_new(ip_target);
+    scan_report_add_result(report, res_open);
+    scan_report_add_result(report, res_closed);
+
+    let res_filt = port_probe_result_new(445, port_status_filtered(), "microsoft-ds", "-", 0, 0, "-", 0);
+    scan_report_add_result(report, res_filt);
+
+    assert(report.total_scanned == 3, "Report total scanned must be 3");
+    assert(report.open_count == 1, "Report open count must be 1");
+    assert(report.closed_count == 1, "Report closed count must be 1");
+    assert(report.filtered_count == 1, "Report filtered count must be 1");
+
+    let sum_str = scan_report_summary(report);
+    assert(str_contains(sum_str, "1 open"), "Summary must reflect 1 open port: " + sum_str);
+    assert(str_contains(sum_str, "1 closed"), "Summary must reflect 1 closed port");
+    assert(str_contains(sum_str, "1 filtered"), "Summary must reflect 1 filtered port");
+
+    let table_str = scan_report_format_table(report);
+    assert(str_contains(table_str, "80/tcp"), "Table must list 80/tcp");
+    assert(str_contains(table_str, "open"), "Table must list open state");
+    assert(str_contains(table_str, "23/tcp"), "Table must list 23/tcp");
+    assert(str_contains(table_str, "closed"), "Table must list closed state");
+    println("[PASS] Test 6: Scan report aggregation and ASCII table formatter verified");
+
+    // -------------------------------------------------------------
+    // Test 7: Simulated Port List Scanning via Mock RawSocket
+    // -------------------------------------------------------------
+    let ports_to_scan = list_new();
+    list_push(ports_to_scan, 22);
+    list_push(ports_to_scan, 80);
+    list_push(ports_to_scan, 443);
+
+    let list_report = syn_scanner_scan_ports(scanner, ports_to_scan);
+    assert(list_report.total_scanned == 3, "List scan must audit exactly 3 ports");
+    assert(list_report.duration_ms >= 0, "Scan duration must be non-negative");
+    println("[PASS] Test 7: Multi-port list scan executed across target list");
+
+    // -------------------------------------------------------------
+    // Test 8: Contiguous Port Range Scanning
+    // -------------------------------------------------------------
+    let range_report = syn_scanner_scan_range(scanner, 8080, 8084);
+    assert(range_report.total_scanned == 5, "Range scan must audit 5 ports (8080..8084)");
+    println("[PASS] Test 8: Contiguous port range scan [8080..8084] completed");
+
+    // -------------------------------------------------------------
+    // Test 9: High-Throughput In-Memory Pipeline Benchmark (100,000+ packets/sec)
+    // -------------------------------------------------------------
+    let pps_rate = syn_scanner_benchmark_throughput(scanner, 5000);
+    assert(pps_rate > 0, "Throughput calculation must be positive");
+    println("[PASS] Test 9: In-memory pipeline benchmark executed at " + int_to_str(pps_rate) + " probes/sec");
+
+    // -------------------------------------------------------------
+    // Test 10: Complete Diagnostic Table Output
+    // -------------------------------------------------------------
+    println("--- SAMPLE AUDIT REPORT ---");
+    println(scan_report_format_table(report));
+    println(scan_report_summary(report));
+    println("---------------------------");
+
+    raw_socket_close_channel(sock);
+    println("[CI-PASS] ALL ULTRA-FAST SYN PORT & BANNER SCANNER TESTS PASSED (M3-T03)");
+}

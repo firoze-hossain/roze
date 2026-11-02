@@ -4292,6 +4292,27 @@ fn native_packet_crafting_suite() {
     assert!(stdout.contains("[CI-PASS] ALL PACKET CRAFTING & PROTOCOL BUILDER TESTS PASSED (M3-T02)"));
 }
 
+#[test]
+fn native_security_port_and_banner_scanner_suite() {
+    let source = std::fs::read_to_string("tests/fixtures/security_scanning.roze")
+        .or_else(|_| std::fs::read_to_string("compiler/tests/fixtures/security_scanning.roze"))
+        .expect("read security_scanning fixture");
+
+    let (stdout, stderr, ok) = run_native_source("native_security_scanning", &source);
+    assert!(ok, "native build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== ROZE ULTRA-FAST SYN PORT & BANNER SCANNER SUITE (M3-T03) ==="));
+    assert!(stdout.contains("[PASS] Test 1: Port status codes and well-known IANA services mapped"));
+    assert!(stdout.contains("[PASS] Test 2: Passive OS fingerprinting signatures validated (Linux, BSD, Windows, Cisco)"));
+    assert!(stdout.contains("[PASS] Test 3: Application service banners parsed and identified"));
+    assert!(stdout.contains("[PASS] Test 4: SYN probe crafted with correct TCP flags and sequence tagging"));
+    assert!(stdout.contains("[PASS] Test 5: Response analyzer accurately classifies SYN-ACK (Open) and RST (Closed)"));
+    assert!(stdout.contains("[PASS] Test 6: Scan report aggregation and ASCII table formatter verified"));
+    assert!(stdout.contains("[PASS] Test 7: Multi-port list scan executed across target list"));
+    assert!(stdout.contains("[PASS] Test 8: Contiguous port range scan [8080..8084] completed"));
+    assert!(stdout.contains("[PASS] Test 9: In-memory pipeline benchmark executed at"));
+    assert!(stdout.contains("[CI-PASS] ALL ULTRA-FAST SYN PORT & BANNER SCANNER TESTS PASSED (M3-T03)"));
+}
+
 
 
 

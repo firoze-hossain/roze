@@ -1600,6 +1600,23 @@ fn packet_crafting_and_dissector_suite() {
     assert!(stdout.contains("[CI-PASS] ALL PACKET CRAFTING & PROTOCOL BUILDER TESTS PASSED (M3-T02)"));
 }
 
+#[test]
+fn security_port_and_banner_scanner_suite() {
+    let (stdout, stderr, ok) = run_fixture("security_scanning.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== ROZE ULTRA-FAST SYN PORT & BANNER SCANNER SUITE (M3-T03) ==="));
+    assert!(stdout.contains("[PASS] Test 1: Port status codes and well-known IANA services mapped"));
+    assert!(stdout.contains("[PASS] Test 2: Passive OS fingerprinting signatures validated (Linux, BSD, Windows, Cisco)"));
+    assert!(stdout.contains("[PASS] Test 3: Application service banners parsed and identified"));
+    assert!(stdout.contains("[PASS] Test 4: SYN probe crafted with correct TCP flags and sequence tagging"));
+    assert!(stdout.contains("[PASS] Test 5: Response analyzer accurately classifies SYN-ACK (Open) and RST (Closed)"));
+    assert!(stdout.contains("[PASS] Test 6: Scan report aggregation and ASCII table formatter verified"));
+    assert!(stdout.contains("[PASS] Test 7: Multi-port list scan executed across target list"));
+    assert!(stdout.contains("[PASS] Test 8: Contiguous port range scan [8080..8084] completed"));
+    assert!(stdout.contains("[PASS] Test 9: In-memory pipeline benchmark executed at"));
+    assert!(stdout.contains("[CI-PASS] ALL ULTRA-FAST SYN PORT & BANNER SCANNER TESTS PASSED (M3-T03)"));
+}
+
 
 
 

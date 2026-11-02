@@ -2109,8 +2109,16 @@ __attribute__((weak)) int64_t jwt_verify(const char* token, const char* secret) 
 __attribute__((weak)) void* jwt_decode(const char* token) { (void)token; return NULL; }
 __attribute__((weak)) void* jwt_decode_header(const char* token) { (void)token; return NULL; }
 
-__attribute__((weak)) int64_t time_now(void) { return (int64_t)time(NULL); }
-__attribute__((weak)) int64_t time_now_millis(void) { return (int64_t)time(NULL) * 1000LL; }
+__attribute__((weak)) int64_t __roze_time_now(void) { return (int64_t)time(NULL); }
+__attribute__((weak)) int64_t __roze_time_now_millis(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+        return (int64_t)ts.tv_sec * 1000LL + (int64_t)(ts.tv_nsec / 1000000LL);
+    }
+    return (int64_t)time(NULL) * 1000LL;
+}
+__attribute__((weak)) int64_t time_now(void) { return __roze_time_now(); }
+__attribute__((weak)) int64_t time_now_millis(void) { return __roze_time_now_millis(); }
 __attribute__((weak)) void* map_keys(void* m) { (void)m; return NULL; }
 __attribute__((weak)) int64_t string_length(const char* s) { return s ? (int64_t)strlen(s) : 0; }
 __attribute__((weak)) int64_t string_char_at(const char* s, int64_t idx) { return (s && idx >= 0 && idx < (int64_t)strlen(s)) ? (int64_t)(unsigned char)s[idx] : 0; }

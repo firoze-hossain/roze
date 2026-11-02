@@ -4081,6 +4081,171 @@ fn native_inline_assembly_suite() {
     assert!(u_out.is_empty(), "expected zero undefined symbols, got:\n{}", u_out);
 }
 
+#[test]
+fn milestone_gate_m2_bootable_os_kernel_verification() {
+    let has_qemu = Command::new("which")
+        .arg("qemu-system-x86_64")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !has_qemu {
+        eprintln!("Skipping milestone_gate_m2_bootable_os_kernel_verification: qemu-system-x86_64 missing");
+        return;
+    }
+
+    let dir = scratch_dir("m2_gate_kernel_verification");
+    let kernel_src_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("demos")
+        .join("kernel")
+        .join("src")
+        .join("main.roze");
+    assert!(kernel_src_path.exists(), "demos/kernel/src/main.roze must exist");
+
+    let source = std::fs::read_to_string(&kernel_src_path)
+        .expect("failed to read demos/kernel/src/main.roze");
+    let file_name = "main.roze";
+    std::fs::write(dir.join(file_name), &source).unwrap();
+
+    // 1. Build freestanding kernel
+    let build_output = Command::new(env!("CARGO_BIN_EXE_roze"))
+        .arg("build")
+        .arg(file_name)
+        .arg("--target")
+        .arg("freestanding")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run roze build --target freestanding");
+
+    assert!(
+        build_output.status.success(),
+        "kernel build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let kernel_bin = dir.join("main");
+    let qemu_bin = dir.join("main.qemu");
+    assert!(kernel_bin.exists(), "expected ELF64 kernel binary 'main'");
+    assert!(qemu_bin.exists(), "expected Multiboot image 'main.qemu'");
+
+    // Verify zero undefined symbols
+    let nm_u = Command::new("nm")
+        .arg("-u")
+        .arg(&kernel_bin)
+        .output()
+        .expect("failed to run nm -u");
+    assert!(nm_u.status.success());
+    let u_out = String::from_utf8_lossy(&nm_u.stdout).trim().to_string();
+    assert!(u_out.is_empty(), "expected zero undefined symbols in kernel binary, got:\n{}", u_out);
+
+    // 2. Direct QEMU Multiboot1 Boot Verification
+    let qemu_output = Command::new("qemu-system-x86_64")
+        .arg("-cpu")
+        .arg("max")
+        .arg("-kernel")
+        .arg(&qemu_bin)
+        .arg("-display")
+        .arg("none")
+        .arg("-serial")
+        .arg("stdio")
+        .arg("-device")
+        .arg("isa-debug-exit,iobase=0xf4,iosize=0x04")
+        .output()
+        .expect("failed to run qemu-system-x86_64");
+
+    let stdout = String::from_utf8_lossy(&qemu_output.stdout);
+    assert_eq!(qemu_output.status.code(), Some(3), "expected QEMU exit code 3 from isa-debug-exit");
+
+    assert!(stdout.contains("ROZE OPERATING SYSTEM - 64-BIT BARE-METAL KERNEL v2"), "missing kernel v2 banner");
+    assert!(stdout.contains("[BOOT] Bootloader Protocol: Multiboot1"), "expected Multiboot1 direct boot protocol");
+    assert!(stdout.contains("[PMM]  Physical Memory Frame Allocator Initialized: 128 Frames"), "missing PMM init");
+    assert!(stdout.contains("[PASS] Test 1: Physical frames strictly 4KB-aligned"), "missing test 1");
+    assert!(stdout.contains("[PASS] Test 2: Direct physical memory read/write verified ('ROZEOS')"), "missing test 2");
+    assert!(stdout.contains("[PASS] Test 3: Successfully freed Frame 2"), "missing test 3");
+    assert!(stdout.contains("[PASS] Test 4: Frame Allocator reused freed frame address"), "missing test 4");
+    assert!(stdout.contains("[PASS] Test 5: Virtual page 0x800000 mapped to physical frame"), "missing test 5");
+    assert!(stdout.contains("[PASS] Test 6: 4-Level Paging translation verified"), "missing test 6");
+    assert!(stdout.contains("[PASS] Test 7: Page Present flag verified in leaf PT entry"), "missing test 7");
+    assert!(stdout.contains("[PASS] Test 8: Pluggable Heap Allocator cache-line alignment verified"), "missing test 8");
+    assert!(stdout.contains("[PASS] Test 9: Kernel heap read/write integrity verified ('KHEAP')"), "missing test 9");
+    assert!(stdout.contains("[PASS] Test 10: IDT Interrupt Dispatch Verified (Vector 14 #PF, Error 7)"), "missing test 10");
+    assert!(stdout.contains("[PASS] 16550 UART COM1 Driver Initialized (115200 8N1)"), "missing COM1 init");
+    assert!(stdout.contains("[PASS] PS/2 Keyboard Driver Scancode Decoder Online"), "missing KBD init");
+    assert!(stdout.contains("[PASS] PS/2 Mouse Driver 3-Byte Packet Decoder Online"), "missing mouse init");
+    assert!(stdout.contains("[PASS] 8253/8254 PIT High-Res Timer Online"), "missing PIT init");
+    assert!(stdout.contains("[PASS] HPET High-Precision Event Timer Online"), "missing HPET init");
+    assert!(stdout.contains("[PASS] UEFI GOP Linear Framebuffer & 8x16 Font Driver Online"), "missing GOP init");
+
+    // Shell command verifications
+    assert!(stdout.contains("roze_sh v2> help"), "missing shell help command");
+    assert!(stdout.contains("roze_sh v2> info"), "missing shell info command");
+    assert!(stdout.contains("roze_sh v2> paging"), "missing shell paging command");
+    assert!(stdout.contains("roze_sh v2> heap"), "missing shell heap command");
+    assert!(stdout.contains("roze_sh v2> frames"), "missing shell frames command");
+    assert!(stdout.contains("roze_sh v2> idt"), "missing shell idt command");
+    assert!(stdout.contains("roze_sh v2> drivers"), "missing shell drivers command");
+    assert!(stdout.contains("roze_sh v2> gop"), "missing shell gop command");
+    assert!(stdout.contains("roze_sh v2> echo"), "missing shell echo command");
+    assert!(stdout.contains("roze_sh v2> clear"), "missing shell clear command");
+    assert!(stdout.contains("roze_sh v2> exit"), "missing shell exit command");
+
+    assert!(stdout.contains("[CI-PASS] ALL SHELL COMMANDS EXECUTED WITH ZERO PANICS"), "missing CI pass banner");
+    assert!(stdout.contains("[CI-PASS] MILESTONE GATE M2 VERIFICATION COMPLETE: ROZEOS KERNEL V2"), "missing gate completion banner");
+
+    // 3. Bootable GRUB Multiboot2 ISO Verification
+    let has_grub = Command::new("which")
+        .arg("grub-mkrescue")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if has_grub {
+        let iso_dir = dir.join("build").join("iso");
+        let boot_grub = iso_dir.join("boot").join("grub");
+        std::fs::create_dir_all(&boot_grub).unwrap();
+        std::fs::copy(&kernel_bin, iso_dir.join("boot").join("kernel.bin")).unwrap();
+
+        let grub_cfg_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("demos")
+            .join("kernel")
+            .join("grub.cfg");
+        std::fs::copy(&grub_cfg_src, boot_grub.join("grub.cfg")).unwrap();
+
+        let iso_img = dir.join("roze_os.iso");
+        let mkrescue_output = Command::new("grub-mkrescue")
+            .arg("-o")
+            .arg(&iso_img)
+            .arg(&iso_dir)
+            .output()
+            .expect("failed to run grub-mkrescue");
+        assert!(mkrescue_output.status.success(), "grub-mkrescue failed");
+        assert!(iso_img.exists(), "expected roze_os.iso to exist");
+
+        let qemu_iso_output = Command::new("qemu-system-x86_64")
+            .arg("-cpu")
+            .arg("max")
+            .arg("-cdrom")
+            .arg(&iso_img)
+            .arg("-display")
+            .arg("none")
+            .arg("-serial")
+            .arg("stdio")
+            .arg("-device")
+            .arg("isa-debug-exit,iobase=0xf4,iosize=0x04")
+            .output()
+            .expect("failed to run qemu with cdrom");
+
+        let iso_stdout = String::from_utf8_lossy(&qemu_iso_output.stdout);
+        assert_eq!(qemu_iso_output.status.code(), Some(3), "expected QEMU exit code 3 from ISO boot");
+        assert!(iso_stdout.contains("[BOOT] Bootloader Protocol: Multiboot2 (0x36D76289 - GRUB Boot)"), "expected Multiboot2 ISO boot protocol");
+        assert!(iso_stdout.contains("[CI-PASS] ALL SHELL COMMANDS EXECUTED WITH ZERO PANICS"), "missing CI pass banner in ISO boot");
+        assert!(iso_stdout.contains("[CI-PASS] MILESTONE GATE M2 VERIFICATION COMPLETE: ROZEOS KERNEL V2"), "missing gate completion banner in ISO boot");
+    }
+}
+
 
 
 

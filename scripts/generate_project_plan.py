@@ -324,7 +324,7 @@ s1_rows = [
         ("M2-T10", 8), ("Month 2", 4), ("Sprint 4 (W07-W08)", 8), "Milestone Gate M2", "Month 2 Bootable OS Kernel Verification",
         "Boot RozeOS Kernel v2 in QEMU via GRUB/Multiboot2: initialize paging, heap allocator, IDT, print to VGA/GOP screen, and execute interactive shell.",
         "QEMU x86_64 automated CI boot test with zero kernel panics.",
-        "Operating Systems & Freestanding", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
+        "Operating Systems & Freestanding", "3 Days", ("Critical", 14), ("Completed", 16)
     ],
 
     # MONTH 3: CYBERSECURITY / HACKING SUITE & ENTERPRISE WEB FRAMEWORK

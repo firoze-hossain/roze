@@ -1524,6 +1524,45 @@ fn native_inline_assembly_suite() {
     assert!(stdout.contains("=== All Inline Assembly Tests Passed Successfully ==="));
 }
 
+#[test]
+fn milestone_gate_m2_kernel_verification_suite() {
+    let (stdout, stderr, ok) = run_fixture("milestone_gate_m2_kernel_verification.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("ROZE OPERATING SYSTEM - 64-BIT BARE-METAL KERNEL v2"));
+    assert!(stdout.contains("[BOOT] Bootloader Protocol: Multiboot2"));
+    assert!(stdout.contains("[PMM]  Physical Memory Frame Allocator Initialized: 128 Frames"));
+    assert!(stdout.contains("[PASS] Test 1: Physical frames strictly 4KB-aligned"));
+    assert!(stdout.contains("[PASS] Test 2: Direct physical memory read/write verified ('ROZEOS')"));
+    assert!(stdout.contains("[PASS] Test 3: Successfully freed Frame 2"));
+    assert!(stdout.contains("[PASS] Test 4: Frame Allocator reused freed frame address"));
+    assert!(stdout.contains("[PASS] Test 5: Virtual page 0x800000 mapped to physical frame"));
+    assert!(stdout.contains("[PASS] Test 6: 4-Level Paging translation verified"));
+    assert!(stdout.contains("[PASS] Test 7: Page Present flag verified in leaf PT entry"));
+    assert!(stdout.contains("[PASS] Test 8: Pluggable Heap Allocator cache-line alignment verified"));
+    assert!(stdout.contains("[PASS] Test 9: Kernel heap read/write integrity verified ('KHEAP')"));
+    assert!(stdout.contains("[PASS] Test 10: IDT Interrupt Dispatch Verified (Vector 14 #PF, Error 7)"));
+    assert!(stdout.contains("[PASS] 16550 UART COM1 Driver Initialized (115200 8N1)"));
+    assert!(stdout.contains("[PASS] PS/2 Keyboard Driver Scancode Decoder Online"));
+    assert!(stdout.contains("[PASS] PS/2 Mouse Driver 3-Byte Packet Decoder Online"));
+    assert!(stdout.contains("[PASS] 8253/8254 PIT High-Res Timer Online"));
+    assert!(stdout.contains("[PASS] HPET High-Precision Event Timer Online"));
+    assert!(stdout.contains("[PASS] UEFI GOP Linear Framebuffer & 8x16 Font Driver Online"));
+    assert!(stdout.contains("roze_sh v2> help"));
+    assert!(stdout.contains("roze_sh v2> info"));
+    assert!(stdout.contains("roze_sh v2> paging"));
+    assert!(stdout.contains("roze_sh v2> heap"));
+    assert!(stdout.contains("roze_sh v2> frames"));
+    assert!(stdout.contains("roze_sh v2> idt"));
+    assert!(stdout.contains("roze_sh v2> drivers"));
+    assert!(stdout.contains("roze_sh v2> gop"));
+    assert!(stdout.contains("roze_sh v2> echo"));
+    assert!(stdout.contains("roze_sh v2> clear"));
+    assert!(stdout.contains("roze_sh v2> exit"));
+    assert!(stdout.contains("[CI-PASS] ALL SHELL COMMANDS EXECUTED WITH ZERO PANICS"));
+    assert!(stdout.contains("[CI-PASS] MILESTONE GATE M2 VERIFICATION COMPLETE: ROZEOS KERNEL V2"));
+}
+
+
 
 
 

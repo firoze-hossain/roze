@@ -6560,7 +6560,7 @@ impl JavaSourceGenerator {
                             .or_else(|| get_out_var("reg"))
                         {
                             if target_var != "_" {
-                                source.push_str(&format!("{}{} = (int)System.nanoTime();\n", indent_str, target_var));
+                                source.push_str(&format!("{}{} = (int)(System.nanoTime() & 0x7fffffff) + 1;\n", indent_str, target_var));
                             }
                         }
                     }

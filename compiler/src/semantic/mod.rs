@@ -1373,6 +1373,20 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("pool_is_full", vec![Type::Unknown], Type::Bool),
         ("pool_is_empty", vec![Type::Unknown], Type::Bool),
         ("pool_reset", vec![Type::Unknown], Type::Void),
+
+        // ---- Raw Sockets & Promiscuous Sniffing Engine (M3-T01) ----
+        ("raw_socket_open", vec![Type::Int], Type::Int),
+        ("raw_socket_bind", vec![Type::Int, Type::String], Type::Int),
+        ("raw_socket_set_promiscuous", vec![Type::Int, Type::String, Type::Int], Type::Int),
+        ("raw_socket_send", vec![Type::Int, Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Int),
+        ("raw_socket_recv", vec![Type::Int, Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Int),
+        ("raw_socket_close", vec![Type::Int], Type::Int),
+        ("raw_socket_is_mock", vec![Type::Int], Type::Int),
+        ("raw_socket_inject_mock", vec![Type::Int, Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Int),
+        ("raw_socket_mock_count", vec![Type::Int], Type::Int),
+        ("pcap_write_dump", vec![Type::String, Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Int),
+        ("pcap_read_dump", vec![Type::String, Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Int),
+        ("pcap_file_size", vec![Type::String], Type::Int),
     ]
 }
 

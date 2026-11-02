@@ -1630,6 +1630,19 @@ long __roze_pool_is_full(long pa) { (void)pa; return 1; }
 long __roze_pool_is_empty(long pa) { (void)pa; return 1; }
 void __roze_pool_reset(long pa) { (void)pa; }
 
+long __roze_raw_socket_open(long proto) { (void)proto; return -1; }
+long __roze_raw_socket_bind(long fd, const char *ifname) { (void)fd; (void)ifname; return -1; }
+long __roze_raw_socket_set_promiscuous(long fd, const char *ifname, long enable) { (void)fd; (void)ifname; (void)enable; return -1; }
+long __roze_raw_socket_send(long fd, const void *buf, long len) { (void)fd; (void)buf; (void)len; return -1; }
+long __roze_raw_socket_recv(long fd, void *buf, long max_len) { (void)fd; (void)buf; (void)max_len; return 0; }
+long __roze_raw_socket_close(long fd) { (void)fd; return 0; }
+long __roze_raw_socket_is_mock(long fd) { (void)fd; return 1; }
+long __roze_raw_socket_inject_mock(long fd, const void *buf, long len) { (void)fd; (void)buf; (void)len; return 0; }
+long __roze_raw_socket_mock_count(long fd) { (void)fd; return 0; }
+long __roze_pcap_write_dump(const char *path, const void *buf, long len) { (void)path; (void)buf; (void)len; return -1; }
+long __roze_pcap_read_dump(const char *path, void *buf, long max_len) { (void)path; (void)buf; (void)max_len; return -1; }
+long __roze_pcap_file_size(const char *path) { (void)path; return -1; }
+
 // 6. Bootstrap entry point called by entry64
 __attribute__((weak))
 void __roze_main(void);
@@ -1936,6 +1949,7 @@ fn expression_is_borrowed(expr: &TypedExpression) -> bool {
     match &expr.kind {
         TypedExpressionKind::Identifier(_) => true,
         TypedExpressionKind::FieldAccess { object, .. } => expression_is_borrowed(object),
+        TypedExpressionKind::Call { function, .. } if function == "list_get" || function == "map_get" => true,
         _ => false,
     }
 }
@@ -5370,6 +5384,60 @@ fn declare_memory_runtime(module: &mut ObjectModule) -> Result<MemoryRuntime> {
     })
 }
 
+#[derive(Clone, Copy)]
+pub struct RawNetRuntime {
+    pub raw_socket_open: FuncId,
+    pub raw_socket_bind: FuncId,
+    pub raw_socket_set_promiscuous: FuncId,
+    pub raw_socket_send: FuncId,
+    pub raw_socket_recv: FuncId,
+    pub raw_socket_close: FuncId,
+    pub raw_socket_is_mock: FuncId,
+    pub raw_socket_inject_mock: FuncId,
+    pub raw_socket_mock_count: FuncId,
+    pub pcap_write_dump: FuncId,
+    pub pcap_read_dump: FuncId,
+    pub pcap_file_size: FuncId,
+}
+
+fn declare_raw_net_runtime(module: &mut ObjectModule) -> Result<RawNetRuntime> {
+    macro_rules! decl {
+        ($name:expr, $sig:expr) => {
+            module.declare_function($name, Linkage::Import, &$sig).map_err(|e| anyhow!(e.to_string()))?
+        };
+    }
+
+    let mut sig_i64_to_i64 = module.make_signature();
+    sig_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_i64_to_i64 = module.make_signature();
+    sig_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_i64_i64_to_i64 = module.make_signature();
+    sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    Ok(RawNetRuntime {
+        raw_socket_open: decl!("__roze_raw_socket_open", sig_i64_to_i64),
+        raw_socket_bind: decl!("__roze_raw_socket_bind", sig_i64_i64_to_i64),
+        raw_socket_set_promiscuous: decl!("__roze_raw_socket_set_promiscuous", sig_i64_i64_i64_to_i64),
+        raw_socket_send: decl!("__roze_raw_socket_send", sig_i64_i64_i64_to_i64),
+        raw_socket_recv: decl!("__roze_raw_socket_recv", sig_i64_i64_i64_to_i64),
+        raw_socket_close: decl!("__roze_raw_socket_close", sig_i64_to_i64),
+        raw_socket_is_mock: decl!("__roze_raw_socket_is_mock", sig_i64_to_i64),
+        raw_socket_inject_mock: decl!("__roze_raw_socket_inject_mock", sig_i64_i64_i64_to_i64),
+        raw_socket_mock_count: decl!("__roze_raw_socket_mock_count", sig_i64_to_i64),
+        pcap_write_dump: decl!("__roze_pcap_write_dump", sig_i64_i64_i64_to_i64),
+        pcap_read_dump: decl!("__roze_pcap_read_dump", sig_i64_i64_i64_to_i64),
+        pcap_file_size: decl!("__roze_pcap_file_size", sig_i64_to_i64),
+    })
+}
+
 /// A native class instance is a pointer to a heap block:
 ///
 ///   [0..8)          i64  refcount
@@ -5717,6 +5785,7 @@ struct NativeGenerator<'a> {
     simd: SimdRuntime,
     collections: CollectionsRuntime,
     memory: MemoryRuntime,
+    raw_net: RawNetRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -5807,6 +5876,7 @@ impl<'a> NativeGenerator<'a> {
         let simd = declare_simd_runtime(module)?;
         let collections = declare_collections_runtime(module)?;
         let memory = declare_memory_runtime(module)?;
+        let raw_net = declare_raw_net_runtime(module)?;
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
@@ -5842,6 +5912,7 @@ impl<'a> NativeGenerator<'a> {
             simd,
             collections,
             memory,
+            raw_net,
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
@@ -6208,6 +6279,7 @@ impl<'a> NativeGenerator<'a> {
                     simd: &self.simd,
                     collections: &self.collections,
                     memory: &self.memory,
+                    raw_net: &self.raw_net,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
@@ -6331,6 +6403,7 @@ impl<'a> NativeGenerator<'a> {
                                 simd: &self.simd,
                                 collections: &self.collections,
                                 memory: &self.memory,
+                                raw_net: &self.raw_net,
                                 classes: &self.classes,
                                 class_retain_id: self.class_retain_id,
                                 literal_counter: &mut self.literal_counter,
@@ -6442,6 +6515,7 @@ impl<'a> NativeGenerator<'a> {
                         simd: &self.simd,
                         collections: &self.collections,
                         memory: &self.memory,
+                        raw_net: &self.raw_net,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
@@ -6596,6 +6670,7 @@ struct FunctionCompiler<'a, 'b> {
     simd: &'a SimdRuntime,
     collections: &'a CollectionsRuntime,
     memory: &'a MemoryRuntime,
+    raw_net: &'a RawNetRuntime,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -6907,7 +6982,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     /// compile time instead of ever executing them.
     fn reject_unless_supported_as_container_value(&self, value: &TypedExpression, location: &Location, context: &str) -> Result<()> {
         match &value.type_ {
-            Type::Int | Type::Bool | Type::Unknown => Ok(()),
+            Type::Int | Type::Bool | Type::Unknown | Type::RawPointer(_) | Type::Class(_) => Ok(()),
             other => Err(anyhow!(
                 "line {}, column {}: the native backend's lists and maps can only hold int/bool values for now, not {} -- {}",
                 location.line, location.column, other, context
@@ -7323,15 +7398,21 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             TypedStatement::Let { name, type_, value, .. } => {
                 require_supported_type(type_, &value.location, &format!("variable '{}'", name))?;
                 let val = self.compile_expression(value)?;
-                self.retain_if_aliasing(value, val)?;
+                if expression_is_borrowed(value) {
+                    let retain_ty = if value.type_ == Type::Unknown { type_ } else { &value.type_ };
+                    self.retain_for_arc_type(retain_ty, val)?;
+                }
                 let var = self.declare_local(name, type_.clone());
                 self.builder.def_var(var, val);
                 Ok(false)
             }
             TypedStatement::Assign { name, value, .. } => {
                 let val = self.compile_expression(value)?;
-                self.retain_if_aliasing(value, val)?;
                 let (var, ty) = self.lookup_local(name);
+                if expression_is_borrowed(value) {
+                    let retain_ty = if value.type_ == Type::Unknown { &ty } else { &value.type_ };
+                    self.retain_for_arc_type(retain_ty, val)?;
+                }
                 let val = self.coerce_for_target_type(val, &value.type_, &ty);
                 let old_val = self.builder.use_var(var);
                 self.emit_release_for_type(&ty, old_val)?;
@@ -8770,6 +8851,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.reject_unless_supported_as_container_value(&arguments[1], location, "list_push")?;
                 let list = self.compile_expression(&arguments[0])?;
                 let value = self.compile_expression(&arguments[1])?;
+                self.retain_for_arc_type(&arguments[1].type_, value)?;
                 let result = self.emit_list_push(list, value)?;
                 self.release_if_fresh(&arguments[0], list)?;
                 return Ok(result);
@@ -11786,6 +11868,130 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[pa]);
                 self.release_if_fresh(&arguments[0], pa)?;
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+
+            // Raw Sockets & Promiscuous Sniffing Engine (M3-T01)
+            "raw_socket_open" if arguments.len() == 1 => {
+                let proto = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_net.raw_socket_open, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[proto]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], proto)?;
+                return Ok(res);
+            }
+            "raw_socket_bind" if arguments.len() == 2 => {
+                let fd = self.compile_expression(&arguments[0])?;
+                let ifname = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_net.raw_socket_bind, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[fd, ifname]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], fd)?;
+                self.release_if_fresh(&arguments[1], ifname)?;
+                return Ok(res);
+            }
+            "raw_socket_set_promiscuous" if arguments.len() == 3 => {
+                let fd = self.compile_expression(&arguments[0])?;
+                let ifname = self.compile_expression(&arguments[1])?;
+                let enable = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_net.raw_socket_set_promiscuous, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[fd, ifname, enable]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], fd)?;
+                self.release_if_fresh(&arguments[1], ifname)?;
+                self.release_if_fresh(&arguments[2], enable)?;
+                return Ok(res);
+            }
+            "raw_socket_send" if arguments.len() == 3 => {
+                let fd = self.compile_expression(&arguments[0])?;
+                let buf = self.compile_expression(&arguments[1])?;
+                let len = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_net.raw_socket_send, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[fd, buf, len]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], fd)?;
+                self.release_if_fresh(&arguments[1], buf)?;
+                self.release_if_fresh(&arguments[2], len)?;
+                return Ok(res);
+            }
+            "raw_socket_recv" if arguments.len() == 3 => {
+                let fd = self.compile_expression(&arguments[0])?;
+                let buf = self.compile_expression(&arguments[1])?;
+                let max_len = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_net.raw_socket_recv, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[fd, buf, max_len]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], fd)?;
+                self.release_if_fresh(&arguments[1], buf)?;
+                self.release_if_fresh(&arguments[2], max_len)?;
+                return Ok(res);
+            }
+            "raw_socket_close" if arguments.len() == 1 => {
+                let fd = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_net.raw_socket_close, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[fd]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], fd)?;
+                return Ok(res);
+            }
+            "raw_socket_is_mock" if arguments.len() == 1 => {
+                let fd = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_net.raw_socket_is_mock, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[fd]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], fd)?;
+                return Ok(res);
+            }
+            "raw_socket_inject_mock" if arguments.len() == 3 => {
+                let fd = self.compile_expression(&arguments[0])?;
+                let buf = self.compile_expression(&arguments[1])?;
+                let len = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_net.raw_socket_inject_mock, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[fd, buf, len]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], fd)?;
+                self.release_if_fresh(&arguments[1], buf)?;
+                self.release_if_fresh(&arguments[2], len)?;
+                return Ok(res);
+            }
+            "raw_socket_mock_count" if arguments.len() == 1 => {
+                let fd = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_net.raw_socket_mock_count, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[fd]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], fd)?;
+                return Ok(res);
+            }
+            "pcap_write_dump" if arguments.len() == 3 => {
+                let path = self.compile_expression(&arguments[0])?;
+                let buf = self.compile_expression(&arguments[1])?;
+                let len = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_net.pcap_write_dump, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[path, buf, len]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], path)?;
+                self.release_if_fresh(&arguments[1], buf)?;
+                self.release_if_fresh(&arguments[2], len)?;
+                return Ok(res);
+            }
+            "pcap_read_dump" if arguments.len() == 3 => {
+                let path = self.compile_expression(&arguments[0])?;
+                let buf = self.compile_expression(&arguments[1])?;
+                let max_len = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_net.pcap_read_dump, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[path, buf, max_len]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], path)?;
+                self.release_if_fresh(&arguments[1], buf)?;
+                self.release_if_fresh(&arguments[2], max_len)?;
+                return Ok(res);
+            }
+            "pcap_file_size" if arguments.len() == 1 => {
+                let path = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_net.pcap_file_size, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[path]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], path)?;
+                return Ok(res);
             }
             _ => {}
         }

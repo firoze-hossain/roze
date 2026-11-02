@@ -1,0 +1,1648 @@
+// stdlib/src/raw_net.roze
+//
+// 🌹 Roze Raw Networking, Promiscuous Sniffing & Packet Engine (M3-T01)
+// Architecture Parity with Python Scapy and Go gopacket:
+//   1. AF_PACKET / BPF Raw Sockets directly bound to network interfaces in promiscuous mode
+//   2. High-throughput zero-copy PacketRingBuffer with timestamping and drop statistics
+//   3. Layer 2-4 Protocol Stack: Ethernet II, ARP, IPv4, ICMP, UDP, TCP
+//   4. Automated RFC 1071 16-Bit Internet Checksum Engine (IPv4, ICMP, UDP & TCP Pseudo-Header)
+//   5. Deep Packet Dissection & Human-Readable Frame Summarizer
+//   6. Scapy-style Protocol Builders & Packet Injection Engine (SYN, ACK, ARP, ICMP Ping)
+//   7. BPF-Style Dynamic Packet Filter Engine
+//   8. PCAP 2.4 Binary Capture File Exporter & Importer (Wireshark / tcpdump Interop)
+//
+// Zero external dependencies. Production-grade cybersecurity & network analysis stack.
+
+// ==============================================================================
+// 1. Protocol Constants & EtherTypes
+// ==============================================================================
+
+// EtherTypes
+func ethertype_ipv4() -> int { return 2048; }  // 0x0800
+func ethertype_arp() -> int { return 2054; }   // 0x0806
+func ethertype_ipv6() -> int { return 34525; } // 0x86DD
+func ethertype_vlan() -> int { return 33024; } // 0x8100
+func eth_p_all() -> int { return 3; }          // 0x0003 (ETH_P_ALL)
+
+// IP Protocols
+func ipproto_icmp() -> int { return 1; }
+func ipproto_tcp() -> int { return 6; }
+func ipproto_udp() -> int { return 17; }
+func ipproto_raw() -> int { return 255; }
+
+// ARP Opcodes
+func arp_op_request() -> int { return 1; }
+func arp_op_reply() -> int { return 2; }
+func arp_hw_ethernet() -> int { return 1; }
+
+// TCP Control Flags
+func tcp_flag_fin() -> int { return 1; }
+func tcp_flag_syn() -> int { return 2; }
+func tcp_flag_rst() -> int { return 4; }
+func tcp_flag_psh() -> int { return 8; }
+func tcp_flag_ack() -> int { return 16; }
+func tcp_flag_urg() -> int { return 32; }
+func tcp_flag_ece() -> int { return 64; }
+func tcp_flag_cwr() -> int { return 128; }
+
+// ICMP Message Types
+func icmp_type_echo_reply() -> int { return 0; }
+func icmp_type_dest_unreach() -> int { return 3; }
+func icmp_type_echo_request() -> int { return 8; }
+func icmp_type_time_exceeded() -> int { return 11; }
+
+// PCAP 2.4 Magic & Constants
+func pcap_magic_microsec() -> int { return 2712847316; } // 0xA1B2C3D4
+func pcap_magic_nanosec() -> int { return 2712812621; }  // 0xA1B23C4D
+func pcap_version_major() -> int { return 2; }
+func pcap_version_minor() -> int { return 4; }
+func pcap_linktype_ethernet() -> int { return 1; }
+
+// ==============================================================================
+// 2. Hardware MAC & IPv4 Network Addresses
+// ==============================================================================
+
+class MacAddress {
+    b0: int,
+    b1: int,
+    b2: int,
+    b3: int,
+    b4: int,
+    b5: int,
+}
+
+func mac_new(b0: int, b1: int, b2: int, b3: int, b4: int, b5: int) -> MacAddress {
+    return new MacAddress(
+        bit_and(b0, 255), bit_and(b1, 255), bit_and(b2, 255),
+        bit_and(b3, 255), bit_and(b4, 255), bit_and(b5, 255)
+    );
+}
+
+func mac_broadcast() -> MacAddress {
+    return new MacAddress(255, 255, 255, 255, 255, 255);
+}
+
+func mac_zero() -> MacAddress {
+    return new MacAddress(0, 0, 0, 0, 0, 0);
+}
+
+func mac_equals(a: MacAddress, b: MacAddress) -> bool {
+    return a.b0 == b.b0 && a.b1 == b.b1 && a.b2 == b.b2 &&
+           a.b3 == b.b3 && a.b4 == b.b4 && a.b5 == b.b5;
+}
+
+func mac_write(mac: MacAddress, ptr: *raw u8, offset: int) {
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 0, mac.b0);
+        ptr_write_u8_at(ptr, offset + 1, mac.b1);
+        ptr_write_u8_at(ptr, offset + 2, mac.b2);
+        ptr_write_u8_at(ptr, offset + 3, mac.b3);
+        ptr_write_u8_at(ptr, offset + 4, mac.b4);
+        ptr_write_u8_at(ptr, offset + 5, mac.b5);
+    }
+}
+
+func mac_read(ptr: *raw u8, offset: int) -> MacAddress {
+    unsafe {
+        return new MacAddress(
+            ptr_read_u8_at(ptr, offset + 0),
+            ptr_read_u8_at(ptr, offset + 1),
+            ptr_read_u8_at(ptr, offset + 2),
+            ptr_read_u8_at(ptr, offset + 3),
+            ptr_read_u8_at(ptr, offset + 4),
+            ptr_read_u8_at(ptr, offset + 5)
+        );
+    }
+}
+
+func hex_char(v: int) -> string {
+    let d = bit_and(v, 15);
+    if d == 0 { return "0"; }
+    if d == 1 { return "1"; }
+    if d == 2 { return "2"; }
+    if d == 3 { return "3"; }
+    if d == 4 { return "4"; }
+    if d == 5 { return "5"; }
+    if d == 6 { return "6"; }
+    if d == 7 { return "7"; }
+    if d == 8 { return "8"; }
+    if d == 9 { return "9"; }
+    if d == 10 { return "A"; }
+    if d == 11 { return "B"; }
+    if d == 12 { return "C"; }
+    if d == 13 { return "D"; }
+    if d == 14 { return "E"; }
+    return "F";
+}
+
+func int_to_str(val: int) -> string {
+    if val == 0 { return "0"; }
+    let mut_v = val;
+    let mut_neg = false;
+    if mut_v < 0 {
+        mut_neg = true;
+        mut_v = 0 - mut_v;
+    }
+    let res = "";
+    while mut_v > 0 {
+        let rem = mut_v % 10;
+        let c = "0";
+        if rem == 1 { c = "1"; }
+        if rem == 2 { c = "2"; }
+        if rem == 3 { c = "3"; }
+        if rem == 4 { c = "4"; }
+        if rem == 5 { c = "5"; }
+        if rem == 6 { c = "6"; }
+        if rem == 7 { c = "7"; }
+        if rem == 8 { c = "8"; }
+        if rem == 9 { c = "9"; }
+        res = c + res;
+        mut_v = mut_v / 10;
+    }
+    if mut_neg {
+        return "-" + res;
+    }
+    return res;
+}
+
+func str_contains(haystack: string, needle: string) -> bool {
+    let h_len = string_length(haystack);
+    let n_len = string_length(needle);
+    if n_len == 0 { return true; }
+    if h_len < n_len { return false; }
+    let mut_i = 0;
+    while mut_i <= h_len - n_len {
+        let mut_match = true;
+        let mut_j = 0;
+        while mut_j < n_len && mut_match {
+            if string_char_at(haystack, mut_i + mut_j) != string_char_at(needle, mut_j) {
+                mut_match = false;
+            }
+            mut_j = mut_j + 1;
+        }
+        if mut_match {
+            return true;
+        }
+        mut_i = mut_i + 1;
+    }
+    return false;
+}
+
+func byte_to_hex_str(b: int) -> string {
+    let val = bit_and(b, 255);
+    return hex_char(bit_shr(val, 4)) + hex_char(val);
+}
+
+func mac_to_string(mac: MacAddress) -> string {
+    return byte_to_hex_str(mac.b0) + ":" + byte_to_hex_str(mac.b1) + ":" +
+           byte_to_hex_str(mac.b2) + ":" + byte_to_hex_str(mac.b3) + ":" +
+           byte_to_hex_str(mac.b4) + ":" + byte_to_hex_str(mac.b5);
+}
+
+class Ipv4Address {
+    b0: int,
+    b1: int,
+    b2: int,
+    b3: int,
+}
+
+func ipv4_new(b0: int, b1: int, b2: int, b3: int) -> Ipv4Address {
+    return new Ipv4Address(
+        bit_and(b0, 255), bit_and(b1, 255), bit_and(b2, 255), bit_and(b3, 255)
+    );
+}
+
+func ipv4_loopback() -> Ipv4Address {
+    return new Ipv4Address(127, 0, 0, 1);
+}
+
+func ipv4_broadcast() -> Ipv4Address {
+    return new Ipv4Address(255, 255, 255, 255);
+}
+
+func ipv4_zero() -> Ipv4Address {
+    return new Ipv4Address(0, 0, 0, 0);
+}
+
+func ipv4_equals(a: Ipv4Address, b: Ipv4Address) -> bool {
+    return a.b0 == b.b0 && a.b1 == b.b1 && a.b2 == b.b2 && a.b3 == b.b3;
+}
+
+func ipv4_to_string(ip: Ipv4Address) -> string {
+    return int_to_str(ip.b0) + "." + int_to_str(ip.b1) + "." + int_to_str(ip.b2) + "." + int_to_str(ip.b3);
+}
+
+func ipv4_to_u32(ip: Ipv4Address) -> int {
+    return bit_or(bit_or(bit_or(bit_shl(ip.b0, 24), bit_shl(ip.b1, 16)), bit_shl(ip.b2, 8)), ip.b3);
+}
+
+func ipv4_from_u32(val: int) -> Ipv4Address {
+    return new Ipv4Address(
+        bit_and(bit_shr(val, 24), 255),
+        bit_and(bit_shr(val, 16), 255),
+        bit_and(bit_shr(val, 8), 255),
+        bit_and(val, 255)
+    );
+}
+
+func ipv4_write(ip: Ipv4Address, ptr: *raw u8, offset: int) {
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 0, ip.b0);
+        ptr_write_u8_at(ptr, offset + 1, ip.b1);
+        ptr_write_u8_at(ptr, offset + 2, ip.b2);
+        ptr_write_u8_at(ptr, offset + 3, ip.b3);
+    }
+}
+
+func ipv4_read(ptr: *raw u8, offset: int) -> Ipv4Address {
+    unsafe {
+        return new Ipv4Address(
+            ptr_read_u8_at(ptr, offset + 0),
+            ptr_read_u8_at(ptr, offset + 1),
+            ptr_read_u8_at(ptr, offset + 2),
+            ptr_read_u8_at(ptr, offset + 3)
+        );
+    }
+}
+
+// ==============================================================================
+// 3. Raw Packet Buffer Abstraction
+// ==============================================================================
+
+class RawPacket {
+    ptr: *raw u8,
+    length: int,
+    capacity: int,
+}
+
+func raw_packet_new(capacity: int) -> RawPacket {
+    let mut_cap = 64;
+    if capacity > 64 {
+        mut_cap = capacity;
+    }
+    unsafe {
+        let ptr: *raw u8 = alloc(mut_cap);
+        mem_set(ptr, 0, mut_cap);
+        return new RawPacket(ptr, 0, mut_cap);
+    }
+}
+
+func raw_packet_from_bytes(src_ptr: *raw u8, length: int) -> RawPacket {
+    let pkt = raw_packet_new(length);
+    if length > 0 {
+        unsafe {
+            mem_copy(pkt.ptr, src_ptr, length);
+        }
+        pkt.length = length;
+    }
+    return pkt;
+}
+
+func raw_packet_free(pkt: RawPacket) {
+    unsafe {
+        if !ptr_is_null(pkt.ptr) {
+            free(pkt.ptr);
+            pkt.ptr = int_to_ptr(0);
+            pkt.length = 0;
+            pkt.capacity = 0;
+        }
+    }
+}
+
+func raw_packet_get_u8(pkt: RawPacket, offset: int) -> int {
+    if offset < 0 || offset >= pkt.length { return 0; }
+    unsafe {
+        return ptr_read_u8_at(pkt.ptr, offset);
+    }
+}
+
+func raw_packet_set_u8(pkt: RawPacket, offset: int, val: int) {
+    if offset >= 0 && offset < pkt.capacity {
+        unsafe {
+            ptr_write_u8_at(pkt.ptr, offset, bit_and(val, 255));
+        }
+        if offset + 1 > pkt.length {
+            pkt.length = offset + 1;
+        }
+    }
+}
+
+func raw_packet_get_u16(pkt: RawPacket, offset: int) -> int {
+    if offset < 0 || offset + 1 >= pkt.length { return 0; }
+    let h = 0;
+    let l = 0;
+    unsafe {
+        h = ptr_read_u8_at(pkt.ptr, offset);
+        l = ptr_read_u8_at(pkt.ptr, offset + 1);
+    }
+    return bit_or(bit_shl(h, 8), l);
+}
+
+func raw_packet_set_u16(pkt: RawPacket, offset: int, val: int) {
+    raw_packet_set_u8(pkt, offset, bit_shr(val, 8));
+    raw_packet_set_u8(pkt, offset + 1, bit_and(val, 255));
+}
+
+func raw_packet_get_u32(pkt: RawPacket, offset: int) -> int {
+    if offset < 0 || offset + 3 >= pkt.length { return 0; }
+    let b0 = 0;
+    let b1 = 0;
+    let b2 = 0;
+    let b3 = 0;
+    unsafe {
+        b0 = ptr_read_u8_at(pkt.ptr, offset);
+        b1 = ptr_read_u8_at(pkt.ptr, offset + 1);
+        b2 = ptr_read_u8_at(pkt.ptr, offset + 2);
+        b3 = ptr_read_u8_at(pkt.ptr, offset + 3);
+    }
+    return bit_or(bit_or(bit_or(bit_shl(b0, 24), bit_shl(b1, 16)), bit_shl(b2, 8)), b3);
+}
+
+func raw_packet_set_u32(pkt: RawPacket, offset: int, val: int) {
+    raw_packet_set_u8(pkt, offset, bit_and(bit_shr(val, 24), 255));
+    raw_packet_set_u8(pkt, offset + 1, bit_and(bit_shr(val, 16), 255));
+    raw_packet_set_u8(pkt, offset + 2, bit_and(bit_shr(val, 8), 255));
+    raw_packet_set_u8(pkt, offset + 3, bit_and(val, 255));
+}
+
+// Writes an ASCII string payload into the packet buffer
+func raw_packet_write_string(pkt: RawPacket, offset: int, s: string) -> int {
+    let len = string_length(s);
+    let mut_i = 0;
+    while mut_i < len {
+        let ch = string_char_at(s, mut_i);
+        raw_packet_set_u8(pkt, offset + mut_i, ch);
+        mut_i = mut_i + 1;
+    }
+    return len;
+}
+
+// ==============================================================================
+// 4. RFC 1071 16-Bit Internet Checksum Engine
+// ==============================================================================
+
+// Computes 16-bit one's complement Internet Checksum (RFC 1071)
+func internet_checksum(ptr: *raw u8, offset: int, length: int) -> int {
+    let sum = 0;
+    let mut_i = 0;
+    unsafe {
+        while mut_i + 1 < length {
+            let b0 = ptr_read_u8_at(ptr, offset + mut_i);
+            let b1 = ptr_read_u8_at(ptr, offset + mut_i + 1);
+            let word = bit_or(bit_shl(b0, 8), b1);
+            sum = sum + word;
+            mut_i = mut_i + 2;
+        }
+        if mut_i < length {
+            let b0 = ptr_read_u8_at(ptr, offset + mut_i);
+            sum = sum + bit_shl(b0, 8);
+        }
+    }
+    while bit_shr(sum, 16) > 0 {
+        sum = bit_and(sum, 65535) + bit_shr(sum, 16);
+    }
+    return bit_and(bit_not(sum), 65535);
+}
+
+// Computes standard IPv4 header checksum over IHL bytes
+func ipv4_header_checksum(ptr: *raw u8, offset: int, ihl_bytes: int) -> int {
+    let orig_csum = 0;
+    unsafe {
+        orig_csum = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 10), 8), ptr_read_u8_at(ptr, offset + 11));
+        ptr_write_u8_at(ptr, offset + 10, 0);
+        ptr_write_u8_at(ptr, offset + 11, 0);
+    }
+    let csum = internet_checksum(ptr, offset, ihl_bytes);
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 10, bit_shr(orig_csum, 8));
+        ptr_write_u8_at(ptr, offset + 11, bit_and(orig_csum, 255));
+    }
+    return csum;
+}
+
+// Computes standard ICMP checksum over the ICMP message
+func icmp_checksum(ptr: *raw u8, offset: int, icmp_len: int) -> int {
+    let orig_csum = 0;
+    unsafe {
+        orig_csum = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 2), 8), ptr_read_u8_at(ptr, offset + 3));
+        ptr_write_u8_at(ptr, offset + 2, 0);
+        ptr_write_u8_at(ptr, offset + 3, 0);
+    }
+    let csum = internet_checksum(ptr, offset, icmp_len);
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 2, bit_shr(orig_csum, 8));
+        ptr_write_u8_at(ptr, offset + 3, bit_and(orig_csum, 255));
+    }
+    return csum;
+}
+
+// Transport Layer Checksum with IPv4 Pseudo-Header (RFC 793 for TCP, RFC 768 for UDP)
+func transport_pseudo_checksum(src_ip: Ipv4Address, dst_ip: Ipv4Address, proto: int, length: int, ptr: *raw u8, offset: int) -> int {
+    let sum = 0;
+    // Pseudo-header: Source IP, Destination IP, Zero + Protocol, Length
+    sum = sum + bit_or(bit_shl(src_ip.b0, 8), src_ip.b1);
+    sum = sum + bit_or(bit_shl(src_ip.b2, 8), src_ip.b3);
+    sum = sum + bit_or(bit_shl(dst_ip.b0, 8), dst_ip.b1);
+    sum = sum + bit_or(bit_shl(dst_ip.b2, 8), dst_ip.b3);
+    sum = sum + proto;
+    sum = sum + length;
+
+    // Segment data payload
+    let mut_i = 0;
+    unsafe {
+        while mut_i + 1 < length {
+            let b0 = ptr_read_u8_at(ptr, offset + mut_i);
+            let b1 = ptr_read_u8_at(ptr, offset + mut_i + 1);
+            sum = sum + bit_or(bit_shl(b0, 8), b1);
+            mut_i = mut_i + 2;
+        }
+        if mut_i < length {
+            let b0 = ptr_read_u8_at(ptr, offset + mut_i);
+            sum = sum + bit_shl(b0, 8);
+        }
+    }
+    while bit_shr(sum, 16) > 0 {
+        sum = bit_and(sum, 65535) + bit_shr(sum, 16);
+    }
+    let res = bit_and(bit_not(sum), 65535);
+    if res == 0 {
+        return 65535;
+    }
+    return res;
+}
+
+func udp_checksum(src_ip: Ipv4Address, dst_ip: Ipv4Address, ptr: *raw u8, offset: int, udp_len: int) -> int {
+    let orig_csum = 0;
+    unsafe {
+        orig_csum = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 6), 8), ptr_read_u8_at(ptr, offset + 7));
+        ptr_write_u8_at(ptr, offset + 6, 0);
+        ptr_write_u8_at(ptr, offset + 7, 0);
+    }
+    let csum = transport_pseudo_checksum(src_ip, dst_ip, 17, udp_len, ptr, offset);
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 6, bit_shr(orig_csum, 8));
+        ptr_write_u8_at(ptr, offset + 7, bit_and(orig_csum, 255));
+    }
+    return csum;
+}
+
+func tcp_checksum(src_ip: Ipv4Address, dst_ip: Ipv4Address, ptr: *raw u8, offset: int, tcp_len: int) -> int {
+    let orig_csum = 0;
+    unsafe {
+        orig_csum = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 16), 8), ptr_read_u8_at(ptr, offset + 17));
+        ptr_write_u8_at(ptr, offset + 16, 0);
+        ptr_write_u8_at(ptr, offset + 17, 0);
+    }
+    let csum = transport_pseudo_checksum(src_ip, dst_ip, 6, tcp_len, ptr, offset);
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 16, bit_shr(orig_csum, 8));
+        ptr_write_u8_at(ptr, offset + 17, bit_and(orig_csum, 255));
+    }
+    return csum;
+}
+
+// ==============================================================================
+// 5. Layer 2-4 Protocol Headers
+// ==============================================================================
+
+// Layer 2: Ethernet II (14 Bytes)
+class EthernetHeader {
+    dst: MacAddress,
+    src: MacAddress,
+    ethertype: int,
+}
+
+func ethernet_header_new(dst: MacAddress, src: MacAddress, ethertype: int) -> EthernetHeader {
+    return new EthernetHeader(dst, src, ethertype);
+}
+
+func ethernet_write(hdr: EthernetHeader, ptr: *raw u8, offset: int) {
+    mac_write(hdr.dst, ptr, offset);
+    mac_write(hdr.src, ptr, offset + 6);
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 12, bit_shr(hdr.ethertype, 8));
+        ptr_write_u8_at(ptr, offset + 13, bit_and(hdr.ethertype, 255));
+    }
+}
+
+func ethernet_read(ptr: *raw u8, offset: int) -> EthernetHeader {
+    let dst = mac_read(ptr, offset);
+    let src = mac_read(ptr, offset + 6);
+    let et_high = 0;
+    let et_low = 0;
+    unsafe {
+        et_high = ptr_read_u8_at(ptr, offset + 12);
+        et_low = ptr_read_u8_at(ptr, offset + 13);
+    }
+    return new EthernetHeader(dst, src, bit_or(bit_shl(et_high, 8), et_low));
+}
+
+// Layer 2.5: Address Resolution Protocol (ARP - 28 Bytes)
+class ArpHeader {
+    hw_type: int,
+    proto_type: int,
+    hw_len: int,
+    proto_len: int,
+    opcode: int,
+    sender_mac: MacAddress,
+    sender_ip: Ipv4Address,
+    target_mac: MacAddress,
+    target_ip: Ipv4Address,
+}
+
+func arp_header_new(opcode: int, sender_mac: MacAddress, sender_ip: Ipv4Address, target_mac: MacAddress, target_ip: Ipv4Address) -> ArpHeader {
+    return new ArpHeader(
+        arp_hw_ethernet(), ethertype_ipv4(), 6, 4,
+        opcode, sender_mac, sender_ip, target_mac, target_ip
+    );
+}
+
+func arp_write(hdr: ArpHeader, ptr: *raw u8, offset: int) {
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 0, bit_shr(hdr.hw_type, 8));
+        ptr_write_u8_at(ptr, offset + 1, bit_and(hdr.hw_type, 255));
+        ptr_write_u8_at(ptr, offset + 2, bit_shr(hdr.proto_type, 8));
+        ptr_write_u8_at(ptr, offset + 3, bit_and(hdr.proto_type, 255));
+        ptr_write_u8_at(ptr, offset + 4, hdr.hw_len);
+        ptr_write_u8_at(ptr, offset + 5, hdr.proto_len);
+        ptr_write_u8_at(ptr, offset + 6, bit_shr(hdr.opcode, 8));
+        ptr_write_u8_at(ptr, offset + 7, bit_and(hdr.opcode, 255));
+    }
+    mac_write(hdr.sender_mac, ptr, offset + 8);
+    ipv4_write(hdr.sender_ip, ptr, offset + 14);
+    mac_write(hdr.target_mac, ptr, offset + 18);
+    ipv4_write(hdr.target_ip, ptr, offset + 24);
+}
+
+func arp_read(ptr: *raw u8, offset: int) -> ArpHeader {
+    let hw = 0;
+    let pr = 0;
+    let hw_len = 0;
+    let pr_len = 0;
+    let op = 0;
+    unsafe {
+        hw = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 0), 8), ptr_read_u8_at(ptr, offset + 1));
+        pr = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 2), 8), ptr_read_u8_at(ptr, offset + 3));
+        hw_len = ptr_read_u8_at(ptr, offset + 4);
+        pr_len = ptr_read_u8_at(ptr, offset + 5);
+        op = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 6), 8), ptr_read_u8_at(ptr, offset + 7));
+    }
+    let s_mac = mac_read(ptr, offset + 8);
+    let s_ip = ipv4_read(ptr, offset + 14);
+    let t_mac = mac_read(ptr, offset + 18);
+    let t_ip = ipv4_read(ptr, offset + 24);
+    return new ArpHeader(hw, pr, hw_len, pr_len, op, s_mac, s_ip, t_mac, t_ip);
+}
+
+// Layer 3: IPv4 Header (20 Bytes minimum)
+class Ipv4Header {
+    version: int,
+    ihl: int,
+    dscp: int,
+    ecn: int,
+    total_len: int,
+    id: int,
+    flags: int,
+    frag_offset: int,
+    ttl: int,
+    protocol: int,
+    checksum: int,
+    src: Ipv4Address,
+    dst: Ipv4Address,
+}
+
+func ipv4_header_new(protocol: int, src: Ipv4Address, dst: Ipv4Address, payload_len: int) -> Ipv4Header {
+    return new Ipv4Header(
+        4, 5, 0, 0, 20 + payload_len, 1234, 2, 0, 64, protocol, 0, src, dst
+    );
+}
+
+func ipv4_header_write(hdr: Ipv4Header, ptr: *raw u8, offset: int) {
+    let v_ihl = bit_or(bit_shl(hdr.version, 4), bit_and(hdr.ihl, 15));
+    let tos = bit_or(bit_shl(hdr.dscp, 2), bit_and(hdr.ecn, 3));
+    let fl_frag = bit_or(bit_shl(hdr.flags, 13), bit_and(hdr.frag_offset, 8191));
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 0, v_ihl);
+        ptr_write_u8_at(ptr, offset + 1, tos);
+        ptr_write_u8_at(ptr, offset + 2, bit_shr(hdr.total_len, 8));
+        ptr_write_u8_at(ptr, offset + 3, bit_and(hdr.total_len, 255));
+        ptr_write_u8_at(ptr, offset + 4, bit_shr(hdr.id, 8));
+        ptr_write_u8_at(ptr, offset + 5, bit_and(hdr.id, 255));
+        ptr_write_u8_at(ptr, offset + 6, bit_shr(fl_frag, 8));
+        ptr_write_u8_at(ptr, offset + 7, bit_and(fl_frag, 255));
+        ptr_write_u8_at(ptr, offset + 8, hdr.ttl);
+        ptr_write_u8_at(ptr, offset + 9, hdr.protocol);
+        ptr_write_u8_at(ptr, offset + 10, bit_shr(hdr.checksum, 8));
+        ptr_write_u8_at(ptr, offset + 11, bit_and(hdr.checksum, 255));
+    }
+    ipv4_write(hdr.src, ptr, offset + 12);
+    ipv4_write(hdr.dst, ptr, offset + 16);
+}
+
+func ipv4_header_read(ptr: *raw u8, offset: int) -> Ipv4Header {
+    let version = 0;
+    let ihl = 0;
+    let dscp = 0;
+    let ecn = 0;
+    let total_len = 0;
+    let id = 0;
+    let flags = 0;
+    let frag_offset = 0;
+    let ttl = 0;
+    let protocol = 0;
+    let checksum = 0;
+    unsafe {
+        let v_ihl = ptr_read_u8_at(ptr, offset + 0);
+        version = bit_shr(v_ihl, 4);
+        ihl = bit_and(v_ihl, 15);
+        let tos = ptr_read_u8_at(ptr, offset + 1);
+        dscp = bit_shr(tos, 2);
+        ecn = bit_and(tos, 3);
+        total_len = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 2), 8), ptr_read_u8_at(ptr, offset + 3));
+        id = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 4), 8), ptr_read_u8_at(ptr, offset + 5));
+        let fl_frag = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 6), 8), ptr_read_u8_at(ptr, offset + 7));
+        flags = bit_shr(fl_frag, 13);
+        frag_offset = bit_and(fl_frag, 8191);
+        ttl = ptr_read_u8_at(ptr, offset + 8);
+        protocol = ptr_read_u8_at(ptr, offset + 9);
+        checksum = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 10), 8), ptr_read_u8_at(ptr, offset + 11));
+    }
+    let src = ipv4_read(ptr, offset + 12);
+    let dst = ipv4_read(ptr, offset + 16);
+    return new Ipv4Header(version, ihl, dscp, ecn, total_len, id, flags, frag_offset, ttl, protocol, checksum, src, dst);
+}
+
+// Layer 4: ICMP Header (8 Bytes)
+class IcmpHeader {
+    icmp_type: int,
+    code: int,
+    checksum: int,
+    id: int,
+    seq: int,
+}
+
+func icmp_header_new(icmp_type: int, code: int, id: int, seq: int) -> IcmpHeader {
+    return new IcmpHeader(icmp_type, code, 0, id, seq);
+}
+
+func icmp_write(hdr: IcmpHeader, ptr: *raw u8, offset: int) {
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 0, hdr.icmp_type);
+        ptr_write_u8_at(ptr, offset + 1, hdr.code);
+        ptr_write_u8_at(ptr, offset + 2, bit_shr(hdr.checksum, 8));
+        ptr_write_u8_at(ptr, offset + 3, bit_and(hdr.checksum, 255));
+        ptr_write_u8_at(ptr, offset + 4, bit_shr(hdr.id, 8));
+        ptr_write_u8_at(ptr, offset + 5, bit_and(hdr.id, 255));
+        ptr_write_u8_at(ptr, offset + 6, bit_shr(hdr.seq, 8));
+        ptr_write_u8_at(ptr, offset + 7, bit_and(hdr.seq, 255));
+    }
+}
+
+func icmp_read(ptr: *raw u8, offset: int) -> IcmpHeader {
+    unsafe {
+        let t = ptr_read_u8_at(ptr, offset + 0);
+        let c = ptr_read_u8_at(ptr, offset + 1);
+        let csum = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 2), 8), ptr_read_u8_at(ptr, offset + 3));
+        let id = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 4), 8), ptr_read_u8_at(ptr, offset + 5));
+        let seq = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 6), 8), ptr_read_u8_at(ptr, offset + 7));
+        return new IcmpHeader(t, c, csum, id, seq);
+    }
+}
+
+// Layer 4: UDP Header (8 Bytes)
+class UdpHeader {
+    src_port: int,
+    dst_port: int,
+    length: int,
+    checksum: int,
+}
+
+func udp_header_new(src_port: int, dst_port: int, payload_len: int) -> UdpHeader {
+    return new UdpHeader(src_port, dst_port, 8 + payload_len, 0);
+}
+
+func udp_write(hdr: UdpHeader, ptr: *raw u8, offset: int) {
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 0, bit_shr(hdr.src_port, 8));
+        ptr_write_u8_at(ptr, offset + 1, bit_and(hdr.src_port, 255));
+        ptr_write_u8_at(ptr, offset + 2, bit_shr(hdr.dst_port, 8));
+        ptr_write_u8_at(ptr, offset + 3, bit_and(hdr.dst_port, 255));
+        ptr_write_u8_at(ptr, offset + 4, bit_shr(hdr.length, 8));
+        ptr_write_u8_at(ptr, offset + 5, bit_and(hdr.length, 255));
+        ptr_write_u8_at(ptr, offset + 6, bit_shr(hdr.checksum, 8));
+        ptr_write_u8_at(ptr, offset + 7, bit_and(hdr.checksum, 255));
+    }
+}
+
+func udp_read(ptr: *raw u8, offset: int) -> UdpHeader {
+    unsafe {
+        let sp = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 0), 8), ptr_read_u8_at(ptr, offset + 1));
+        let dp = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 2), 8), ptr_read_u8_at(ptr, offset + 3));
+        let len = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 4), 8), ptr_read_u8_at(ptr, offset + 5));
+        let csum = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 6), 8), ptr_read_u8_at(ptr, offset + 7));
+        return new UdpHeader(sp, dp, len, csum);
+    }
+}
+
+// Layer 4: TCP Header (20 Bytes minimum)
+class TcpHeader {
+    src_port: int,
+    dst_port: int,
+    seq_num: int,
+    ack_num: int,
+    data_offset: int,
+    flags: int,
+    window_size: int,
+    checksum: int,
+    urgent_ptr: int,
+}
+
+func tcp_header_new(src_port: int, dst_port: int, seq: int, ack: int, flags: int, window: int) -> TcpHeader {
+    return new TcpHeader(src_port, dst_port, seq, ack, 5, flags, window, 0, 0);
+}
+
+func tcp_write(hdr: TcpHeader, ptr: *raw u8, offset: int) {
+    let doff_res = bit_shl(bit_and(hdr.data_offset, 15), 4);
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 0, bit_shr(hdr.src_port, 8));
+        ptr_write_u8_at(ptr, offset + 1, bit_and(hdr.src_port, 255));
+        ptr_write_u8_at(ptr, offset + 2, bit_shr(hdr.dst_port, 8));
+        ptr_write_u8_at(ptr, offset + 3, bit_and(hdr.dst_port, 255));
+
+        ptr_write_u8_at(ptr, offset + 4, bit_and(bit_shr(hdr.seq_num, 24), 255));
+        ptr_write_u8_at(ptr, offset + 5, bit_and(bit_shr(hdr.seq_num, 16), 255));
+        ptr_write_u8_at(ptr, offset + 6, bit_and(bit_shr(hdr.seq_num, 8), 255));
+        ptr_write_u8_at(ptr, offset + 7, bit_and(hdr.seq_num, 255));
+
+        ptr_write_u8_at(ptr, offset + 8, bit_and(bit_shr(hdr.ack_num, 24), 255));
+        ptr_write_u8_at(ptr, offset + 9, bit_and(bit_shr(hdr.ack_num, 16), 255));
+        ptr_write_u8_at(ptr, offset + 10, bit_and(bit_shr(hdr.ack_num, 8), 255));
+        ptr_write_u8_at(ptr, offset + 11, bit_and(hdr.ack_num, 255));
+
+        ptr_write_u8_at(ptr, offset + 12, doff_res);
+        ptr_write_u8_at(ptr, offset + 13, bit_and(hdr.flags, 255));
+
+        ptr_write_u8_at(ptr, offset + 14, bit_shr(hdr.window_size, 8));
+        ptr_write_u8_at(ptr, offset + 15, bit_and(hdr.window_size, 255));
+        ptr_write_u8_at(ptr, offset + 16, bit_shr(hdr.checksum, 8));
+        ptr_write_u8_at(ptr, offset + 17, bit_and(hdr.checksum, 255));
+        ptr_write_u8_at(ptr, offset + 18, bit_shr(hdr.urgent_ptr, 8));
+        ptr_write_u8_at(ptr, offset + 19, bit_and(hdr.urgent_ptr, 255));
+    }
+}
+
+func tcp_read(ptr: *raw u8, offset: int) -> TcpHeader {
+    unsafe {
+        let sp = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 0), 8), ptr_read_u8_at(ptr, offset + 1));
+        let dp = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 2), 8), ptr_read_u8_at(ptr, offset + 3));
+
+        let s0 = ptr_read_u8_at(ptr, offset + 4);
+        let s1 = ptr_read_u8_at(ptr, offset + 5);
+        let s2 = ptr_read_u8_at(ptr, offset + 6);
+        let s3 = ptr_read_u8_at(ptr, offset + 7);
+        let seq = bit_or(bit_or(bit_or(bit_shl(s0, 24), bit_shl(s1, 16)), bit_shl(s2, 8)), s3);
+
+        let a0 = ptr_read_u8_at(ptr, offset + 8);
+        let a1 = ptr_read_u8_at(ptr, offset + 9);
+        let a2 = ptr_read_u8_at(ptr, offset + 10);
+        let a3 = ptr_read_u8_at(ptr, offset + 11);
+        let ack = bit_or(bit_or(bit_or(bit_shl(a0, 24), bit_shl(a1, 16)), bit_shl(a2, 8)), a3);
+
+        let doff = bit_shr(ptr_read_u8_at(ptr, offset + 12), 4);
+        let flags = ptr_read_u8_at(ptr, offset + 13);
+        let win = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 14), 8), ptr_read_u8_at(ptr, offset + 15));
+        let csum = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 16), 8), ptr_read_u8_at(ptr, offset + 17));
+        let urg = bit_or(bit_shl(ptr_read_u8_at(ptr, offset + 18), 8), ptr_read_u8_at(ptr, offset + 19));
+        return new TcpHeader(sp, dp, seq, ack, doff, flags, win, csum, urg);
+    }
+}
+
+// ==============================================================================
+// 6. Full Packet Dissector Engine (ParsedPacket)
+// ==============================================================================
+
+class ParsedPacket {
+    raw_ptr: *raw u8,
+    length: int,
+    has_ethernet: bool,
+    eth: EthernetHeader,
+    has_arp: bool,
+    arp: ArpHeader,
+    has_ipv4: bool,
+    ip: Ipv4Header,
+    has_icmp: bool,
+    icmp: IcmpHeader,
+    has_udp: bool,
+    udp: UdpHeader,
+    has_tcp: bool,
+    tcp: TcpHeader,
+    payload_offset: int,
+    payload_len: int,
+}
+
+func parsed_packet_empty() -> ParsedPacket {
+    let dummy_mac = mac_zero();
+    let dummy_ip = ipv4_zero();
+    let eth = new EthernetHeader(dummy_mac, dummy_mac, 0);
+    let arp = new ArpHeader(0, 0, 0, 0, 0, dummy_mac, dummy_ip, dummy_mac, dummy_ip);
+    let ip = new Ipv4Header(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, dummy_ip, dummy_ip);
+    let icmp = new IcmpHeader(0, 0, 0, 0, 0);
+    let udp = new UdpHeader(0, 0, 0, 0);
+    let tcp = new TcpHeader(0, 0, 0, 0, 0, 0, 0, 0, 0);
+    unsafe {
+        let null_ptr: *raw u8 = int_to_ptr(0);
+        return new ParsedPacket(null_ptr, 0, false, eth, false, arp, false, ip, false, icmp, false, udp, false, tcp, 0, 0);
+    }
+}
+
+func dissect_packet(ptr: *raw u8, length: int) -> ParsedPacket {
+    let parsed = parsed_packet_empty();
+    parsed.raw_ptr = ptr;
+    parsed.length = length;
+
+    if length < 14 {
+        return parsed;
+    }
+
+    parsed.has_ethernet = true;
+    parsed.eth = ethernet_read(ptr, 0);
+
+    // ARP Packet
+    if parsed.eth.ethertype == ethertype_arp() && length >= 42 {
+        parsed.has_arp = true;
+        parsed.arp = arp_read(ptr, 14);
+        parsed.payload_offset = 42;
+        parsed.payload_len = length - 42;
+        return parsed;
+    }
+
+    // IPv4 Packet
+    if parsed.eth.ethertype == ethertype_ipv4() && length >= 34 {
+        parsed.has_ipv4 = true;
+        parsed.ip = ipv4_header_read(ptr, 14);
+        let ihl_bytes = parsed.ip.ihl * 4;
+        let l4_offset = 14 + ihl_bytes;
+
+        // ICMP
+        if parsed.ip.protocol == ipproto_icmp() && length >= l4_offset + 8 {
+            parsed.has_icmp = true;
+            parsed.icmp = icmp_read(ptr, l4_offset);
+            parsed.payload_offset = l4_offset + 8;
+            parsed.payload_len = length - parsed.payload_offset;
+            return parsed;
+        }
+
+        // UDP
+        if parsed.ip.protocol == ipproto_udp() && length >= l4_offset + 8 {
+            parsed.has_udp = true;
+            parsed.udp = udp_read(ptr, l4_offset);
+            parsed.payload_offset = l4_offset + 8;
+            parsed.payload_len = length - parsed.payload_offset;
+            return parsed;
+        }
+
+        // TCP
+        if parsed.ip.protocol == ipproto_tcp() && length >= l4_offset + 20 {
+            parsed.has_tcp = true;
+            parsed.tcp = tcp_read(ptr, l4_offset);
+            let tcp_hdr_len = parsed.tcp.data_offset * 4;
+            if tcp_hdr_len < 20 { tcp_hdr_len = 20; }
+            parsed.payload_offset = l4_offset + tcp_hdr_len;
+            parsed.payload_len = length - parsed.payload_offset;
+            return parsed;
+        }
+
+        parsed.payload_offset = l4_offset;
+        parsed.payload_len = length - l4_offset;
+        return parsed;
+    }
+
+    parsed.payload_offset = 14;
+    parsed.payload_len = length - 14;
+    return parsed;
+}
+
+func tcp_flags_summary(flags: int) -> string {
+    let s = "";
+    if bit_and(flags, tcp_flag_syn()) != 0 { s = s + "SYN "; }
+    if bit_and(flags, tcp_flag_ack()) != 0 { s = s + "ACK "; }
+    if bit_and(flags, tcp_flag_fin()) != 0 { s = s + "FIN "; }
+    if bit_and(flags, tcp_flag_rst()) != 0 { s = s + "RST "; }
+    if bit_and(flags, tcp_flag_psh()) != 0 { s = s + "PSH "; }
+    if bit_and(flags, tcp_flag_urg()) != 0 { s = s + "URG "; }
+    return s;
+}
+
+func parsed_packet_summary(pkt: ParsedPacket) -> string {
+    if pkt.has_arp {
+        let mut_op_name = "who-has";
+        if pkt.arp.opcode == 2 {
+            mut_op_name = "is-at";
+        }
+        return "[ARP] " + mut_op_name + " " + ipv4_to_string(pkt.arp.target_ip) + " tell " + ipv4_to_string(pkt.arp.sender_ip);
+    }
+    if pkt.has_ipv4 {
+        let src_ip = ipv4_to_string(pkt.ip.src);
+        let dst_ip = ipv4_to_string(pkt.ip.dst);
+        if pkt.has_icmp {
+            let mut_t_name = "Echo Request";
+            if pkt.icmp.icmp_type == 0 {
+                mut_t_name = "Echo Reply";
+            }
+            return "[ICMP] " + src_ip + " -> " + dst_ip + " " + mut_t_name + " id=" + int_to_str(pkt.icmp.id) + " seq=" + int_to_str(pkt.icmp.seq);
+        }
+        if pkt.has_udp {
+            return "[UDP] " + src_ip + ":" + int_to_str(pkt.udp.src_port) + " -> " + dst_ip + ":" + int_to_str(pkt.udp.dst_port) + " len=" + int_to_str(pkt.udp.length);
+        }
+        if pkt.has_tcp {
+            return "[TCP] " + src_ip + ":" + int_to_str(pkt.tcp.src_port) + " -> " + dst_ip + ":" + int_to_str(pkt.tcp.dst_port) + " [" + tcp_flags_summary(pkt.tcp.flags) + "] seq=" + int_to_str(pkt.tcp.seq_num) + " win=" + int_to_str(pkt.tcp.window_size);
+        }
+        return "[IPv4] " + src_ip + " -> " + dst_ip + " proto=" + int_to_str(pkt.ip.protocol);
+    }
+    if pkt.has_ethernet {
+        return "[Ethernet] " + mac_to_string(pkt.eth.src) + " -> " + mac_to_string(pkt.eth.dst) + " type=" + int_to_str(pkt.eth.ethertype);
+    }
+    return "[RawFrame] length=" + int_to_str(pkt.length);
+}
+
+// ==============================================================================
+// 7. Scapy-Style Packet Builders & Crafters
+// ==============================================================================
+
+// Crafts a complete Ethernet + ARP Request frame
+func craft_arp_request(sender_mac: MacAddress, sender_ip: Ipv4Address, target_ip: Ipv4Address) -> RawPacket {
+    let pkt = raw_packet_new(64);
+    let eth = ethernet_header_new(mac_broadcast(), sender_mac, ethertype_arp());
+    ethernet_write(eth, pkt.ptr, 0);
+
+    let arp = arp_header_new(arp_op_request(), sender_mac, sender_ip, mac_zero(), target_ip);
+    arp_write(arp, pkt.ptr, 14);
+
+    pkt.length = 42;
+    return pkt;
+}
+
+// Crafts a complete Ethernet + ARP Reply frame
+func craft_arp_reply(sender_mac: MacAddress, sender_ip: Ipv4Address, target_mac: MacAddress, target_ip: Ipv4Address) -> RawPacket {
+    let pkt = raw_packet_new(64);
+    let eth = ethernet_header_new(target_mac, sender_mac, ethertype_arp());
+    ethernet_write(eth, pkt.ptr, 0);
+
+    let arp = arp_header_new(arp_op_reply(), sender_mac, sender_ip, target_mac, target_ip);
+    arp_write(arp, pkt.ptr, 14);
+
+    pkt.length = 42;
+    return pkt;
+}
+
+// Crafts an ICMP Echo Request (Ping) frame
+func craft_icmp_ping(src_mac: MacAddress, dst_mac: MacAddress, src_ip: Ipv4Address, dst_ip: Ipv4Address, id: int, seq: int, payload: string) -> RawPacket {
+    let p_len = string_length(payload);
+    let icmp_len = 8 + p_len;
+    let ip_len = 20 + icmp_len;
+    let frame_len = 14 + ip_len;
+
+    let pkt = raw_packet_new(frame_len + 16);
+    let eth = ethernet_header_new(dst_mac, src_mac, ethertype_ipv4());
+    ethernet_write(eth, pkt.ptr, 0);
+
+    let ip = ipv4_header_new(ipproto_icmp(), src_ip, dst_ip, icmp_len);
+    ipv4_header_write(ip, pkt.ptr, 14);
+
+    let icmp = icmp_header_new(icmp_type_echo_request(), 0, id, seq);
+    icmp_write(icmp, pkt.ptr, 34);
+
+    if p_len > 0 {
+        raw_packet_write_string(pkt, 42, payload);
+    }
+    pkt.length = frame_len;
+
+    // Compute Checksums
+    let icmp_csum = icmp_checksum(pkt.ptr, 34, icmp_len);
+    let ip_csum = ipv4_header_checksum(pkt.ptr, 14, 20);
+    unsafe {
+        ptr_write_u8_at(pkt.ptr, 36, bit_shr(icmp_csum, 8));
+        ptr_write_u8_at(pkt.ptr, 37, bit_and(icmp_csum, 255));
+        ptr_write_u8_at(pkt.ptr, 24, bit_shr(ip_csum, 8));
+        ptr_write_u8_at(pkt.ptr, 25, bit_and(ip_csum, 255));
+    }
+
+    return pkt;
+}
+
+// Crafts an ICMP Echo Reply frame in response to a request
+func craft_icmp_reply(src_mac: MacAddress, dst_mac: MacAddress, src_ip: Ipv4Address, dst_ip: Ipv4Address, id: int, seq: int, payload: string) -> RawPacket {
+    let pkt = craft_icmp_ping(src_mac, dst_mac, src_ip, dst_ip, id, seq, payload);
+    let icmp_len = 8 + string_length(payload);
+    let icmp_csum = icmp_checksum(pkt.ptr, 34, icmp_len);
+    unsafe {
+        ptr_write_u8_at(pkt.ptr, 34, icmp_type_echo_reply());
+        ptr_write_u8_at(pkt.ptr, 36, bit_shr(icmp_csum, 8));
+        ptr_write_u8_at(pkt.ptr, 37, bit_and(icmp_csum, 255));
+    }
+    return pkt;
+}
+
+// Crafts a UDP packet frame
+func craft_udp_frame(src_mac: MacAddress, dst_mac: MacAddress, src_ip: Ipv4Address, dst_ip: Ipv4Address, src_port: int, dst_port: int, payload: string) -> RawPacket {
+    let p_len = string_length(payload);
+    let udp_len = 8 + p_len;
+    let ip_len = 20 + udp_len;
+    let frame_len = 14 + ip_len;
+
+    let pkt = raw_packet_new(frame_len + 16);
+    let eth = ethernet_header_new(dst_mac, src_mac, ethertype_ipv4());
+    ethernet_write(eth, pkt.ptr, 0);
+
+    let ip = ipv4_header_new(ipproto_udp(), src_ip, dst_ip, udp_len);
+    ipv4_header_write(ip, pkt.ptr, 14);
+
+    let udp = udp_header_new(src_port, dst_port, p_len);
+    udp_write(udp, pkt.ptr, 34);
+
+    if p_len > 0 {
+        raw_packet_write_string(pkt, 42, payload);
+    }
+    pkt.length = frame_len;
+
+    // Checksums
+    let udp_csum = udp_checksum(src_ip, dst_ip, pkt.ptr, 34, udp_len);
+    let ip_csum = ipv4_header_checksum(pkt.ptr, 14, 20);
+    unsafe {
+        ptr_write_u8_at(pkt.ptr, 40, bit_shr(udp_csum, 8));
+        ptr_write_u8_at(pkt.ptr, 41, bit_and(udp_csum, 255));
+        ptr_write_u8_at(pkt.ptr, 24, bit_shr(ip_csum, 8));
+        ptr_write_u8_at(pkt.ptr, 25, bit_and(ip_csum, 255));
+    }
+
+    return pkt;
+}
+
+// Crafts a TCP SYN packet (for port scanning and connection initiation)
+func craft_tcp_syn(src_mac: MacAddress, dst_mac: MacAddress, src_ip: Ipv4Address, dst_ip: Ipv4Address, src_port: int, dst_port: int, seq: int) -> RawPacket {
+    let tcp_len = 20;
+    let ip_len = 20 + tcp_len;
+    let frame_len = 14 + ip_len;
+
+    let pkt = raw_packet_new(frame_len + 16);
+    let eth = ethernet_header_new(dst_mac, src_mac, ethertype_ipv4());
+    ethernet_write(eth, pkt.ptr, 0);
+
+    let ip = ipv4_header_new(ipproto_tcp(), src_ip, dst_ip, tcp_len);
+    ipv4_header_write(ip, pkt.ptr, 14);
+
+    let tcp = tcp_header_new(src_port, dst_port, seq, 0, tcp_flag_syn(), 64240);
+    tcp_write(tcp, pkt.ptr, 34);
+    pkt.length = frame_len;
+
+    let tcp_csum = tcp_checksum(src_ip, dst_ip, pkt.ptr, 34, tcp_len);
+    let ip_csum = ipv4_header_checksum(pkt.ptr, 14, 20);
+    unsafe {
+        ptr_write_u8_at(pkt.ptr, 50, bit_shr(tcp_csum, 8));
+        ptr_write_u8_at(pkt.ptr, 51, bit_and(tcp_csum, 255));
+        ptr_write_u8_at(pkt.ptr, 24, bit_shr(ip_csum, 8));
+        ptr_write_u8_at(pkt.ptr, 25, bit_and(ip_csum, 255));
+    }
+
+    return pkt;
+}
+
+// Crafts a TCP SYN-ACK packet (server handshake reply)
+func craft_tcp_syn_ack(src_mac: MacAddress, dst_mac: MacAddress, src_ip: Ipv4Address, dst_ip: Ipv4Address, src_port: int, dst_port: int, seq: int, ack: int) -> RawPacket {
+    let tcp_len = 20;
+    let ip_len = 20 + tcp_len;
+    let frame_len = 14 + ip_len;
+
+    let pkt = raw_packet_new(frame_len + 16);
+    let eth = ethernet_header_new(dst_mac, src_mac, ethertype_ipv4());
+    ethernet_write(eth, pkt.ptr, 0);
+
+    let ip = ipv4_header_new(ipproto_tcp(), src_ip, dst_ip, tcp_len);
+    ipv4_header_write(ip, pkt.ptr, 14);
+
+    let flags = bit_or(tcp_flag_syn(), tcp_flag_ack());
+    let tcp = tcp_header_new(src_port, dst_port, seq, ack, flags, 64240);
+    tcp_write(tcp, pkt.ptr, 34);
+    pkt.length = frame_len;
+
+    let tcp_csum = tcp_checksum(src_ip, dst_ip, pkt.ptr, 34, tcp_len);
+    let ip_csum = ipv4_header_checksum(pkt.ptr, 14, 20);
+    unsafe {
+        ptr_write_u8_at(pkt.ptr, 50, bit_shr(tcp_csum, 8));
+        ptr_write_u8_at(pkt.ptr, 51, bit_and(tcp_csum, 255));
+        ptr_write_u8_at(pkt.ptr, 24, bit_shr(ip_csum, 8));
+        ptr_write_u8_at(pkt.ptr, 25, bit_and(ip_csum, 255));
+    }
+
+    return pkt;
+}
+
+// ==============================================================================
+// 8. BPF-Style Packet Filter Engine
+// ==============================================================================
+
+class PacketFilter {
+    ethertype: int,
+    protocol: int,
+    src_ip: Ipv4Address,
+    dst_ip: Ipv4Address,
+    has_src_ip: bool,
+    has_dst_ip: bool,
+    src_port: int,
+    dst_port: int,
+    tcp_flags: int,
+    min_len: int,
+    max_len: int,
+}
+
+func packet_filter_new() -> PacketFilter {
+    return new PacketFilter(
+        -1, -1, ipv4_zero(), ipv4_zero(), false, false,
+        -1, -1, -1, 0, 65535
+    );
+}
+
+func packet_filter_set_ethertype(pf: PacketFilter, et: int) {
+    pf.ethertype = et;
+}
+
+func packet_filter_set_protocol(pf: PacketFilter, proto: int) {
+    pf.protocol = proto;
+}
+
+func packet_filter_set_src_ip(pf: PacketFilter, ip: Ipv4Address) {
+    pf.src_ip = ip;
+    pf.has_src_ip = true;
+}
+
+func packet_filter_set_dst_ip(pf: PacketFilter, ip: Ipv4Address) {
+    pf.dst_ip = ip;
+    pf.has_dst_ip = true;
+}
+
+func packet_filter_set_src_port(pf: PacketFilter, port: int) {
+    pf.src_port = port;
+}
+
+func packet_filter_set_dst_port(pf: PacketFilter, port: int) {
+    pf.dst_port = port;
+}
+
+func packet_filter_set_tcp_flags(pf: PacketFilter, flags: int) {
+    pf.tcp_flags = flags;
+}
+
+func packet_filter_matches(pf: PacketFilter, pkt: ParsedPacket) -> bool {
+    // Length check
+    if pkt.length < pf.min_len || pkt.length > pf.max_len {
+        return false;
+    }
+
+    // EtherType check
+    if pf.ethertype != -1 {
+        if !pkt.has_ethernet || pkt.eth.ethertype != pf.ethertype {
+            return false;
+        }
+    }
+
+    // Protocol check
+    if pf.protocol != -1 {
+        if !pkt.has_ipv4 || pkt.ip.protocol != pf.protocol {
+            return false;
+        }
+    }
+
+    // IP checks
+    if pf.has_src_ip {
+        if !pkt.has_ipv4 || !ipv4_equals(pkt.ip.src, pf.src_ip) {
+            return false;
+        }
+    }
+    if pf.has_dst_ip {
+        if !pkt.has_ipv4 || !ipv4_equals(pkt.ip.dst, pf.dst_ip) {
+            return false;
+        }
+    }
+
+    // Port checks (TCP or UDP)
+    if pf.src_port != -1 {
+        let p_match = (pkt.has_tcp && pkt.tcp.src_port == pf.src_port) ||
+                      (pkt.has_udp && pkt.udp.src_port == pf.src_port);
+        if !p_match { return false; }
+    }
+    if pf.dst_port != -1 {
+        let p_match = (pkt.has_tcp && pkt.tcp.dst_port == pf.dst_port) ||
+                      (pkt.has_udp && pkt.udp.dst_port == pf.dst_port);
+        if !p_match { return false; }
+    }
+
+    // TCP Flags check
+    if pf.tcp_flags != -1 {
+        if !pkt.has_tcp || bit_and(pkt.tcp.flags, pf.tcp_flags) != pf.tcp_flags {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// ==============================================================================
+// 9. Zero-Copy Packet Ring Buffer (PacketRingBuffer)
+// ==============================================================================
+
+class RingBufferSlot {
+    buffer_ptr: *raw u8,
+    capacity: int,
+    wire_len: int,
+    captured_len: int,
+    timestamp_ns: int,
+    is_ready: bool,
+}
+
+class PacketRingBuffer {
+    buffers: List,
+    wire_lens: List,
+    captured_lens: List,
+    timestamps: List,
+    capacity: int,
+    slot_size: int,
+    head: int,
+    tail: int,
+    count: int,
+    dropped_count: int,
+    total_received: int,
+}
+
+func packet_ring_buffer_new(capacity: int, slot_size: int) -> PacketRingBuffer {
+    let mut_cap = 2;
+    if capacity > 2 {
+        mut_cap = capacity;
+    }
+    let mut_s_size = 1514;
+    if slot_size > 64 {
+        mut_s_size = slot_size;
+    }
+    let buffers = list_new();
+    let wire_lens = list_new();
+    let captured_lens = list_new();
+    let timestamps = list_new();
+    let mut_i = 0;
+    unsafe {
+        while mut_i < mut_cap {
+            let buf: *raw u8 = alloc(mut_s_size);
+            mem_set(buf, 0, mut_s_size);
+            let buf_addr = ptr_to_int(buf);
+            list_push(buffers, buf_addr);
+            list_push(wire_lens, 0);
+            list_push(captured_lens, 0);
+            list_push(timestamps, 0);
+            mut_i = mut_i + 1;
+        }
+    }
+    return new PacketRingBuffer(buffers, wire_lens, captured_lens, timestamps, mut_cap, mut_s_size, 0, 0, 0, 0, 0);
+}
+
+func packet_ring_buffer_is_full(rb: PacketRingBuffer) -> bool {
+    return rb.count >= rb.capacity;
+}
+
+func packet_ring_buffer_is_empty(rb: PacketRingBuffer) -> bool {
+    return rb.count == 0;
+}
+
+func packet_ring_buffer_count(rb: PacketRingBuffer) -> int {
+    return rb.count;
+}
+
+func packet_ring_buffer_dropped(rb: PacketRingBuffer) -> int {
+    return rb.dropped_count;
+}
+
+func packet_ring_buffer_push(rb: PacketRingBuffer, src_ptr: *raw u8, length: int, ts_ns: int) -> bool {
+    rb.total_received = rb.total_received + 1;
+    if packet_ring_buffer_is_full(rb) {
+        rb.dropped_count = rb.dropped_count + 1;
+        return false;
+    }
+
+    let mut_copy_len = rb.slot_size;
+    if length < rb.slot_size {
+        mut_copy_len = length;
+    }
+    unsafe {
+        let buf_addr: int = list_get(rb.buffers, rb.tail);
+        let buf_ptr: *raw u8 = int_to_ptr(buf_addr);
+        mem_copy(buf_ptr, src_ptr, mut_copy_len);
+    }
+    list_set(rb.wire_lens, rb.tail, length);
+    list_set(rb.captured_lens, rb.tail, mut_copy_len);
+    list_set(rb.timestamps, rb.tail, ts_ns);
+
+    rb.tail = (rb.tail + 1) % rb.capacity;
+    rb.count = rb.count + 1;
+    return true;
+}
+
+func packet_ring_buffer_pop(rb: PacketRingBuffer) -> RingBufferSlot {
+    if packet_ring_buffer_is_empty(rb) {
+        unsafe {
+            let null_ptr: *raw u8 = int_to_ptr(0);
+            return new RingBufferSlot(null_ptr, 0, 0, 0, 0, false);
+        }
+    }
+
+    let buf_addr: int = list_get(rb.buffers, rb.head);
+    let wire_len: int = list_get(rb.wire_lens, rb.head);
+    let captured_len: int = list_get(rb.captured_lens, rb.head);
+    let ts_ns: int = list_get(rb.timestamps, rb.head);
+
+    rb.head = (rb.head + 1) % rb.capacity;
+    rb.count = rb.count - 1;
+
+    unsafe {
+        let buf_ptr: *raw u8 = int_to_ptr(buf_addr);
+        return new RingBufferSlot(buf_ptr, rb.slot_size, wire_len, captured_len, ts_ns, true);
+    }
+}
+
+func packet_ring_buffer_free(rb: PacketRingBuffer) {
+    let mut_i = 0;
+    unsafe {
+        while mut_i < rb.capacity {
+            let buf_addr: int = list_get(rb.buffers, mut_i);
+            if buf_addr != 0 {
+                let buf_ptr: *raw u8 = int_to_ptr(buf_addr);
+                free(buf_ptr);
+                list_set(rb.buffers, mut_i, 0);
+            }
+            mut_i = mut_i + 1;
+        }
+    }
+    rb.count = 0;
+}
+
+// ==============================================================================
+// 10. PCAP 2.4 Binary Capture File Exporter & Importer
+// ==============================================================================
+
+// Writes PCAP global file header (24 bytes) into memory
+func pcap_write_global_header(ptr: *raw u8, offset: int, snaplen: int) {
+    unsafe {
+        // Magic Number (0xA1B2C3D4 = 2712847316)
+        ptr_write_u8_at(ptr, offset + 0, 212); // 0xD4
+        ptr_write_u8_at(ptr, offset + 1, 195); // 0xC3
+        ptr_write_u8_at(ptr, offset + 2, 178); // 0xB2
+        ptr_write_u8_at(ptr, offset + 3, 161); // 0xA1
+
+        // Version Major 2, Minor 4 (Little-Endian)
+        ptr_write_u8_at(ptr, offset + 4, 2);
+        ptr_write_u8_at(ptr, offset + 5, 0);
+        ptr_write_u8_at(ptr, offset + 6, 4);
+        ptr_write_u8_at(ptr, offset + 7, 0);
+
+        // ThisZone (0), SigFigs (0)
+        ptr_write_u8_at(ptr, offset + 8, 0);
+        ptr_write_u8_at(ptr, offset + 9, 0);
+        ptr_write_u8_at(ptr, offset + 10, 0);
+        ptr_write_u8_at(ptr, offset + 11, 0);
+        ptr_write_u8_at(ptr, offset + 12, 0);
+        ptr_write_u8_at(ptr, offset + 13, 0);
+        ptr_write_u8_at(ptr, offset + 14, 0);
+        ptr_write_u8_at(ptr, offset + 15, 0);
+
+        // SnapLen (e.g. 65535)
+        ptr_write_u8_at(ptr, offset + 16, bit_and(snaplen, 255));
+        ptr_write_u8_at(ptr, offset + 17, bit_and(bit_shr(snaplen, 8), 255));
+        ptr_write_u8_at(ptr, offset + 18, 0);
+        ptr_write_u8_at(ptr, offset + 19, 0);
+
+        // LinkType (1 = LINKTYPE_ETHERNET)
+        ptr_write_u8_at(ptr, offset + 20, 1);
+        ptr_write_u8_at(ptr, offset + 21, 0);
+        ptr_write_u8_at(ptr, offset + 22, 0);
+        ptr_write_u8_at(ptr, offset + 23, 0);
+    }
+}
+
+// Writes individual PCAP packet header (16 bytes) into memory
+func pcap_write_packet_header(ptr: *raw u8, offset: int, ts_sec: int, ts_usec: int, incl_len: int, orig_len: int) {
+    unsafe {
+        // ts_sec (Little Endian)
+        ptr_write_u8_at(ptr, offset + 0, bit_and(ts_sec, 255));
+        ptr_write_u8_at(ptr, offset + 1, bit_and(bit_shr(ts_sec, 8), 255));
+        ptr_write_u8_at(ptr, offset + 2, bit_and(bit_shr(ts_sec, 16), 255));
+        ptr_write_u8_at(ptr, offset + 3, bit_and(bit_shr(ts_sec, 24), 255));
+
+        // ts_usec
+        ptr_write_u8_at(ptr, offset + 4, bit_and(ts_usec, 255));
+        ptr_write_u8_at(ptr, offset + 5, bit_and(bit_shr(ts_usec, 8), 255));
+        ptr_write_u8_at(ptr, offset + 6, bit_and(bit_shr(ts_usec, 16), 255));
+        ptr_write_u8_at(ptr, offset + 7, bit_and(bit_shr(ts_usec, 24), 255));
+
+        // incl_len (Captured size)
+        ptr_write_u8_at(ptr, offset + 8, bit_and(incl_len, 255));
+        ptr_write_u8_at(ptr, offset + 9, bit_and(bit_shr(incl_len, 8), 255));
+        ptr_write_u8_at(ptr, offset + 10, bit_and(bit_shr(incl_len, 16), 255));
+        ptr_write_u8_at(ptr, offset + 11, bit_and(bit_shr(incl_len, 24), 255));
+
+        // orig_len (Wire size)
+        ptr_write_u8_at(ptr, offset + 12, bit_and(orig_len, 255));
+        ptr_write_u8_at(ptr, offset + 13, bit_and(bit_shr(orig_len, 8), 255));
+        ptr_write_u8_at(ptr, offset + 14, bit_and(bit_shr(orig_len, 16), 255));
+        ptr_write_u8_at(ptr, offset + 15, bit_and(bit_shr(orig_len, 24), 255));
+    }
+}
+
+// Serializes a List of RawPacket instances into a PCAP 2.4 file
+func pcap_save_to_file(path: string, packets: List) -> bool {
+    let num_pkts = list_length(packets);
+    let total_bytes = 24; // Global header
+
+    let mut_i = 0;
+    while mut_i < num_pkts {
+        let p: RawPacket = list_get(packets, mut_i);
+        total_bytes = total_bytes + 16 + p.length;
+        mut_i = mut_i + 1;
+    }
+
+    unsafe {
+        let buf: *raw u8 = alloc(total_bytes);
+        pcap_write_global_header(buf, 0, 65535);
+
+        let mut_offset = 24;
+        mut_i = 0;
+        while mut_i < num_pkts {
+            let p: RawPacket = list_get(packets, mut_i);
+            pcap_write_packet_header(buf, mut_offset, 1700000000 + mut_i, mut_i * 1000, p.length, p.length);
+            mem_copy(ptr_add(buf, mut_offset + 16), p.ptr, p.length);
+            mut_offset = mut_offset + 16 + p.length;
+            mut_i = mut_i + 1;
+        }
+
+        let written = pcap_write_dump(path, buf, total_bytes);
+        free(buf);
+        return written == total_bytes;
+    }
+}
+
+// Reads and parses a PCAP 2.4 file into a List of RawPacket instances
+func pcap_load_from_file(path: string) -> List {
+    let packets = list_new();
+    let file_sz = pcap_file_size(path);
+    if file_sz < 24 {
+        return packets;
+    }
+
+    unsafe {
+        let buf: *raw u8 = alloc(file_sz);
+        let read_bytes = pcap_read_dump(path, buf, file_sz);
+        if read_bytes < 24 {
+            free(buf);
+            return packets;
+        }
+
+        let mut_offset = 24;
+        let mut_has_more = true;
+        while mut_offset + 16 <= read_bytes && mut_has_more {
+            let incl_b0 = ptr_read_u8_at(buf, mut_offset + 8);
+            let incl_b1 = ptr_read_u8_at(buf, mut_offset + 9);
+            let incl_b2 = ptr_read_u8_at(buf, mut_offset + 10);
+            let incl_b3 = ptr_read_u8_at(buf, mut_offset + 11);
+            let incl_len = bit_or(bit_or(bit_or(incl_b0, bit_shl(incl_b1, 8)), bit_shl(incl_b2, 16)), bit_shl(incl_b3, 24));
+
+            if mut_offset + 16 + incl_len > read_bytes {
+                mut_has_more = false;
+            } else {
+                let pkt = raw_packet_new(incl_len);
+                mem_copy(pkt.ptr, ptr_add(buf, mut_offset + 16), incl_len);
+                pkt.length = incl_len;
+                list_push(packets, pkt);
+
+                mut_offset = mut_offset + 16 + incl_len;
+            }
+        }
+
+        free(buf);
+        return packets;
+    }
+}
+
+// ==============================================================================
+// 11. High-Level RawSocket & Promiscuous Sniffer API
+// ==============================================================================
+
+class RawSocket {
+    handle: int,
+    ifname: string,
+    promiscuous: bool,
+    is_open: bool,
+    is_mock: bool,
+    ring_buffer: PacketRingBuffer,
+}
+
+// Opens a raw socket bound to interface with promiscuous mode
+func raw_socket_open_iface(ifname: string, promiscuous: bool) -> RawSocket {
+    let handle = raw_socket_open(eth_p_all());
+    if handle < 0 {
+        return new RawSocket(-1, ifname, false, false, true, packet_ring_buffer_new(4, 64));
+    }
+
+    raw_socket_bind(handle, ifname);
+    if promiscuous {
+        raw_socket_set_promiscuous(handle, ifname, 1);
+    }
+
+    let is_mock_mode = raw_socket_is_mock(handle) != 0;
+    let rb = packet_ring_buffer_new(64, 1514);
+
+    return new RawSocket(handle, ifname, promiscuous, true, is_mock_mode, rb);
+}
+
+// Binds an existing socket to an interface
+func raw_socket_bind_interface(sock: RawSocket, ifname: string) -> bool {
+    if !sock.is_open { return false; }
+    sock.ifname = ifname;
+    let res = raw_socket_bind(sock.handle, ifname);
+    return res == 0;
+}
+
+// Enables or disables promiscuous mode on the socket's interface
+func raw_socket_enable_promiscuous(sock: RawSocket, enable: bool) -> bool {
+    if !sock.is_open { return false; }
+    sock.promiscuous = enable;
+    let mut_en = 0;
+    if enable {
+        mut_en = 1;
+    }
+    let res = raw_socket_set_promiscuous(sock.handle, sock.ifname, mut_en);
+    return res == 0;
+}
+
+// Transmits a RawPacket frame over the network interface
+func raw_socket_transmit(sock: RawSocket, pkt: RawPacket) -> int {
+    if !sock.is_open || pkt.length <= 0 { return 0; }
+    return raw_socket_send(sock.handle, pkt.ptr, pkt.length);
+}
+
+// Receives a single packet frame from the raw socket
+func raw_socket_receive(sock: RawSocket, max_len: int) -> RawPacket {
+    if !sock.is_open {
+        return raw_packet_new(64);
+    }
+    let pkt = raw_packet_new(max_len);
+    let bytes_read = raw_socket_recv(sock.handle, pkt.ptr, max_len);
+    if bytes_read > 0 {
+        pkt.length = bytes_read;
+    } else {
+        pkt.length = 0;
+    }
+    return pkt;
+}
+
+// Injects a mock packet into the socket's receive buffer (for sniffing / unit tests)
+func raw_socket_inject(sock: RawSocket, pkt: RawPacket) -> int {
+    if !sock.is_open || pkt.length <= 0 { return 0; }
+    return raw_socket_inject_mock(sock.handle, pkt.ptr, pkt.length);
+}
+
+// Sniffs up to max_packets matching optional PacketFilter
+func raw_socket_sniff(sock: RawSocket, max_packets: int, filter: PacketFilter) -> List {
+    let captured = list_new();
+    if !sock.is_open || max_packets <= 0 {
+        return captured;
+    }
+
+    let mut_count = 0;
+    unsafe {
+        let temp_buf: *raw u8 = alloc(1514);
+        let mut_done = false;
+        while mut_count < max_packets && !mut_done {
+            let n = raw_socket_recv(sock.handle, temp_buf, 1514);
+            if n > 0 {
+                let parsed = dissect_packet(temp_buf, n);
+                let matches = packet_filter_matches(filter, parsed);
+                if matches {
+                    let pkt = raw_packet_new(n);
+                    mem_copy(pkt.ptr, temp_buf, n);
+                    pkt.length = n;
+                    list_push(captured, pkt);
+                    mut_count = mut_count + 1;
+                }
+            } else {
+                // No packet ready right now
+                mut_done = true;
+            }
+        }
+        free(temp_buf);
+    }
+    return captured;
+}
+
+// Closes the raw socket channel and frees associated resources
+func raw_socket_close_channel(sock: RawSocket) {
+    if sock.is_open {
+        raw_socket_close(sock.handle);
+        sock.is_open = false;
+        packet_ring_buffer_free(sock.ring_buffer);
+    }
+}

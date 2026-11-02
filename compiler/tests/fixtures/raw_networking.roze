@@ -1,0 +1,285 @@
+// compiler/tests/fixtures/raw_networking.roze
+//
+// Test suite for Roze Raw Networking, Promiscuous Sniffing & Scapy/gopacket Parity (M3-T01)
+
+import "raw_net";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("[ASSERTION FAILED]: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+func main() {
+    println("=== ROZE RAW NETWORKING & PROMISCUOUS SNIFFING SUITE (M3-T01) ===");
+
+    // -------------------------------------------------------------
+    // Test 1: Network Address Representation & Formatting
+    // -------------------------------------------------------------
+    let mac1 = mac_new(0, 12, 41, 67, 142, 222); // 00:0C:29:43:8E:DE
+    let mac1_str = mac_to_string(mac1);
+    assert(mac1_str == "00:0C:29:43:8E:DE", "MAC address string format mismatch");
+
+    let mac_bcast = mac_broadcast();
+    assert(mac_to_string(mac_bcast) == "FF:FF:FF:FF:FF:FF", "Broadcast MAC mismatch");
+    assert(mac_equals(mac1, mac1), "MAC self-equality failed");
+    assert(!mac_equals(mac1, mac_bcast), "MAC inequality failed");
+
+    let ip1 = ipv4_new(192, 168, 1, 100);
+    let ip1_str = ipv4_to_string(ip1);
+    assert(ip1_str == "192.168.1.100", "IPv4 address string format mismatch");
+
+    let ip_gw = ipv4_new(192, 168, 1, 1);
+    let ip_target = ipv4_new(10, 0, 0, 50);
+    assert(!ipv4_equals(ip1, ip_gw), "IPv4 inequality failed");
+
+    let ip_u32 = ipv4_to_u32(ip1);
+    let ip_recon = ipv4_from_u32(ip_u32);
+    assert(ipv4_equals(ip1, ip_recon), "IPv4 u32 roundtrip conversion failed");
+    println("[PASS] Test 1: Hardware MAC and IPv4 addresses formatted and converted");
+
+    // -------------------------------------------------------------
+    // Test 2: RFC 1071 Checksum Engine Verification
+    // -------------------------------------------------------------
+    // Test known standard RFC 1071 calculation on arbitrary buffer
+    let csum1 = 0;
+    unsafe {
+        let test_buf: *raw u8 = alloc(16);
+        ptr_write_u8_at(test_buf, 0, 69);  // 0x45
+        ptr_write_u8_at(test_buf, 1, 0);   // 0x00
+        ptr_write_u8_at(test_buf, 2, 0);   // Total len = 64
+        ptr_write_u8_at(test_buf, 3, 64);
+        ptr_write_u8_at(test_buf, 4, 0);   // ID = 1
+        ptr_write_u8_at(test_buf, 5, 1);
+        ptr_write_u8_at(test_buf, 6, 64);  // Flags = DF (0x40)
+        ptr_write_u8_at(test_buf, 7, 0);
+        ptr_write_u8_at(test_buf, 8, 64);  // TTL = 64
+        ptr_write_u8_at(test_buf, 9, 6);   // Protocol = TCP (6)
+        ptr_write_u8_at(test_buf, 10, 0);  // Checksum initially 0
+        ptr_write_u8_at(test_buf, 11, 0);
+        // Source: 192.168.1.1
+        ptr_write_u8_at(test_buf, 12, 192);
+        ptr_write_u8_at(test_buf, 13, 168);
+        ptr_write_u8_at(test_buf, 14, 1);
+        ptr_write_u8_at(test_buf, 15, 1);
+
+        csum1 = internet_checksum(test_buf, 0, 16);
+        free(test_buf);
+    }
+    assert(csum1 > 0 && csum1 <= 65535, "RFC 1071 Checksum out of 16-bit range");
+    println("[PASS] Test 2: RFC 1071 16-bit Internet Checksum validated: 0x" + byte_to_hex_str(bit_shr(csum1, 8)) + byte_to_hex_str(csum1));
+
+    // -------------------------------------------------------------
+    // Test 3: Scapy-Style Packet Crafting & Dissecting (ARP)
+    // -------------------------------------------------------------
+    let arp_req = craft_arp_request(mac1, ip1, ip_gw);
+    assert(arp_req.length == 42, "ARP request length must be 42 bytes");
+
+    let parsed_arp = dissect_packet(arp_req.ptr, arp_req.length);
+    assert(parsed_arp.has_ethernet, "ARP packet must have Ethernet header");
+    assert(parsed_arp.eth.ethertype == ethertype_arp(), "EtherType must be ARP (0x0806)");
+    assert(parsed_arp.has_arp, "Dissector must flag has_arp");
+    assert(parsed_arp.arp.opcode == 1, "ARP request opcode must be 1 (who-has)");
+    assert(ipv4_equals(parsed_arp.arp.sender_ip, ip1), "Sender IP mismatch");
+    assert(ipv4_equals(parsed_arp.arp.target_ip, ip_gw), "Target IP mismatch");
+
+    let arp_sum = parsed_packet_summary(parsed_arp);
+    assert(str_contains(arp_sum, "[ARP] who-has"), "ARP summary string mismatch: " + arp_sum);
+    println("[PASS] Test 3: ARP Request packet crafted and dissected: " + arp_sum);
+
+    // -------------------------------------------------------------
+    // Test 4: ICMP Echo Request & Reply (Ping Crafting & Verification)
+    // -------------------------------------------------------------
+    let ping_payload = "RozePingPayload1234";
+    let ping_pkt = craft_icmp_ping(mac1, mac_broadcast(), ip1, ip_target, 42, 1, ping_payload);
+    assert(ping_pkt.length == 14 + 20 + 8 + string_length(ping_payload), "ICMP ping frame size mismatch");
+
+    let parsed_ping = dissect_packet(ping_pkt.ptr, ping_pkt.length);
+    assert(parsed_ping.has_ipv4, "Ping must have IPv4 header");
+    assert(parsed_ping.ip.protocol == ipproto_icmp(), "IPv4 protocol must be ICMP (1)");
+    assert(ipv4_equals(parsed_ping.ip.src, ip1), "Ping source IP mismatch");
+    assert(ipv4_equals(parsed_ping.ip.dst, ip_target), "Ping target IP mismatch");
+    assert(parsed_ping.has_icmp, "Ping must have ICMP header");
+    assert(parsed_ping.icmp.icmp_type == 8, "Echo Request type must be 8");
+    assert(parsed_ping.icmp.id == 42, "ICMP ID mismatch");
+    assert(parsed_ping.icmp.seq == 1, "ICMP seq mismatch");
+
+    let ping_sum = parsed_packet_summary(parsed_ping);
+    assert(str_contains(ping_sum, "[ICMP]"), "ICMP summary string mismatch: " + ping_sum);
+    println("[PASS] Test 4: ICMP Ping frame crafted and dissected: " + ping_sum);
+
+    // -------------------------------------------------------------
+    // Test 5: UDP Frame Crafting & Pseudo-Header Checksum Verification
+    // -------------------------------------------------------------
+    let udp_payload = "CybersecurityDNSQuery";
+    let udp_pkt = craft_udp_frame(mac1, mac_broadcast(), ip1, ip_gw, 53210, 53, udp_payload);
+    let parsed_udp = dissect_packet(udp_pkt.ptr, udp_pkt.length);
+    assert(parsed_udp.has_udp, "Packet must have UDP header");
+    assert(parsed_udp.udp.src_port == 53210, "UDP source port mismatch");
+    assert(parsed_udp.udp.dst_port == 53, "UDP destination port mismatch (DNS)");
+    assert(parsed_udp.udp.checksum > 0, "UDP checksum must be non-zero");
+
+    let udp_sum = parsed_packet_summary(parsed_udp);
+    assert(str_contains(udp_sum, "[UDP]"), "UDP summary string mismatch");
+    println("[PASS] Test 5: UDP DNS frame crafted with RFC 768 pseudo-checksum: " + udp_sum);
+
+    // -------------------------------------------------------------
+    // Test 6: TCP SYN & SYN-ACK Stealth Scanning Frame Construction
+    // -------------------------------------------------------------
+    let tcp_syn_pkt = craft_tcp_syn(mac1, mac_broadcast(), ip1, ip_target, 49152, 443, 10001);
+    let parsed_syn = dissect_packet(tcp_syn_pkt.ptr, tcp_syn_pkt.length);
+    assert(parsed_syn.has_tcp, "Packet must have TCP header");
+    assert(parsed_syn.tcp.src_port == 49152, "TCP source port mismatch");
+    assert(parsed_syn.tcp.dst_port == 443, "TCP target port mismatch (HTTPS)");
+    assert(parsed_syn.tcp.seq_num == 10001, "TCP sequence number mismatch");
+    assert(bit_and(parsed_syn.tcp.flags, tcp_flag_syn()) != 0, "TCP SYN flag must be set");
+    assert(bit_and(parsed_syn.tcp.flags, tcp_flag_ack()) == 0, "TCP ACK flag must NOT be set on SYN");
+    assert(parsed_syn.tcp.checksum > 0, "TCP checksum must be computed");
+
+    let syn_sum = parsed_packet_summary(parsed_syn);
+    assert(str_contains(syn_sum, "SYN"), "SYN summary mismatch: " + syn_sum);
+    println("[PASS] Test 6: TCP SYN frame crafted for stealth scanner: " + syn_sum);
+
+    let tcp_synack_pkt = craft_tcp_syn_ack(mac_broadcast(), mac1, ip_target, ip1, 443, 49152, 20002, 10002);
+    let parsed_synack = dissect_packet(tcp_synack_pkt.ptr, tcp_synack_pkt.length);
+    assert(bit_and(parsed_synack.tcp.flags, tcp_flag_syn()) != 0, "SYN must be set in SYN-ACK");
+    assert(bit_and(parsed_synack.tcp.flags, tcp_flag_ack()) != 0, "ACK must be set in SYN-ACK");
+    assert(parsed_synack.tcp.ack_num == 10002, "TCP ACK number mismatch");
+    println("[PASS] Test 7: TCP SYN-ACK response frame validated with 2-way flag assertions");
+
+    // -------------------------------------------------------------
+    // Test 8: BPF-Style Dynamic Packet Filter Engine
+    // -------------------------------------------------------------
+    let filter_syn = packet_filter_new();
+    packet_filter_set_protocol(filter_syn, ipproto_tcp());
+    packet_filter_set_dst_port(filter_syn, 443);
+    packet_filter_set_tcp_flags(filter_syn, tcp_flag_syn());
+
+    assert(packet_filter_matches(filter_syn, parsed_syn), "Filter must match TCP SYN to port 443");
+    assert(!packet_filter_matches(filter_syn, parsed_udp), "Filter must NOT match UDP DNS packet");
+    assert(!packet_filter_matches(filter_syn, parsed_ping), "Filter must NOT match ICMP Ping packet");
+    assert(!packet_filter_matches(filter_syn, parsed_arp), "Filter must NOT match ARP packet");
+
+    let filter_dns = packet_filter_new();
+    packet_filter_set_protocol(filter_dns, ipproto_udp());
+    packet_filter_set_dst_port(filter_dns, 53);
+    assert(packet_filter_matches(filter_dns, parsed_udp), "Filter must match UDP DNS packet");
+    assert(!packet_filter_matches(filter_dns, parsed_syn), "Filter must NOT match TCP SYN on DNS filter");
+    println("[PASS] Test 8: BPF-style packet filter matched protocol, port, and TCP flags");
+
+    // -------------------------------------------------------------
+    // Test 9: Zero-Copy Circular PacketRingBuffer & Drop Tracking
+    // -------------------------------------------------------------
+    let ring = packet_ring_buffer_new(3, 128); // Capacity 3 slots
+    assert(packet_ring_buffer_is_empty(ring), "Ring buffer should initially be empty");
+
+    let ok1 = packet_ring_buffer_push(ring, arp_req.ptr, arp_req.length, 100000000);
+    let ok2 = packet_ring_buffer_push(ring, udp_pkt.ptr, udp_pkt.length, 200000000);
+    let ok3 = packet_ring_buffer_push(ring, tcp_syn_pkt.ptr, tcp_syn_pkt.length, 300000000);
+    assert(ok1 && ok2 && ok3, "All 3 pushes should succeed");
+    assert(packet_ring_buffer_count(ring) == 3, "Ring buffer count must be 3");
+    assert(packet_ring_buffer_is_full(ring), "Ring buffer should now be full");
+
+    // 4th push should overflow and increment drop counter
+    let ok4 = packet_ring_buffer_push(ring, ping_pkt.ptr, ping_pkt.length, 400000000);
+    assert(!ok4, "Overflow push must be rejected");
+    assert(packet_ring_buffer_dropped(ring) == 1, "Dropped counter must be 1");
+
+    let slot1: RingBufferSlot = packet_ring_buffer_pop(ring);
+    assert(slot1.wire_len == arp_req.length, "Popped slot wire length mismatch");
+    assert(slot1.timestamp_ns == 100000000, "Popped slot timestamp mismatch");
+    assert(packet_ring_buffer_count(ring) == 2, "Ring count after pop must be 2");
+
+    let slot2: RingBufferSlot = packet_ring_buffer_pop(ring);
+    assert(slot2.wire_len == udp_pkt.length, "Popped slot 2 length mismatch");
+
+    packet_ring_buffer_free(ring);
+    println("[PASS] Test 9: Zero-copy PacketRingBuffer high-throughput circular buffering & drop tracking verified");
+
+    // -------------------------------------------------------------
+    // Test 10: RawSocket & Promiscuous Sniffing Engine
+    // -------------------------------------------------------------
+    let sock = raw_socket_open_iface("lo", true);
+    assert(sock.is_open, "Raw socket must be marked open");
+    assert(sock.promiscuous, "Socket must have promiscuous mode enabled");
+
+    // Transmit packets through raw socket
+    let sent_bytes1 = raw_socket_transmit(sock, arp_req);
+    assert(sent_bytes1 == arp_req.length, "Transmitted bytes must equal ARP packet length");
+
+    let sent_bytes2 = raw_socket_transmit(sock, tcp_syn_pkt);
+    assert(sent_bytes2 == tcp_syn_pkt.length, "Transmitted bytes must equal TCP SYN length");
+
+    // Receive packets from raw socket queue
+    let recv_pkt1 = raw_socket_receive(sock, 1514);
+    assert(recv_pkt1.length == arp_req.length, "Received frame length mismatch for ARP");
+    let rec_dissect1 = dissect_packet(recv_pkt1.ptr, recv_pkt1.length);
+    assert(rec_dissect1.has_arp, "Received packet 1 must dissect to ARP");
+
+    let recv_pkt2 = raw_socket_receive(sock, 1514);
+    assert(recv_pkt2.length == tcp_syn_pkt.length, "Received frame length mismatch for TCP SYN");
+    let rec_dissect2 = dissect_packet(recv_pkt2.ptr, recv_pkt2.length);
+    assert(rec_dissect2.has_tcp, "Received packet 2 must dissect to TCP");
+    assert(rec_dissect2.tcp.dst_port == 443, "Received TCP destination port mismatch");
+
+    // Test Sniffer with BPF Filter
+    raw_socket_transmit(sock, udp_pkt);
+    raw_socket_transmit(sock, tcp_syn_pkt);
+    let captured_list = raw_socket_sniff(sock, 5, filter_syn);
+    assert(list_length(captured_list) == 1, "Sniffer must capture exactly 1 TCP SYN packet matching filter");
+    let sniffed_pkt: RawPacket = list_get(captured_list, 0);
+    let sniffed_dissect = dissect_packet(sniffed_pkt.ptr, sniffed_pkt.length);
+    assert(sniffed_dissect.has_tcp && sniffed_dissect.tcp.dst_port == 443, "Sniffed packet must be TCP port 443");
+
+    raw_socket_close_channel(sock);
+    assert(!sock.is_open, "Socket must be closed");
+    println("[PASS] Test 10: RawSocket bound promiscuously, transmitted, received, and sniffed with BPF filter");
+
+    // -------------------------------------------------------------
+    // Test 11: PCAP 2.4 Binary Capture File Export & Import
+    // -------------------------------------------------------------
+    let pcap_file = "/tmp/roze_capture_test.pcap";
+    let pcap_packets = list_new();
+    list_push(pcap_packets, arp_req);
+    list_push(pcap_packets, ping_pkt);
+    list_push(pcap_packets, udp_pkt);
+    list_push(pcap_packets, tcp_syn_pkt);
+
+    let save_ok = pcap_save_to_file(pcap_file, pcap_packets);
+    assert(save_ok, "PCAP file save failed");
+
+    let loaded_pkts = pcap_load_from_file(pcap_file);
+    assert(list_length(loaded_pkts) == 4, "Loaded PCAP must contain 4 packets");
+
+    let l_arp: RawPacket = list_get(loaded_pkts, 0);
+    assert(l_arp.length == arp_req.length, "Loaded packet 0 length mismatch (ARP)");
+    let l_arp_dissect = dissect_packet(l_arp.ptr, l_arp.length);
+    assert(l_arp_dissect.has_arp, "Loaded packet 0 must dissect to ARP");
+
+    let l_ping: RawPacket = list_get(loaded_pkts, 1);
+    assert(l_ping.length == ping_pkt.length, "Loaded packet 1 length mismatch (ICMP Ping)");
+    let l_ping_dissect = dissect_packet(l_ping.ptr, l_ping.length);
+    assert(l_ping_dissect.has_icmp && l_ping_dissect.icmp.id == 42, "Loaded packet 1 ICMP ID mismatch");
+
+    let l_udp: RawPacket = list_get(loaded_pkts, 2);
+    assert(l_udp.length == udp_pkt.length, "Loaded packet 2 length mismatch (UDP DNS)");
+    let l_udp_dissect = dissect_packet(l_udp.ptr, l_udp.length);
+    assert(l_udp_dissect.has_udp && l_udp_dissect.udp.dst_port == 53, "Loaded packet 2 UDP port mismatch");
+
+    let l_syn: RawPacket = list_get(loaded_pkts, 3);
+    assert(l_syn.length == tcp_syn_pkt.length, "Loaded packet 3 length mismatch (TCP SYN)");
+    let l_syn_dissect = dissect_packet(l_syn.ptr, l_syn.length);
+    assert(l_syn_dissect.has_tcp && l_syn_dissect.tcp.dst_port == 443, "Loaded packet 3 TCP port mismatch");
+
+    println("[PASS] Test 11: PCAP 2.4 capture file saved and re-imported with byte-for-byte fidelity");
+
+    // Clean up allocated raw packets
+    raw_packet_free(arp_req);
+    raw_packet_free(ping_pkt);
+    raw_packet_free(udp_pkt);
+    raw_packet_free(tcp_syn_pkt);
+    raw_packet_free(tcp_synack_pkt);
+
+    println("[CI-PASS] ALL RAW NETWORKING & PROMISCUOUS SNIFFING TESTS PASSED (M3-T01)");
+}

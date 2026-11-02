@@ -17,6 +17,16 @@
 #include <errno.h>
 #include <math.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#if defined(__linux__)
+#include <linux/if_packet.h>
+#include <net/ethernet.h>
+#include <net/if.h>
+#include <sys/ioctl.h>
+#endif
 
 #define ROZE_MAGIC_THREAD 0x544852445F4D4147ULL // "THRD_MAG"
 #define ROZE_MAGIC_FIBER  0x464942525F4D4147ULL // "FIBR_MAG"
@@ -4931,6 +4941,345 @@ void __roze_pool_reset(int64_t pa_val) {
         pa->free_list[i] = (int64_t)(pa->pool_memory + (i * pa->block_size));
     }
     pa->free_top = pa->block_count;
+}
+
+// =============================================================
+// AF_PACKET / Raw Sockets & Promiscuous Sniffing Runtime (M3-T01)
+// =============================================================
+
+#define ROZE_MAX_RAW_SOCKETS 64
+#define ROZE_MOCK_QUEUE_CAP 256
+#define ROZE_MOCK_PKT_MAX 2048
+
+typedef struct {
+    uint8_t data[ROZE_MOCK_PKT_MAX];
+    int64_t len;
+} RozeMockPacket;
+
+typedef struct {
+    int64_t handle_id;
+    int os_fd;
+    int is_mock;
+    int is_promiscuous;
+    char ifname[64];
+    uint16_t protocol;
+    RozeMockPacket mock_queue[ROZE_MOCK_QUEUE_CAP];
+    int mock_head;
+    int mock_tail;
+    int mock_count;
+    pthread_mutex_t lock;
+    int64_t packets_sent;
+    int64_t bytes_sent;
+    int64_t packets_recv;
+    int64_t bytes_recv;
+    int64_t packets_dropped;
+} RozeRawSocket;
+
+static RozeRawSocket g_roze_raw_sockets[ROZE_MAX_RAW_SOCKETS];
+static pthread_mutex_t g_roze_raw_socket_table_lock = PTHREAD_MUTEX_INITIALIZER;
+static int64_t g_roze_raw_socket_next_id = 1;
+
+int64_t __roze_raw_socket_open(int64_t proto) {
+    pthread_mutex_lock(&g_roze_raw_socket_table_lock);
+    int slot = -1;
+    for (int i = 0; i < ROZE_MAX_RAW_SOCKETS; i++) {
+        if (g_roze_raw_sockets[i].handle_id == 0) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot == -1) {
+        pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+        return -1;
+    }
+
+    RozeRawSocket* sock = &g_roze_raw_sockets[slot];
+    memset(sock, 0, sizeof(RozeRawSocket));
+    pthread_mutex_init(&sock->lock, NULL);
+    sock->handle_id = g_roze_raw_socket_next_id++;
+    sock->protocol = proto == 0 ? 0x0003 : (uint16_t)proto;
+    sock->os_fd = -1;
+    sock->is_mock = 1; // default to mock fallback if AF_PACKET unprivileged or unavailable
+
+#if defined(__linux__)
+    uint16_t net_proto = htons(sock->protocol);
+    int fd = socket(AF_PACKET, SOCK_RAW, net_proto);
+    if (fd >= 0) {
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags != -1) {
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        }
+        sock->os_fd = fd;
+        sock->is_mock = 0;
+    }
+#endif
+
+    int64_t id = sock->handle_id;
+    pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+    return id;
+}
+
+static RozeRawSocket* get_raw_socket(int64_t handle) {
+    if (handle <= 0) return NULL;
+    for (int i = 0; i < ROZE_MAX_RAW_SOCKETS; i++) {
+        if (g_roze_raw_sockets[i].handle_id == handle) {
+            return &g_roze_raw_sockets[i];
+        }
+    }
+    return NULL;
+}
+
+int64_t __roze_raw_socket_bind(int64_t handle, const char* ifname) {
+    pthread_mutex_lock(&g_roze_raw_socket_table_lock);
+    RozeRawSocket* sock = get_raw_socket(handle);
+    if (!sock) {
+        pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+        return -1;
+    }
+    pthread_mutex_lock(&sock->lock);
+    pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+
+    if (ifname && *ifname) {
+        strncpy(sock->ifname, ifname, sizeof(sock->ifname) - 1);
+        sock->ifname[sizeof(sock->ifname) - 1] = '\0';
+    } else {
+        strncpy(sock->ifname, "lo", sizeof(sock->ifname) - 1);
+    }
+
+#if defined(__linux__)
+    if (!sock->is_mock && sock->os_fd >= 0) {
+        struct sockaddr_ll sll;
+        memset(&sll, 0, sizeof(sll));
+        sll.sll_family = AF_PACKET;
+        unsigned int if_idx = if_nametoindex(sock->ifname);
+        if (if_idx > 0) {
+            sll.sll_ifindex = if_idx;
+            sll.sll_protocol = htons(sock->protocol);
+            if (bind(sock->os_fd, (struct sockaddr*)&sll, sizeof(sll)) < 0) {
+                close(sock->os_fd);
+                sock->os_fd = -1;
+                sock->is_mock = 1;
+            }
+        } else {
+            close(sock->os_fd);
+            sock->os_fd = -1;
+            sock->is_mock = 1;
+        }
+    }
+#endif
+
+    pthread_mutex_unlock(&sock->lock);
+    return 0;
+}
+
+int64_t __roze_raw_socket_set_promiscuous(int64_t handle, const char* ifname, int64_t enable) {
+    pthread_mutex_lock(&g_roze_raw_socket_table_lock);
+    RozeRawSocket* sock = get_raw_socket(handle);
+    if (!sock) {
+        pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+        return -1;
+    }
+    pthread_mutex_lock(&sock->lock);
+    pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+
+    sock->is_promiscuous = (enable != 0);
+    const char* dev = (ifname && *ifname) ? ifname : (sock->ifname[0] ? sock->ifname : "lo");
+
+#if defined(__linux__)
+    if (!sock->is_mock && sock->os_fd >= 0) {
+        unsigned int if_idx = if_nametoindex(dev);
+        if (if_idx > 0) {
+            struct packet_mreq mr;
+            memset(&mr, 0, sizeof(mr));
+            mr.mr_ifindex = if_idx;
+            mr.mr_type = PACKET_MR_PROMISC;
+            setsockopt(sock->os_fd, SOL_PACKET, enable ? PACKET_ADD_MEMBERSHIP : PACKET_DROP_MEMBERSHIP, &mr, sizeof(mr));
+        }
+    }
+#endif
+
+    pthread_mutex_unlock(&sock->lock);
+    return 0;
+}
+
+int64_t __roze_raw_socket_send(int64_t handle, const void* buf, int64_t len) {
+    if (!buf || len <= 0) return 0;
+    pthread_mutex_lock(&g_roze_raw_socket_table_lock);
+    RozeRawSocket* sock = get_raw_socket(handle);
+    if (!sock) {
+        pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+        return -1;
+    }
+    pthread_mutex_lock(&sock->lock);
+    pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+
+    int64_t bytes_written = 0;
+#if defined(__linux__)
+    if (!sock->is_mock && sock->os_fd >= 0) {
+        ssize_t s = send(sock->os_fd, buf, (size_t)len, 0);
+        if (s >= 0) {
+            bytes_written = s;
+        }
+    }
+#endif
+
+    if (sock->is_mock || bytes_written <= 0) {
+        if (sock->mock_count < ROZE_MOCK_QUEUE_CAP) {
+            int64_t copy_len = len > ROZE_MOCK_PKT_MAX ? ROZE_MOCK_PKT_MAX : len;
+            memcpy(sock->mock_queue[sock->mock_tail].data, buf, (size_t)copy_len);
+            sock->mock_queue[sock->mock_tail].len = copy_len;
+            sock->mock_tail = (sock->mock_tail + 1) % ROZE_MOCK_QUEUE_CAP;
+            sock->mock_count++;
+        } else {
+            sock->packets_dropped++;
+        }
+        bytes_written = len;
+    }
+
+    sock->packets_sent++;
+    sock->bytes_sent += bytes_written;
+    pthread_mutex_unlock(&sock->lock);
+    return bytes_written;
+}
+
+int64_t __roze_raw_socket_recv(int64_t handle, void* buf, int64_t max_len) {
+    if (!buf || max_len <= 0) return 0;
+    pthread_mutex_lock(&g_roze_raw_socket_table_lock);
+    RozeRawSocket* sock = get_raw_socket(handle);
+    if (!sock) {
+        pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+        return 0;
+    }
+    pthread_mutex_lock(&sock->lock);
+    pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+
+    if (sock->mock_count > 0) {
+        RozeMockPacket* mp = &sock->mock_queue[sock->mock_head];
+        int64_t copy_len = mp->len < max_len ? mp->len : max_len;
+        memcpy(buf, mp->data, (size_t)copy_len);
+        mp->len = 0;
+        sock->mock_head = (sock->mock_head + 1) % ROZE_MOCK_QUEUE_CAP;
+        sock->mock_count--;
+        sock->packets_recv++;
+        sock->bytes_recv += copy_len;
+        pthread_mutex_unlock(&sock->lock);
+        return copy_len;
+    }
+
+#if defined(__linux__)
+    if (!sock->is_mock && sock->os_fd >= 0) {
+        ssize_t n = recv(sock->os_fd, buf, (size_t)max_len, MSG_DONTWAIT);
+        if (n > 0) {
+            sock->packets_recv++;
+            sock->bytes_recv += n;
+            pthread_mutex_unlock(&sock->lock);
+            return (int64_t)n;
+        }
+    }
+#endif
+
+    pthread_mutex_unlock(&sock->lock);
+    return 0;
+}
+
+int64_t __roze_raw_socket_close(int64_t handle) {
+    pthread_mutex_lock(&g_roze_raw_socket_table_lock);
+    RozeRawSocket* sock = get_raw_socket(handle);
+    if (!sock) {
+        pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+        return 0;
+    }
+    pthread_mutex_lock(&sock->lock);
+
+    if (sock->os_fd >= 0) {
+        close(sock->os_fd);
+        sock->os_fd = -1;
+    }
+    sock->mock_count = 0;
+    sock->mock_head = 0;
+    sock->mock_tail = 0;
+    sock->handle_id = 0;
+    pthread_mutex_unlock(&sock->lock);
+    pthread_mutex_destroy(&sock->lock);
+    pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+    return 0;
+}
+
+int64_t __roze_raw_socket_is_mock(int64_t handle) {
+    pthread_mutex_lock(&g_roze_raw_socket_table_lock);
+    RozeRawSocket* sock = get_raw_socket(handle);
+    if (!sock) {
+        pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+        return 1;
+    }
+    int is_mock = sock->is_mock;
+    pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+    return is_mock;
+}
+
+int64_t __roze_raw_socket_inject_mock(int64_t handle, const void* buf, int64_t len) {
+    if (!buf || len <= 0) return 0;
+    pthread_mutex_lock(&g_roze_raw_socket_table_lock);
+    RozeRawSocket* sock = get_raw_socket(handle);
+    if (!sock) {
+        pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+        return 0;
+    }
+    pthread_mutex_lock(&sock->lock);
+    pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+
+    if (sock->mock_count < ROZE_MOCK_QUEUE_CAP) {
+        int64_t copy_len = len > ROZE_MOCK_PKT_MAX ? ROZE_MOCK_PKT_MAX : len;
+        memcpy(sock->mock_queue[sock->mock_tail].data, buf, (size_t)copy_len);
+        sock->mock_queue[sock->mock_tail].len = copy_len;
+        sock->mock_tail = (sock->mock_tail + 1) % ROZE_MOCK_QUEUE_CAP;
+        sock->mock_count++;
+        pthread_mutex_unlock(&sock->lock);
+        return copy_len;
+    }
+    sock->packets_dropped++;
+    pthread_mutex_unlock(&sock->lock);
+    return 0;
+}
+
+int64_t __roze_raw_socket_mock_count(int64_t handle) {
+    pthread_mutex_lock(&g_roze_raw_socket_table_lock);
+    RozeRawSocket* sock = get_raw_socket(handle);
+    if (!sock) {
+        pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+        return 0;
+    }
+    int count = sock->mock_count;
+    pthread_mutex_unlock(&g_roze_raw_socket_table_lock);
+    return count;
+}
+
+int64_t __roze_pcap_write_dump(const char* path, const void* buf, int64_t len) {
+    if (!path || !buf || len <= 0) return 0;
+    FILE* f = fopen(path, "wb");
+    if (!f) return -1;
+    size_t written = fwrite(buf, 1, (size_t)len, f);
+    fclose(f);
+    return (int64_t)written;
+}
+
+int64_t __roze_pcap_read_dump(const char* path, void* buf, int64_t max_len) {
+    if (!path || !buf || max_len <= 0) return 0;
+    FILE* f = fopen(path, "rb");
+    if (!f) return -1;
+    size_t read_bytes = fread(buf, 1, (size_t)max_len, f);
+    fclose(f);
+    return (int64_t)read_bytes;
+}
+
+int64_t __roze_pcap_file_size(const char* path) {
+    if (!path) return -1;
+    FILE* f = fopen(path, "rb");
+    if (!f) return -1;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fclose(f);
+    return (int64_t)sz;
 }
 
 

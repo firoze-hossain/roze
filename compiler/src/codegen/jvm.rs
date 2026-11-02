@@ -4225,6 +4225,154 @@ const MEMORY_HELPER_METHODS: &str = r#"
     private static void pool_reset(Object pa) { ((RozePoolAllocator) pa).reset(); }
 "#;
 
+const RAW_NET_HELPER_METHODS: &str = r#"
+    // =============================================================
+    // AF_PACKET / Raw Sockets & Promiscuous Sniffing Runtime (M3-T01)
+    // =============================================================
+    private static final java.util.Map<Long, RozeRawSocketState> __ROZE_RAW_SOCKETS = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.atomic.AtomicLong __ROZE_RAW_SOCKET_NEXT_ID = new java.util.concurrent.atomic.AtomicLong(1);
+
+    private static class RozeRawSocketState {
+        long id;
+        String ifname = "lo";
+        int protocol;
+        boolean promiscuous;
+        final java.util.concurrent.ConcurrentLinkedQueue<byte[]> queue = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        long packetsSent;
+        long bytesSent;
+        long packetsRecv;
+        long bytesRecv;
+        long packetsDropped;
+    }
+
+    private static int raw_socket_open(int proto) {
+        long id = __ROZE_RAW_SOCKET_NEXT_ID.getAndIncrement();
+        RozeRawSocketState state = new RozeRawSocketState();
+        state.id = id;
+        state.protocol = proto == 0 ? 0x0003 : proto;
+        __ROZE_RAW_SOCKETS.put(id, state);
+        return (int) id;
+    }
+
+    private static int raw_socket_bind(int handle, String ifname) {
+        RozeRawSocketState state = __ROZE_RAW_SOCKETS.get((long) handle);
+        if (state != null) {
+            state.ifname = (ifname != null && !ifname.isEmpty()) ? ifname : "lo";
+            return 0;
+        }
+        return -1;
+    }
+
+    private static int raw_socket_set_promiscuous(int handle, String ifname, int enable) {
+        RozeRawSocketState state = __ROZE_RAW_SOCKETS.get((long) handle);
+        if (state != null) {
+            state.promiscuous = (enable != 0);
+            if (ifname != null && !ifname.isEmpty()) {
+                state.ifname = ifname;
+            }
+            return 0;
+        }
+        return -1;
+    }
+
+    private static int raw_socket_send(int handle, long bufPtr, int len) {
+        if (bufPtr == 0 || len <= 0) return 0;
+        RozeRawSocketState state = __ROZE_RAW_SOCKETS.get((long) handle);
+        if (state == null) return -1;
+        byte[] data = new byte[len];
+        for (int i = 0; i < len; i++) {
+            data[i] = (byte) __roze_ptr_read_u8((long) bufPtr + i);
+        }
+        state.queue.add(data);
+        state.packetsSent++;
+        state.bytesSent += len;
+        return len;
+    }
+
+    private static int raw_socket_recv(int handle, long bufPtr, int maxLen) {
+        if (bufPtr == 0 || maxLen <= 0) return 0;
+        RozeRawSocketState state = __ROZE_RAW_SOCKETS.get((long) handle);
+        if (state == null) return 0;
+        byte[] data = state.queue.poll();
+        if (data == null) return 0;
+        int copyLen = Math.min(data.length, maxLen);
+        for (int i = 0; i < copyLen; i++) {
+            __roze_ptr_write_u8_at((long) bufPtr, (long) i, data[i] & 0xFF);
+        }
+        state.packetsRecv++;
+        state.bytesRecv += copyLen;
+        return copyLen;
+    }
+
+    private static int raw_socket_close(int handle) {
+        RozeRawSocketState state = __ROZE_RAW_SOCKETS.remove((long) handle);
+        if (state != null) {
+            state.queue.clear();
+        }
+        return 0;
+    }
+
+    private static int raw_socket_is_mock(int handle) {
+        return 1;
+    }
+
+    private static int raw_socket_inject_mock(int handle, long bufPtr, int len) {
+        if (bufPtr == 0 || len <= 0) return 0;
+        RozeRawSocketState state = __ROZE_RAW_SOCKETS.get((long) handle);
+        if (state == null) return 0;
+        byte[] data = new byte[len];
+        for (int i = 0; i < len; i++) {
+            data[i] = (byte) __roze_ptr_read_u8((long) bufPtr + i);
+        }
+        state.queue.add(data);
+        return len;
+    }
+
+    private static int raw_socket_mock_count(int handle) {
+        RozeRawSocketState state = __ROZE_RAW_SOCKETS.get((long) handle);
+        return state != null ? state.queue.size() : 0;
+    }
+
+    private static int pcap_write_dump(String path, long bufPtr, int len) {
+        if (path == null || bufPtr == 0 || len <= 0) return 0;
+        try (java.io.FileOutputStream fos = new java.io.FileOutputStream(path)) {
+            byte[] bytes = new byte[len];
+            for (int i = 0; i < len; i++) {
+                bytes[i] = (byte) __roze_ptr_read_u8((long) bufPtr + i);
+            }
+            fos.write(bytes);
+            return len;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    private static int pcap_read_dump(String path, long bufPtr, int maxLen) {
+        if (path == null || bufPtr == 0 || maxLen <= 0) return 0;
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(path)) {
+            byte[] bytes = new byte[maxLen];
+            int n = fis.read(bytes);
+            if (n <= 0) return 0;
+            for (int i = 0; i < n; i++) {
+                __roze_ptr_write_u8_at((long) bufPtr, (long) i, bytes[i] & 0xFF);
+            }
+            return n;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    private static int pcap_file_size(String path) {
+        if (path == null) return -1;
+        try {
+            java.io.File f = new java.io.File(path);
+            return f.exists() ? (int) f.length() : -1;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+"#;
+
 
 /// Returns the Java return type for a built-in Core (string/math)
 /// intrinsic, or None if `name` isn't one. Keep this in sync with
@@ -4603,6 +4751,12 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "pool_dealloc" | "pool_is_full" | "pool_is_empty" => Some("boolean"),
         "pool_reset" => Some("void"),
 
+        // Raw Sockets & Promiscuous Sniffing Engine (M3-T01)
+        "raw_socket_open" | "raw_socket_bind" | "raw_socket_set_promiscuous"
+        | "raw_socket_send" | "raw_socket_recv" | "raw_socket_close"
+        | "raw_socket_is_mock" | "raw_socket_inject_mock" | "raw_socket_mock_count"
+        | "pcap_write_dump" | "pcap_read_dump" | "pcap_file_size" => Some("int"),
+
         _ => None,
     }
 }
@@ -4916,6 +5070,7 @@ impl JavaSourceGenerator {
         source.push_str(SIMD_HELPER_METHODS);
         source.push_str(COLLECTIONS_HELPER_METHODS);
         source.push_str(MEMORY_HELPER_METHODS);
+        source.push_str(RAW_NET_HELPER_METHODS);
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);

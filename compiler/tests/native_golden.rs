@@ -4246,6 +4246,29 @@ fn milestone_gate_m2_bootable_os_kernel_verification() {
     }
 }
 
+#[test]
+fn native_raw_networking_suite() {
+    let source = std::fs::read_to_string("tests/fixtures/raw_networking.roze")
+        .or_else(|_| std::fs::read_to_string("compiler/tests/fixtures/raw_networking.roze"))
+        .expect("read raw_networking fixture");
+
+    let (stdout, stderr, ok) = run_native_source("native_raw_networking", &source);
+    assert!(ok, "native build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== ROZE RAW NETWORKING & PROMISCUOUS SNIFFING SUITE (M3-T01) ==="));
+    assert!(stdout.contains("[PASS] Test 1: Hardware MAC and IPv4 addresses formatted and converted"));
+    assert!(stdout.contains("[PASS] Test 2: RFC 1071 16-bit Internet Checksum validated: 0x790E"));
+    assert!(stdout.contains("[PASS] Test 3: ARP Request packet crafted and dissected"));
+    assert!(stdout.contains("[PASS] Test 4: ICMP Ping frame crafted and dissected"));
+    assert!(stdout.contains("[PASS] Test 5: UDP DNS frame crafted with RFC 768 pseudo-checksum"));
+    assert!(stdout.contains("[PASS] Test 6: TCP SYN frame crafted for stealth scanner"));
+    assert!(stdout.contains("[PASS] Test 7: TCP SYN-ACK response frame validated with 2-way flag assertions"));
+    assert!(stdout.contains("[PASS] Test 8: BPF-style packet filter matched protocol, port, and TCP flags"));
+    assert!(stdout.contains("[PASS] Test 9: Zero-copy PacketRingBuffer high-throughput circular buffering & drop tracking verified"));
+    assert!(stdout.contains("[PASS] Test 10: RawSocket bound promiscuously, transmitted, received, and sniffed with BPF filter"));
+    assert!(stdout.contains("[PASS] Test 11: PCAP 2.4 capture file saved and re-imported with byte-for-byte fidelity"));
+    assert!(stdout.contains("[CI-PASS] ALL RAW NETWORKING & PROMISCUOUS SNIFFING TESTS PASSED (M3-T01)"));
+}
+
 
 
 

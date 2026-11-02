@@ -332,7 +332,7 @@ s1_rows = [
         ("M3-T01", 8), ("Month 3", 5), ("Sprint 5 (W09-W10)", 8), "Raw Networking", "Raw Sockets & Promiscuous Sniffing",
         "AF_PACKET / BPF raw socket engine in roze::net::raw. Binds directly to network interfaces in promiscuous mode with zero-copy packet ring buffer.",
         "Parity with Python Scapy and Go gopacket; native raw socket capture without external dependencies.",
-        "Cybersecurity, Hacking, Pen-Testing", "6 Days", ("High", 14), ("Planned", 12)
+        "Cybersecurity, Hacking, Pen-Testing", "6 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M3-T02", 8), ("Month 3", 5), ("Sprint 5 (W09-W10)", 8), "Packet Crafting", "Protocol Builder & Packet Dissector",

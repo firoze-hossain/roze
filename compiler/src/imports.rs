@@ -78,6 +78,9 @@ const INTERRUPTS_DISPLAY_NAME: &str = "interrupts (built-in)";
 const DRIVERS_SOURCE: &str = include_str!("../../stdlib/src/drivers.roze");
 const DRIVERS_DISPLAY_NAME: &str = "drivers (built-in)";
 
+const RAW_NET_SOURCE: &str = include_str!("../../stdlib/src/raw_net.roze");
+const RAW_NET_DISPLAY_NAME: &str = "raw_net (built-in)";
+
 /// Walks `program`'s top-level statements, replacing every `Import` with
 /// the functions it pulls in. `base_dir` is the directory of the file
 /// being compiled, used to resolve relative import paths.
@@ -208,6 +211,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "drivers" || path == "uart" || path == "keyboard" || path == "mouse" || path == "ps2" || path == "timer" || path == "pit" || path == "hpet" || path == "gop" || path == "framebuffer" {
         return Ok((DRIVERS_SOURCE.to_string(), DRIVERS_DISPLAY_NAME.to_string()));
+    }
+    if path == "raw_net" || path == "net" || path == "packet" || path == "pcap" || path == "roze::net::raw" {
+        return Ok((RAW_NET_SOURCE.to_string(), RAW_NET_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

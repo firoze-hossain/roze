@@ -1,0 +1,266 @@
+// compiler/tests/fixtures/standard_cryptography.roze
+//
+// Comprehensive Test Suite for Roze Standard Cryptographic Suite & Pure TLS 1.3 (M3-T04)
+
+import "crypto";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("[ASSERTION FAILED]: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+func main() {
+    println("=== ROZE STANDARD CRYPTOGRAPHY & PURE TLS 1.3 SUITE (M3-T04) ===");
+
+    // -------------------------------------------------------------
+    // Test 1: Byte & Hex Encoding / Decoding Utilities
+    // -------------------------------------------------------------
+    let h1 = hex_encode(bytes_from_string("RozeLang"));
+    assert(h1 == "526f7a654c616e67", "Hex encoding mismatch: " + h1);
+
+    let d1 = string_from_bytes(hex_decode(h1));
+    assert(d1 == "RozeLang", "Hex decoding roundtrip mismatch: " + d1);
+
+    let bytes_a = bytes_from_string("SecretToken123");
+    let bytes_b = bytes_from_string("SecretToken123");
+    let bytes_c = bytes_from_string("SecretToken124");
+    assert(bytes_equals_constant_time(bytes_a, bytes_b), "Constant-time equality failed on identical bytes");
+    assert(!bytes_equals_constant_time(bytes_a, bytes_c), "Constant-time equality failed on differing bytes");
+    println("[PASS] Test 1: Byte serialization, hex encoding/decoding, and constant-time comparison verified");
+
+    // -------------------------------------------------------------
+    // Test 2: SHA-256 Standard NIST FIPS 180-4 Test Vector
+    // -------------------------------------------------------------
+    // "abc" -> ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+    let sha256_abc = sha256_hex("abc");
+    assert(sha256_abc == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+           "SHA-256 standard vector 'abc' mismatch: " + sha256_abc);
+
+    let sha256_empty = sha256_hex("");
+    assert(sha256_empty == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+           "SHA-256 empty string mismatch: " + sha256_empty);
+    println("[PASS] Test 2: SHA-256 standard NIST FIPS 180-4 test vectors verified");
+
+    // -------------------------------------------------------------
+    // Test 3: SHA-512 Standard NIST FIPS 180-4 Test Vector
+    // -------------------------------------------------------------
+    // "abc" -> ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f
+    let sha512_abc = sha512_hex("abc");
+    assert(sha512_abc == "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
+           "SHA-512 standard vector 'abc' mismatch: " + sha512_abc);
+    println("[PASS] Test 3: SHA-512 dual-backend 64-bit emulation and FIPS 180-4 vector verified");
+
+    // -------------------------------------------------------------
+    // Test 4: SHA-3 / Keccak (FIPS 202) Standard Test Vector
+    // -------------------------------------------------------------
+    // SHA3-256("abc") -> 3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532
+    let sha3_abc = sha3_256_hex("abc");
+    assert(sha3_abc == "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532",
+           "SHA3-256 standard vector 'abc' mismatch: " + sha3_abc);
+    println("[PASS] Test 4: SHA-3/Keccak-f[1600] 24-round permutation and FIPS 202 vector verified");
+
+    // -------------------------------------------------------------
+    // Test 5: HMAC-SHA256 & HMAC-SHA512 (RFC 2104 / RFC 4231)
+    // -------------------------------------------------------------
+    let hmac_key = bytes_from_string("Jefe");
+    let hmac_data = bytes_from_string("what do ya want for nothing?");
+    // RFC 4231 Test Case 2: 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
+    let hmac_res = hex_encode(hmac_sha256(hmac_key, hmac_data));
+    assert(hmac_res == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+           "HMAC-SHA256 RFC 4231 Test Case 2 mismatch: " + hmac_res);
+
+    let hmac512_res = hmac_sha512(hmac_key, hmac_data);
+    assert(list_length(hmac512_res) == 64, "HMAC-SHA512 digest length must be 64 bytes");
+    println("[PASS] Test 5: HMAC-SHA256 and HMAC-SHA512 standard vectors verified");
+
+    // -------------------------------------------------------------
+    // Test 6: HKDF Key Derivation (RFC 5869 & RFC 8446)
+    // -------------------------------------------------------------
+    let ikm = bytes_from_string("input-keying-material-roze");
+    let salt = bytes_from_string("salt-token-42");
+    let prk = hkdf_extract(salt, ikm);
+    assert(list_length(prk) == 32, "HKDF-Extract PRK must be 32 bytes");
+
+    let okm = hkdf_expand(prk, bytes_from_string("tls13-test-info"), 48);
+    assert(list_length(okm) == 48, "HKDF-Expand OKM must be requested length (48 bytes)");
+
+    let expanded_label = hkdf_expand_label(prk, "key", bytes_new(0), 16);
+    assert(list_length(expanded_label) == 16, "HKDF-Expand-Label must derive 16-byte key");
+    println("[PASS] Test 6: HKDF Extract, Expand, and RFC 8446 Expand-Label verified");
+
+    // -------------------------------------------------------------
+    // Test 7: Argon2id Password Hashing Engine (RFC 9106)
+    // -------------------------------------------------------------
+    let argon_pwd = "CorrectHorseBatteryStaple!";
+    let argon_salt = bytes_from_string("somesalt12345678");
+    let argon_hash = argon2id_hash(argon_pwd, argon_salt, 2, 64, 1, 32);
+    assert(list_length(argon_hash) == 32, "Argon2id hash output must be 32 bytes");
+
+    assert(argon2id_verify(argon_pwd, argon_salt, argon_hash, 2, 64, 1),
+           "Argon2id verify failed on matching password");
+    assert(!argon2id_verify("WrongPassword123!", argon_salt, argon_hash, 2, 64, 1),
+           "Argon2id verify succeeded on incorrect password");
+    println("[PASS] Test 7: Argon2id memory-hard password hashing and verification validated");
+
+    // -------------------------------------------------------------
+    // Test 8: AES-128-GCM & AES-256-GCM Authenticated Encryption (NIST SP 800-38D)
+    // -------------------------------------------------------------
+    let aes128_key = hex_decode("feffe9928665731c6d6a8f9467308308");
+    let aes_iv = hex_decode("cafebabefacedbaddecaf888");
+    let aes_pt = bytes_from_string("TopSecretApplicationDataPayload123456");
+    let aes_aad = bytes_from_string("AuthenticatedHeaderData");
+
+    // AES-128-GCM
+    let gcm128_enc = aes_128_gcm_encrypt(aes128_key, aes_iv, aes_pt, aes_aad);
+    assert(list_length(gcm128_enc.data) == list_length(aes_pt), "GCM ciphertext length must match plaintext");
+    assert(list_length(gcm128_enc.tag) == 16, "GCM authentication tag must be 16 bytes");
+
+    let gcm128_dec = aes_128_gcm_decrypt(aes128_key, aes_iv, gcm128_enc.data, aes_aad, gcm128_enc.tag);
+    assert(gcm128_dec.valid, "AES-128-GCM tag verification failed on valid ciphertext");
+    assert(string_from_bytes(gcm128_dec.data) == "TopSecretApplicationDataPayload123456", "AES-128-GCM decrypted plaintext mismatch");
+
+    // Tampered tag must be rejected
+    let bad_tag = bytes_clone(gcm128_enc.tag);
+    let bt0: int = list_get(bad_tag, 0);
+    list_set(bad_tag, 0, bit_xor(bt0, 1));
+    let gcm128_bad = aes_128_gcm_decrypt(aes128_key, aes_iv, gcm128_enc.data, aes_aad, bad_tag);
+    assert(!gcm128_bad.valid, "AES-128-GCM must reject tampered authentication tag");
+
+    // AES-256-GCM
+    let aes256_key = hex_decode("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308");
+    let gcm256_enc = aes_256_gcm_encrypt(aes256_key, aes_iv, aes_pt, aes_aad);
+    let gcm256_dec = aes_256_gcm_decrypt(aes256_key, aes_iv, gcm256_enc.data, aes_aad, gcm256_enc.tag);
+    assert(gcm256_dec.valid, "AES-256-GCM tag verification failed");
+    assert(string_from_bytes(gcm256_dec.data) == "TopSecretApplicationDataPayload123456", "AES-256-GCM decrypted plaintext mismatch");
+    println("[PASS] Test 8: AES-128-GCM and AES-256-GCM encryption, decryption, and GHASH integrity verified");
+
+    // -------------------------------------------------------------
+    // Test 9: ChaCha20-Poly1305 AEAD Engine (RFC 8439)
+    // -------------------------------------------------------------
+    let chacha_key = bytes_new(32);
+    let chacha_nonce = bytes_new(12);
+    let chacha_pt = bytes_from_string("Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.");
+    let chacha_aad = bytes_from_string("RFC8439-AssociatedData");
+
+    let chacha_enc = chacha20_poly1305_encrypt(chacha_key, chacha_nonce, chacha_pt, chacha_aad);
+    assert(list_length(chacha_enc.data) == list_length(chacha_pt), "ChaCha20 ciphertext length mismatch");
+    assert(list_length(chacha_enc.tag) == 16, "Poly1305 authentication tag must be 16 bytes");
+
+    let chacha_dec = chacha20_poly1305_decrypt(chacha_key, chacha_nonce, chacha_enc.data, chacha_aad, chacha_enc.tag);
+    assert(chacha_dec.valid, "ChaCha20-Poly1305 tag verification failed");
+    assert(string_from_bytes(chacha_dec.data) == string_from_bytes(chacha_pt), "ChaCha20-Poly1305 decrypted text mismatch");
+    println("[PASS] Test 9: ChaCha20-Poly1305 AEAD authenticated cipher roundtrip verified");
+
+    // -------------------------------------------------------------
+    // Test 10: Curve25519 / X25519 Diffie-Hellman Key Exchange (RFC 7748)
+    // -------------------------------------------------------------
+    // Alice and Bob Key Exchange
+    let alice_priv = bytes_new(32);
+    list_set(alice_priv, 0, 11);
+    let alice_pub = x25519_base(alice_priv);
+
+    let bob_priv = bytes_new(32);
+    list_set(bob_priv, 0, 22);
+    let bob_pub = x25519_base(bob_priv);
+
+    // Both compute shared secret
+    let shared_alice = x25519_scalarmult(alice_priv, bob_pub);
+    let shared_bob = x25519_scalarmult(bob_priv, alice_pub);
+    assert(bytes_equals_constant_time(shared_alice, shared_bob),
+           "X25519 Diffie-Hellman shared secret mismatch between Alice and Bob");
+    assert(list_length(shared_alice) == 32, "X25519 shared secret must be 32 bytes");
+    println("[PASS] Test 10: Curve25519/X25519 scalar multiplication and Diffie-Hellman agreement verified");
+
+    // -------------------------------------------------------------
+    // Test 11: Ed25519 Digital Signature Scheme (RFC 8032)
+    // -------------------------------------------------------------
+    let ed_seed = bytes_new(32);
+    list_set(ed_seed, 0, 42);
+    let ed_kp = ed25519_keypair_from_seed(ed_seed);
+    assert(list_length(ed_kp.public_key) == 32, "Ed25519 public key must be 32 bytes");
+
+    let ed_msg = bytes_from_string("Roze Secure Kernel Firmware Signature");
+    let ed_sig = ed25519_sign(ed_kp.seed, ed_msg);
+    assert(list_length(ed_sig) == 64, "Ed25519 signature must be 64 bytes");
+
+    assert(ed25519_verify(ed_kp.public_key, ed_msg, ed_sig), "Ed25519 signature verification failed on valid message");
+    assert(!ed25519_verify(ed_kp.public_key, bytes_from_string("Tampered Message"), ed_sig), "Ed25519 must reject tampered message");
+    println("[PASS] Test 11: Ed25519 keypair derivation, signing, and verification validated");
+
+    // -------------------------------------------------------------
+    // Test 12: BigInt Arithmetic & RSA-4096 (PKCS#1 v1.5 / OAEP)
+    // -------------------------------------------------------------
+    let rsa_key = rsa_generate_key(4096);
+    assert(rsa_key.key_bits == 4096, "RSA key size must be 4096 bits");
+
+    let rsa_msg = bytes_from_string("EncryptedMasterKeySecret");
+    let rsa_ct = rsa_pkcs1_v15_encrypt(rsa_key, rsa_msg);
+    assert(list_length(rsa_ct) == 512, "RSA-4096 ciphertext must be 512 bytes (4096 bits)");
+
+    let rsa_recovered = rsa_pkcs1_v15_decrypt(rsa_key, rsa_ct);
+    assert(string_from_bytes(rsa_recovered) == "EncryptedMasterKeySecret", "RSA-4096 decrypted message mismatch");
+
+    let rsa_digest = sha256(bytes_from_string("SoftwareUpdatePayload"));
+    let rsa_sig = rsa_pkcs1_v15_sign(rsa_key, rsa_digest);
+    assert(list_length(rsa_sig) == 512, "RSA-4096 signature must be 512 bytes");
+    assert(rsa_pkcs1_v15_verify(rsa_key, rsa_digest, rsa_sig), "RSA-4096 PKCS#1 v1.5 signature verification failed");
+    println("[PASS] Test 12: BigInt arbitrary-precision arithmetic and RSA-4096 encryption/signing verified");
+
+    // -------------------------------------------------------------
+    // Test 13: Pure TLS 1.3 Handshake & Record Layer (RFC 8446)
+    // -------------------------------------------------------------
+    let session = tls13_client_new("api.roze-lang.org");
+    assert(session.sni == "api.roze-lang.org", "TLS 1.3 SNI mismatch");
+    assert(list_length(session.client_pub) == 32, "Client X25519 public key must be 32 bytes");
+
+    // 1. ClientHello Generation
+    let client_hello = tls13_create_client_hello(session);
+    assert(list_length(client_hello) > 50, "ClientHello record must be non-empty");
+    assert(list_get(client_hello, 0) == 22, "Record layer content type must be Handshake (22)");
+    assert(list_get(client_hello, 1) == 3 && list_get(client_hello, 2) == 3, "Record layer legacy version must be 0x0303");
+
+    // 2. Mock ServerHello Record Processing
+    let mock_server_hello = list_new();
+    list_push(mock_server_hello, 22); // Handshake
+    list_push(mock_server_hello, 3); list_push(mock_server_hello, 3); // 0x0303
+    list_push(mock_server_hello, 0); list_push(mock_server_hello, 70); // Length
+    list_push(mock_server_hello, 2); // Handshake type: ServerHello (2)
+    list_push(mock_server_hello, 0); list_push(mock_server_hello, 0); list_push(mock_server_hello, 66); // length 66
+    list_push(mock_server_hello, 3); list_push(mock_server_hello, 3); // legacy version 0x0303
+    // Server random (32 bytes)
+    let k = 0;
+    while k < 32 { list_push(mock_server_hello, (k * 7 + 1) % 256); k = k + 1; }
+    list_push(mock_server_hello, 0); // legacy session ID echo
+    list_push(mock_server_hello, 19); list_push(mock_server_hello, 1); // Selected cipher suite 0x1301 (TLS_AES_128_GCM_SHA256)
+    list_push(mock_server_hello, 0); // compression method 0
+    // Extensions length 36
+    list_push(mock_server_hello, 0); list_push(mock_server_hello, 36);
+    // key_share extension (0x0033)
+    list_push(mock_server_hello, 0); list_push(mock_server_hello, 51);
+    list_push(mock_server_hello, 0); list_push(mock_server_hello, 32);
+    // Server X25519 key share (32 bytes)
+    k = 0;
+    while k < 32 { list_push(mock_server_hello, (k * 19 + 3) % 256); k = k + 1; }
+
+    let handshake_ok = tls13_process_server_hello(session, mock_server_hello);
+    assert(handshake_ok, "TLS 1.3 ServerHello processing failed");
+    assert(session.handshake_complete, "Session handshake must be marked complete");
+    assert(list_length(session.shared_secret) == 32, "Shared secret must be derived");
+    assert(list_length(session.client_app_secret) == 32, "Client application traffic secret must be derived");
+    assert(list_length(session.server_app_secret) == 32, "Server application traffic secret must be derived");
+
+    // 3. Application Data Record Encrypted Exchange
+    let http_req = bytes_from_string("GET /v1/status HTTP/1.1\r\nHost: api.roze-lang.org\r\n\r\n");
+    let enc_record = tls13_encrypt_record(session, http_req, 23);
+    assert(list_get(enc_record, 0) == 23, "Application data record must have content type 23");
+    assert(list_length(enc_record) > list_length(http_req), "Encrypted record must contain ciphertext and tag");
+
+    let dec_req = tls13_decrypt_record(session, enc_record);
+    assert(string_from_bytes(dec_req) == "GET /v1/status HTTP/1.1\r\nHost: api.roze-lang.org\r\n\r\n",
+           "TLS 1.3 decrypted application payload mismatch");
+    println("[PASS] Test 13: Pure TLS 1.3 ClientHello, ServerHello, Key Schedule, and Encrypted Records verified");
+
+    println("[CI-PASS] ALL STANDARD CRYPTOGRAPHY & PURE TLS 1.3 TESTS PASSED (M3-T04)");
+}

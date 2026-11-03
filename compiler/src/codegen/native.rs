@@ -8879,7 +8879,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let list = self.compile_expression(&arguments[0])?;
                 let index = self.compile_expression(&arguments[1])?;
                 let value = self.compile_expression(&arguments[2])?;
+                self.retain_for_arc_type(&arguments[2].type_, value)?;
                 let result = self.emit_list_set(list, index, value)?;
+                self.emit_release_for_type(&arguments[2].type_, result)?;
                 self.release_if_fresh(&arguments[0], list)?;
                 return Ok(result);
             }

@@ -81,6 +81,9 @@ const DRIVERS_DISPLAY_NAME: &str = "drivers (built-in)";
 const RAW_NET_SOURCE: &str = include_str!("../../stdlib/src/raw_net.roze");
 const RAW_NET_DISPLAY_NAME: &str = "raw_net (built-in)";
 
+const CRYPTO_SOURCE: &str = include_str!("../../stdlib/src/crypto.roze");
+const CRYPTO_DISPLAY_NAME: &str = "crypto (built-in)";
+
 /// Walks `program`'s top-level statements, replacing every `Import` with
 /// the functions it pulls in. `base_dir` is the directory of the file
 /// being compiled, used to resolve relative import paths.
@@ -216,6 +219,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         || path == "packet_crafting" || path == "protocol" || path == "dissector" || path == "dns" || path == "dhcp"
         || path == "scanner" || path == "port_scanner" || path == "net_scan" || path == "roze::net::scanner" {
         return Ok((RAW_NET_SOURCE.to_string(), RAW_NET_DISPLAY_NAME.to_string()));
+    }
+    if path == "crypto" || path == "roze::crypto" || path == "tls" || path == "sha" || path == "aes" || path == "chacha" || path == "rsa" {
+        return Ok((CRYPTO_SOURCE.to_string(), CRYPTO_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

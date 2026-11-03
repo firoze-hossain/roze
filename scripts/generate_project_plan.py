@@ -350,7 +350,7 @@ s1_rows = [
         ("M3-T04", 8), ("Month 3", 5), ("Sprint 5 (W09-W10)", 8), "Standard Cryptography", "Full Crypto Suite & Pure TLS 1.3",
         "roze::crypto module: AES-128/256-GCM, ChaCha20-Poly1305, SHA-256, SHA-512, SHA-3/Keccak, HMAC, Argon2id, Ed25519, Curve25519 (X25519), RSA-4096, and TLS 1.3 handshake.",
         "Matches Java Cryptography Architecture (JCA) and Rust ring/rustls; zero OpenSSL dependency.",
-        "Security, Web Backends, Authentication", "9 Days", ("Critical", 14), ("Planned", 12)
+        "Security, Web Backends, Authentication", "9 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M3-T05", 8), ("Month 3", 5), ("Sprint 5 (W09-W10)", 8), "Binary Analysis", "ELF / PE / Mach-O Disassembler Engine",

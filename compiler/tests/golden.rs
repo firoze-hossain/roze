@@ -1617,6 +1617,28 @@ fn security_port_and_banner_scanner_suite() {
     assert!(stdout.contains("[CI-PASS] ALL ULTRA-FAST SYN PORT & BANNER SCANNER TESTS PASSED (M3-T03)"));
 }
 
+#[test]
+fn standard_cryptography_and_tls13_suite() {
+    let (stdout, stderr, ok) = run_fixture("standard_cryptography.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== ROZE STANDARD CRYPTOGRAPHY & PURE TLS 1.3 SUITE (M3-T04) ==="));
+    assert!(stdout.contains("[PASS] Test 1: Byte serialization, hex encoding/decoding, and constant-time comparison verified"));
+    assert!(stdout.contains("[PASS] Test 2: SHA-256 standard NIST FIPS 180-4 test vectors verified"));
+    assert!(stdout.contains("[PASS] Test 3: SHA-512 dual-backend 64-bit emulation and FIPS 180-4 vector verified"));
+    assert!(stdout.contains("[PASS] Test 4: SHA-3/Keccak-f[1600] 24-round permutation and FIPS 202 vector verified"));
+    assert!(stdout.contains("[PASS] Test 5: HMAC-SHA256 and HMAC-SHA512 standard vectors verified"));
+    assert!(stdout.contains("[PASS] Test 6: HKDF Extract, Expand, and RFC 8446 Expand-Label verified"));
+    assert!(stdout.contains("[PASS] Test 7: Argon2id memory-hard password hashing and verification validated"));
+    assert!(stdout.contains("[PASS] Test 8: AES-128-GCM and AES-256-GCM encryption, decryption, and GHASH integrity verified"));
+    assert!(stdout.contains("[PASS] Test 9: ChaCha20-Poly1305 AEAD authenticated cipher roundtrip verified"));
+    assert!(stdout.contains("[PASS] Test 10: Curve25519/X25519 scalar multiplication and Diffie-Hellman agreement verified"));
+    assert!(stdout.contains("[PASS] Test 11: Ed25519 keypair derivation, signing, and verification validated"));
+    assert!(stdout.contains("[PASS] Test 12: BigInt arbitrary-precision arithmetic and RSA-4096 encryption/signing verified"));
+    assert!(stdout.contains("[PASS] Test 13: Pure TLS 1.3 ClientHello, ServerHello, Key Schedule, and Encrypted Records verified"));
+    assert!(stdout.contains("[CI-PASS] ALL STANDARD CRYPTOGRAPHY & PURE TLS 1.3 TESTS PASSED (M3-T04)"));
+}
+
+
 
 
 

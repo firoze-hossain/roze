@@ -368,7 +368,7 @@ s1_rows = [
         ("M3-T07", 8), ("Month 3", 5), ("Sprint 6 (W11-W12)", 8), "Enterprise Web Core", "Asynchronous HTTP/1.1, HTTP/2 & HTTP/3",
         "Multi-core non-blocking event-driven web server powered by epoll/kqueue/IOCP. Zero-copy header parsing, HTTP/2 multiplexed streams, and HTTP/3 QUIC support.",
         "Performance beats Node.js/Go; on par with Rust Actix-web and Java 25 Netty.",
-        "Enterprise Web, Cloud Microservices", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Enterprise Web, Cloud Microservices", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M3-T08", 8), ("Month 3", 5), ("Sprint 6 (W11-W12)", 8), "Enterprise Framework", "RozeBoot 2.0 Annotations & IoC Container",

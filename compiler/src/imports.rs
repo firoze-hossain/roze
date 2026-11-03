@@ -48,6 +48,9 @@ const SYNC_DISPLAY_NAME: &str = "sync (built-in)";
 const WEB_SOURCE: &str = include_str!("../../stdlib/src/web.roze");
 const WEB_DISPLAY_NAME: &str = "web (built-in)";
 
+const ENTERPRISE_WEB_SOURCE: &str = include_str!("../../stdlib/src/enterprise_web.roze");
+const ENTERPRISE_WEB_DISPLAY_NAME: &str = "enterprise_web (built-in)";
+
 const VGA_SOURCE: &str = include_str!("../../stdlib/src/vga.roze");
 const VGA_DISPLAY_NAME: &str = "vga (built-in)";
 
@@ -190,6 +193,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "web" {
         return Ok((WEB_SOURCE.to_string(), WEB_DISPLAY_NAME.to_string()));
+    }
+    if path == "enterprise_web" || path == "roze::web" || path == "http" || path == "http2" || path == "http3" || path == "quic" || path == "h2" || path == "h3" {
+        return Ok((ENTERPRISE_WEB_SOURCE.to_string(), ENTERPRISE_WEB_DISPLAY_NAME.to_string()));
     }
     if path == "vga" {
         return Ok((VGA_SOURCE.to_string(), VGA_DISPLAY_NAME.to_string()));

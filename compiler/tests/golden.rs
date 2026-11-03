@@ -1670,6 +1670,18 @@ fn memory_forensics_and_defensive_analysis_suite() {
     assert!(stdout.contains("ALL 8 FORENSICS TEST SUITES PASSED! [100% SUCCESS]"));
 }
 
+#[test]
+fn enterprise_web_core_suite() {
+    let (stdout, stderr, ok) = run_fixture("enterprise_web.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("Roze Enterprise Web Core: HTTP/1.1, HTTP/2 & HTTP/3 Suite (M3-T07)"));
+    assert!(stdout.contains("Suite 1 passed: HTTP/1.1 request/response & chunked coding verified."));
+    assert!(stdout.contains("Suite 2 passed: HTTP/2 frames, HPACK roundtrip & stream multiplexing verified."));
+    assert!(stdout.contains("Suite 3 passed: QUIC VINT, HTTP/3 framing & QPACK compression verified."));
+    assert!(stdout.contains("Suite 4 passed: EnterpriseWebServer multi-core reactor & benchmark verified."));
+    assert!(stdout.contains("ALL 4 ENTERPRISE WEB TEST SUITES PASSED! [100% SUCCESS]"));
+}
+
 
 
 

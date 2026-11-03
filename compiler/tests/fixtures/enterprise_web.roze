@@ -1,0 +1,212 @@
+// compiler/tests/fixtures/enterprise_web.roze
+//
+// 🌹 Roze Enterprise Web Core Comprehensive Verification Suite (M3-T07)
+// Multi-core non-blocking event-driven web server, HTTP/1.1 zero-copy,
+// HTTP/2 binary framing & HPACK, HTTP/3 over QUIC & QPACK, and high-throughput benchmarks.
+
+import "enterprise_web";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("[ASSERTION FAILED]: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+func test_http1_engine() {
+    println("=== Suite 1: HTTP/1.1 Zero-Copy Engine & Chunked Coding ===");
+    let raw_req = "POST /api/v1/orders HTTP/1.1\r\n" +
+                  "Host: api.roze.io\r\n" +
+                  "User-Agent: RozeClient/1.0\r\n" +
+                  "Content-Type: application/json\r\n" +
+                  "Content-Length: 27\r\n" +
+                  "Connection: keep-alive\r\n\r\n" +
+                  "{\"item\":\"laptop\",\"quantity\":1}";
+
+    let req = parse_http1_request(raw_req);
+    assert(req.method == "POST", "http1 method mismatch: " + req.method);
+    assert(req.path == "/api/v1/orders", "http1 path mismatch: " + req.path);
+    assert(req.version == "HTTP/1.1", "http1 version mismatch: " + req.version);
+    assert(req.content_length == 27, "http1 content-length mismatch");
+    assert(req.is_keep_alive, "http1 keep-alive mismatch");
+    assert(!req.is_chunked, "http1 chunked mismatch");
+    assert(req.body == "{\"item\":\"laptop\",\"quantity\":1}", "http1 body mismatch");
+
+    let host_hdr = find_header(req.headers, "host");
+    assert(host_hdr == "api.roze.io", "http1 host header mismatch");
+
+    // Chunked Transfer Coding roundtrip
+    let payload = "High-performance Roze Chunked Transfer Engine";
+    let chunked = encode_chunked_body(payload);
+    assert(str_contains(chunked, "0\r\n\r\n"), "chunked terminal mismatch");
+    let decoded_payload = decode_chunked_body(chunked);
+    assert(decoded_payload == payload, "chunked roundtrip mismatch");
+
+    // HTTP/1.1 Response serialization
+    let resp = http1_response_new(200, "{\"success\":true}");
+    let resp_str = serialize_http1_response(resp);
+    assert(str_contains(resp_str, "HTTP/1.1 200 OK"), "http1 response status line mismatch");
+    assert(str_contains(resp_str, "Server: Roze-Enterprise-Core/1.0"), "http1 server header mismatch");
+    println("Suite 1 passed: HTTP/1.1 request/response & chunked coding verified.");
+}
+
+func test_http2_framing_and_hpack() {
+    println("=== Suite 2: HTTP/2 Binary Framing & HPACK Compression ===");
+    assert(h2_client_preface() == "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "client preface mismatch");
+
+    // 1. SETTINGS Frame
+    let settings_frame = h2_settings_frame(false);
+    assert(settings_frame.frame_type == h2_frame_settings(), "settings frame type mismatch");
+    assert(settings_frame.stream_id == 0, "settings stream id must be 0");
+    let encoded_settings = h2_encode_frame(settings_frame);
+    assert(list_length(encoded_settings) == 9 + settings_frame.length, "encoded frame length mismatch");
+
+    let decoded_settings = h2_decode_frame(encoded_settings, 0);
+    assert(decoded_settings.frame_type == h2_frame_settings(), "decoded settings type mismatch");
+    assert(decoded_settings.length == settings_frame.length, "decoded settings length mismatch");
+
+    // 2. PING Frame
+    let ping_payload = list_new();
+    let mut_p = 0;
+    while mut_p < 8 {
+        list_push(ping_payload, mut_p + 1);
+        mut_p = mut_p + 1;
+    }
+    let ping_frame = h2_ping_frame(false, ping_payload);
+    let enc_ping = h2_encode_frame(ping_frame);
+    let dec_ping = h2_decode_frame(enc_ping, 0);
+    assert(dec_ping.frame_type == h2_frame_ping(), "ping frame type mismatch");
+    assert(dec_ping.length == 8, "ping frame length mismatch");
+
+    // 3. HPACK Compression & Decompression
+    let hdrs = list_new();
+    list_push(hdrs, header_field_new(":method", "GET"));
+    list_push(hdrs, header_field_new(":path", "/"));
+    list_push(hdrs, header_field_new(":scheme", "https"));
+    list_push(hdrs, header_field_new("x-custom-header", "RozeH2Speed"));
+
+    let hpack_bytes = hpack_encode_headers(hdrs);
+    assert(list_length(hpack_bytes) > 0, "hpack output empty");
+
+    let decoded_hdrs = hpack_decode_headers(hpack_bytes);
+    assert(list_length(decoded_hdrs) == 4, "decoded headers count mismatch");
+
+    let m_val = find_header(decoded_hdrs, ":method");
+    let p_val = find_header(decoded_hdrs, ":path");
+    let c_val = find_header(decoded_hdrs, "x-custom-header");
+    assert(m_val == "GET", "hpack :method mismatch: " + m_val);
+    assert(p_val == "/", "hpack :path mismatch: " + p_val);
+    assert(c_val == "RozeH2Speed", "hpack custom header mismatch: " + c_val);
+
+    // 4. HTTP/2 Multiplexed Session
+    let session = http2_session_new(true);
+    let stream1 = http2_session_get_stream(session, 1);
+    assert(stream1.stream_id == 1, "stream id mismatch");
+
+    let resp_frames = http2_session_create_response(session, 1, 200, "{\"h2\":true}");
+    assert(list_length(resp_frames) == 2, "h2 response frames count mismatch (headers + data expected)");
+
+    let h_frame: Http2Frame = list_get(resp_frames, 0);
+    let d_frame: Http2Frame = list_get(resp_frames, 1);
+    assert(h_frame.frame_type == h2_frame_headers(), "h2 resp headers frame type mismatch");
+    assert(d_frame.frame_type == h2_frame_data(), "h2 resp data frame type mismatch");
+    println("Suite 2 passed: HTTP/2 frames, HPACK roundtrip & stream multiplexing verified.");
+}
+
+func test_http3_and_quic_engine() {
+    println("=== Suite 3: HTTP/3 & QUIC Transport Engine ===");
+
+    // 1. QUIC Variable-Length Integer (VINT) Codec
+    let v1 = 25;
+    let enc1 = quic_vint_encode(v1);
+    assert(list_length(enc1) == 1, "vint 1-byte length mismatch");
+    let dec1 = quic_vint_decode(enc1, 0);
+    assert(dec1.value == 25, "vint 1-byte decode mismatch");
+
+    let v2 = 15213;
+    let enc2 = quic_vint_encode(v2);
+    assert(list_length(enc2) == 2, "vint 2-byte length mismatch");
+    let dec2 = quic_vint_decode(enc2, 0);
+    assert(dec2.value == 15213, "vint 2-byte decode mismatch");
+
+    let v3 = 1000000;
+    let enc3 = quic_vint_encode(v3);
+    assert(list_length(enc3) == 4, "vint 4-byte length mismatch");
+    let dec3 = quic_vint_decode(enc3, 0);
+    assert(dec3.value == 1000000, "vint 4-byte decode mismatch");
+
+    // 2. HTTP/3 Binary Framing
+    let h3_payload = list_new();
+    list_push(h3_payload, 10);
+    list_push(h3_payload, 20);
+    list_push(h3_payload, 30);
+    let h3_frame = new Http3Frame(h3_frame_headers(), 3, h3_payload);
+
+    let enc_h3 = h3_encode_frame(h3_frame);
+    let dec_h3 = h3_decode_frame(enc_h3, 0);
+    assert(dec_h3.frame_type == h3_frame_headers(), "h3 frame type mismatch");
+    assert(dec_h3.length == 3, "h3 frame length mismatch");
+
+    // 3. QPACK Header Compression for HTTP/3
+    let qhdrs = list_new();
+    list_push(qhdrs, header_field_new(":method", "POST"));
+    list_push(qhdrs, header_field_new(":path", "/"));
+    list_push(qhdrs, header_field_new(":scheme", "https"));
+    list_push(qhdrs, header_field_new("x-quic-flow", "RozeH3Fast"));
+
+    let qpack_bytes = qpack_encode_headers(qhdrs);
+    let dec_qhdrs = qpack_decode_headers(qpack_bytes);
+    assert(list_length(dec_qhdrs) == 4, "qpack decoded count mismatch");
+
+    let qm_val = find_header(dec_qhdrs, ":method");
+    let qp_val = find_header(dec_qhdrs, ":path");
+    let qc_val = find_header(dec_qhdrs, "x-quic-flow");
+    assert(qm_val == "POST", "qpack :method mismatch: " + qm_val);
+    assert(qp_val == "/", "qpack :path mismatch: " + qp_val);
+    assert(qc_val == "RozeH3Fast", "qpack custom header mismatch: " + qc_val);
+
+    // 4. HTTP/3 Session
+    let h3_session = http3_session_new(true);
+    let h3_resps = http3_session_create_response(h3_session, 200, "{\"quic\":true}");
+    assert(list_length(h3_resps) == 2, "h3 response frames count mismatch (headers + data expected)");
+    assert(h3_session.requests_processed == 1, "h3 processed counter mismatch");
+    println("Suite 3 passed: QUIC VINT, HTTP/3 framing & QPACK compression verified.");
+}
+
+func test_enterprise_web_server_integration() {
+    println("=== Suite 4: Unified Enterprise Web Server & Benchmark ===");
+    let server = enterprise_server_new(8443, 8);
+    enterprise_server_set_protocols(server, true, true, true);
+
+    // 1. Dispatch HTTP/1.1
+    let raw_h1 = "GET /status HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    let h1_out = enterprise_server_dispatch_h1(server, raw_h1);
+    assert(str_contains(h1_out, "HTTP/1.1 200 OK"), "server h1 dispatch status mismatch");
+    assert(str_contains(h1_out, "Roze-Enterprise-Core"), "server h1 engine mismatch");
+    assert(server.req_count_h1 == 1, "server h1 count mismatch");
+
+    // 2. High-Throughput Performance Benchmark
+    let rps = enterprise_server_benchmark_rps(server, 1000, 16);
+    assert(rps >= 150000, "enterprise web server throughput benchmark under 150k rps: " + int_to_str(rps));
+    println("[BENCHMARK] Enterprise Web Server Throughput: " + int_to_str(rps) + " req/sec (multi-worker reactor)");
+
+    // 3. Formatted Metrics Report
+    let stats = enterprise_server_stats(server);
+    assert(str_contains(stats, "ROZE ENTERPRISE WEB CORE SERVER METRICS"), "stats title mismatch");
+    assert(str_contains(stats, "Worker Threads       : 8"), "stats workers mismatch");
+    assert(str_contains(stats, "HTTP/1.1 Probes : 1"), "stats h1 count mismatch");
+    println("Suite 4 passed: EnterpriseWebServer multi-core reactor & benchmark verified.");
+}
+
+func main() {
+    println("================================================================================");
+    println(" 🌹 Roze Enterprise Web Core: HTTP/1.1, HTTP/2 & HTTP/3 Suite (M3-T07)");
+    println("================================================================================");
+    test_http1_engine();
+    test_http2_framing_and_hpack();
+    test_http3_and_quic_engine();
+    test_enterprise_web_server_integration();
+    println("================================================================================");
+    println(" ALL 4 ENTERPRISE WEB TEST SUITES PASSED! [100% SUCCESS]");
+    println("================================================================================");
+}

@@ -4378,6 +4378,22 @@ fn native_memory_forensics_suite() {
     assert!(stdout.contains("ALL 8 FORENSICS TEST SUITES PASSED! [100% SUCCESS]"));
 }
 
+#[test]
+fn native_enterprise_web_core_suite() {
+    let source = std::fs::read_to_string("tests/fixtures/enterprise_web.roze")
+        .or_else(|_| std::fs::read_to_string("compiler/tests/fixtures/enterprise_web.roze"))
+        .expect("read enterprise_web fixture");
+
+    let (stdout, stderr, ok) = run_native_source("native_enterprise_web", &source);
+    assert!(ok, "native build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("Roze Enterprise Web Core: HTTP/1.1, HTTP/2 & HTTP/3 Suite (M3-T07)"));
+    assert!(stdout.contains("Suite 1 passed: HTTP/1.1 request/response & chunked coding verified."));
+    assert!(stdout.contains("Suite 2 passed: HTTP/2 frames, HPACK roundtrip & stream multiplexing verified."));
+    assert!(stdout.contains("Suite 3 passed: QUIC VINT, HTTP/3 framing & QPACK compression verified."));
+    assert!(stdout.contains("Suite 4 passed: EnterpriseWebServer multi-core reactor & benchmark verified."));
+    assert!(stdout.contains("ALL 4 ENTERPRISE WEB TEST SUITES PASSED! [100% SUCCESS]"));
+}
+
 
 
 

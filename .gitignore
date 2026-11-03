@@ -54,3 +54,7 @@ Thumbs.db
 /demos/self_hosted/bin/
 ide/vscode/node_modules/
 ide/vscode/out/
+
+# Python bytecode
+__pycache__/
+*.pyc

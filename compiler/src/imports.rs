@@ -84,6 +84,9 @@ const RAW_NET_DISPLAY_NAME: &str = "raw_net (built-in)";
 const CRYPTO_SOURCE: &str = include_str!("../../stdlib/src/crypto.roze");
 const CRYPTO_DISPLAY_NAME: &str = "crypto (built-in)";
 
+const BINARY_SOURCE: &str = include_str!("../../stdlib/src/binary.roze");
+const BINARY_DISPLAY_NAME: &str = "binary (built-in)";
+
 /// Walks `program`'s top-level statements, replacing every `Import` with
 /// the functions it pulls in. `base_dir` is the directory of the file
 /// being compiled, used to resolve relative import paths.
@@ -222,6 +225,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "crypto" || path == "roze::crypto" || path == "tls" || path == "sha" || path == "aes" || path == "chacha" || path == "rsa" {
         return Ok((CRYPTO_SOURCE.to_string(), CRYPTO_DISPLAY_NAME.to_string()));
+    }
+    if path == "binary" || path == "roze::binary" || path == "disasm" || path == "roze::disasm" || path == "elf" || path == "pe" || path == "macho" {
+        return Ok((BINARY_SOURCE.to_string(), BINARY_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

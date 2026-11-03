@@ -1638,6 +1638,22 @@ fn standard_cryptography_and_tls13_suite() {
     assert!(stdout.contains("[CI-PASS] ALL STANDARD CRYPTOGRAPHY & PURE TLS 1.3 TESTS PASSED (M3-T04)"));
 }
 
+#[test]
+fn binary_analysis_and_disassembler_suite() {
+    let (stdout, stderr, ok) = run_fixture("binary_analysis.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== ROZE BINARY ANALYSIS & DISASSEMBLER ENGINE (M3-T05) ==="));
+    assert!(stdout.contains("[PASS] Test 1: Binary Stream Reader and Hex utilities verified"));
+    assert!(stdout.contains("[PASS] Test 2: ELF64 Parser, headers, segments, and section headers verified"));
+    assert!(stdout.contains("[PASS] Test 3: PE/COFF Windows PE32+ Parser, optional headers, and section table verified"));
+    assert!(stdout.contains("[PASS] Test 4: Mach-O 64-bit ARM64 Parser, load commands, and segments verified"));
+    assert!(stdout.contains("[PASS] Test 5: Symbol demangler verified on Itanium C++, Rust v0, and Roze namespaces"));
+    assert!(stdout.contains("[PASS] Test 6: x86_64 instruction decoding, registers, ModR/M, and control-flow flags verified"));
+    assert!(stdout.contains("[PASS] Test 7: ARM64 instruction decoder, registers, branches, load/store pairs verified"));
+    assert!(stdout.contains("[PASS] Test 8: Unified BinaryFile auto-detection, summaries, and table formatter verified"));
+    assert!(stdout.contains("[CI-PASS] ALL BINARY ANALYSIS & DISASSEMBLER TESTS PASSED (M3-T05)"));
+}
+
 
 
 

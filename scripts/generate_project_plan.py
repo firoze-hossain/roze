@@ -356,7 +356,7 @@ s1_rows = [
         ("M3-T05", 8), ("Month 3", 5), ("Sprint 5 (W09-W10)", 8), "Binary Analysis", "ELF / PE / Mach-O Disassembler Engine",
         "Binary parsing and disassembly engine: parse headers, sections, export/import tables, demangle symbols, and disassemble x86_64 and ARM64 machine opcodes.",
         "Matches capabilities of radare2 and Capstone disassembler.",
-        "Reverse Engineering, Malware Analysis", "8 Days", ("High", 14), ("Planned", 12)
+        "Reverse Engineering, Malware Analysis", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M3-T06", 8), ("Month 3", 5), ("Sprint 5 (W09-W10)", 8), "Exploit Research", "Memory Forensics & Shellcode Harness",

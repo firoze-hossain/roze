@@ -1,0 +1,532 @@
+// compiler/tests/fixtures/binary_analysis.roze
+//
+// Comprehensive Verification Suite for Roze Binary Analysis & Disassembler Engine (M3-T05)
+
+import "binary";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("[ASSERTION FAILED]: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+func main() {
+    println("=== ROZE BINARY ANALYSIS & DISASSEMBLER ENGINE (M3-T05) ===");
+
+    // =========================================================================
+    // Test 1: Binary Stream Reader & Hex Utilities
+    // =========================================================================
+    let sample_bytes = list_new();
+    list_push(sample_bytes, 72);  // 'H'
+    list_push(sample_bytes, 101); // 'e'
+    list_push(sample_bytes, 108); // 'l'
+    list_push(sample_bytes, 108); // 'l'
+    list_push(sample_bytes, 111); // 'o'
+    list_push(sample_bytes, 0);   // NUL
+    list_push(sample_bytes, 239); // 0xEF
+    list_push(sample_bytes, 190); // 0xBE
+    list_push(sample_bytes, 173); // 0xAD
+    list_push(sample_bytes, 222); // 0xDE
+
+    let s = read_cstring(sample_bytes, 0, 16);
+    assert(s == "Hello", "read_cstring mismatch: " + s);
+
+    let u16_val = read_u16_le(sample_bytes, 6); // 0xBEEF
+    assert(u16_val == 48879, "read_u16_le mismatch: " + int_to_str(u16_val));
+    assert(int_to_hex(u16_val, 4) == "beef", "int_to_hex mismatch: " + int_to_hex(u16_val, 4));
+
+    let u32_val = read_u32_le(sample_bytes, 6); // 0xDEADBEEF
+    assert(u32_val == -559038737 || u32_val == 3735928559, "read_u32_le deadbeef mismatch");
+    assert(int_to_hex(u32_val, 8) == "deadbeef", "hex 32-bit mismatch: " + int_to_hex(u32_val, 8));
+
+    println("[PASS] Test 1: Binary Stream Reader and Hex utilities verified");
+
+    // =========================================================================
+    // Test 2: ELF64 Parser & Dissector
+    // =========================================================================
+    // Construct a minimal valid ELF64 x86_64 executable image in memory:
+    // Header: 64 bytes
+    // Program Header: 56 bytes at offset 64
+    // Section Headers: 4 sections * 64 bytes = 256 bytes at offset 120
+    // Shstrtab: 64 bytes at offset 376
+    // Text section: 16 bytes at offset 440
+    // Strtab & Symtab: offset 456
+    let elf_img = list_new();
+    let mut_idx = 0;
+    while mut_idx < 600 {
+        list_push(elf_img, 0);
+        mut_idx = mut_idx + 1;
+    }
+
+    // ELF Header Magic: 0x7F, 'E', 'L', 'F'
+    list_set(elf_img, 0, 127);
+    list_set(elf_img, 1, 69);
+    list_set(elf_img, 2, 76);
+    list_set(elf_img, 3, 70);
+    list_set(elf_img, 4, 2); // 64-bit (ELFCLASS64)
+    list_set(elf_img, 5, 1); // Little-endian (ELFDATA2LSB)
+    list_set(elf_img, 6, 1); // EV_CURRENT
+    list_set(elf_img, 7, 0); // System V OSABI
+
+    // e_type = ET_EXEC (2)
+    list_set(elf_img, 16, 2);
+    // e_machine = EM_X86_64 (62)
+    list_set(elf_img, 18, 62);
+    // e_version = 1
+    list_set(elf_img, 20, 1);
+    // e_entry = 0x00401000
+    list_set(elf_img, 24, 0);
+    list_set(elf_img, 25, 16);
+    list_set(elf_img, 26, 64);
+    list_set(elf_img, 27, 0);
+
+    // e_phoff = 64
+    list_set(elf_img, 32, 64);
+    // e_shoff = 120
+    list_set(elf_img, 40, 120);
+    // e_ehsize = 64
+    list_set(elf_img, 52, 64);
+    // e_phentsize = 56
+    list_set(elf_img, 54, 56);
+    // e_phnum = 1
+    list_set(elf_img, 56, 1);
+    // e_shentsize = 64
+    list_set(elf_img, 58, 64);
+    // e_shnum = 4
+    list_set(elf_img, 60, 4);
+    // e_shstrndx = 2 (.shstrtab index)
+    list_set(elf_img, 62, 2);
+
+    // Program Header 0 at offset 64: PT_LOAD (1), PF_R|PF_X (5), offset 440, vaddr 0x401000, size 16
+    list_set(elf_img, 64, 1); // p_type = PT_LOAD
+    list_set(elf_img, 68, 5); // p_flags = R + X
+    list_set(elf_img, 72, 184); // p_offset = 440 (low byte 184, high byte 1)
+    list_set(elf_img, 73, 1);
+    list_set(elf_img, 80, 0); // p_vaddr = 0x401000
+    list_set(elf_img, 81, 16);
+    list_set(elf_img, 82, 64);
+    list_set(elf_img, 96, 16); // p_filesz = 16
+    list_set(elf_img, 104, 16); // p_memsz = 16
+
+    // Populate .shstrtab at offset 376
+    // Offsets:
+    // 0: \0
+    // 1: .text\0 (len 6)
+    // 7: .shstrtab\0 (len 10)
+    // 17: .symtab\0 (len 8)
+    // 25: .strtab\0 (len 8)
+    let shstrtab_off = 376;
+    let sh_names = ".text.shstrtab.symtab.strtab";
+    // 1: .text
+    list_set(elf_img, shstrtab_off + 1, 46); // '.'
+    list_set(elf_img, shstrtab_off + 2, 116); // 't'
+    list_set(elf_img, shstrtab_off + 3, 101); // 'e'
+    list_set(elf_img, shstrtab_off + 4, 120); // 'x'
+    list_set(elf_img, shstrtab_off + 5, 116); // 't'
+    list_set(elf_img, shstrtab_off + 6, 0);
+    // 7: .shstrtab
+    list_set(elf_img, shstrtab_off + 7, 46);
+    list_set(elf_img, shstrtab_off + 8, 115);
+    list_set(elf_img, shstrtab_off + 9, 104);
+    list_set(elf_img, shstrtab_off + 10, 115);
+    list_set(elf_img, shstrtab_off + 11, 116);
+    list_set(elf_img, shstrtab_off + 12, 114);
+    list_set(elf_img, shstrtab_off + 13, 116);
+    list_set(elf_img, shstrtab_off + 14, 97);
+    list_set(elf_img, shstrtab_off + 15, 98);
+    list_set(elf_img, shstrtab_off + 16, 0);
+
+    // Section 0 at 120: SHT_NULL
+    // Section 1 at 184: .text (sh_name=1, SHT_PROGBITS=1, flags=6 (AX), addr=0x401000, off=440, size=16)
+    let s1_off = 120 + 64;
+    list_set(elf_img, s1_off, 1); // sh_name = 1 (".text")
+    list_set(elf_img, s1_off + 4, 1); // sh_type = SHT_PROGBITS
+    list_set(elf_img, s1_off + 8, 6); // sh_flags = SHF_ALLOC | SHF_EXECINSTR
+    list_set(elf_img, s1_off + 16, 0); // sh_addr = 0x401000
+    list_set(elf_img, s1_off + 17, 16);
+    list_set(elf_img, s1_off + 18, 64);
+    list_set(elf_img, s1_off + 24, 184); // sh_offset = 440
+    list_set(elf_img, s1_off + 25, 1);
+    list_set(elf_img, s1_off + 32, 16); // sh_size = 16
+
+    // Section 2 at 248: .shstrtab (sh_name=7, SHT_STRTAB=3, off=376, size=64)
+    let s2_off = 120 + 128;
+    list_set(elf_img, s2_off, 7); // sh_name = 7 (".shstrtab")
+    list_set(elf_img, s2_off + 4, 3); // sh_type = SHT_STRTAB
+    list_set(elf_img, s2_off + 24, 120); // sh_offset = 376 (376 = 256 + 120)
+    list_set(elf_img, s2_off + 25, 1);
+    list_set(elf_img, s2_off + 32, 64); // sh_size = 64
+
+    // Machine code in .text (offset 440):
+    // 55                push rbp
+    // 48 89 e5          mov rbp, rsp
+    // 48 31 c0          xor rax, rax
+    // c9                leave
+    // c3                ret
+    list_set(elf_img, 440, 85);  // 0x55
+    list_set(elf_img, 441, 72);  // 0x48
+    list_set(elf_img, 442, 137); // 0x89
+    list_set(elf_img, 443, 229); // 0xE5
+    list_set(elf_img, 444, 72);  // 0x48
+    list_set(elf_img, 445, 49);  // 0x31
+    list_set(elf_img, 446, 192); // 0xC0
+    list_set(elf_img, 447, 201); // 0xC9
+    list_set(elf_img, 448, 195); // 0xC3
+
+    assert(is_elf(elf_img), "is_elf failed on constructed ELF image");
+    let elf = elf_parse(elf_img);
+    assert(elf.header.ei_class == 2, "ELF class must be 64-bit");
+    assert(elf_machine_name(elf.header.e_machine) == "x86_64", "ELF machine must be x86_64");
+    assert(elf.header.e_entry == 4198400, "ELF entry point must be 0x00401000");
+
+    let sec_text = elf_get_section(elf, ".text");
+    assert(sec_text.name == ".text", "Section .text not found");
+    assert(sec_text.sh_size == 16, "Section .text size mismatch");
+
+    println("[PASS] Test 2: ELF64 Parser, headers, segments, and section headers verified");
+
+    // =========================================================================
+    // Test 3: PE / COFF Windows Portable Executable Engine
+    // =========================================================================
+    let pe_img = list_new();
+    let mut_pe_i = 0;
+    while mut_pe_i < 600 {
+        list_push(pe_img, 0);
+        mut_pe_i = mut_pe_i + 1;
+    }
+
+    // DOS 'MZ' Header
+    list_set(pe_img, 0, 77); // 'M'
+    list_set(pe_img, 1, 90); // 'Z'
+    // e_lfanew = 128 (offset 60)
+    list_set(pe_img, 60, 128);
+
+    // PE Signature at 128: 'P', 'E', 0, 0
+    list_set(pe_img, 128, 80);
+    list_set(pe_img, 129, 69);
+    list_set(pe_img, 130, 0);
+    list_set(pe_img, 131, 0);
+
+    // COFF Header at 132:
+    // Machine = 0x8664 (AMD64)
+    list_set(pe_img, 132, 100);
+    list_set(pe_img, 133, 134);
+    // NumberOfSections = 2
+    list_set(pe_img, 134, 2);
+    // SizeOfOptionalHeader = 240
+    list_set(pe_img, 148, 240);
+    // Characteristics = 0x0022 (EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE)
+    list_set(pe_img, 150, 34);
+
+    // Optional Header at 152:
+    // Magic = 0x20B (PE32+)
+    list_set(pe_img, 152, 11);
+    list_set(pe_img, 153, 2);
+    // AddressOfEntryPoint = 0x1000
+    list_set(pe_img, 168, 0);
+    list_set(pe_img, 169, 16);
+    // Subsystem = 3 (Windows CUI / Console)
+    list_set(pe_img, 220, 3);
+    // NumberOfRvaAndSizes = 16
+    list_set(pe_img, 260, 16);
+
+    // Data Directory 0 (Export Table) at offset 152 + 112 = 264: RVA 0x2000, Size 64
+    list_set(pe_img, 264, 0);
+    list_set(pe_img, 265, 32); // 0x2000
+    list_set(pe_img, 268, 64);
+
+    // Section Header 0 (.text) at offset 152 + 240 = 392:
+    // Name = ".text\0\0\0"
+    list_set(pe_img, 392, 46);
+    list_set(pe_img, 393, 116);
+    list_set(pe_img, 394, 101);
+    list_set(pe_img, 395, 120);
+    list_set(pe_img, 396, 116);
+    // VirtualSize = 0x1000
+    list_set(pe_img, 400, 0);
+    list_set(pe_img, 401, 16);
+    // VirtualAddress = 0x1000
+    list_set(pe_img, 404, 0);
+    list_set(pe_img, 405, 16);
+    // SizeOfRawData = 512
+    list_set(pe_img, 408, 0);
+    list_set(pe_img, 409, 2);
+    // PointerToRawData = 512
+    list_set(pe_img, 412, 0);
+    list_set(pe_img, 413, 2);
+    // Characteristics = 0x60000020 (CODE | EXECUTE | READ)
+    list_set(pe_img, 428, 32);
+    list_set(pe_img, 431, 96);
+
+    assert(is_pe(pe_img), "is_pe failed on constructed PE image");
+    let pe = pe_parse(pe_img);
+    assert(pe_machine_name(pe.file_header.machine) == "x86_64", "PE machine must be x86_64");
+    assert(pe.opt_header.entry_point == 4096, "PE entry point must be 0x1000");
+    assert(pe_subsystem_name(pe.opt_header.subsystem) == "Windows CUI (Console)", "PE subsystem mismatch");
+
+    let pe_sec_text = pe_get_section(pe, ".text");
+    assert(pe_sec_text.name == ".text", "PE section .text missing");
+    assert(pe_sec_text.virtual_address == 4096, "PE section .text virtual address mismatch");
+
+    println("[PASS] Test 3: PE/COFF Windows PE32+ Parser, optional headers, and section table verified");
+
+    // =========================================================================
+    // Test 4: Mach-O 64-bit macOS / iOS Parser
+    // =========================================================================
+    let macho_img = list_new();
+    let mut_m_i = 0;
+    while mut_m_i < 400 {
+        list_push(macho_img, 0);
+        mut_m_i = mut_m_i + 1;
+    }
+
+    // Mach-O 64-bit Little-Endian Header at 0:
+    // Magic = 0xFEEDFACF (Little-Endian: CF FA ED FE)
+    list_set(macho_img, 0, 207);
+    list_set(macho_img, 1, 250);
+    list_set(macho_img, 2, 237);
+    list_set(macho_img, 3, 254);
+    // cputype = CPU_TYPE_ARM64 (0x0100000C)
+    list_set(macho_img, 4, 12);
+    list_set(macho_img, 7, 1);
+    // filetype = MH_EXECUTE (2)
+    list_set(macho_img, 12, 2);
+    // ncmds = 1
+    list_set(macho_img, 16, 1);
+    // sizeofcmds = 152
+    list_set(macho_img, 20, 152);
+
+    // Command 0 at offset 32: LC_SEGMENT_64 (0x19), cmdsize = 152 (72 + 80 for 1 section)
+    list_set(macho_img, 32, 25); // 0x19
+    list_set(macho_img, 36, 152);
+    // segname = "__TEXT\0" at 40
+    list_set(macho_img, 40, 95);
+    list_set(macho_img, 41, 95);
+    list_set(macho_img, 42, 84);
+    list_set(macho_img, 43, 69);
+    list_set(macho_img, 44, 88);
+    list_set(macho_img, 45, 84);
+    // vmaddr = 0x100000000
+    list_set(macho_img, 56, 0);
+    list_set(macho_img, 60, 1);
+    // nsects = 1 (offset 32 + 64 = 96)
+    list_set(macho_img, 96, 1);
+
+    // Section 0 at offset 32 + 72 = 104:
+    // sectname = "__text\0"
+    list_set(macho_img, 104, 95);
+    list_set(macho_img, 105, 95);
+    list_set(macho_img, 106, 116);
+    list_set(macho_img, 107, 101);
+    list_set(macho_img, 108, 120);
+    list_set(macho_img, 109, 116);
+    // segname = "__TEXT\0" at 120
+    list_set(macho_img, 120, 95);
+    list_set(macho_img, 121, 95);
+    list_set(macho_img, 122, 84);
+    list_set(macho_img, 123, 69);
+    list_set(macho_img, 124, 88);
+    list_set(macho_img, 125, 84);
+    // size = 64 at offset 104 + 40 = 144
+    list_set(macho_img, 144, 64);
+
+    assert(is_macho(macho_img), "is_macho failed on constructed Mach-O image");
+    let macho = macho_parse(macho_img);
+    assert(macho_cputype_name(macho.header.cputype) == "arm64", "Mach-O cputype must be arm64");
+    assert(macho_filetype_name(macho.header.filetype) == "EXECUTE", "Mach-O filetype must be EXECUTE");
+
+    let macho_text = macho_get_section(macho, "__TEXT", "__text");
+    assert(macho_text.name == "__text", "Mach-O __text section missing");
+    assert(macho_text.size == 64, "Mach-O __text section size mismatch");
+
+    println("[PASS] Test 4: Mach-O 64-bit ARM64 Parser, load commands, and segments verified");
+
+    // =========================================================================
+    // Test 5: High-Precision Symbol Demangler (Itanium C++, Rust, Roze)
+    // =========================================================================
+    let itanium_sym1 = "_ZN7Network6Socket4sendEPKci";
+    let demangled1 = demangle_symbol(itanium_sym1);
+    assert(demangled1 == "Network::Socket::send(const char*, int)",
+           "Itanium demangle mismatch 1: " + demangled1);
+
+    let itanium_sym2 = "_ZN3Foo3barEi";
+    let demangled2 = demangle_symbol(itanium_sym2);
+    assert(demangled2 == "Foo::bar(int)", "Itanium demangle mismatch 2: " + demangled2);
+
+    let itanium_sym3 = "_ZN4Math8multiplyEdd";
+    let demangled3 = demangle_symbol(itanium_sym3);
+    assert(demangled3 == "Math::multiply(double, double)", "Itanium demangle mismatch 3: " + demangled3);
+
+    let rust_sym = "_RNvCs1234_7mycrate3foo";
+    let demangled_rust = demangle_symbol(rust_sym);
+    assert(demangled_rust == "mycrate::foo", "Rust v0 demangle mismatch: " + demangled_rust);
+
+    let roze_sym = "_Roze_net_scanner_probe";
+    let demangled_roze = demangle_symbol(roze_sym);
+    assert(demangled_roze == "roze::net::scanner::probe", "Roze demangle mismatch: " + demangled_roze);
+
+    println("[PASS] Test 5: Symbol demangler verified on Itanium C++, Rust v0, and Roze namespaces");
+
+    // =========================================================================
+    // Test 6: x86_64 Disassembler Engine (Radare2 / Capstone Parity)
+    // =========================================================================
+    // Machine Code Sequence:
+    // 0x401000: 55                      push rbp
+    // 0x401001: 48 89 e5                mov rbp, rsp
+    // 0x401004: 48 83 ec 20             sub rsp, 0x20
+    // 0x401008: 48 31 c0                xor rax, rax
+    // 0x40100b: b8 2a 00 00 00          mov eax, 0x0000002a
+    // 0x401010: eb 02                   jmp 0x00401014
+    // 0x401012: 90                      nop
+    // 0x401013: 90                      nop
+    // 0x401014: 0f 05                   syscall
+    // 0x401016: c9                      leave
+    // 0x401017: c3                      ret
+    let x86_code = list_new();
+    list_push(x86_code, 85);             // 0x55 push rbp
+    list_push(x86_code, 72);             // 0x48
+    list_push(x86_code, 137);            // 0x89
+    list_push(x86_code, 229);            // 0xE5 mov rbp, rsp
+    list_push(x86_code, 72);             // 0x48
+    list_push(x86_code, 131);            // 0x83
+    list_push(x86_code, 236);            // 0xEC
+    list_push(x86_code, 32);             // 0x20 sub rsp, 0x20
+    list_push(x86_code, 72);             // 0x48
+    list_push(x86_code, 49);             // 0x31
+    list_push(x86_code, 192);            // 0xC0 xor rax, rax
+    list_push(x86_code, 184);            // 0xB8
+    list_push(x86_code, 42);             // 0x2A
+    list_push(x86_code, 0);              // 0x00
+    list_push(x86_code, 0);              // 0x00
+    list_push(x86_code, 0);              // 0x00 mov eax, 0x0000002a
+    list_push(x86_code, 235);            // 0xEB
+    list_push(x86_code, 2);              // 0x02 jmp +2
+    list_push(x86_code, 144);            // 0x90 nop
+    list_push(x86_code, 144);            // 0x90 nop
+    list_push(x86_code, 15);             // 0x0F
+    list_push(x86_code, 5);              // 0x05 syscall
+    list_push(x86_code, 201);            // 0xC9 leave
+    list_push(x86_code, 195);            // 0xC3 ret
+
+    let x86_ins = disassemble_x86_64(x86_code, 0, list_length(x86_code), 4198400);
+    assert(list_length(x86_ins) == 11, "x86_64 disassembled instruction count mismatch: " + int_to_str(list_length(x86_ins)));
+
+    let ins0: Instruction = list_get(x86_ins, 0);
+    assert(ins0.mnemonic == "push" && ins0.operands == "rbp", "ins0 mismatch: " + ins0.mnemonic);
+
+    let ins1: Instruction = list_get(x86_ins, 1);
+    assert(ins1.mnemonic == "mov" && ins1.operands == "rbp, rsp", "ins1 mismatch: " + ins1.operands);
+
+    let ins2: Instruction = list_get(x86_ins, 2);
+    assert(ins2.mnemonic == "sub" && ins2.operands == "rsp, 0x20", "ins2 mismatch: " + ins2.operands);
+
+    let ins3: Instruction = list_get(x86_ins, 3);
+    assert(ins3.mnemonic == "xor" && ins3.operands == "rax, rax", "ins3 mismatch: " + ins3.operands);
+
+    let ins4: Instruction = list_get(x86_ins, 4);
+    assert(ins4.mnemonic == "mov" && ins4.operands == "eax, 0x0000002a", "ins4 mismatch: " + ins4.operands);
+
+    let ins5: Instruction = list_get(x86_ins, 5);
+    assert(ins5.mnemonic == "jmp" && ins5.is_branch, "ins5 jmp mismatch");
+
+    let ins8: Instruction = list_get(x86_ins, 8);
+    assert(ins8.mnemonic == "syscall" && ins8.is_syscall, "ins8 syscall mismatch");
+
+    let ins10: Instruction = list_get(x86_ins, 10);
+    assert(ins10.mnemonic == "ret" && ins10.is_return, "ins10 ret mismatch");
+
+    println("[PASS] Test 6: x86_64 instruction decoding, registers, ModR/M, and control-flow flags verified");
+
+    // =========================================================================
+    // Test 7: ARM64 (AArch64) Disassembler Engine
+    // =========================================================================
+    // Little-Endian 32-bit Words:
+    // 0x00: A9BF7BFD -> stp x29, x30, [sp, #-16]! (FD 7B BF A9)
+    // 0x04: 910003FD -> mov x29, sp               (FD 03 00 91)
+    // 0x08: D2800540 -> movz x0, 0x002a           (40 05 80 D2)
+    // 0x0C: 52800041 -> movz w1, 0x0002           (41 00 80 52)
+    // 0x10: 0B010002 -> add w2, w0, w1            (02 00 01 0B)
+    // 0x14: 7100085F -> cmp w2, #2                (5F 08 00 71)
+    // 0x18: 54000040 -> b.eq 0x00000020           (40 00 00 54)
+    // 0x1C: D503201F -> nop                       (1F 20 03 D5)
+    // 0x20: D4000001 -> svc #0                    (01 00 00 D4)
+    // 0x24: A8C17BFD -> ldp x29, x30, [sp], #16   (FD 7B C1 A8)
+    // 0x28: D65F03C0 -> ret                       (C0 03 5F D6)
+    let arm_code = list_new();
+    // 0x00: stp x29, x30, [sp, #-16]!
+    list_push(arm_code, 253); list_push(arm_code, 123); list_push(arm_code, 191); list_push(arm_code, 169);
+    // 0x04: add x29, sp, #0
+    list_push(arm_code, 253); list_push(arm_code, 3); list_push(arm_code, 0); list_push(arm_code, 145);
+    // 0x08: movz x0, 0x002a
+    list_push(arm_code, 64); list_push(arm_code, 5); list_push(arm_code, 128); list_push(arm_code, 210);
+    // 0x0C: movz w1, 0x0002
+    list_push(arm_code, 65); list_push(arm_code, 0); list_push(arm_code, 128); list_push(arm_code, 82);
+    // 0x10: add w2, w0, w1
+    list_push(arm_code, 2); list_push(arm_code, 0); list_push(arm_code, 1); list_push(arm_code, 11);
+    // 0x14: cmp w2, #2
+    list_push(arm_code, 95); list_push(arm_code, 8); list_push(arm_code, 0); list_push(arm_code, 113);
+    // 0x18: b.eq +8 (target 0x20)
+    list_push(arm_code, 64); list_push(arm_code, 0); list_push(arm_code, 0); list_push(arm_code, 84);
+    // 0x1C: nop
+    list_push(arm_code, 31); list_push(arm_code, 32); list_push(arm_code, 3); list_push(arm_code, 213);
+    // 0x20: svc #0
+    list_push(arm_code, 1); list_push(arm_code, 0); list_push(arm_code, 0); list_push(arm_code, 212);
+    // 0x24: ldp x29, x30, [sp], #16
+    list_push(arm_code, 253); list_push(arm_code, 123); list_push(arm_code, 193); list_push(arm_code, 168);
+    // 0x28: ret
+    list_push(arm_code, 192); list_push(arm_code, 3); list_push(arm_code, 95); list_push(arm_code, 214);
+
+    let arm_ins = disassemble_arm64(arm_code, 0, list_length(arm_code), 0);
+    assert(list_length(arm_ins) == 11, "arm64 instruction count mismatch: " + int_to_str(list_length(arm_ins)));
+
+    let a0: Instruction = list_get(arm_ins, 0);
+    assert(a0.mnemonic == "stp" && a0.operands == "x29, x30, [sp, #-16]!", "a0 stp mismatch: " + a0.operands);
+
+    let a2: Instruction = list_get(arm_ins, 2);
+    assert(a2.mnemonic == "movz" && a2.operands == "x0, 0x002a", "a2 movz mismatch: " + a2.operands);
+
+    let a4: Instruction = list_get(arm_ins, 4);
+    assert(a4.mnemonic == "add" && a4.operands == "w2, w0, w1", "a4 add mismatch: " + a4.operands);
+
+    let a5: Instruction = list_get(arm_ins, 5);
+    assert(a5.mnemonic == "cmp" && a5.operands == "w2, #2", "a5 cmp mismatch: " + a5.operands);
+
+    let a6: Instruction = list_get(arm_ins, 6);
+    assert(a6.mnemonic == "b.eq" && a6.is_branch, "a6 b.eq mismatch: " + a6.mnemonic);
+
+    let a7: Instruction = list_get(arm_ins, 7);
+    assert(a7.mnemonic == "nop", "a7 nop mismatch");
+
+    let a8: Instruction = list_get(arm_ins, 8);
+    assert(a8.mnemonic == "svc" && a8.is_syscall, "a8 svc mismatch");
+
+    let a9: Instruction = list_get(arm_ins, 9);
+    assert(a9.mnemonic == "ldp" && a9.operands == "x29, x30, [sp], #16", "a9 ldp mismatch: " + a9.operands);
+
+    let a10: Instruction = list_get(arm_ins, 10);
+    assert(a10.mnemonic == "ret" && a10.is_return, "a10 ret mismatch");
+
+    println("[PASS] Test 7: ARM64 instruction decoder, registers, branches, load/store pairs verified");
+
+    // =========================================================================
+    // Test 8: Unified BinaryFile API & Formatted Disassembly
+    // =========================================================================
+    let bf_elf = binary_parse(elf_img);
+    assert(bf_elf.format == "ELF", "Unified format should be ELF");
+    assert(bf_elf.arch == "x86_64", "Unified arch should be x86_64");
+    assert(bf_elf.is_64bit, "Unified is_64bit must be true");
+
+    let table_output = disassembly_to_string(x86_ins);
+    assert(string_length(table_output) > 100, "Disassembly table output empty");
+
+    let bf_summary = binary_file_summary(bf_elf);
+    assert(string_length(bf_summary) > 50, "Binary summary empty");
+
+    println("[PASS] Test 8: Unified BinaryFile auto-detection, summaries, and table formatter verified");
+
+    println("=================================================================");
+    println("✅ ALL 8 BINARY ANALYSIS & DISASSEMBLER TEST SUITES PASSED! 🎉");
+    println("[CI-PASS] ALL BINARY ANALYSIS & DISASSEMBLER TESTS PASSED (M3-T05)");
+    println("=================================================================");
+}

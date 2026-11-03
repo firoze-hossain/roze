@@ -359,10 +359,10 @@ s1_rows = [
         "Reverse Engineering, Malware Analysis", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
-        ("M3-T06", 8), ("Month 3", 5), ("Sprint 5 (W09-W10)", 8), "Exploit Research", "Memory Forensics & Shellcode Harness",
-        "Cross-platform process memory inspection (/proc/<pid>/mem & VirtualAllocEx), ROP gadget scanner, memory pattern searcher, and shellcode execution sandbox.",
-        "Standard penetration testing exploit harness in Roze.",
-        "Cybersecurity, Vulnerability Research", "7 Days", ("Medium", 14), ("Planned", 12)
+        ("M3-T06", 8), ("Month 3", 5), ("Sprint 5 (W09-W10)", 8), "Memory Forensics", "Memory Forensics & Defensive Analysis Harness",
+        "Cross-platform process memory inspection (/proc/<pid>/maps & VirtualQueryEx), memory dump analysis, wildcard byte pattern search, Shannon entropy analysis, PE/ELF structure recognition, defensive control-flow anomaly detection, and sandboxed CPU emulator.",
+        "Defensive digital forensics & incident response analysis engine in pure Roze.",
+        "Cybersecurity, Incident Response, Digital Forensics", "7 Days", ("Medium", 14), ("Completed", 16)
     ],
     [
         ("M3-T07", 8), ("Month 3", 5), ("Sprint 6 (W11-W12)", 8), "Enterprise Web Core", "Asynchronous HTTP/1.1, HTTP/2 & HTTP/3",

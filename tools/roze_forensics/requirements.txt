@@ -1,0 +1,13 @@
+# Core requirements for Roze Memory Forensics & Defensive Analysis Harness
+# The toolkit is fully functional with Python 3.8+ standard library alone.
+# The following optional libraries enhance performance and capabilities if available:
+
+# Optional YARA rule compiler and scanning engine
+yara-python>=4.3.0; platform_system != "Windows" or python_version < "3.13"
+
+# Optional multi-architecture disassembly engine
+capstone>=5.0.0
+
+# Optional test runner
+pytest>=7.0.0
+pytest-cov>=4.0.0

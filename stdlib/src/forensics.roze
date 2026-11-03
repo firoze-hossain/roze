@@ -1,0 +1,1036 @@
+// Roze Standard Library: Memory Forensics & Defensive Analysis Harness (M3-T06)
+// Module: roze::forensics
+// Production-quality defensive memory inspection, memory dump analysis, byte pattern matching,
+// Shannon entropy analysis, in-memory PE/ELF recognition, defensive control-flow anomaly detection,
+// and pure software sandboxed CPU emulation with zero host execution.
+
+// ============================================================================
+// Section 1: Process Memory & Mapping Abstraction
+// ============================================================================
+
+class MemoryRegion {
+    start_addr: int,
+    end_addr: int,
+    perms: string,
+    offset: int,
+    pathname: string,
+    is_r: bool,
+    is_w: bool,
+    is_x: bool,
+    is_anon: bool,
+}
+
+func memory_region_new(start_addr: int, end_addr: int, perms: string, offset: int, pathname: string) -> MemoryRegion {
+    let r = false;
+    let w = false;
+    let x = false;
+    let len = string_length(perms);
+    if len > 0 && string_char_at(perms, 0) == 114 { r = true; }
+    if len > 1 && string_char_at(perms, 1) == 119 { w = true; }
+    if len > 2 && string_char_at(perms, 2) == 120 { x = true; }
+    
+    let is_anon = false;
+    let path_len = string_length(pathname);
+    if path_len == 0 {
+        is_anon = true;
+    } else {
+        let first_ch = string_char_at(pathname, 0);
+        if first_ch == 91 { // '['
+            is_anon = true;
+        }
+    }
+    
+    return new MemoryRegion(start_addr, end_addr, perms, offset, pathname, r, w, x, is_anon);
+}
+
+func memory_region_size(r: MemoryRegion) -> int {
+    return r.end_addr - r.start_addr;
+}
+
+func memory_region_is_rwx(r: MemoryRegion) -> bool {
+    return r.is_r && r.is_w && r.is_x;
+}
+
+func memory_region_is_executable(r: MemoryRegion) -> bool {
+    return r.is_x;
+}
+
+// Windows Memory Protection Constants
+func page_noaccess() -> int { return 1; }
+func page_readonly() -> int { return 2; }
+func page_readwrite() -> int { return 4; }
+func page_writecopy() -> int { return 8; }
+func page_execute() -> int { return 16; }
+func page_execute_read() -> int { return 32; }
+func page_execute_readwrite() -> int { return 64; }
+func page_execute_writecopy() -> int { return 128; }
+
+func page_protection_to_string(prot: int) -> string {
+    if prot == 1 { return "---p"; }
+    if prot == 2 { return "r--p"; }
+    if prot == 4 { return "rw-p"; }
+    if prot == 8 { return "rw-p"; }
+    if prot == 16 { return "--xp"; }
+    if prot == 32 { return "r-xp"; }
+    if prot == 64 { return "rwxp"; }
+    if prot == 128 { return "rwxp"; }
+    return "???p";
+}
+
+func parse_hex_digit(c: int) -> int {
+    if c >= 48 && c <= 57 { return c - 48; }
+    if c >= 97 && c <= 102 { return c - 87; }
+    if c >= 65 && c <= 70 { return c - 55; }
+    return -1;
+}
+
+func ascii_char(code: int) -> string {
+    if code >= 97 && code <= 122 {
+        if code == 97 { return "a"; }
+        if code == 98 { return "b"; }
+        if code == 99 { return "c"; }
+        if code == 100 { return "d"; }
+        if code == 101 { return "e"; }
+        if code == 102 { return "f"; }
+        if code == 103 { return "g"; }
+        if code == 104 { return "h"; }
+        if code == 105 { return "i"; }
+        if code == 106 { return "j"; }
+        if code == 107 { return "k"; }
+        if code == 108 { return "l"; }
+        if code == 109 { return "m"; }
+        if code == 110 { return "n"; }
+        if code == 111 { return "o"; }
+        if code == 112 { return "p"; }
+        if code == 113 { return "q"; }
+        if code == 114 { return "r"; }
+        if code == 115 { return "s"; }
+        if code == 116 { return "t"; }
+        if code == 117 { return "u"; }
+        if code == 118 { return "v"; }
+        if code == 119 { return "w"; }
+        if code == 120 { return "x"; }
+        if code == 121 { return "y"; }
+        return "z";
+    }
+    if code >= 65 && code <= 90 {
+        if code == 65 { return "A"; }
+        if code == 66 { return "B"; }
+        if code == 67 { return "C"; }
+        if code == 68 { return "D"; }
+        if code == 69 { return "E"; }
+        if code == 70 { return "F"; }
+        if code == 71 { return "G"; }
+        if code == 72 { return "H"; }
+        if code == 73 { return "I"; }
+        if code == 74 { return "J"; }
+        if code == 75 { return "K"; }
+        if code == 76 { return "L"; }
+        if code == 77 { return "M"; }
+        if code == 78 { return "N"; }
+        if code == 79 { return "O"; }
+        if code == 80 { return "P"; }
+        if code == 81 { return "Q"; }
+        if code == 82 { return "R"; }
+        if code == 83 { return "S"; }
+        if code == 84 { return "T"; }
+        if code == 85 { return "U"; }
+        if code == 86 { return "V"; }
+        if code == 87 { return "W"; }
+        if code == 88 { return "X"; }
+        if code == 89 { return "Y"; }
+        return "Z";
+    }
+    if code >= 48 && code <= 57 {
+        if code == 48 { return "0"; }
+        if code == 49 { return "1"; }
+        if code == 50 { return "2"; }
+        if code == 51 { return "3"; }
+        if code == 52 { return "4"; }
+        if code == 53 { return "5"; }
+        if code == 54 { return "6"; }
+        if code == 55 { return "7"; }
+        if code == 56 { return "8"; }
+        return "9";
+    }
+    if code == 46 { return "."; }
+    if code == 95 { return "_"; }
+    if code == 58 { return ":"; }
+    if code == 47 { return "/"; }
+    if code == 45 { return "-"; }
+    if code == 32 { return " "; }
+    if code == 91 { return "["; }
+    if code == 93 { return "]"; }
+    return "?";
+}
+
+func sub_str(s: string, start: int, end: int) -> string {
+    let res = "";
+    let mut_i = start;
+    while mut_i < end {
+        let ch = string_char_at(s, mut_i);
+        res = res + ascii_char(ch);
+        mut_i = mut_i + 1;
+    }
+    return res;
+}
+
+func str_contains(haystack: string, needle: string) -> bool {
+    let h_len = string_length(haystack);
+    let n_len = string_length(needle);
+    if n_len == 0 { return true; }
+    if h_len < n_len { return false; }
+    let max_idx = h_len - n_len;
+    let mut_i = 0;
+    while mut_i <= max_idx {
+        let mut_match = true;
+        let mut_j = 0;
+        while mut_j < n_len && mut_match {
+            let c_h = string_char_at(haystack, mut_i + mut_j);
+            let c_n = string_char_at(needle, mut_j);
+            if c_h != c_n {
+                mut_match = false;
+            }
+            mut_j = mut_j + 1;
+        }
+        if mut_match {
+            return true;
+        }
+        mut_i = mut_i + 1;
+    }
+    return false;
+}
+
+// Parses /proc/<pid>/maps line into a MemoryRegion
+func parse_proc_maps_line(line: string) -> MemoryRegion {
+    let len = string_length(line);
+    let mut_pos = 0;
+    
+    // 1. start_addr
+    let mut_start_addr = 0;
+    let mut_done_start = false;
+    while mut_pos < len && !mut_done_start {
+        let ch = string_char_at(line, mut_pos);
+        if ch == 45 { // '-'
+            mut_done_start = true;
+        } else {
+            let d = parse_hex_digit(ch);
+            if d >= 0 {
+                mut_start_addr = (mut_start_addr * 16) + d;
+            }
+        }
+        mut_pos = mut_pos + 1;
+    }
+    
+    // 2. end_addr
+    let mut_end_addr = 0;
+    let mut_done_end = false;
+    while mut_pos < len && !mut_done_end {
+        let ch = string_char_at(line, mut_pos);
+        if ch == 32 { // ' '
+            mut_done_end = true;
+        } else {
+            let d = parse_hex_digit(ch);
+            if d >= 0 {
+                mut_end_addr = (mut_end_addr * 16) + d;
+            }
+        }
+        mut_pos = mut_pos + 1;
+    }
+    
+    // 3. permissions (e.g. "r-xp")
+    let mut_perms = "";
+    let mut_done_perms = false;
+    while mut_pos < len && !mut_done_perms {
+        let ch = string_char_at(line, mut_pos);
+        if ch == 32 {
+            mut_done_perms = true;
+        } else {
+            if ch == 114 { mut_perms = mut_perms + "r"; }
+            else if ch == 119 { mut_perms = mut_perms + "w"; }
+            else if ch == 120 { mut_perms = mut_perms + "x"; }
+            else if ch == 115 { mut_perms = mut_perms + "s"; }
+            else if ch == 112 { mut_perms = mut_perms + "p"; }
+            else if ch == 45 { mut_perms = mut_perms + "-"; }
+        }
+        mut_pos = mut_pos + 1;
+    }
+    
+    // 4. offset
+    let mut_offset = 0;
+    let mut_done_off = false;
+    while mut_pos < len && !mut_done_off {
+        let ch = string_char_at(line, mut_pos);
+        if ch == 32 {
+            mut_done_off = true;
+        } else {
+            let d = parse_hex_digit(ch);
+            if d >= 0 {
+                mut_offset = (mut_offset * 16) + d;
+            }
+        }
+        mut_pos = mut_pos + 1;
+    }
+    
+    // Skip device and inode tokens
+    let mut_spaces_seen = 0;
+    let mut_done_skip = false;
+    while mut_pos < len && !mut_done_skip {
+        let ch = string_char_at(line, mut_pos);
+        if ch == 32 {
+            if mut_pos + 1 < len && string_char_at(line, mut_pos + 1) != 32 {
+                mut_spaces_seen = mut_spaces_seen + 1;
+                if mut_spaces_seen >= 2 {
+                    mut_done_skip = true;
+                }
+            }
+        }
+        mut_pos = mut_pos + 1;
+    }
+    
+    // Skip leading spaces before pathname
+    while mut_pos < len && string_char_at(line, mut_pos) == 32 {
+        mut_pos = mut_pos + 1;
+    }
+    
+    let pathname = sub_str(line, mut_pos, len);
+    return memory_region_new(mut_start_addr, mut_end_addr, mut_perms, mut_offset, pathname);
+}
+
+// ============================================================================
+// Section 2: Memory Pattern & Wildcard Search Engine
+// ============================================================================
+
+// Exact byte search: returns offset of needle in haystack, or -1 if not found
+func pattern_find(haystack: List, needle: List) -> int {
+    let h_len = list_length(haystack);
+    let n_len = list_length(needle);
+    if n_len == 0 { return 0; }
+    if h_len < n_len { return -1; }
+    
+    let max_idx = h_len - n_len;
+    let mut_i = 0;
+    while mut_i <= max_idx {
+        let mut_match = true;
+        let mut_j = 0;
+        while mut_j < n_len && mut_match {
+            let b_h: int = list_get(haystack, mut_i + mut_j);
+            let b_n: int = list_get(needle, mut_j);
+            if b_h != b_n {
+                mut_match = false;
+            }
+            mut_j = mut_j + 1;
+        }
+        if mut_match {
+            return mut_i;
+        }
+        mut_i = mut_i + 1;
+    }
+    return -1;
+}
+
+// Wildcard byte search: mask contains 1 for exact match, 0 for wildcard (any byte)
+// Returns List of matching int offsets
+func pattern_find_wildcard(haystack: List, needle: List, mask: List) -> List {
+    let results = list_new();
+    let h_len = list_length(haystack);
+    let n_len = list_length(needle);
+    if n_len == 0 || h_len < n_len {
+        return results;
+    }
+    
+    let max_idx = h_len - n_len;
+    let mut_i = 0;
+    while mut_i <= max_idx {
+        let mut_match = true;
+        let mut_j = 0;
+        while mut_j < n_len && mut_match {
+            let m_val: int = list_get(mask, mut_j);
+            if m_val == 1 {
+                let b_h: int = list_get(haystack, mut_i + mut_j);
+                let b_n: int = list_get(needle, mut_j);
+                if b_h != b_n {
+                    mut_match = false;
+                }
+            }
+            mut_j = mut_j + 1;
+        }
+        if mut_match {
+            list_push(results, mut_i);
+        }
+        mut_i = mut_i + 1;
+    }
+    return results;
+}
+
+// Parses hex string with wildcards into bytes list (wildcards become 0)
+func parse_hex_pattern_bytes(pattern_hex: string) -> List {
+    let res = list_new();
+    let len = string_length(pattern_hex);
+    let mut_pos = 0;
+    while mut_pos < len {
+        while mut_pos < len && string_char_at(pattern_hex, mut_pos) == 32 {
+            mut_pos = mut_pos + 1;
+        }
+        if mut_pos < len {
+            let ch0 = string_char_at(pattern_hex, mut_pos);
+            if ch0 == 63 { // '?'
+                list_push(res, 0);
+                mut_pos = mut_pos + 1;
+                if mut_pos < len && string_char_at(pattern_hex, mut_pos) == 63 {
+                    mut_pos = mut_pos + 1;
+                }
+            } else {
+                let d0 = parse_hex_digit(ch0);
+                let d1 = 0;
+                mut_pos = mut_pos + 1;
+                if mut_pos < len && string_char_at(pattern_hex, mut_pos) != 32 {
+                    d1 = parse_hex_digit(string_char_at(pattern_hex, mut_pos));
+                    mut_pos = mut_pos + 1;
+                }
+                list_push(res, (d0 * 16) + d1);
+            }
+        }
+    }
+    return res;
+}
+
+// Parses hex string with wildcards into mask list (1 = exact, 0 = wildcard)
+func parse_hex_pattern_mask(pattern_hex: string) -> List {
+    let res = list_new();
+    let len = string_length(pattern_hex);
+    let mut_pos = 0;
+    while mut_pos < len {
+        while mut_pos < len && string_char_at(pattern_hex, mut_pos) == 32 {
+            mut_pos = mut_pos + 1;
+        }
+        if mut_pos < len {
+            let ch0 = string_char_at(pattern_hex, mut_pos);
+            if ch0 == 63 { // '?'
+                list_push(res, 0);
+                mut_pos = mut_pos + 1;
+                if mut_pos < len && string_char_at(pattern_hex, mut_pos) == 63 {
+                    mut_pos = mut_pos + 1;
+                }
+            } else {
+                list_push(res, 1);
+                mut_pos = mut_pos + 1;
+                if mut_pos < len && string_char_at(pattern_hex, mut_pos) != 32 {
+                    mut_pos = mut_pos + 1;
+                }
+            }
+        }
+    }
+    return res;
+}
+
+// ============================================================================
+// Section 3: Shannon Entropy Analysis
+// ============================================================================
+
+// Computes Shannon entropy of buffer scaled by 1000 (e.g. 7.95 bits -> 7950)
+// Uses integer approximation of -p * log2(p)
+func calculate_entropy_scaled(buffer: List, start: int, len: int) -> int {
+    if len <= 0 { return 0; }
+    
+    // Frequency count for all 256 byte values
+    let freqs = list_new();
+    let mut_i = 0;
+    while mut_i < 256 {
+        list_push(freqs, 0);
+        mut_i = mut_i + 1;
+    }
+    
+    let mut_idx = 0;
+    while mut_idx < len {
+        let b: int = list_get(buffer, start + mut_idx);
+        let b_clamped = bit_and(b, 255);
+        let curr_cnt: int = list_get(freqs, b_clamped);
+        list_set(freqs, b_clamped, curr_cnt + 1);
+        mut_idx = mut_idx + 1;
+    }
+    
+    // Shannon entropy: H = sum((count/len) * log2(len/count))
+    // Approximation: count * (log2(len) - log2(count)) / len
+    let mut_entropy_sum = 0;
+    let mut_c = 0;
+    while mut_c < 256 {
+        let cnt: int = list_get(freqs, mut_c);
+        if cnt > 0 {
+            // Compute approx log2(len) - log2(cnt) using bit length and fraction
+            // len / cnt ratio
+            let ratio_scaled = (len * 1000) / cnt;
+            let mut_log_approx = 0;
+            // log2(ratio) approx in fixed-point * 1000
+            if ratio_scaled >= 256000 { mut_log_approx = 8000; }
+            else if ratio_scaled >= 128000 { mut_log_approx = 7000; }
+            else if ratio_scaled >= 64000 { mut_log_approx = 6000; }
+            else if ratio_scaled >= 32000 { mut_log_approx = 5000; }
+            else if ratio_scaled >= 16000 { mut_log_approx = 4000; }
+            else if ratio_scaled >= 8000 { mut_log_approx = 3000; }
+            else if ratio_scaled >= 4000 { mut_log_approx = 2000; }
+            else if ratio_scaled >= 2000 { mut_log_approx = 1000; }
+            else if ratio_scaled >= 1414 { mut_log_approx = 500; }
+            
+            mut_entropy_sum = mut_entropy_sum + ((cnt * mut_log_approx) / len);
+        }
+        mut_c = mut_c + 1;
+    }
+    
+    return mut_entropy_sum;
+}
+
+func is_high_entropy_block(buffer: List, start: int, len: int, threshold_scaled: int) -> bool {
+    let ent = calculate_entropy_scaled(buffer, start, len);
+    return ent >= threshold_scaled;
+}
+
+// ============================================================================
+// Section 4: In-Memory Binary Recognition
+// ============================================================================
+
+class InMemElf {
+    is_64bit: bool,
+    entry_point: int,
+    machine: int,
+    ph_offset: int,
+}
+
+class InMemPe {
+    is_64bit: bool,
+    entry_point: int,
+    image_base: int,
+    num_sections: int,
+}
+
+func detect_binary_type(buffer: List, offset: int) -> string {
+    let buf_len = list_length(buffer);
+    if buf_len < offset + 4 { return "UNKNOWN"; }
+    
+    let b0: int = list_get(buffer, offset);
+    let b1: int = list_get(buffer, offset + 1);
+    let b2: int = list_get(buffer, offset + 2);
+    let b3: int = list_get(buffer, offset + 3);
+    
+    // ELF: 0x7F 'E' 'L' 'F'
+    if b0 == 127 && b1 == 69 && b2 == 76 && b3 == 70 {
+        return "ELF";
+    }
+    
+    // PE: 'M' 'Z' (0x4D 0x5A)
+    if b0 == 77 && b1 == 90 {
+        return "PE";
+    }
+    
+    return "RAW";
+}
+
+func parse_in_memory_elf_header(buffer: List, offset: int) -> InMemElf {
+    let is_64 = false;
+    let b4: int = list_get(buffer, offset + 4);
+    if b4 == 2 { is_64 = true; }
+    
+    let m0: int = list_get(buffer, offset + 18);
+    let m1: int = list_get(buffer, offset + 19);
+    let machine = m0 + (m1 * 256);
+    
+    let e0: int = list_get(buffer, offset + 24);
+    let e1: int = list_get(buffer, offset + 25);
+    let e2: int = list_get(buffer, offset + 26);
+    let e3: int = list_get(buffer, offset + 27);
+    let entry = e0 + (e1 * 256) + (e2 * 65536) + (e3 * 16777216);
+    
+    let p0: int = list_get(buffer, offset + 32);
+    let p1: int = list_get(buffer, offset + 33);
+    let ph_off = p0 + (p1 * 256);
+    
+    return new InMemElf(is_64, entry, machine, ph_off);
+}
+
+func parse_in_memory_pe_header(buffer: List, offset: int) -> InMemPe {
+    // Read e_lfanew at offset + 0x3C
+    let l0: int = list_get(buffer, offset + 60);
+    let l1: int = list_get(buffer, offset + 61);
+    let pe_off = offset + l0 + (l1 * 256);
+    
+    // Number of sections at pe_off + 6
+    let s0: int = list_get(buffer, pe_off + 6);
+    let s1: int = list_get(buffer, pe_off + 7);
+    let num_sec = s0 + (s1 * 256);
+    
+    // Magic at pe_off + 24
+    let m0: int = list_get(buffer, pe_off + 24);
+    let is_64 = (m0 == 11); // 0x20B (11 is low byte of 0x020B)
+    
+    // Entry point at pe_off + 40
+    let ep0: int = list_get(buffer, pe_off + 40);
+    let ep1: int = list_get(buffer, pe_off + 41);
+    let ep = ep0 + (ep1 * 256);
+    
+    // Image base at pe_off + 48
+    let ib0: int = list_get(buffer, pe_off + 48);
+    let ib1: int = list_get(buffer, pe_off + 49);
+    let ib = ib0 + (ib1 * 256);
+    
+    return new InMemPe(is_64, ep, ib, num_sec);
+}
+
+// ============================================================================
+// Section 5: Defensive Memory Auditing & Anomaly Detection
+// ============================================================================
+
+class MemoryAnomaly {
+    start_addr: int,
+    size: int,
+    anomaly_type: string,
+    severity: string,
+    description: string,
+}
+
+func memory_anomaly_new(start_addr: int, size: int, anomaly_type: string, severity: string, description: string) -> MemoryAnomaly {
+    return new MemoryAnomaly(start_addr, size, anomaly_type, severity, description);
+}
+
+// Audits memory regions and returns List of MemoryAnomaly
+func audit_memory_regions(regions: List) -> List {
+    let anomalies = list_new();
+    let count = list_length(regions);
+    let mut_i = 0;
+    while mut_i < count {
+        let r: MemoryRegion = list_get(regions, mut_i);
+        
+        // 1. RWX violation
+        if memory_region_is_rwx(r) {
+            let a = memory_anomaly_new(
+                r.start_addr,
+                memory_region_size(r),
+                "RWX_PERMISSION_VIOLATION",
+                "CRITICAL",
+                "Memory region is simultaneously writable and executable (W+X violation)."
+            );
+            list_push(anomalies, a);
+        }
+        
+        // 2. Executable Stack
+        if r.is_x && str_contains(r.pathname, "[stack") {
+            let a = memory_anomaly_new(
+                r.start_addr,
+                memory_region_size(r),
+                "EXECUTABLE_STACK_DETECTED",
+                "CRITICAL",
+                "Call stack memory is marked executable."
+            );
+            list_push(anomalies, a);
+        }
+        
+        // 3. Executable Heap
+        if r.is_x && str_contains(r.pathname, "[heap]") {
+            let a = memory_anomaly_new(
+                r.start_addr,
+                memory_region_size(r),
+                "EXECUTABLE_HEAP_DETECTED",
+                "HIGH",
+                "Process heap memory is marked executable."
+            );
+            list_push(anomalies, a);
+        }
+        
+        // 4. Unbacked Executable Memory
+        if r.is_x && r.is_anon && !str_contains(r.pathname, "[") {
+            let a = memory_anomaly_new(
+                r.start_addr,
+                memory_region_size(r),
+                "UNBACKED_EXECUTABLE_MEMORY",
+                "HIGH",
+                "Executable memory region is not backed by any file on disk."
+            );
+            list_push(anomalies, a);
+        }
+        
+        mut_i = mut_i + 1;
+    }
+    return anomalies;
+}
+
+// ============================================================================
+// Section 6: Defensive Control-Flow Anomaly Detection
+// ============================================================================
+
+// Analyzes machine opcodes to detect control flow anomalies (stack pivots, clusters)
+func audit_control_flow(opcodes: List, base_addr: int) -> List {
+    let anomalies = list_new();
+    let len = list_length(opcodes);
+    if len < 2 { return anomalies; }
+    
+    let mut_ret_count = 0;
+    let mut_i = 0;
+    while mut_i < len {
+        let b: int = list_get(opcodes, mut_i);
+        
+        // Check for return (0xC3)
+        if b == 195 { // 0xC3
+            mut_ret_count = mut_ret_count + 1;
+            
+            // Check preceding opcode for stack manipulation:
+            // 0x5C is 'pop rsp'
+            if mut_i > 0 {
+                let prev_b: int = list_get(opcodes, mut_i - 1);
+                if prev_b == 92 { // 0x5C
+                    let a = memory_anomaly_new(
+                        base_addr + mut_i - 1,
+                        2,
+                        "STACK_PIVOT_SEQUENCE_DETECTED",
+                        "HIGH",
+                        "Stack pointer altered immediately before indirect return (pop rsp; ret)."
+                    );
+                    list_push(anomalies, a);
+                }
+            }
+        }
+        
+        mut_i = mut_i + 1;
+    }
+    
+    // Check for concentrated return cluster (>30% of bytes are returns in sample >= 10 bytes)
+    if len >= 10 && (mut_ret_count * 100 / len) >= 30 {
+        let a = memory_anomaly_new(
+            base_addr,
+            len,
+            "CONCENTRATED_RETURN_CLUSTER",
+            "MEDIUM",
+            "Abnormally dense cluster of isolated return opcodes without standard function prologues."
+        );
+        list_push(anomalies, a);
+    }
+    
+    return anomalies;
+}
+
+// ============================================================================
+// Section 7: Sandboxed CPU State Emulator Harness
+// ============================================================================
+
+class CpuState {
+    rax: int,
+    rbx: int,
+    rcx: int,
+    rdx: int,
+    rsi: int,
+    rdi: int,
+    rbp: int,
+    rsp: int,
+    rip: int,
+    rflags: int,
+}
+
+func cpu_state_new() -> CpuState {
+    return new CpuState(0, 0, 0, 0, 0, 0, 0, 0, 0, 514);
+}
+
+class SandboxHarness {
+    cpu: CpuState,
+    memory: List,
+    mem_base: int,
+    mem_size: int,
+    steps_executed: int,
+    max_steps: int,
+    halted: bool,
+    halt_reason: string,
+}
+
+func sandbox_new(mem_size: int, base_addr: int) -> SandboxHarness {
+    let cpu = cpu_state_new();
+    cpu.rip = base_addr;
+    cpu.rsp = base_addr + mem_size - 64;
+    cpu.rbp = cpu.rsp;
+    
+    let mem = list_new();
+    let mut_i = 0;
+    while mut_i < mem_size {
+        list_push(mem, 0);
+        mut_i = mut_i + 1;
+    }
+    
+    return new SandboxHarness(cpu, mem, base_addr, mem_size, 0, 1000, false, "");
+}
+
+func sandbox_load_bytes(harness: SandboxHarness, data: List, load_addr: int) {
+    let data_len = list_length(data);
+    let mut_i = 0;
+    while mut_i < data_len {
+        let target = load_addr + mut_i;
+        if target >= harness.mem_base && target < harness.mem_base + harness.mem_size {
+            let offset = target - harness.mem_base;
+            let b: int = list_get(data, mut_i);
+            list_set(harness.memory, offset, b);
+        }
+        mut_i = mut_i + 1;
+    }
+}
+
+func sandbox_read_byte(harness: SandboxHarness, addr: int) -> int {
+    if addr < harness.mem_base || addr >= harness.mem_base + harness.mem_size {
+        harness.halted = true;
+        harness.halt_reason = "Memory read out of bounds";
+        return 0;
+    }
+    return list_get(harness.memory, addr - harness.mem_base);
+}
+
+func sandbox_write_byte(harness: SandboxHarness, addr: int, val: int) {
+    if addr < harness.mem_base || addr >= harness.mem_base + harness.mem_size {
+        harness.halted = true;
+        harness.halt_reason = "Memory write out of bounds";
+        return;
+    }
+    list_set(harness.memory, addr - harness.mem_base, bit_and(val, 255));
+}
+
+func sandbox_push(harness: SandboxHarness, val: int) {
+    harness.cpu.rsp = harness.cpu.rsp - 8;
+    let mut_temp = val;
+    let mut_i = 0;
+    while mut_i < 8 {
+        let b = bit_and(mut_temp, 255);
+        sandbox_write_byte(harness, harness.cpu.rsp + mut_i, b);
+        mut_temp = mut_temp / 256;
+        mut_i = mut_i + 1;
+    }
+}
+
+func sandbox_pop(harness: SandboxHarness) -> int {
+    let mut_val = 0;
+    let mut_i = 0;
+    while mut_i < 4 { // Read 32-bit low word for dual backend compatibility
+        let b = sandbox_read_byte(harness, harness.cpu.rsp + mut_i);
+        let shift = mut_i * 8;
+        let mut_mult = 1;
+        let mut_s = 0;
+        while mut_s < shift {
+            mut_mult = mut_mult * 2;
+            mut_s = mut_s + 1;
+        }
+        mut_val = mut_val + (b * mut_mult);
+        mut_i = mut_i + 1;
+    }
+    harness.cpu.rsp = harness.cpu.rsp + 8;
+    return mut_val;
+}
+
+func sandbox_step(harness: SandboxHarness) -> bool {
+    if harness.halted || harness.steps_executed >= harness.max_steps {
+        if !harness.halted {
+            harness.halted = true;
+            harness.halt_reason = "Step limit exceeded";
+        }
+        return false;
+    }
+    
+    let b0 = sandbox_read_byte(harness, harness.cpu.rip);
+    if harness.halted { return false; }
+    
+    // NOP (0x90)
+    if b0 == 144 {
+        harness.cpu.rip = harness.cpu.rip + 1;
+        harness.steps_executed = harness.steps_executed + 1;
+        return true;
+    }
+    
+    // INT3 (0xCC = 204) or HLT (0xF4 = 244)
+    if b0 == 204 || b0 == 244 {
+        harness.cpu.rip = harness.cpu.rip + 1;
+        harness.halted = true;
+        harness.halt_reason = "Halted by break/halt instruction";
+        harness.steps_executed = harness.steps_executed + 1;
+        return false;
+    }
+    
+    // RET (0xC3 = 195)
+    if b0 == 195 {
+        let ret_addr = sandbox_pop(harness);
+        harness.cpu.rip = ret_addr;
+        harness.steps_executed = harness.steps_executed + 1;
+        return true;
+    }
+    
+    // PUSH rax (0x50 = 80)
+    if b0 == 80 {
+        sandbox_push(harness, harness.cpu.rax);
+        harness.cpu.rip = harness.cpu.rip + 1;
+        harness.steps_executed = harness.steps_executed + 1;
+        return true;
+    }
+    
+    // POP rbx (0x5B = 91)
+    if b0 == 91 {
+        harness.cpu.rbx = sandbox_pop(harness);
+        harness.cpu.rip = harness.cpu.rip + 1;
+        harness.steps_executed = harness.steps_executed + 1;
+        return true;
+    }
+    
+    // MOV eax, imm32 (0xB8 = 184)
+    if b0 == 184 {
+        let b1 = sandbox_read_byte(harness, harness.cpu.rip + 1);
+        let b2 = sandbox_read_byte(harness, harness.cpu.rip + 2);
+        let b3 = sandbox_read_byte(harness, harness.cpu.rip + 3);
+        let b4 = sandbox_read_byte(harness, harness.cpu.rip + 4);
+        harness.cpu.rax = b1 + (b2 * 256) + (b3 * 65536) + (b4 * 16777216);
+        harness.cpu.rip = harness.cpu.rip + 5;
+        harness.steps_executed = harness.steps_executed + 1;
+        return true;
+    }
+    
+    // MOV ebx, imm32 (0xBB = 187)
+    if b0 == 187 {
+        let b1 = sandbox_read_byte(harness, harness.cpu.rip + 1);
+        let b2 = sandbox_read_byte(harness, harness.cpu.rip + 2);
+        let b3 = sandbox_read_byte(harness, harness.cpu.rip + 3);
+        let b4 = sandbox_read_byte(harness, harness.cpu.rip + 4);
+        harness.cpu.rbx = b1 + (b2 * 256) + (b3 * 65536) + (b4 * 16777216);
+        harness.cpu.rip = harness.cpu.rip + 5;
+        harness.steps_executed = harness.steps_executed + 1;
+        return true;
+    }
+    
+    // ADD rsp, imm8 (0x48 0x83 0xC4 imm8)
+    if b0 == 72 { // 0x48 REX.W
+        let b1 = sandbox_read_byte(harness, harness.cpu.rip + 1);
+        let b2 = sandbox_read_byte(harness, harness.cpu.rip + 2);
+        if b1 == 131 && b2 == 196 { // 0x83 0xC4
+            let imm = sandbox_read_byte(harness, harness.cpu.rip + 3);
+            harness.cpu.rsp = harness.cpu.rsp + imm;
+            harness.cpu.rip = harness.cpu.rip + 4;
+            harness.steps_executed = harness.steps_executed + 1;
+            return true;
+        }
+        // XOR rax, rax (48 31 C0)
+        if b1 == 49 && b2 == 192 {
+            harness.cpu.rax = 0;
+            harness.cpu.rip = harness.cpu.rip + 3;
+            harness.steps_executed = harness.steps_executed + 1;
+            return true;
+        }
+    }
+    
+    // Default safe halt on unrecognized opcode
+    harness.halted = true;
+    harness.halt_reason = "Unmodeled instruction safely halted";
+    return false;
+}
+
+func sandbox_run(harness: SandboxHarness, max_steps: int) -> int {
+    let mut_count = 0;
+    let mut_running = true;
+    while mut_running && mut_count < max_steps {
+        if !sandbox_step(harness) {
+            mut_running = false;
+        } else {
+            mut_count = mut_count + 1;
+        }
+    }
+    return mut_count;
+}
+
+func sandbox_get_register(harness: SandboxHarness, reg_name: string) -> int {
+    if reg_name == "rax" { return harness.cpu.rax; }
+    if reg_name == "rbx" { return harness.cpu.rbx; }
+    if reg_name == "rcx" { return harness.cpu.rcx; }
+    if reg_name == "rdx" { return harness.cpu.rdx; }
+    if reg_name == "rsi" { return harness.cpu.rsi; }
+    if reg_name == "rdi" { return harness.cpu.rdi; }
+    if reg_name == "rbp" { return harness.cpu.rbp; }
+    if reg_name == "rsp" { return harness.cpu.rsp; }
+    if reg_name == "rip" { return harness.cpu.rip; }
+    return 0;
+}
+
+// ============================================================================
+// Section 8: Comprehensive Forensic Audit Reporting
+// ============================================================================
+
+func int_to_str(val: int) -> string {
+    if val == 0 { return "0"; }
+    let mut_v = val;
+    let mut_neg = false;
+    if mut_v < 0 {
+        mut_neg = true;
+        mut_v = 0 - mut_v;
+    }
+    let res = "";
+    while mut_v > 0 {
+        let rem = mut_v % 10;
+        let c = "0";
+        if rem == 1 { c = "1"; }
+        if rem == 2 { c = "2"; }
+        if rem == 3 { c = "3"; }
+        if rem == 4 { c = "4"; }
+        if rem == 5 { c = "5"; }
+        if rem == 6 { c = "6"; }
+        if rem == 7 { c = "7"; }
+        if rem == 8 { c = "8"; }
+        if rem == 9 { c = "9"; }
+        res = c + res;
+        mut_v = mut_v / 10;
+    }
+    if mut_neg {
+        return "-" + res;
+    }
+    return res;
+}
+
+class ForensicReport {
+    pid: int,
+    target_name: string,
+    region_count: int,
+    total_memory_bytes: int,
+    anomalies: List,
+}
+
+func forensic_report_new(pid: int, target_name: string, regions: List, anomalies: List) -> ForensicReport {
+    let reg_count = list_length(regions);
+    let mut_total_bytes = 0;
+    let mut_i = 0;
+    while mut_i < reg_count {
+        let r: MemoryRegion = list_get(regions, mut_i);
+        mut_total_bytes = mut_total_bytes + memory_region_size(r);
+        mut_i = mut_i + 1;
+    }
+    return new ForensicReport(pid, target_name, reg_count, mut_total_bytes, anomalies);
+}
+
+func forensic_report_summary(report: ForensicReport) -> string {
+    let a_count = list_length(report.anomalies);
+    return "ForensicReport target=" + report.target_name + " regions=" + int_to_str(report.region_count) + " anomalies=" + int_to_str(a_count);
+}
+
+func forensic_report_format_table(report: ForensicReport) -> string {
+    let out = "================================================================================\n";
+    out = out + " ROZE DEFENSIVE MEMORY FORENSICS REPORT: " + report.target_name + "\n";
+    out = out + "================================================================================\n";
+    out = out + " Total Mapped Regions : " + int_to_str(report.region_count) + "\n";
+    out = out + " Total Address Space  : " + int_to_str(report.total_memory_bytes / 1024) + " KB\n";
+    let a_count = list_length(report.anomalies);
+    out = out + " Detected Anomalies   : " + int_to_str(a_count) + "\n";
+    out = out + "--------------------------------------------------------------------------------\n";
+    
+    if a_count == 0 {
+        out = out + " [OK] No memory protection anomalies detected.\n";
+    } else {
+        out = out + " SEVERITY   ADDRESS            ANOMALY TYPE\n";
+        out = out + " --------   ----------------   ------------------------------\n";
+        let mut_i = 0;
+        while mut_i < a_count {
+            let a: MemoryAnomaly = list_get(report.anomalies, mut_i);
+            let mut_sev = a.severity;
+            while string_length(mut_sev) < 10 { mut_sev = mut_sev + " "; }
+            let mut_addr_str = "0x" + int_to_str(a.start_addr);
+            while string_length(mut_addr_str) < 18 { mut_addr_str = mut_addr_str + " "; }
+            out = out + " " + mut_sev + " " + mut_addr_str + " " + a.anomaly_type + "\n";
+            out = out + "   └─ " + a.description + "\n";
+            mut_i = mut_i + 1;
+        }
+    }
+    out = out + "================================================================================\n";
+    return out;
+}

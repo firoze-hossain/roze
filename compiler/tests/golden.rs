@@ -1654,6 +1654,22 @@ fn binary_analysis_and_disassembler_suite() {
     assert!(stdout.contains("[CI-PASS] ALL BINARY ANALYSIS & DISASSEMBLER TESTS PASSED (M3-T05)"));
 }
 
+#[test]
+fn memory_forensics_and_defensive_analysis_suite() {
+    let (stdout, stderr, ok) = run_fixture("memory_forensics.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("Roze M3-T06: Memory Forensics & Defensive Analysis Harness Test Suite"));
+    assert!(stdout.contains("Suite 1 passed: /proc/<pid>/maps parsed successfully."));
+    assert!(stdout.contains("Suite 2 passed: pattern & wildcard search verified."));
+    assert!(stdout.contains("Suite 3 passed: Shannon entropy scaled calculation verified."));
+    assert!(stdout.contains("Suite 4 passed: ELF/PE binary header recognition verified."));
+    assert!(stdout.contains("Suite 5 passed: defensive memory auditing anomalies detected."));
+    assert!(stdout.contains("Suite 6 passed: stack pivot control-flow anomaly detected."));
+    assert!(stdout.contains("Suite 7 passed: pure software CPU emulation verified."));
+    assert!(stdout.contains("Suite 8 passed: forensic report formatting verified."));
+    assert!(stdout.contains("ALL 8 FORENSICS TEST SUITES PASSED! [100% SUCCESS]"));
+}
+
 
 
 

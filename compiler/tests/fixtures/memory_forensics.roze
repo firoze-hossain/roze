@@ -1,0 +1,221 @@
+// Roze Test Fixture: Memory Forensics & Defensive Analysis Suite (M3-T06)
+// Module: roze::forensics
+// Comprehensive unit and integration verification for defensive memory analysis
+
+import "forensics";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("[ASSERTION FAILED]: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+func test_proc_maps_parsing() {
+    println("=== Suite 1: /proc/<pid>/maps Parsing ===");
+    let line1 = "00400000-00452000 r-xp 00000000 fd:00 123456 /usr/bin/target_app";
+    let r1 = parse_proc_maps_line(line1);
+    assert(r1.start_addr == 4194304, "maps start addr mismatch");
+    assert(r1.end_addr == 4530176, "maps end addr mismatch");
+    assert(r1.is_r, "maps r mismatch");
+    assert(!r1.is_w, "maps w mismatch");
+    assert(r1.is_x, "maps x mismatch");
+    assert(!r1.is_anon, "maps anon mismatch");
+    assert(r1.pathname == "/usr/bin/target_app", "maps pathname mismatch");
+    
+    let line2 = "7ffde000-7ffdf000 rwxp 00000000 00:00 0 [stack]";
+    let r2 = parse_proc_maps_line(line2);
+    assert(memory_region_is_rwx(r2), "rwx detection mismatch");
+    assert(r2.is_anon, "stack anon mismatch");
+    assert(r2.pathname == "[stack]", "stack pathname mismatch");
+    println("Suite 1 passed: /proc/<pid>/maps parsed successfully.");
+}
+
+func test_pattern_and_wildcard_matching() {
+    println("=== Suite 2: Pattern & Wildcard Matching ===");
+    let buf = list_new();
+    list_push(buf, 144); // 0x90 nop
+    list_push(buf, 72);  // 0x48 rex.w
+    list_push(buf, 137); // 0x89 mov
+    list_push(buf, 229); // 0xE5 rbp, rsp
+    list_push(buf, 195); // 0xC3 ret
+    
+    // Exact match
+    let needle = list_new();
+    list_push(needle, 72);
+    list_push(needle, 137);
+    list_push(needle, 229);
+    let idx = pattern_find(buf, needle);
+    assert(idx == 1, "exact pattern find mismatch");
+    
+    // Wildcard match: 0x48 ?? 0xE5
+    let wild_needle = list_new();
+    list_push(wild_needle, 72);
+    list_push(wild_needle, 0);   // wildcard
+    list_push(wild_needle, 229);
+    
+    let mask = list_new();
+    list_push(mask, 1);
+    list_push(mask, 0); // 0 = wildcard
+    list_push(mask, 1);
+    
+    let matches = pattern_find_wildcard(buf, wild_needle, mask);
+    assert(list_length(matches) == 1, "wildcard matches count mismatch");
+    let match_pos: int = list_get(matches, 0);
+    assert(match_pos == 1, "wildcard match offset mismatch");
+    println("Suite 2 passed: pattern & wildcard search verified.");
+}
+
+func test_entropy_analysis() {
+    println("=== Suite 3: Shannon Entropy Analysis ===");
+    let zeros = list_new();
+    let mut_i = 0;
+    while mut_i < 256 {
+        list_push(zeros, 0);
+        mut_i = mut_i + 1;
+    }
+    let ent_zero = calculate_entropy_scaled(zeros, 0, 256);
+    assert(ent_zero == 0, "zero entropy mismatch");
+    
+    let diverse = list_new();
+    let mut_j = 0;
+    while mut_j < 256 {
+        list_push(diverse, mut_j);
+        mut_j = mut_j + 1;
+    }
+    let ent_diverse = calculate_entropy_scaled(diverse, 0, 256);
+    // Diverse 256 bytes has ~8000 scaled entropy (8.0 bits)
+    assert(ent_diverse >= 7000, "high entropy threshold mismatch");
+    assert(is_high_entropy_block(diverse, 0, 256, 7000), "is_high_entropy mismatch");
+    println("Suite 3 passed: Shannon entropy scaled calculation verified.");
+}
+
+func test_binary_recognition() {
+    println("=== Suite 4: In-Memory Binary Recognition ===");
+    let elf_hdr = list_new();
+    list_push(elf_hdr, 127); // 0x7F
+    list_push(elf_hdr, 69);  // 'E'
+    list_push(elf_hdr, 76);  // 'L'
+    list_push(elf_hdr, 70);  // 'F'
+    list_push(elf_hdr, 2);   // 64-bit
+    let mut_pad = 0;
+    while mut_pad < 40 {
+        list_push(elf_hdr, 0);
+        mut_pad = mut_pad + 1;
+    }
+    
+    let bin_type = detect_binary_type(elf_hdr, 0);
+    assert(bin_type == "ELF", "elf detect mismatch");
+    
+    let pe_hdr = list_new();
+    list_push(pe_hdr, 77); // 'M'
+    list_push(pe_hdr, 90); // 'Z'
+    list_push(pe_hdr, 0);
+    list_push(pe_hdr, 0);
+    let pe_type = detect_binary_type(pe_hdr, 0);
+    assert(pe_type == "PE", "pe detect mismatch");
+    println("Suite 4 passed: ELF/PE binary header recognition verified.");
+}
+
+func test_defensive_auditing() {
+    println("=== Suite 5: Defensive Memory Auditing ===");
+    let regions = list_new();
+    
+    // Normal code section: r-xp
+    list_push(regions, memory_region_new(4194304, 4200000, "r-xp", 0, "/usr/bin/app"));
+    // Suspicious RWX section
+    list_push(regions, memory_region_new(5000000, 5004096, "rwxp", 0, ""));
+    // Executable stack
+    list_push(regions, memory_region_new(6000000, 6008192, "r-xp", 0, "[stack]"));
+    
+    let anomalies = audit_memory_regions(regions);
+    assert(list_length(anomalies) >= 2, "anomalies count mismatch");
+    
+    let a0: MemoryAnomaly = list_get(anomalies, 0);
+    assert(a0.anomaly_type == "RWX_PERMISSION_VIOLATION", "rwx anomaly mismatch");
+    assert(a0.severity == "CRITICAL", "rwx severity mismatch");
+    println("Suite 5 passed: defensive memory auditing anomalies detected.");
+}
+
+func test_control_flow_anomalies() {
+    println("=== Suite 6: Defensive Control-Flow Analysis ===");
+    let opcodes = list_new();
+    list_push(opcodes, 144); // nop
+    list_push(opcodes, 92);  // pop rsp (0x5C)
+    list_push(opcodes, 195); // ret (0xC3)
+    
+    let anomalies = audit_control_flow(opcodes, 4194304);
+    assert(list_length(anomalies) == 1, "cf anomalies count mismatch");
+    let cfa: MemoryAnomaly = list_get(anomalies, 0);
+    assert(cfa.anomaly_type == "STACK_PIVOT_SEQUENCE_DETECTED", "cf anomaly type mismatch");
+    assert(cfa.severity == "HIGH", "cf anomaly severity mismatch");
+    println("Suite 6 passed: stack pivot control-flow anomaly detected.");
+}
+
+func test_sandboxed_cpu_emulation() {
+    println("=== Suite 7: Sandboxed CPU Emulation ===");
+    let harness = sandbox_new(4096, 4194304);
+    
+    // Code sequence:
+    // 0xB8 0x2A 0x00 0x00 0x00 -> mov eax, 42
+    // 0x50                     -> push rax
+    // 0x5B                     -> pop rbx
+    // 0xC3                     -> ret
+    let code = list_new();
+    list_push(code, 184); // 0xB8
+    list_push(code, 42);
+    list_push(code, 0);
+    list_push(code, 0);
+    list_push(code, 0);
+    list_push(code, 80);  // 0x50 push rax
+    list_push(code, 91);  // 0x5B pop rbx
+    list_push(code, 195); // 0xC3 ret
+    
+    sandbox_load_bytes(harness, code, 4194304);
+    
+    // Push return target 0x400100
+    sandbox_push(harness, 4194560);
+    
+    let steps = sandbox_run(harness, 10);
+    assert(steps == 4, "emulated steps count mismatch");
+    assert(harness.cpu.rax == 42, "eax register value mismatch");
+    assert(harness.cpu.rbx == 42, "rbx register value mismatch");
+    assert(harness.cpu.rip == 4194560, "rip return target mismatch");
+    println("Suite 7 passed: pure software CPU emulation verified.");
+}
+
+func test_forensic_report_formatting() {
+    println("=== Suite 8: Forensic Report Formatting ===");
+    let regions = list_new();
+    list_push(regions, memory_region_new(4194304, 4200000, "r-xp", 0, "/usr/bin/app"));
+    list_push(regions, memory_region_new(5000000, 5004096, "rwxp", 0, ""));
+    
+    let anomalies = audit_memory_regions(regions);
+    let report = forensic_report_new(1234, "target_daemon", regions, anomalies);
+    
+    let sum_str = forensic_report_summary(report);
+    assert(str_contains(sum_str, "target=target_daemon"), "summary target mismatch");
+    assert(str_contains(sum_str, "regions=2"), "summary regions mismatch");
+    
+    let table = forensic_report_format_table(report);
+    assert(str_contains(table, "ROZE DEFENSIVE MEMORY FORENSICS REPORT"), "table title mismatch");
+    assert(str_contains(table, "RWX_PERMISSION_VIOLATION"), "table anomaly mismatch");
+    println("Suite 8 passed: forensic report formatting verified.");
+}
+
+func main() {
+    println("================================================================================");
+    println(" Roze M3-T06: Memory Forensics & Defensive Analysis Harness Test Suite");
+    println("================================================================================");
+    test_proc_maps_parsing();
+    test_pattern_and_wildcard_matching();
+    test_entropy_analysis();
+    test_binary_recognition();
+    test_defensive_auditing();
+    test_control_flow_anomalies();
+    test_sandboxed_cpu_emulation();
+    test_forensic_report_formatting();
+    println("================================================================================");
+    println(" ALL 8 FORENSICS TEST SUITES PASSED! [100% SUCCESS]");
+    println("================================================================================");
+}

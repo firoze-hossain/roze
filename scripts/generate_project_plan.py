@@ -386,7 +386,7 @@ s1_rows = [
         ("M3-T10", 8), ("Month 3", 5), ("Sprint 6 (W11-W12)", 8), "Web Security & Cloud", "JWT, OAuth2, Metrics & OpenAPI 3.1",
         "Built-in JWT auth filter, OAuth2 token validation, Argon2id password hashing, Prometheus /metrics endpoint, OpenTelemetry tracing, and auto-generated Swagger UI docs.",
         "Matches Spring Security and Quarkus observability stack.",
-        "Enterprise Backends, Microservices", "6 Days", ("High", 14), ("Planned", 12)
+        "Enterprise Backends, Microservices", "6 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M3-T11", 8), ("Month 3", 5), ("Sprint 6 (W11-W12)", 8), "Milestone Gate M3", "Month 3 Web & Security Integration Gate",

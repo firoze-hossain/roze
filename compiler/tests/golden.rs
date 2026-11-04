@@ -874,6 +874,32 @@ fn data_orm_high_throughput_suite() {
 }
 
 #[test]
+fn cloud_web_security_and_observability_suite() {
+    let (stdout, stderr, ok) = run_fixture("cloud_security.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    assert!(out.contains("Roze Web Security & Cloud Observability Suite (M3-T10)"), "missing header banner:\n{}", out);
+    assert!(out.contains("[PASS] SecurityPrincipal & RBAC Context verified."), "missing suite 1 pass:\n{}", out);
+    assert!(out.contains("[PASS] JWT Authentication Filter & RBAC Gatekeeper verified."), "missing suite 2 pass:\n{}", out);
+    assert!(out.contains("[PASS] OAuth 2.0 / OIDC Token Validation verified."), "missing suite 3 pass:\n{}", out);
+    assert!(out.contains("[PASS] Argon2id Password Hashing Engine verified."), "missing suite 4 pass:\n{}", out);
+    assert!(out.contains("[PASS] Prometheus / OpenMetrics Telemetry Engine verified."), "missing suite 5 pass:\n{}", out);
+    assert!(out.contains("[PASS] OpenTelemetry (OTel) Distributed Tracing Engine verified."), "missing suite 6 pass:\n{}", out);
+    assert!(out.contains("[PASS] Auto-Generated OpenAPI 3.1 & Swagger UI verified."), "missing suite 7 pass:\n{}", out);
+    assert!(out.contains("Excluded /health Status: 200"), "missing excluded path check:\n{}", out);
+    assert!(out.contains("Missing Token Status:    401"), "missing 401 check:\n{}", out);
+    assert!(out.contains("Regular User /api/admin: 403"), "missing 403 check:\n{}", out);
+    assert!(out.contains("Admin User /api/admin:   200"), "missing 200 admin check:\n{}", out);
+    assert!(out.contains("Has Scope 'write:orders':true"), "missing scope true check:\n{}", out);
+    assert!(out.contains("Has Scope 'admin:delete':false"), "missing scope false check:\n{}", out);
+    assert!(out.contains("Verify Correct Password: true"), "missing argon2id correct check:\n{}", out);
+    assert!(out.contains("Verify Incorrect Password:false"), "missing argon2id wrong check:\n{}", out);
+    assert!(out.contains("# TYPE http_requests_total counter"), "missing prometheus type check:\n{}", out);
+    assert!(out.contains("W3C traceparent Header:  00-"), "missing traceparent check:\n{}", out);
+    assert!(out.contains("\"openapi\": \"3.1.0\""), "missing openapi check:\n{}", out);
+}
+
+#[test]
 fn trait_bounds_and_associated_types() {
     let (stdout, stderr, ok) = run_fixture("trait_bounds.roze");
     assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);

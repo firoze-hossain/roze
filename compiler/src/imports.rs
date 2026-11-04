@@ -96,6 +96,9 @@ const FORENSICS_DISPLAY_NAME: &str = "forensics (built-in)";
 const ORM_SOURCE: &str = include_str!("../../stdlib/src/orm.roze");
 const ORM_DISPLAY_NAME: &str = "orm (built-in)";
 
+const CLOUD_SECURITY_SOURCE: &str = include_str!("../../stdlib/src/cloud_security.roze");
+const CLOUD_SECURITY_DISPLAY_NAME: &str = "cloud_security (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -252,6 +255,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "orm" || path == "data" || path == "roze::data" || path == "roze::orm" || path == "sql_orm" || path == "jpa" || path == "diesel" || path == "seaorm" {
         return Ok((ORM_SOURCE.to_string(), ORM_DISPLAY_NAME.to_string()));
+    }
+    if path == "cloud_security" || path == "security" || path == "roze::security" || path == "oauth2" || path == "jwt" || path == "metrics" || path == "telemetry" || path == "openapi" || path == "swagger" {
+        return Ok((CLOUD_SECURITY_SOURCE.to_string(), CLOUD_SECURITY_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

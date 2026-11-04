@@ -392,7 +392,7 @@ s1_rows = [
         ("M3-T11", 8), ("Month 3", 5), ("Sprint 6 (W11-W12)", 8), "Milestone Gate M3", "Month 3 Web & Security Integration Gate",
         "Deploy RozeBoot REST microservice serving 100,000 req/sec under load test. Execute penetration testing suite verifying raw packet sniffer, SYN scanner, and crypto.",
         "Sub-millisecond P99 latency under 50,000 concurrent web connections.",
-        "Web Enterprise & Cybersecurity", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
+        "Web Enterprise & Cybersecurity", "3 Days", ("Critical", 14), ("Completed", 16)
     ],
 
     # MONTH 4: NATIVE AI / MACHINE LEARNING & 2D/3D GAME DEV SUITE

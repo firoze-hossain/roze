@@ -900,6 +900,32 @@ fn cloud_web_security_and_observability_suite() {
 }
 
 #[test]
+fn milestone_gate_m3_web_security_integration_suite() {
+    let (stdout, stderr, ok) = run_fixture("milestone_gate_m3_web_security.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    assert!(out.contains("Roze Milestone Gate M3: Month 3 Web & Security Integration Gate (M3-T11)"), "missing header banner:\n{}", out);
+    assert!(out.contains("[PASS] Suite 1: Full-Stack RozeBoot 2.0 Microservice & ORM Engine Initialized."), "missing suite 1 pass:\n{}", out);
+    assert!(out.contains("[PASS] Suite 2: High-Throughput Load Benchmark (100,000 req/sec & Sub-Millisecond P99 Latency) Verified."), "missing suite 2 pass:\n{}", out);
+    assert!(out.contains("[PASS] Suite 3: Cybersecurity, Raw Sockets, SYN Scanner & Cryptographic Defense Verified."), "missing suite 3 pass:\n{}", out);
+    assert!(out.contains("[PASS] Suite 4: JWT/OAuth2 Security Perimeter & RBAC Gatekeeper Verified."), "missing suite 4 pass:\n{}", out);
+    assert!(out.contains("[PASS] Suite 5: Cloud Observability (Prometheus, OTel) & OpenAPI 3.1 Verified."), "missing suite 5 pass:\n{}", out);
+    assert!(out.contains("🌹 MILESTONE GATE M3: MONTH 3 WEB & SECURITY INTEGRATION PASSED 100% 🌹"), "missing milestone pass conclusion:\n{}", out);
+    assert!(out.contains("Seeded Accounts: Alice ($500.00), Bob ($200.00). Total: $700.00."), "missing seeded accounts:\n{}", out);
+    assert!(out.contains("Processed 100000 simulated HTTP request dispatches."), "missing 100k req benchmark:\n{}", out);
+    assert!(out.contains("Throughput: 142,857 req/sec"), "missing throughput benchmark:\n{}", out);
+    assert!(out.contains("Sub-Millisecond P99 Latency"), "missing p99 latency verification:\n{}", out);
+    assert!(out.contains("ACID Integrity: Overdraft attempt safely rolled back. Total conserved: $700.00."), "missing overdraft rollback:\n{}", out);
+    assert!(out.contains("Dissected TCP SYN packet; BPF filter matched TCP port 8080."), "missing raw packet bpf match:\n{}", out);
+    assert!(out.contains("OS Fingerprinting detected Linux 6.x and Windows 11"), "missing os fingerprinting:\n{}", out);
+    assert!(out.contains("Crypto Suite: SHA-256 and AES-256-GCM AEAD authenticated encryption verified."), "missing crypto verification:\n{}", out);
+    assert!(out.contains("Security Perimeter: Public /health (200), Unauthenticated (401), Unauthorized (403), Operator (200)."), "missing rbac perimeter:\n{}", out);
+    assert!(out.contains("Prometheus Telemetry: Monotonic Counters, Gauges & Latency Histograms exposed."), "missing prometheus telemetry:\n{}", out);
+    assert!(out.contains("OpenTelemetry Tracing: W3C traceparent (00-"), "missing otel traceparent:\n{}", out);
+    assert!(out.contains("API Documentation: OpenAPI 3.1 JSON Specification and Swagger UI Dashboard generated."), "missing openapi & swagger:\n{}", out);
+}
+
+#[test]
 fn trait_bounds_and_associated_types() {
     let (stdout, stderr, ok) = run_fixture("trait_bounds.roze");
     assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);

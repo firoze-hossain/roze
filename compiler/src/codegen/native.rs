@@ -157,6 +157,9 @@ fn collect_closures_and_refs_from_stmt(
                 }
             }
         }
+        TypedStatement::Annotated { statement, .. } => {
+            collect_closures_and_refs_from_stmt(statement, closures, func_refs);
+        }
         TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } | TypedStatement::TraitDecl { .. } | TypedStatement::ExternFunction { .. } => {}
     }
 }
@@ -5947,6 +5950,13 @@ impl<'a> NativeGenerator<'a> {
         Ok(data_id)
     }
 
+    fn unwrap_typed_stmt<'b>(stmt: &'b TypedStatement) -> &'b TypedStatement {
+        match stmt {
+            TypedStatement::Annotated { statement, .. } => Self::unwrap_typed_stmt(statement),
+            other => other,
+        }
+    }
+
     /// Registers every class's `new`/`release` function *signatures*
     /// first (a first pass, mirroring `declare_all_functions`'s own
     /// first pass for the same reason), then builds every class's
@@ -5955,7 +5965,7 @@ impl<'a> NativeGenerator<'a> {
     /// always find that class's release function already declared,
     /// regardless of source order.
     fn declare_all_classes(&mut self, program: &TypedProgram) -> Result<()> {
-        for stmt in &program.statements {
+        for stmt in program.statements.iter().map(Self::unwrap_typed_stmt) {
             if let TypedStatement::TraitDecl { methods, .. } = stmt {
                 for m in methods {
                     if !self.trait_methods.contains_key(&m.name) {
@@ -5966,7 +5976,7 @@ impl<'a> NativeGenerator<'a> {
             }
         }
 
-        for stmt in &program.statements {
+        for stmt in program.statements.iter().map(Self::unwrap_typed_stmt) {
             if let TypedStatement::ImplDecl { class_name, methods, .. } = stmt {
                 for m in methods {
                     if let TypedStatement::Function { name, params, return_type, location, .. } = m {
@@ -5992,7 +6002,7 @@ impl<'a> NativeGenerator<'a> {
             }
         }
 
-        for stmt in &program.statements {
+        for stmt in program.statements.iter().map(Self::unwrap_typed_stmt) {
             if let TypedStatement::ClassDecl { name, fields, location } = stmt {
                 for (field_name, field_type) in fields {
                     require_supported_type(field_type, location, &format!("field '{}' of class '{}'", field_name, name))?;
@@ -6026,7 +6036,7 @@ impl<'a> NativeGenerator<'a> {
             let rel_ref = self.module.declare_func_in_data(info.release_id, &mut data_ctx);
             data_ctx.write_function_addr(0, rel_ref);
 
-            for stmt in &program.statements {
+            for stmt in program.statements.iter().map(Self::unwrap_typed_stmt) {
                 if let TypedStatement::ImplDecl { trait_name: Some(_), class_name: c_name, methods, .. } = stmt {
                     if c_name == class_name {
                         for m in methods {
@@ -6090,7 +6100,7 @@ impl<'a> NativeGenerator<'a> {
     /// so it doesn't collide with the real C-ABI `main` synthesized in
     /// `emit_c_main`.
     fn declare_all_functions(&mut self, program: &TypedProgram) -> Result<()> {
-        for stmt in &program.statements {
+        for stmt in program.statements.iter().map(Self::unwrap_typed_stmt) {
             if let TypedStatement::Function { name, params, return_type, location, .. } = stmt {
                 for param in params {
                     require_supported_type(&param.type_, location, &format!("parameter '{}' of function '{}'", param.name, name))?;
@@ -6350,7 +6360,7 @@ impl<'a> NativeGenerator<'a> {
     fn compile_all_methods(&mut self, program: &TypedProgram) -> Result<()> {
         let mut ctx = self.module.make_context();
 
-        for stmt in &program.statements {
+        for stmt in program.statements.iter().map(Self::unwrap_typed_stmt) {
             if let TypedStatement::ImplDecl { class_name, methods, .. } = stmt {
                 for m in methods {
                     if let TypedStatement::Function { name, params, return_type, body, .. } = m {
@@ -6467,7 +6477,7 @@ impl<'a> NativeGenerator<'a> {
     fn compile_all_functions(&mut self, program: &TypedProgram) -> Result<()> {
         let mut ctx = self.module.make_context();
 
-        for stmt in &program.statements {
+        for stmt in program.statements.iter().map(Self::unwrap_typed_stmt) {
             if let TypedStatement::Function { name, params, return_type, body, .. } = stmt {
                 let func_id = *self.functions.get(name)
                     .expect("declare_all_functions registers every function before this runs");
@@ -7545,6 +7555,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             TypedStatement::ClassDecl { .. } | TypedStatement::EnumDecl { .. } | TypedStatement::TraitDecl { .. } | TypedStatement::ImplDecl { .. } | TypedStatement::ExternFunction { .. } => {
                 // Top-level constructs, handled elsewhere.
                 Ok(false)
+            }
+            TypedStatement::Annotated { statement, .. } => {
+                self.compile_statement(statement)
             }
             TypedStatement::Match { expr, arms, .. } => {
                 let target_val = self.compile_expression(expr)?;

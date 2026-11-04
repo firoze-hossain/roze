@@ -152,6 +152,11 @@ pub enum TypedStatement {
         asm_block: TypedAsmBlock,
         location: Location,
     },
+    Annotated {
+        annotations: Vec<crate::parser::ast::Annotation>,
+        statement: Box<TypedStatement>,
+        location: Location,
+    },
     // Deliberately no `Import` variant: imports are resolved into real
     // functions before type-checking ever runs (see
     // imports::resolve_imports), so by the time this IR exists, no

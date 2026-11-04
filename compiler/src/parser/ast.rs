@@ -185,6 +185,20 @@ pub enum Statement {
         asm_block: AsmBlock,
         location: Location,
     },
+    /// `@AnnotationName(...) statement`
+    Annotated {
+        annotations: Vec<Annotation>,
+        statement: Box<Statement>,
+        location: Location,
+    },
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct Annotation {
+    pub name: String,
+    pub args: Vec<String>,
+    pub location: Location,
 }
 
 #[derive(Debug, Clone)]

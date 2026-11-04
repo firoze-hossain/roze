@@ -1591,6 +1591,11 @@ fn substitute_statement(stmt: &Statement, map: &HashMap<String, String>) -> Stat
             asm_block: substitute_asm_block(asm_block, map),
             location: location.clone(),
         },
+        Statement::Annotated { annotations, statement, location } => Statement::Annotated {
+            annotations: annotations.clone(),
+            statement: Box::new(substitute_statement(statement, map)),
+            location: location.clone(),
+        },
     }
 }
 
@@ -2607,7 +2612,15 @@ impl TypeChecker {
         }
         let program_statements = desugared_stmts;
 
-        for stmt in &program_statements {
+        fn unwrap_annotated_stmt<'a>(stmt: &'a Statement) -> &'a Statement {
+            match stmt {
+                Statement::Annotated { statement, .. } => unwrap_annotated_stmt(statement),
+                other => other,
+            }
+        }
+
+        for raw_stmt in &program_statements {
+            let stmt = unwrap_annotated_stmt(raw_stmt);
             if let Statement::EnumDecl { name, type_params, variants, location } = stmt {
                 if !type_params.is_empty() {
                     self.generic_enums.insert(name.clone(), GenericEnumDef {
@@ -2633,7 +2646,8 @@ impl TypeChecker {
 
         // Pre-register all class names so mutually-referential or forward-referencing
         // class field types resolve to Type::Class instead of Type::Unknown.
-        for stmt in &program_statements {
+        for raw_stmt in &program_statements {
+            let stmt = unwrap_annotated_stmt(raw_stmt);
             if let Statement::ClassDecl { name, type_params, .. } = stmt {
                 if type_params.is_empty() {
                     self.classes.insert(name.clone(), Vec::new());
@@ -2641,7 +2655,8 @@ impl TypeChecker {
             }
         }
 
-        for stmt in &program_statements {
+        for raw_stmt in &program_statements {
+            let stmt = unwrap_annotated_stmt(raw_stmt);
             if let Statement::ClassDecl { name, type_params, fields, location } = stmt {
                 if !type_params.is_empty() {
                     self.generic_classes.insert(name.clone(), GenericClassDef {
@@ -2661,7 +2676,8 @@ impl TypeChecker {
             }
         }
 
-        for stmt in &program_statements {
+        for raw_stmt in &program_statements {
+            let stmt = unwrap_annotated_stmt(raw_stmt);
             if let Statement::TraitDecl { name, associated_types, methods, location } = stmt {
                 let mut method_map = HashMap::new();
                 for m in methods {
@@ -2688,7 +2704,8 @@ impl TypeChecker {
             }
         }
 
-        for stmt in &program_statements {
+        for raw_stmt in &program_statements {
+            let stmt = unwrap_annotated_stmt(raw_stmt);
             if let Statement::ImplDecl { trait_name, class_name, associated_types, methods, location } = stmt {
                 for (assoc_name, target_ty_str) in associated_types {
                     let resolved_ty = self.resolve_type_name(target_ty_str);
@@ -2751,7 +2768,8 @@ impl TypeChecker {
             }
         }
 
-        for stmt in &program_statements {
+        for raw_stmt in &program_statements {
+            let stmt = unwrap_annotated_stmt(raw_stmt);
             if let Statement::Function { name, type_params, params, return_type, body, location, is_async } = stmt {
                 self.ast_functions.insert(name.clone(), stmt.clone());
                 if !type_params.is_empty() {
@@ -2775,7 +2793,8 @@ impl TypeChecker {
             }
         }
 
-        for stmt in &program_statements {
+        for raw_stmt in &program_statements {
+            let stmt = unwrap_annotated_stmt(raw_stmt);
             if let Statement::ExternFunction { abi, name, params, return_type, location } = stmt {
                 if abi != "C" {
                     return Err(RozeError::type_error(
@@ -3317,6 +3336,17 @@ impl TypeChecker {
                     asm_block: typed_asm,
                     location: location.clone(),
                 }))
+            }
+            Statement::Annotated { annotations, statement, location } => {
+                if let Some(typed_stmt) = self.check_statement(statement)? {
+                    Ok(Some(TypedStatement::Annotated {
+                        annotations: annotations.clone(),
+                        statement: Box::new(typed_stmt),
+                        location: location.clone(),
+                    }))
+                } else {
+                    Ok(None)
+                }
             }
         }
     }

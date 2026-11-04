@@ -5006,7 +5006,11 @@ impl JavaSourceGenerator {
         source.push_str(&format!("public class {} {{\n", self.class_name));
 
         let mut main_found = false;
-        for stmt in &self.program.statements {
+        for raw_stmt in &self.program.statements {
+            let (stmt, annotations) = match raw_stmt {
+                TypedStatement::Annotated { annotations, statement, .. } => (statement.as_ref(), Some(annotations)),
+                other => (other, None),
+            };
             if let TypedStatement::Function { name, params, return_type, body, .. } = stmt {
                 // Core intrinsics are handled entirely at each call site
                 // (see generate_call) and never emitted as a real method,
@@ -5021,6 +5025,11 @@ impl JavaSourceGenerator {
                     source.push_str("    }\n");
                     main_found = true;
                 } else {
+                    if let Some(anns) = annotations {
+                        for a in anns {
+                            source.push_str(&format!("    // @{}({:?})\n", a.name, a.args));
+                        }
+                    }
                     let params_sig: Vec<String> = params.iter()
                         .map(|p| format!("{} {}", java_type_name(&p.type_), escape_java_identifier(&p.name)))
                         .collect();
@@ -5080,6 +5089,10 @@ impl JavaSourceGenerator {
         source.push_str(MEMORY_HELPER_CLASSES);
 
         for stmt in &self.program.statements {
+            let stmt = match stmt {
+                TypedStatement::Annotated { statement, .. } => statement.as_ref(),
+                other => other,
+            };
             match stmt {
                 TypedStatement::TraitDecl { name, methods, .. } => {
                     self.generate_trait(&mut source, name, methods)?;
@@ -5444,6 +5457,9 @@ impl JavaSourceGenerator {
             }
             TypedStatement::Match { arms, .. } => {
                 !arms.is_empty() && arms.iter().all(|arm| Self::statement_always_returns(&arm.body))
+            }
+            TypedStatement::Annotated { statement, .. } => {
+                Self::statement_always_returns(statement)
             }
             _ => false,
         }
@@ -5840,6 +5856,9 @@ impl JavaSourceGenerator {
             }
             TypedStatement::EnumDecl { .. } => {
                 // Like ClassDecl, emitted as top-level Java classes in `generate`.
+            }
+            TypedStatement::Annotated { statement, .. } => {
+                self.generate_statement(source, statement, indent, return_type, is_closure)?;
             }
             TypedStatement::Match { expr, arms, .. } => {
                 let mut hoisted = String::new();

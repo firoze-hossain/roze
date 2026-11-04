@@ -93,15 +93,20 @@ const BINARY_DISPLAY_NAME: &str = "binary (built-in)";
 const FORENSICS_SOURCE: &str = include_str!("../../stdlib/src/forensics.roze");
 const FORENSICS_DISPLAY_NAME: &str = "forensics (built-in)";
 
+fn statement_defined_name(stmt: &Statement) -> Option<String> {
+    match stmt {
+        Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
+        Statement::Annotated { statement, .. } => statement_defined_name(statement),
+        _ => None,
+    }
+}
+
 /// Walks `program`'s top-level statements, replacing every `Import` with
 /// the functions it pulls in. `base_dir` is the directory of the file
 /// being compiled, used to resolve relative import paths.
 pub fn resolve_imports(program: Program, base_dir: &Path) -> Result<Program> {
     let mut defined_names: HashSet<String> = program.statements.iter()
-        .filter_map(|stmt| match stmt {
-            Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
-            _ => None,
-        })
+        .filter_map(statement_defined_name)
         .collect();
 
     let mut visited_paths: HashSet<String> = HashSet::new();
@@ -152,16 +157,17 @@ pub fn resolve_imports(program: Program, base_dir: &Path) -> Result<Program> {
                     Statement::Import { .. } => {
                         queue.push_back((module_stmt, next_base_dir.clone()));
                     }
-                    Statement::Function { ref name, .. } | Statement::ExternFunction { ref name, .. } | Statement::ClassDecl { ref name, .. } => {
-                        if defined_names.contains(name) {
+                    stmt if statement_defined_name(&stmt).is_some() => {
+                        let name = statement_defined_name(&stmt).unwrap();
+                        if defined_names.contains(&name) {
                             // Either the importing file itself, or an
                             // earlier import, already provided this name
                             // -- that one wins, so skip this one rather
                             // than emitting a duplicate Java method/class.
                             continue;
                         }
-                        defined_names.insert(name.clone());
-                        imported_functions.push(module_stmt);
+                        defined_names.insert(name);
+                        imported_functions.push(stmt);
                     }
                     other => {
                         imported_functions.push(other);
@@ -200,7 +206,7 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "vga" {
         return Ok((VGA_SOURCE.to_string(), VGA_DISPLAY_NAME.to_string()));
     }
-    if path == "rozeboot" {
+    if path == "rozeboot" || path == "rozeboot2" || path == "roze::boot" || path == "ioc" || path == "annotations" {
         return Ok((ROZEBOOT_SOURCE.to_string(), ROZEBOOT_DISPLAY_NAME.to_string()));
     }
     if path == "raylib" {

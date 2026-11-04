@@ -129,6 +129,7 @@ impl Parser {
             Token::Comptime => self.parse_comptime_statement(),
             Token::AsmBang => self.parse_asm_statement(),
             Token::Identifier(id) if id == "asm" && self.peek_is_not() => self.parse_asm_statement(),
+            Token::At => self.parse_annotated_statement(),
             _ => {
                 // Parse a full expression first, then decide: if `=`
                 // follows, this is an assignment (either to a bare name
@@ -179,6 +180,96 @@ impl Parser {
                 }
             }
         }
+    }
+
+    fn parse_annotation(&mut self) -> Result<crate::parser::ast::Annotation> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // consume '@'
+
+        let name = match &self.current().token {
+            Token::Identifier(n) => {
+                let n = n.clone();
+                self.advance();
+                n
+            }
+            other => return Err(self.error(format!("Expected an annotation name after '@', found {}", other))),
+        };
+
+        let mut args = Vec::new();
+        if self.check(&Token::LeftParen) {
+            self.advance(); // consume '('
+            while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::RightParen) {
+                    break;
+                }
+                match &self.current().token {
+                    Token::String(s) => {
+                        args.push(s.clone());
+                        self.advance();
+                    }
+                    Token::Identifier(id) => {
+                        args.push(id.clone());
+                        self.advance();
+                    }
+                    Token::Number(n) => {
+                        args.push(n.clone());
+                        self.advance();
+                    }
+                    Token::True => {
+                        args.push("true".to_string());
+                        self.advance();
+                    }
+                    Token::False => {
+                        args.push("false".to_string());
+                        self.advance();
+                    }
+                    other => {
+                        args.push(format!("{}", other));
+                        self.advance();
+                    }
+                }
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            if !self.check(&Token::RightParen) {
+                return Err(self.error("Expected ')' after annotation arguments"));
+            }
+            self.advance(); // consume ')'
+        }
+
+        Ok(crate::parser::ast::Annotation {
+            name,
+            args,
+            location,
+        })
+    }
+
+    fn parse_annotated_statement(&mut self) -> Result<Statement> {
+        let location = Location::new(self.current().line, self.current().column);
+        let mut annotations = Vec::new();
+
+        while self.check(&Token::At) {
+            annotations.push(self.parse_annotation()?);
+            while self.check(&Token::Newline) {
+                self.advance();
+            }
+        }
+
+        let inner_stmt = self.parse_statement()?;
+        Ok(Statement::Annotated {
+            annotations,
+            statement: Box::new(inner_stmt),
+            location,
+        })
     }
 
     fn parse_import(&mut self) -> Result<Statement> {
@@ -266,6 +357,14 @@ impl Parser {
 
             if self.check(&Token::RightParen) {
                 break;
+            }
+
+            // Skip any parameter annotations (e.g. @PathVariable("id"), @RequestParam("filter"), @RequestBody, @Valid)
+            while self.check(&Token::At) {
+                let _ann = self.parse_annotation()?;
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
             }
 
             // Get parameter name
@@ -682,6 +781,17 @@ impl Parser {
 
         let mut fields = Vec::new();
         while !self.check(&Token::RightBrace) && !self.check(&Token::EOF) {
+            // Skip any field annotations (e.g. @Autowired)
+            while self.check(&Token::At) {
+                let _ann = self.parse_annotation()?;
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+            }
+            if self.check(&Token::RightBrace) {
+                break;
+            }
+
             let field_name = match &self.current().token {
                 Token::Identifier(n) => {
                     let n = n.clone();

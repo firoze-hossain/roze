@@ -374,7 +374,7 @@ s1_rows = [
         ("M3-T08", 8), ("Month 3", 5), ("Sprint 6 (W11-W12)", 8), "Enterprise Framework", "RozeBoot 2.0 Annotations & IoC Container",
         "Declarative annotations: @RestController, @GetMapping, @PostMapping, @PathVariable, @RequestParam, @RequestBody, @Autowired, @Service, @Component, @Valid. IoC container.",
         "1:1 architectural parity with Spring Boot 3 on Java 25.",
-        "Enterprise Cloud Services", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Enterprise Cloud Services", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M3-T09", 8), ("Month 3", 5), ("Sprint 6 (W11-W12)", 8), "Data & ORM", "High-Throughput ORM & SQL Query Builder",

@@ -75,6 +75,7 @@ pub enum Token {
     FatArrow,    // =>
     Underscore,  // _
     Pipe,        // |
+    At,          // @
 
     // Special
     Newline,
@@ -150,6 +151,7 @@ impl fmt::Display for Token {
             Token::FatArrow => write!(f, "=>"),
             Token::Underscore => write!(f, "_"),
             Token::Pipe => write!(f, "|"),
+            Token::At => write!(f, "@"),
             Token::Newline => write!(f, "\\n"),
             Token::EOF => write!(f, "EOF"),
             Token::Error => write!(f, "ERROR"),

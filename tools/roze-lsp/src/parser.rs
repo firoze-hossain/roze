@@ -171,6 +171,9 @@ fn collect_statement(stmt: &Statement, ast: &mut Ast) {
             collect_statement(statement, ast);
         }
         Statement::Asm { .. } => {}
+        Statement::Annotated { statement, .. } => {
+            collect_statement(statement, ast);
+        }
     }
 }
 

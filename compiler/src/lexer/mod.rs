@@ -319,6 +319,10 @@ impl<'a> Lexer<'a> {
                         Token::Pipe
                     }
                 }
+                '@' => {
+                    self.advance();
+                    Token::At
+                }
                 '"' => {
                     let string = self.read_string();
                     Token::String(string)
@@ -444,8 +448,14 @@ mod tests {
 
     #[test]
     fn unrecognized_character_becomes_error_token() {
-        let tokens = tokenize("@");
+        let tokens = tokenize("$");
         assert_eq!(tokens[0].token, Token::Error);
+    }
+
+    #[test]
+    fn at_symbol_lexes_as_at_token() {
+        let tokens = tokenize("@");
+        assert_eq!(tokens[0].token, Token::At);
     }
 
     /// The very first character of a file must be column 1, not 2. The
@@ -479,7 +489,7 @@ mod tests {
     fn column_tracks_correctly_mid_line() {
         let tokens = tokenize("    let x = 5 @ 3;");
         // '@' is the 15th character (1-indexed): 4 spaces + "let x = 5 " (10 chars) = 14, so '@' is at column 15.
-        let at_token = tokens.iter().find(|t| t.token == Token::Error).expect("expected an Error token for '@'");
+        let at_token = tokens.iter().find(|t| t.token == Token::At).expect("expected an At token for '@'");
         assert_eq!(at_token.column, 15);
     }
 

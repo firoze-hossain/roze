@@ -838,6 +838,24 @@ true";
 }
 
 #[test]
+fn rozeboot_enterprise_framework_v2_suite() {
+    let (stdout, stderr, ok) = run_fixture("rozeboot2.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    assert!(out.contains("RozeBoot 2.0 - Spring Boot 3 on Java 25 Parity Suite (M3-T08)"), "missing header banner:\n{}", out);
+    assert!(out.contains("[PASS] Declarative Annotation Metadata verified."), "missing suite 1 pass:\n{}", out);
+    assert!(out.contains("[PASS] IoC Container & Cycle Detection verified."), "missing suite 2 pass:\n{}", out);
+    assert!(out.contains("[PASS] Validation Engine (@Valid) verified."), "missing suite 3 pass:\n{}", out);
+    assert!(out.contains("[PASS] Unified RozeBoot 2.0 Application Pipeline verified."), "missing suite 4 pass:\n{}", out);
+    assert!(out.contains("RozeBoot Enterprise Framework"), "missing ASCII banner:\n{}", out);
+    assert!(out.contains("Dispatch 1 Status: 200 OK"), "missing dispatch 1:\n{}", out);
+    assert!(out.contains("Dispatch 2 Status: 201 Created"), "missing dispatch 2:\n{}", out);
+    assert!(out.contains("Dispatch 3 Status: 400 Bad Request"), "missing dispatch 3:\n{}", out);
+    assert!(out.contains("application/problem+json"), "missing RFC 7807 header:\n{}", out);
+    assert!(out.contains("Dispatch 4 Status: 404 Not Found"), "missing dispatch 4:\n{}", out);
+}
+
+#[test]
 fn trait_bounds_and_associated_types() {
     let (stdout, stderr, ok) = run_fixture("trait_bounds.roze");
     assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);

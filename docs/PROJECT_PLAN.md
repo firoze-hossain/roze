@@ -437,9 +437,9 @@ The master project spreadsheet has been regenerated and updated in:
 | **Month 1 (W01-W04)** | **Advanced Type System & Concurrency** | Generics with Trait Bounds (`<T: Display>`), Deep Pattern Matching with Guards, Comptime expressions, M:N Green Threads (1M fibers), Async/Await state machines, Lock-free Atomics & Channels. | Rust 1.99 trait system & Java 25 Loom Virtual Threads |
 | **Month 2 (W05-W08)** | **Systems Core & Bare-Metal OS Kernel** | Primitive Types (`i8`-`u128`, `f32`, `f64`), Hardware SIMD (`Vec4f`/`Vec8f` AVX-512/NEON), Advanced Collections (`VecDeque`, `BTreeMap`, `BinaryHeap`), Bare-metal `--target freestanding`, 4-level paging manager, IDT/GDT interrupt handlers, APIC, UART & GOP drivers. | Rust `#![no_std]` & Zig freestanding |
 | **Month 3 (W09-W12)** | **Cybersecurity & Enterprise Web (RozeBoot)** | Raw packet sockets (`AF_PACKET`/`BPF`), Packet crafter/dissector, 100k port/s SYN scanner, Pure TLS 1.3 & Crypto (AES-256-GCM, Ed25519), Binary disassembler, RozeBoot 2.0 (HTTP/2 & HTTP/3, `@RestController`, IoC container, HikariCP ORM, JWT, OpenAPI). | Spring Boot 3 on Java 25 & Python Scapy |
-| **Month 4 (W13-W16)** | **Native AI / ML & 2D/3D Game Dev** | N-D `Tensor<T, D>`, AVX-512/CUDA GEMM kernels, Dynamic Autograd tape, Native GGUF/ONNX loaders, Local LLaMA 3 inference with KV-cache, 3D Game Math (`Quat`, `Mat4`), Graphics HAL (Vulkan, Metal, DirectX 12), Archetype ECS, 3D Spatial Audio, Rigid Body Physics. | PyTorch / llama.cpp & Bevy / Raylib |
-| **Month 5 (W17-W20)** | **Desktop GUI & Standard Utilities** | Cross-platform Windowing (Win32/Cocoa/Wayland), GPU 2D Vector Canvas (Skia-grade), Reactive UI ("RozeUI") with Flexbox layout, Native Widget Kit, Embedded Webview, Linear-time Regex (DFA/NFA), Date/Time (JSR-310), Universal Serialization (JSON/TOML/MsgPack/Protobuf). | JavaFX / Tauri & Java 25 java.time |
-| **Month 6 (W21-W26)** | **Pure Roze Self-Hosting, Universal Targets & Launch** | Roze-in-Roze Compiler v2.0 (Frontend, Type Checker, SSA Optimizer, Native Code Generator in pure Roze), 100% Decommissioning of Rust, 3-Stage Bootstrap Fixpoint Verification (`diff roze_stage2 roze_stage3` == 0 bytes), Basir (`bsr`) Package Manager with `.mfz` (Mohammad Firoze) Manifests (`bsr.mfz`, `bsr.lock`), WebAssembly Target (`--target wasm32` / `wasm32-wasi`, `roze-bindgen`), Microcontroller IoT & `embedded-hal` (ARM Cortex-M, RISC-V), Monolithic CLI (`roze`), LSP Extension, Roze v2.0 "Prometheus" Launch. | Rustc self-hosting, Cargo parity, Rust `wasm32-wasi` / `embedded-hal` & Go gc autonomy |
+| **Month 4 (W13-W16)** | **Universal C FFI, Atomic Thread-Safety & Core OS StdLib** | Universal C FFI (`extern "C"`, `dlopen`/`dlsym`), `#[repr(C)]` struct layout & alignment, Raw pointer primitives (`*const T`, `*mut T`), Thread-safe atomic ARC (`Arc<T>`, `Weak<T>`), Standard Filesystem (`std::fs`, `std::io`), Process spawning & pipes (`std::process`, `std::os`), Monotonic `std::time`, Linear-time `std::regex`, Universal `std::serde`, Compile-time `std::reflect`, FFI bridges (Raylib, SQLite, POSIX libc). | Rust `core::ffi` / `std::io` & Java 25 Project Panama (Foreign Function & Memory API) |
+| **Month 5 (W17-W20)** | **Basir (`bsr`) Package Manager & Developer Ecosystem** | Standalone `bsr` package manager, proprietary `bsr.mfz` manifest, deterministic `bsr.lock`, SemVer SAT solver, global package cache, `bsr vendor` offline mode, decentralized git/registry resolution, decoupling frameworks (`rozeboot`, `roze-orm`, `roze-net`) into standalone packages, Language Server Protocol (`roze-lsp`), `rozedoc`, and `bsr bench`. | Rust Cargo / crates.io & Go Modules |
+| **Month 6 (W21-W26)** | **Pure Roze Self-Hosting, Universal Targets & Launch** | Roze-in-Roze Compiler v2.0 (Frontend, Type Checker, SSA Optimizer, Native Code Generator in pure Roze), 100% Decommissioning of Rust, 3-Stage Bootstrap Fixpoint Verification (`diff roze_stage2 roze_stage3` == 0 bytes), WebAssembly Target (`--target wasm32` / `wasm32-wasi`, `roze-bindgen`), Microcontroller IoT & `embedded-hal` (ARM Cortex-M, RISC-V), Monolithic CLI (`roze`), Community Package Registry & Ecosystem Seed, Roze v2.0 "Prometheus" Launch. | Rustc self-hosting, Cargo parity, Rust `wasm32-wasi` / `embedded-hal` & Go gc autonomy |
 
 ---
 
@@ -479,20 +479,27 @@ The master project spreadsheet has been regenerated and updated in:
 
 ---
 
-### Month 6 Highlighted Epics & Domain Extensions
+### Month 5 & 6 Highlighted Epics: The Language Independence & Ecosystem Pillars
 
-#### 1. Basir (`bsr`) Package Manager & `.mfz` (Mohammad Firoze) Manifest Ecosystem (`M6-T08`)
+#### 1. Universal C FFI & Native Interop (`M4-T01`, `M4-T02`, `M4-T10`)
+- **First-Class C ABI**: `extern "C" func ...` with System V and Windows x64 calling conventions.
+- **Dynamic Library Linking**: Direct dynamic symbol resolution (`dlopen`/`dlsym`/`LoadLibrary`) without compiler modifications.
+- **`#[repr(C)]` & Pointer Primitives**: C-compatible memory alignment, raw pointers (`*const T`, `*mut T`, `*raw u8`), and zero-copy C-string conversion.
+- **Unlocking All Domains**: Enables pure Roze packages to link against Raylib, Vulkan, CUDA, SQLite, OpenSSL, and OS native APIs without touching the compiler.
+
+#### 2. Basir (`bsr`) Package Manager & `.mfz` (Mohammad Firoze) Manifest Ecosystem (`M5-T01`..`M5-T07`)
 - **CLI Executable**: `bsr` (from Arabic: **البصير** - *Al-Basir*, "The All-Perceiving", "Insightful Discerner") — representing a package manager that inspects, analyzes, and resolves dependency trees with mathematical clarity.
 - **Proprietary Manifest**: `bsr.mfz` (standing for creator **Mohammad Firoze**), giving Roze its own distinct identity rather than borrowing `.toml`. Full backwards compatibility is preserved for `roze.mfz` and legacy `roze.toml`.
 - **Deterministic Lockfile**: `bsr.lock` (recording cryptographic package hashes, exact versions, and dependency graphs).
-- **Tooling Commands**: `bsr new`, `bsr build`, `bsr run`, `bsr add`, `bsr remove`, `bsr install`, `bsr update`, `bsr lock`, `bsr cache`, `bsr search`, `bsr publish`, `bsr test`.
+- **Tooling Commands**: `bsr new`, `bsr build`, `bsr run`, `bsr add`, `bsr remove`, `bsr install`, `bsr update`, `bsr lock`, `bsr cache`, `bsr search`, `bsr publish`, `bsr bench`.
+- **Decoupled Architecture**: Frameworks (`rozeboot`, `roze-orm`, `roze-torch`, `roze-game`) are distributed as independent `bsr` packages rather than hardcoded in the compiler.
 
-#### 2. WebAssembly Target Compiler & Browser JS Bridge (`M6-T09`)
+#### 3. WebAssembly Target Compiler & Browser JS Bridge (`M6-T07`)
 - **Target Triples**: `--target wasm32-unknown-unknown` and `--target wasm32-wasi`.
 - **POSIX Syscalls via WASI**: `fd_read`, `fd_write`, `clock_time_get`, `environ_get` for sandboxed serverless execution (Cloudflare Workers, Fastly Compute@Edge).
 - **`roze-bindgen`**: Automated generation of JavaScript and TypeScript bindings, DOM interop, and linear memory buffer sharing.
 
-#### 3. Microcontroller IoT & `embedded-hal` Peripheral Architecture (`M6-T10`)
+#### 4. Microcontroller IoT & `embedded-hal` Peripheral Architecture (`M6-T08`)
 - **Cross-Compilation Targets**: ARM Cortex-M (`thumbv6m-none-eabi`, `thumbv7m-none-eabi`, `thumbv7em-none-eabihf`) and RISC-V (`riscv32i`, `riscv32imc`, `riscv64gc`).
 - **Standard Driver Traits (`roze::embedded`)**: `GpioPin` (Input/Output/Alternate), `I2cMaster`, `SpiBus`, `PwmChannel`, `AdcChannel`, `DelayTimer`.
 - **Peripheral Access Crates (PAC)**: Native CMSIS-SVD hardware description parser generating type-safe MMIO register blocks.
@@ -504,15 +511,16 @@ The master project spreadsheet has been regenerated and updated in:
 
 | # | Target Domain | Vision & Capability | Industry Benchmark | Parity Deliverables |
 | :- | :--- | :--- | :--- | :--- |
-| **1** | **Enterprise Web & Microservices** | High-throughput async REST/gRPC microservices, IoC dependency injection (`@Service`, `@Autowired`), ORM connection pool, and OpenAPI 3.1. | Java 25 (Spring Boot 3), Rust (Actix-web) | M1-T04, M1-T05, M3-T07..M3-T10 |
+| **1** | **Enterprise Web & Microservices** | High-throughput async REST/gRPC microservices, IoC dependency injection (`@Service`, `@Autowired`), ORM connection pool, and OpenAPI 3.1. | Java 25 (Spring Boot 3), Rust (Actix-web) | M1-T04, M1-T05, M3-T07..M3-T10, M5-T07 (`rozeboot` package) |
 | **2** | **Operating Systems & Kernels** | 64-bit freestanding OS kernels, 4-level paging, Buddy allocators, GDT/IDT interrupt gates, APIC, UART, PIT, HPET, and UEFI GOP framebuffer graphics. | C23, Rust 1.99 (`#![no_std]`), Zig | M2-T01, M2-T05..M2-T09 |
-| **3** | **Cybersecurity & Hacking** | Promiscuous raw sockets (`AF_PACKET`/`BPF`), packet crafter/dissector, 100k port/s SYN scanner, pure TLS 1.3, binary disassembler (ELF/PE), process memory inspection. | Python (Scapy), Go, C/C++ | M3-T01..M3-T06 |
-| **4** | **AI / Machine Learning** | N-D tensors with striding/slicing, AVX-512/CUDA GEMM, dynamic Autograd tape, native GGUF/ONNX loaders, local LLaMA 3 inference with KV-cache. | Python (PyTorch), C++ (llama.cpp) | M4-T01..M4-T06 |
-| **5** | **Game Development** | 60+ FPS 2D/3D games, cross-platform graphics HAL (Vulkan, Metal, DX12), archetype ECS scheduler, 3D math (`Quat`, `Mat4`), spatial audio, rigid-body physics. | Rust (Bevy), C++ (Unreal/Raylib) | M4-T07..M4-T10 |
-| **6** | **Desktop GUI Applications** | Native windowing (Win32/Cocoa/Wayland), GPU 2D vector canvas, reactive state UI ("RozeUI") with Flexbox layout, full widget set, embedded Webview. | JavaFX, Tauri, Qt | M5-T01..M5-T05 |
-| **7** | **Embedded & Microcontroller IoT** | Microcontroller firmware for ARM Cortex-M and RISC-V, SVD/PAC register mapping, zero-allocation `embedded-hal` driver traits (GPIO, I2C, SPI, PWM, ADC). | Rust (`embedded-hal`), C (CMSIS/HAL) | M2-T05..M2-T08, M6-T10 |
-| **8** | **WebAssembly & Edge Serverless** | High-performance WASM binaries for browsers and serverless clouds (Cloudflare Workers, Fastly), WASI POSIX runtime, `roze-bindgen` JS/TS bridge. | Rust (`wasm-bindgen`/WASI), Go | M1-T05, M5-T08, M6-T09 |
-| **9** | **Package & Dependency Ecosystem** | Basir (`bsr`) package manager, proprietary `.mfz` (Mohammad Firoze) manifests, deterministic `bsr.lock`, Ed25519 signatures, SAT-based semver solver. | Rust (Cargo / crates.io), Go modules | M5-T08, M6-T07, M6-T08 |
+| **3** | **Cybersecurity & Hacking** | Promiscuous raw sockets (`AF_PACKET`/`BPF`), packet crafter/dissector, 100k port/s SYN scanner, pure TLS 1.3, binary disassembler (ELF/PE), process memory inspection. | Python (Scapy), Go, C/C++ | M3-T01..M3-T06, M5-T07 |
+| **4** | **AI / Machine Learning** | N-D tensors, CUDA/BLAS hardware acceleration, dynamic computational graph, GGUF/ONNX loaders via universal FFI & native libraries. | Python (PyTorch), C++ (llama.cpp) | M4-T01..M4-T03 (FFI/C-ABI), M6-T10 (`roze-torch` package) |
+| **5** | **Game Development** | 60+ FPS 2D/3D games, cross-platform graphics HAL (Vulkan, Metal, Raylib via FFI), ECS architecture, 3D math (`Quat`, `Mat4`), audio, physics. | Rust (Bevy), C++ (Unreal/Raylib) | M4-T01, M4-T02, M4-T10 (Raylib FFI), M6-T10 (`roze-game` package) |
+| **6** | **Desktop GUI Applications** | Native windowing (Win32/Cocoa/Wayland), GPU 2D vector canvas, reactive UI with Flexbox layout, full widget set, embedded Webview via FFI. | JavaFX, Tauri, Qt | M4-T01, M4-T10, M6-T10 (`roze-ui` package) |
+| **7** | **Embedded & Microcontroller IoT** | Microcontroller firmware for ARM Cortex-M and RISC-V, SVD/PAC register mapping, zero-allocation `embedded-hal` driver traits (GPIO, I2C, SPI, PWM, ADC). | Rust (`embedded-hal`), C (CMSIS/HAL) | M2-T05..M2-T08, M6-T08 |
+| **8** | **WebAssembly & Edge Serverless** | High-performance WASM binaries for browsers and serverless clouds (Cloudflare Workers, Fastly), WASI POSIX runtime, `roze-bindgen` JS/TS bridge. | Rust (`wasm-bindgen`/WASI), Go | M1-T05, M6-T07 |
+| **9** | **Package & Dependency Ecosystem** | Basir (`bsr`) package manager, proprietary `.mfz` (Mohammad Firoze) manifests, deterministic `bsr.lock`, Ed25519 signatures, SAT-based semver solver. | Rust (Cargo / crates.io), Go modules | M5-T01..M5-T06, M6-T09, M6-T10 |
+| **10** | **Systems Programming & Utilities** | High-performance CLI tools, linear-time regex, universal serialization, process spawning, pipes, atomic ARC memory management. | Rust (standard library), C++23 | M4-T03..M4-T09 |
 | **10** | **Pure Roze Self-Hosting Compiler** | 100% Roze-in-Roze compiler (Frontend, Type Checker, SSA IR Optimizer, Native Emitter), complete Rust decommissioning, 3-stage bootstrap fixpoint (0 bytes diff). | Rust (`rustc`), Go (`gc`) | M6-T01..M6-T06, M6-T11, M6-T12 |
 
 

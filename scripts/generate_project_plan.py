@@ -395,140 +395,140 @@ s1_rows = [
         "Web Enterprise & Cybersecurity", "3 Days", ("Critical", 14), ("Completed", 16)
     ],
 
-    # MONTH 4: NATIVE AI / MACHINE LEARNING & 2D/3D GAME DEV SUITE
+    # MONTH 4: UNIVERSAL C FFI, ATOMIC THREAD-SAFETY & CORE OS STANDARD LIBRARY
     [
-        ("M4-T01", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "AI Tensor Engine", "N-Dimensional Tensor<T, D> Engine",
-        "Multi-dimensional tensor structure supporting arbitrary ranks, strided views, continuous memory, broadcasting, slicing (tensor[0..5, :, 1]), and transposition.",
-        "Parity with NumPy ndarray and PyTorch torch.Tensor.",
-        "AI/ML, Data Science, Scientific Computing", "8 Days", ("Critical", 14), ("Planned", 12)
+        ("M4-T01", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Universal C FFI", "C-ABI Foreign Function Interface Engine",
+        "Universal C FFI supporting extern 'C' declarations, dynamic library loading (dlopen/dlsym/LoadLibrary), and System V / Windows x64 C calling conventions.",
+        "Parity with Rust extern 'C' FFI and Java 25 Project Panama (Foreign Function & Memory API).",
+        "All Domains, Native C Interop, GPU/Hardware", "8 Days", ("Critical", 14), ("Planned", 12)
     ],
     [
-        ("M4-T02", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "AI Acceleration", "GEMM / BLAS & GPU Compute (CUDA/Metal)",
-        "Hardware-accelerated matrix multiplication kernels: AVX-512 FMA vector code generator + direct CUDA PTX / Apple Metal Shading Language GPU kernels.",
-        "Matches cuBLAS and Apple Accelerate performance for neural operations.",
-        "AI/ML Deep Learning, LLM Inference", "8 Days", ("Critical", 14), ("Planned", 12)
+        ("M4-T02", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Memory Layout & Types", "#[repr(C)] Layout & Raw Pointer Primitives",
+        "C-compatible struct memory layout (#[repr(C)]), field padding, alignment rules, and pointer primitives (*const T, *mut T, *raw u8) with zero-copy C-string conversion.",
+        "Matches C ABI memory guarantees and Rust std::ptr / core::ffi.",
+        "Systems Programming, OS Drivers, Graphics", "7 Days", ("Critical", 14), ("Planned", 12)
     ],
     [
-        ("M4-T03", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Deep Learning", "Reverse-Mode Automatic Differentiation (Autograd)",
-        "Dynamic computational tape recording forward ops. Automated backward-pass gradient propagation for complex neural networks and loss functions.",
-        "Matches PyTorch Autograd and JAX automatic differentiation.",
-        "Machine Learning Training & Fine-Tuning", "7 Days", ("High", 14), ("Planned", 12)
+        ("M4-T03", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Memory Architecture", "Thread-Safe Atomic ARC & Weak References",
+        "Upgrade ARC to multi-threaded atomic retain/release (atomic_fetch_add/sub), implement Weak<T> cyclic reference detection, and distinguish thread-local Rc<T> from atomic Arc<T>.",
+        "100% thread-safe memory management matching Rust Arc<T>/Weak<T> and C++ std::shared_ptr.",
+        "Multi-Core Systems, Concurrency, Servers", "8 Days", ("Critical", 14), ("Planned", 12)
     ],
     [
-        ("M4-T04", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Neural Network Layers", "Comprehensive NN Layer Library (roze::nn)",
-        "Linear/Dense, Conv1D, Conv2D, MaxPool, LayerNorm, RMSNorm, Dropout, Multi-Head Attention, RoPE (Rotary Position Embeddings), and SwiGLU activations.",
-        "Matches PyTorch torch.nn module ecosystem.",
-        "AI/ML Computer Vision & NLP", "7 Days", ("High", 14), ("Planned", 12)
+        ("M4-T04", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Filesystem & I/O", "Standard I/O Streams & Filesystem Engine",
+        "Cross-platform std::io and std::fs: File, OpenOptions (read, write, append, create), BufferedReader, BufferedWriter, Path/PathBuf, directory walking, and metadata.",
+        "Parity with Rust std::fs / std::io and Java 25 java.nio.file.",
+        "CLI Tools, Backend Servers, Compilers", "7 Days", ("High", 14), ("Planned", 12)
     ],
     [
-        ("M4-T05", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Model Formats", "GGUF & ONNX Native Model Loaders",
-        "Native binary parser for GGUF (Llama, Mistral, Qwen) and ONNX files. Memory-mapped weight loading (mmap) with Q4_K_M, Q8_0, and FP16 dequantization.",
-        "Zero C++ dependency loader matching llama.cpp format.",
-        "Local AI Inference, Edge AI", "7 Days", ("Critical", 14), ("Planned", 12)
+        ("M4-T05", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "OS & Processes", "Process Spawning, Pipes & Signal Handling",
+        "Cross-platform process execution (Command::new), standard I/O redirection (pipes for stdin/stdout/stderr), exit status codes, environment variables (std::env), and POSIX/Win32 signals.",
+        "Matches Rust std::process and Java java.lang.ProcessBuilder.",
+        "Systems Administration, DevOps, Build Tools", "7 Days", ("High", 14), ("Planned", 12)
     ],
     [
-        ("M4-T06", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "LLM Inference", "Local LLM Inference Engine & KV-Cache",
-        "Complete Transformer decoder pipeline in pure Roze: BPE tokenizer, rotary embeddings, KV-cache, top-p/top-k sampling, and streaming token generation.",
-        "Run LLaMA 3 8B locally in Roze with 45+ tokens/sec on Apple Silicon / CUDA.",
-        "AI Applications, Local Copilots", "8 Days", ("Critical", 14), ("Planned", 12)
+        ("M4-T06", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "High-Precision Time", "Instant, Duration & Monotonic Timer Reactor",
+        "Monotonic high-precision Instant, nanosecond Duration arithmetic, clock conversions, high-resolution sleep timers, and timeout reactor integration.",
+        "Matches Rust std::time and Java java.time.Instant / Duration.",
+        "Networking, Game Loops, Real-Time Systems", "6 Days", ("Medium", 14), ("Planned", 12)
     ],
     [
-        ("M4-T07", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Game Math", "Complete 2D/3D Game Math Suite",
-        "Vec2, Vec3, Vec4, Mat3x3, Mat4x4, Quaternion, Transform, Ray, Plane, AABB, and Frustum with SIMD-accelerated linear algebra operations.",
-        "Parity with Rust glam/nalgebra and C++ GLM.",
-        "Game Development, Physics Simulation, VFX", "6 Days", ("High", 14), ("Planned", 12)
-    ],
-    [
-        ("M4-T08", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Graphics HAL", "Cross-Platform Graphics Hardware Abstraction",
-        "Unified rendering backend: Vulkan 1.3, Apple Metal, DirectX 12, WebGPU, plus Raylib & SDL3 FFI bindings. Pipeline state, shaders, uniform buffers, textures.",
-        "Matches Rust wgpu and C++ bgfx cross-platform graphics reach.",
-        "2D/3D Games, CAD, Visual Applications", "9 Days", ("Critical", 14), ("Planned", 12)
-    ],
-    [
-        ("M4-T09", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Game Architecture", "Archetype-Based Entity Component System (ECS)",
-        "High-performance ECS engine: contiguous component chunk storage (archetypes), query filters (With<T>, Without<U>), and multi-threaded system parallelization.",
-        "Matches Rust Bevy ECS and C++ Flecs performance.",
-        "Game Engines, Massive Simulations", "7 Days", ("High", 14), ("Planned", 12)
-    ],
-    [
-        ("M4-T10", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Game Audio & Physics", "3D Spatial Audio & Rigid Body Physics Engine",
-        "Audio mixer with 3D spatial listener; decoders for WAV, OGG, MP3. Real-time 2D/3D physics: AABB/OBB, GJK/EPA narrowphase, impulse solver, and Raycast.",
-        "Complete indie game runtime stack in pure Roze.",
-        "Game Development, Interactive Media", "7 Days", ("High", 14), ("Planned", 12)
-    ],
-    [
-        ("M4-T11", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Milestone Gate M4", "Month 4 AI & Game Platform Verification",
-        "Run LLaMA 3 token generation streaming demo with zero external C++ code. Launch 60 FPS 3D game demo with ECS, lighting, shadows, physics, and audio.",
-        "Stable 60 FPS rendering and validated local LLM generation.",
-        "AI/ML & Game Development", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
-    ],
-
-    # MONTH 5: DESKTOP GUI & STANDARD DEVELOPER PRODUCTIVITY SUITE
-    [
-        ("M5-T01", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Desktop Windowing", "Cross-Platform Native Windowing Engine",
-        "Event loop, multi-window creation, DPI scaling, mouse/keyboard/gamepad events, clipboard, and drag-and-drop on Windows (Win32), macOS (Cocoa), Linux (Wayland/X11).",
-        "Parity with Rust winit and Java AWT/Swing windowing abstractions.",
-        "Desktop Applications, Productivity Software", "7 Days", ("High", 14), ("Planned", 12)
-    ],
-    [
-        ("M5-T02", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Vector 2D Canvas", "GPU-Accelerated 2D Vector Rendering Canvas",
-        "Path rasterization, cubic bezier curves, SVG path parser, gradient fills, clipping masks, and subpixel anti-aliased font rendering via FreeType/HarfBuzz.",
-        "Matches Skia and Rust vello 2D graphics performance.",
-        "Desktop GUI, Data Visualization, Creative Tools", "8 Days", ("High", 14), ("Planned", 12)
-    ],
-    [
-        ("M5-T03", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Reactive UI Framework", "Declarative Reactive UI ('RozeUI')",
-        "Reactive component tree, State<T>, Computed<T>, Effect, two-way data binding, and integrated Flexbox layout engine (Yoga-compatible).",
-        "Modern reactive UI matching Flutter, React, and Swift UI.",
-        "Desktop Business Apps, Developer Tools", "8 Days", ("Critical", 14), ("Planned", 12)
-    ],
-    [
-        ("M5-T04", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Native Widget Kit", "Batteries-Included Desktop Widget Library",
-        "Comprehensive widgets: Button, TextInput, TextArea, CheckBox, Dropdown, Slider, DataGrid/Table, TabView, TreeView, SplitPane, Modal Dialogs, Menus.",
-        "Matches JavaFX and Qt Widget richness.",
-        "Enterprise Desktop Applications", "7 Days", ("High", 14), ("Planned", 12)
-    ],
-    [
-        ("M5-T05", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Desktop Webview", "Embedded Webview Component (RozeWebview)",
-        "Native embedded browser container: WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux. Bidirectional JS-Roze bridge communication.",
-        "Matches Tauri and Electron capabilities with 1/10th the memory footprint.",
-        "Hybrid Desktop Apps, Admin Dashboards", "6 Days", ("Medium", 14), ("Planned", 12)
-    ],
-    [
-        ("M5-T06", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Text & Regex", "High-Performance Linear-Time Regex Engine",
-        "DFA/NFA regular expression engine with linear O(N) guarantees (no ReDoS catastrophic backtracking), Unicode character classes, capture groups, and lookaheads.",
+        ("M4-T07", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Text & Regex", "High-Performance Linear-Time Regex Engine",
+        "DFA/NFA regular expression engine with linear O(N) guarantees (no ReDoS catastrophic backtracking), Unicode character classes, capture groups, and replace/split.",
         "Parity with Rust regex crate and Java java.util.regex.",
         "Text Processing, Compilers, Data Extraction", "7 Days", ("High", 14), ("Planned", 12)
     ],
     [
-        ("M5-T07", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Date & Time", "Comprehensive Date, Time & Timezone Suite",
-        "Instant, Duration, DateTime, TimeZone, ZonedDateTime, IANA timezone database, calendar math (leap seconds, daylight savings), and ISO-8601 parsing.",
-        "Complete parity with Java 25 java.time (JSR-310) and Rust chrono.",
-        "Enterprise Banking, Scheduling, Databases", "6 Days", ("High", 14), ("Planned", 12)
+        ("M4-T08", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Universal Serialization", "Zero-Copy Multi-Format Serialization (Serde)",
+        "Type-safe serialization abstractions (Serialize, Deserialize) with zero heap allocation encoders/decoders for JSON, TOML, YAML, and binary formats.",
+        "Matches Rust serde and Java Jackson / Google Protobuf.",
+        "Microservices, Configs, Game Saves, Storage", "7 Days", ("Critical", 14), ("Planned", 12)
     ],
     [
-        ("M5-T08", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Universal Serialization", "Zero-Copy Multi-Format Serialization",
-        "High-throughput encoders and decoders for JSON, TOML, YAML, MsgPack, and Protocol Buffers with zero heap allocation deserialization.",
-        "Parity with Rust serde and Java Jackson / Google Protobuf.",
-        "Microservices, Configs, Game Saves", "7 Days", ("Critical", 14), ("Planned", 12)
+        ("M4-T09", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Metaprogramming", "Compile-Time Type Reflection & Introspection",
+        "Type inspection metadata: struct field enumeration, type_name<T>(), type_id<T>(), annotation inspection, and compile-time code generation hooks.",
+        "Matches Java reflection and Rust proc_macro derive capabilities in pure Roze.",
+        "Framework Authors, Serialization, IoC Engines", "7 Days", ("High", 14), ("Planned", 12)
     ],
     [
-        ("M5-T09", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "OS & System Utils", "Filesystem, Pipes, Signals & Process Engine",
-        "Cross-platform file walking, symbolic links, file watching, inter-process pipes, POSIX/Windows signals, environment variables, and async process spawning.",
-        "Matches Rust std::process / std::fs and Java java.nio.file.",
-        "DevOps Tooling, CLI Utilities, Systems", "6 Days", ("High", 14), ("Planned", 12)
+        ("M4-T10", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "FFI Ecosystem Bridges", "Raylib, SQLite & POSIX Libc Native Bridges",
+        "Prove universal FFI by building 3 real-world pure Roze native bridges without compiler modifications: SQLite3 embedded database, Raylib 2D/3D graphics, and POSIX libc.",
+        "Demonstrates Roze can link and drive any C library in the world.",
+        "Game Dev, Databases, Systems Integration", "7 Days", ("High", 14), ("Planned", 12)
     ],
     [
-        ("M5-T10", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Runtime Metadata", "Reflection & Runtime Type Information (RTTI)",
-        "Type inspection metadata: struct field enumeration, method discovery, annotation/attribute extraction, and dynamic invoke.",
-        "Matches Java reflection and C# metadata reflection.",
-        "Frameworks, Serialization, Testing Tools", "6 Days", ("Medium", 14), ("Planned", 12)
+        ("M4-T11", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Milestone Gate M4", "Universal Runtime & FFI Verification Gate",
+        "Comprehensive verification gate: call native C libraries via FFI, spawn multi-process pipelines, serialize complex data, and run multi-threaded atomic ARC stress test.",
+        "Zero memory leaks, zero data races under Valgrind/TSan, 100% C ABI parity.",
+        "Core Systems & Language Runtime", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
+    ],
+
+    # MONTH 5: BASIR ('bsr') PACKAGE MANAGER, MANIFEST ECOSYSTEM & DEVELOPER TOOLING
+    [
+        ("M5-T01", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Package Manager CLI", "Basir ('bsr') CLI Architecture & Project Generator",
+        "Standalone 'bsr' executable: bsr init, bsr new <name> [--bin | --lib], project scaffolding (src/main.roze, src/lib.roze, tests/, benches/).",
+        "Parity with 'cargo new' and 'go mod init'.",
+        "Developer Experience, Package Ecosystem", "7 Days", ("Critical", 14), ("Planned", 12)
     ],
     [
-        ("M5-T11", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Milestone Gate M5", "Month 5 Desktop GUI & StdLib Integration",
-        "Build and launch cross-platform Desktop Dashboard app in RozeUI displaying real-time system stats, data grids, and embedded webview.",
-        "Fluid 60 FPS desktop UI with sub-50ms cold startup time.",
-        "Desktop GUI & Standard Utilities", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
+        ("M5-T02", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Proprietary Manifest", "Proprietary 'bsr.mfz' (Mohammad Firoze) Manifest",
+        "Full parser and serializer for 'bsr.mfz' manifest: package metadata (name, version, authors, license, edition), dependencies, target configurations, and feature flags.",
+        "Roze's distinct proprietary manifest format preserving full backwards compatibility.",
+        "Package Management, Build System", "7 Days", ("Critical", 14), ("Planned", 12)
+    ],
+    [
+        ("M5-T03", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Deterministic Lockfile", "Deterministic Lockfile Engine ('bsr.lock')",
+        "Cryptographic dependency pinning: exact versions, git commit hashes, SHA-256 package checksums. Guarantees 100% reproducible builds across machines.",
+        "Parity with Cargo.lock and yarn.lock.",
+        "Supply Chain Security, Enterprise Builds", "6 Days", ("High", 14), ("Planned", 12)
+    ],
+    [
+        ("M5-T04", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Dependency Resolver", "SemVer Engine & SAT Dependency Solver",
+        "Semantic versioning specification (^1.2.3, ~1.2.0, >=1.0.0, *) with SAT-based graph solver detecting version conflicts and circular dependencies.",
+        "Parity with Cargo resolver v2 and npm PubGrub solver.",
+        "Package Management, Architecture", "8 Days", ("Critical", 14), ("Planned", 12)
+    ],
+    [
+        ("M5-T05", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Cache & Offline Mode", "Package Cache & 'bsr vendor' Offline Mode",
+        "Global immutable package cache (~/.bsr/cache/), hash validation, and 'bsr vendor' for 100% offline air-gapped enterprise builds.",
+        "Parity with 'cargo vendor' and 'go mod vendor'.",
+        "Enterprise Security, Air-Gapped Environments", "6 Days", ("High", 14), ("Planned", 12)
+    ],
+    [
+        ("M5-T06", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Registry Protocol", "Decentralized Git & HTTPS Package Registry",
+        "Support for Git repository dependencies (git = 'https://...', tag = 'v1.0') and HTTPS registry protocol with Ed25519 cryptographic package signing.",
+        "Parity with crates.io and Go module proxy.",
+        "Open-Source Ecosystem, Community", "8 Days", ("Critical", 14), ("Planned", 12)
+    ],
+    [
+        ("M5-T07", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Framework Modularization", "Decoupling Frameworks into Standalone Packages",
+        "Extract Month 3 frameworks (rozeboot, roze-orm, roze-net, roze-crypto) into standalone, modular bsr packages with bsr.mfz manifests, decoupling them from core compiler.",
+        "Makes Roze core compiler pristine and establishes the modular ecosystem model.",
+        "Framework Architecture, Clean Core", "7 Days", ("Critical", 14), ("Planned", 12)
+    ],
+    [
+        ("M5-T08", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "IDE Tooling", "Language Server Protocol (LSP) Engine ('roze-lsp')",
+        "Full LSP v3.17 server: real-time syntax diagnostics, semantic tokens, hover documentation, go-to-definition, and autocomplete for VS Code, Neovim, Zed.",
+        "Matches rust-analyzer and Eclipse JDT language server experience.",
+        "Developer Productivity, IDEs, Editors", "8 Days", ("High", 14), ("Planned", 12)
+    ],
+    [
+        ("M5-T09", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Documentation Tool", "Automated Documentation Generator ('rozedoc')",
+        "Markdown docstring extractor (/// ...), type signature indexer, and searchable HTML documentation generator with live playground support.",
+        "Parity with 'rustdoc' and 'javadoc'.",
+        "Documentation, API Reference, Open Source", "6 Days", ("High", 14), ("Planned", 12)
+    ],
+    [
+        ("M5-T10", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Benchmarking Tool", "Native Microbenchmark & Profiler Harness ('bsr bench')",
+        "Microbenchmark harness with nanosecond timing, statistical warm-up, memory allocation tracking, and throughput calculation.",
+        "Matches Rust criterion and Java JMH benchmark rigor.",
+        "Performance Engineering, Optimization", "6 Days", ("Medium", 14), ("Planned", 12)
+    ],
+    [
+        ("M5-T11", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Milestone Gate M5", "Package Ecosystem & Developer Experience Gate",
+        "Build, resolve, fetch, compile, test, benchmark, and document multi-package modular projects using 'bsr' and 'bsr.mfz' with zero compiler interventions.",
+        "Full package manager autonomy and verified developer tooling workflow.",
+        "Package Ecosystem & Developer Tooling", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
     ],
 
     # MONTH 6: 100% PURE ROZE-IN-ROZE SELF-HOSTING COMPILER & PRODUCTION INDEPENDENCE
@@ -569,39 +569,33 @@ s1_rows = [
         "Self-Hosting Compiler", "6 Days", ("Critical", 14), ("Planned", 12)
     ],
     [
-        ("M6-T07", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Unified Toolchain", "Monolithic 'roze' CLI Toolchain Suite",
-        "Unify compiler, roze-build, roze-test, roze-fmt, roze-doc, and roze-repl into a single hyper-fast monolithic executable (roze).",
-        "Matches the convenience of 'cargo' and 'go' single-binary toolchain.",
-        "Developer Experience, Tooling", "6 Days", ("High", 14), ("Planned", 12)
-    ],
-    [
-        ("M6-T08", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Package Ecosystem", "Basir ('bsr') Package Manager & '.mfz' Ecosystem",
-        "Deploy production 'bsr' (Basir - The All-Perceiving / Discerner) package manager with proprietary 'bsr.mfz' (Mohammad Firoze) manifest format and deterministic 'bsr.lock'. Ed25519 cryptographic package signing, SAT-based semantic dependency solver, decentralized Git & HTTPS registry resolution, and global package cache.",
-        "Parity with Rust Cargo and modern package managers using Roze's own .mfz format and bsr CLI.",
-        "Package Ecosystem, Community, Tooling", "7 Days", ("High", 14), ("Planned", 12)
-    ],
-    [
-        ("M6-T09", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "WebAssembly Target", "WebAssembly Compiler Target (--target wasm32 / wasi) & 'roze-bindgen'",
-        "WASM32 code generation backend in native Cranelift engine (--target wasm32, --target wasm32-wasi). WebAssembly System Interface (WASI snapshot-preview1) POSIX runtime calls (fd_read, fd_write, clock_time_get), memory linear buffer export, and 'roze-bindgen' JS/TS interface binding generator for browser DOM and Node.js.",
-        "Full parity with Rust wasm32-wasi / wasm-bindgen and Go WebAssembly syscall/js target; runs directly in browsers and edge clouds (Cloudflare Workers, Fastly).",
+        ("M6-T07", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "WebAssembly Target", "WebAssembly Compiler Target (--target wasm32 / wasi) & 'roze-bindgen'",
+        "WASM32 code generation backend in native Cranelift engine (--target wasm32, --target wasm32-wasi). WebAssembly System Interface (WASI snapshot-preview1) POSIX runtime calls, memory linear buffer export, and 'roze-bindgen' JS/TS interface binding generator.",
+        "Full parity with Rust wasm32-wasi / wasm-bindgen and Go WebAssembly target; runs directly in browsers and edge clouds.",
         "WebAssembly, Edge Serverless, Browser Applications", "8 Days", ("Critical", 14), ("Planned", 12)
     ],
     [
-        ("M6-T10", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Microcontroller IoT", "Microcontroller IoT Targets & 'embedded-hal' Architecture",
-        "Embedded cross-compilation targets for ARM Cortex-M (thumbv6m-none-eabi, thumbv7m-none-eabi, thumbv7em-none-eabihf) and RISC-V (riscv32i, riscv32imc, riscv64gc). Peripheral Access Crate (PAC) SVD parser and standard 'embedded-hal' peripheral trait library: GPIO (InputPin, OutputPin), I2C master, SPI bus, UART, PWM, and ADC with zero heap allocation.",
+        ("M6-T08", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Microcontroller IoT", "Microcontroller IoT Targets & 'embedded-hal' Architecture",
+        "Embedded cross-compilation targets for ARM Cortex-M (thumbv7m-none-eabi) and RISC-V (riscv32imc). Peripheral Access Crate (PAC) SVD parser and standard 'embedded-hal' peripheral trait library: GPIO, I2C, SPI, UART, PWM, ADC.",
         "Parity with Rust embedded-hal and C CMSIS/HAL micro-firmware architectures; direct flash programming on STM32, ESP32, and RP2040.",
         "Microcontrollers, IoT Edge, Automotive, Robotics", "8 Days", ("Critical", 14), ("Planned", 12)
     ],
     [
-        ("M6-T11", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "IDE Ecosystem", "Production LSP Server & VS Code Marketplace",
-        "Language Server Protocol engine in pure Roze: semantic highlighting, smart completion, go-to-definition, type hover, rename, and formatting in VS Code and JetBrains.",
-        "World-class developer tooling experience.",
-        "IDE, Developer Productivity", "6 Days", ("High", 14), ("Planned", 12)
+        ("M6-T09", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Unified Toolchain", "Monolithic 'roze' CLI Toolchain Suite",
+        "Unify compiler, roze-build, roze-test, roze-fmt, roze-doc, and roze-repl into a single hyper-fast monolithic executable (roze) integrating with 'bsr'.",
+        "Matches the convenience of 'cargo' and 'go' single-binary toolchain.",
+        "Developer Experience, Tooling", "6 Days", ("High", 14), ("Planned", 12)
     ],
     [
-        ("M6-T12", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Final Release M6", "Official Roze v2.0 'Prometheus' Production Launch",
+        ("M6-T10", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Ecosystem Seed Packages", "Community Package Registry & Reference Seed Ecosystem",
+        "Deploy official package registry with seed packages: rozeboot (web), roze-orm (database), roze-torch (tensors/AI via CUDA FFI), roze-game (games via Raylib FFI), roze-ui (desktop GUI).",
+        "Empowers community to install and build frameworks using 'bsr add <package>'.",
+        "Ecosystem, Community, Frameworks", "7 Days", ("High", 14), ("Planned", 12)
+    ],
+    [
+        ("M6-T11", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Final Release M6", "Official Roze v2.0 'Prometheus' Production Launch",
         "Official launch: Finalized grammar specification, 1,000-page standard library documentation, installer packages (deb, rpm, Homebrew, MSI), and RozeHub portal.",
-        "Roze v2.0 officially released as an autonomous, general-purpose programming language on par with Java 25 & Rust 1.99.1.",
+        "Roze v2.0 officially released as an autonomous, resourceful general-purpose programming language on par with Java 25 & Rust 1.99.1.",
         "Global Release & Production Ecosystem", "5 Days", ("Critical", 14), ("Milestone Gate", 15)
     ]
 ]

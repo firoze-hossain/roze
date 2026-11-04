@@ -75,6 +75,7 @@ pub fn run_java(class_name: &str, classpath: Option<&str>) -> Result<()> {
     let full_classpath = build_run_classpath(classpath);
 
     let status = Command::new("java")
+        .arg("--enable-native-access=ALL-UNNAMED")
         .arg("-Dstdout.encoding=UTF-8")
         .arg("-Dstderr.encoding=UTF-8")
         .arg("-cp")

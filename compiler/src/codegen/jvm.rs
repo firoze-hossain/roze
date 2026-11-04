@@ -4509,6 +4509,212 @@ const RAW_NET_HELPER_METHODS: &str = r#"
     }
 "#;
 
+const FFI_HELPER_METHODS: &str = r#"
+    // =============================================================
+    // Universal C FFI & Java 25 Project Panama FFM Runtime (M4-T01)
+    // =============================================================
+    private static java.lang.foreign.Linker __roze_linker() {
+        return java.lang.foreign.Linker.nativeLinker();
+    }
+
+    private static final java.util.Map<String, java.lang.foreign.MemorySegment> __ROZE_FFI_SYMBOLS = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.List<java.lang.foreign.SymbolLookup> __ROZE_FFI_LOADED_LIBS = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public static java.lang.foreign.MemorySegment __roze_find_symbol(String name) {
+        if (__ROZE_FFI_SYMBOLS.containsKey(name)) {
+            return __ROZE_FFI_SYMBOLS.get(name);
+        }
+        java.lang.foreign.Linker linker = java.lang.foreign.Linker.nativeLinker();
+        java.lang.foreign.MemorySegment addr = linker.defaultLookup().find(name)
+            .or(() -> java.lang.foreign.SymbolLookup.loaderLookup().find(name))
+            .orElse(null);
+        if (addr == null) {
+            for (java.lang.foreign.SymbolLookup lookup : __ROZE_FFI_LOADED_LIBS) {
+                addr = lookup.find(name).orElse(null);
+                if (addr != null) break;
+            }
+        }
+        if (addr == null) {
+            String os = System.getProperty("os.name").toLowerCase();
+            String[] libs = os.contains("win") ? new String[]{"msvcrt.dll", "kernel32.dll", "ucrtbase.dll", "user32.dll"} :
+                            os.contains("mac") ? new String[]{"libSystem.B.dylib", "libc.dylib", "libm.dylib"} :
+                            new String[]{"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0"};
+            for (String lib : libs) {
+                try {
+                    java.lang.foreign.SymbolLookup lookup = java.lang.foreign.SymbolLookup.libraryLookup(lib, java.lang.foreign.Arena.global());
+                    __ROZE_FFI_LOADED_LIBS.add(lookup);
+                    addr = lookup.find(name).orElse(null);
+                    if (addr != null) break;
+                } catch (Throwable ignored) {}
+            }
+        }
+        if (addr == null) {
+            throw new UnsatisfiedLinkError("Cannot resolve native extern C symbol: " + name);
+        }
+        __ROZE_FFI_SYMBOLS.put(name, addr);
+        return addr;
+    }
+
+    private static final java.util.Map<Integer, java.lang.foreign.SymbolLookup> __ROZE_DL_HANDLES = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.Map<Integer, java.lang.foreign.MemorySegment> __ROZE_SYM_HANDLES = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.atomic.AtomicInteger __ROZE_DL_SEQ = new java.util.concurrent.atomic.AtomicInteger(1000);
+    private static final java.util.concurrent.atomic.AtomicInteger __ROZE_SYM_SEQ = new java.util.concurrent.atomic.AtomicInteger(2000);
+    private static volatile String __ROZE_LAST_DLERROR = "";
+
+    public static int dlopen(String path, int flags) {
+        if (path == null || path.isEmpty()) {
+            return 1;
+        }
+        try {
+            java.lang.foreign.SymbolLookup lookup;
+            try {
+                lookup = java.lang.foreign.SymbolLookup.libraryLookup(java.nio.file.Path.of(path), java.lang.foreign.Arena.global());
+            } catch (Throwable t1) {
+                lookup = java.lang.foreign.SymbolLookup.libraryLookup(path, java.lang.foreign.Arena.global());
+            }
+            int h = __ROZE_DL_SEQ.incrementAndGet();
+            __ROZE_DL_HANDLES.put(h, lookup);
+            __ROZE_FFI_LOADED_LIBS.add(lookup);
+            __ROZE_LAST_DLERROR = "";
+            return h;
+        } catch (Throwable t) {
+            __ROZE_LAST_DLERROR = "dlopen failed for " + path + ": " + t.getMessage();
+            return 0;
+        }
+    }
+
+    public static int dlsym(int handle, String symbol) {
+        try {
+            java.lang.foreign.MemorySegment addr = null;
+            if (handle == 1) {
+                addr = __roze_find_symbol(symbol);
+            } else {
+                java.lang.foreign.SymbolLookup lookup = __ROZE_DL_HANDLES.get(handle);
+                if (lookup != null) {
+                    addr = lookup.find(symbol).orElse(null);
+                }
+                if (addr == null) {
+                    addr = __roze_find_symbol(symbol);
+                }
+            }
+            if (addr != null) {
+                int s = __ROZE_SYM_SEQ.incrementAndGet();
+                __ROZE_SYM_HANDLES.put(s, addr);
+                __ROZE_LAST_DLERROR = "";
+                return s;
+            } else {
+                __ROZE_LAST_DLERROR = "dlsym: undefined symbol " + symbol;
+                return 0;
+            }
+        } catch (Throwable t) {
+            __ROZE_LAST_DLERROR = "dlsym error: " + t.getMessage();
+            return 0;
+        }
+    }
+
+    public static int dlclose(int handle) {
+        __ROZE_DL_HANDLES.remove(handle);
+        return 0;
+    }
+
+    public static String dlerror() {
+        String err = __ROZE_LAST_DLERROR;
+        __ROZE_LAST_DLERROR = "";
+        return err;
+    }
+
+    private static java.lang.foreign.MemorySegment __roze_resolve_sym_addr(long symId) {
+        java.lang.foreign.MemorySegment addr = __ROZE_SYM_HANDLES.get((int) symId);
+        if (addr != null) return addr;
+        if (symId != 0L) {
+            return java.lang.foreign.MemorySegment.ofAddress(symId);
+        }
+        throw new NullPointerException("Null function pointer passed to dynamic FFI call");
+    }
+
+    public static int ffi_call_i64_0(int symId) {
+        try {
+            java.lang.foreign.MemorySegment addr = __roze_resolve_sym_addr(symId);
+            java.lang.invoke.MethodHandle h = __roze_linker().downcallHandle(
+                addr,
+                java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.JAVA_INT)
+            );
+            return (int) h.invokeExact();
+        } catch (Throwable t) {
+            throw new RuntimeException("FFI call failed: " + t.getMessage(), t);
+        }
+    }
+
+    public static int ffi_call_i64_1(int symId, int a1) {
+        try {
+            java.lang.foreign.MemorySegment addr = __roze_resolve_sym_addr(symId);
+            java.lang.invoke.MethodHandle h = __roze_linker().downcallHandle(
+                addr,
+                java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.JAVA_INT, java.lang.foreign.ValueLayout.JAVA_INT)
+            );
+            return (int) h.invokeExact(a1);
+        } catch (Throwable t) {
+            throw new RuntimeException("FFI call failed: " + t.getMessage(), t);
+        }
+    }
+
+    public static int ffi_call_i64_2(int symId, int a1, int a2) {
+        try {
+            java.lang.foreign.MemorySegment addr = __roze_resolve_sym_addr(symId);
+            java.lang.invoke.MethodHandle h = __roze_linker().downcallHandle(
+                addr,
+                java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.JAVA_INT, java.lang.foreign.ValueLayout.JAVA_INT, java.lang.foreign.ValueLayout.JAVA_INT)
+            );
+            return (int) h.invokeExact(a1, a2);
+        } catch (Throwable t) {
+            throw new RuntimeException("FFI call failed: " + t.getMessage(), t);
+        }
+    }
+
+    public static double ffi_call_f64_1(int symId, double a1) {
+        try {
+            java.lang.foreign.MemorySegment addr = __roze_resolve_sym_addr(symId);
+            java.lang.invoke.MethodHandle h = __roze_linker().downcallHandle(
+                addr,
+                java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.JAVA_DOUBLE, java.lang.foreign.ValueLayout.JAVA_DOUBLE)
+            );
+            return (double) h.invokeExact(a1);
+        } catch (Throwable t) {
+            throw new RuntimeException("FFI call failed: " + t.getMessage(), t);
+        }
+    }
+
+    public static int ffi_call_str_1(int symId, String a1) {
+        try (java.lang.foreign.Arena arena = java.lang.foreign.Arena.ofConfined()) {
+            java.lang.foreign.MemorySegment addr = __roze_resolve_sym_addr(symId);
+            java.lang.foreign.MemorySegment cStr = a1 == null ? java.lang.foreign.MemorySegment.NULL : arena.allocateFrom(a1);
+            java.lang.invoke.MethodHandle h = __roze_linker().downcallHandle(
+                addr,
+                java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.JAVA_INT, java.lang.foreign.ValueLayout.ADDRESS)
+            );
+            return (int) h.invokeExact(cStr);
+        } catch (Throwable t) {
+            throw new RuntimeException("FFI call failed: " + t.getMessage(), t);
+        }
+    }
+
+    public static String ffi_call_str_str(int symId, String a1, String a2) {
+        try (java.lang.foreign.Arena arena = java.lang.foreign.Arena.ofConfined()) {
+            java.lang.foreign.MemorySegment addr = __roze_resolve_sym_addr(symId);
+            java.lang.foreign.MemorySegment s1 = a1 == null ? java.lang.foreign.MemorySegment.NULL : arena.allocateFrom(a1);
+            java.lang.foreign.MemorySegment s2 = a2 == null ? java.lang.foreign.MemorySegment.NULL : arena.allocateFrom(a2);
+            java.lang.invoke.MethodHandle h = __roze_linker().downcallHandle(
+                addr,
+                java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.ADDRESS, java.lang.foreign.ValueLayout.ADDRESS, java.lang.foreign.ValueLayout.ADDRESS)
+            );
+            java.lang.foreign.MemorySegment res = (java.lang.foreign.MemorySegment) h.invokeExact(s1, s2);
+            return (res == null || res.address() == 0) ? "" : res.reinterpret(Long.MAX_VALUE).getString(0);
+        } catch (Throwable t) {
+            throw new RuntimeException("FFI call failed: " + t.getMessage(), t);
+        }
+    }
+"#;
+
 
 /// Returns the Java return type for a built-in Core (string/math)
 /// intrinsic, or None if `name` isn't one. Keep this in sync with
@@ -5024,6 +5230,20 @@ fn java_type_name(ty: &Type) -> String {
     }
 }
 
+fn java_layout_for_type(ty: &Type) -> String {
+    match ty {
+        Type::Int | Type::I32 | Type::U32 => "java.lang.foreign.ValueLayout.JAVA_INT".to_string(),
+        Type::I8 | Type::U8 => "java.lang.foreign.ValueLayout.JAVA_BYTE".to_string(),
+        Type::I16 | Type::U16 => "java.lang.foreign.ValueLayout.JAVA_SHORT".to_string(),
+        Type::I64 | Type::U64 | Type::Isize | Type::Usize => "java.lang.foreign.ValueLayout.JAVA_LONG".to_string(),
+        Type::Float | Type::F64 => "java.lang.foreign.ValueLayout.JAVA_DOUBLE".to_string(),
+        Type::F32 => "java.lang.foreign.ValueLayout.JAVA_FLOAT".to_string(),
+        Type::Bool => "java.lang.foreign.ValueLayout.JAVA_BOOLEAN".to_string(),
+        Type::String | Type::RawPointer(_) => "java.lang.foreign.ValueLayout.ADDRESS".to_string(),
+        _ => "java.lang.foreign.ValueLayout.JAVA_LONG".to_string(),
+    }
+}
+
 fn java_unbox(ty: &Type, expr_str: &str) -> String {
     match ty {
         Type::Int => format!("((Number) {}).intValue()", expr_str),
@@ -5187,17 +5407,105 @@ impl JavaSourceGenerator {
                 }
             }
             if let TypedStatement::ExternFunction { name, params, return_type, .. } = stmt {
+                let ffi_builtin = [
+                    "dlopen", "dlsym", "dlclose", "dlerror",
+                    "ffi_call_i64_0", "ffi_call_i64_1", "ffi_call_i64_2",
+                    "ffi_call_f64_1", "ffi_call_str_1", "ffi_call_str_str"
+                ];
+                if ffi_builtin.contains(&name.as_str()) {
+                    continue;
+                }
+
                 let params_sig: Vec<String> = params.iter()
                     .map(|p| format!("{} {}", java_type_name(&p.type_), escape_java_identifier(&p.name)))
                     .collect();
+                let escaped_name = escape_java_identifier(name);
+
+                source.push_str(&format!(
+                    "    private static java.lang.invoke.MethodHandle __roze_ffi_h_{} = null;\n",
+                    escaped_name
+                ));
                 source.push_str(&format!(
                     "    public static {} {}({}) {{\n",
-                    java_type_name(return_type), escape_java_identifier(name), params_sig.join(", ")
+                    java_type_name(return_type), escaped_name, params_sig.join(", ")
                 ));
-                source.push_str(&format!(
-                    "        throw new UnsupportedOperationException(\"extern C function '{}' is native-only; run with --target native\");\n",
-                    name
-                ));
+                source.push_str("        try {\n");
+                source.push_str(&format!("            if (__roze_ffi_h_{} == null) {{\n", escaped_name));
+                source.push_str(&format!("                java.lang.foreign.MemorySegment __addr = __roze_find_symbol(\"{}\");\n", name));
+
+                let desc_str = match return_type {
+                    Type::Void => {
+                        let param_layouts: Vec<String> = params.iter().map(|p| java_layout_for_type(&p.type_)).collect();
+                        format!("java.lang.foreign.FunctionDescriptor.ofVoid({})", param_layouts.join(", "))
+                    }
+                    _ => {
+                        let ret_layout = java_layout_for_type(return_type);
+                        let mut all_layouts = vec![ret_layout];
+                        for p in params {
+                            all_layouts.push(java_layout_for_type(&p.type_));
+                        }
+                        format!("java.lang.foreign.FunctionDescriptor.of({})", all_layouts.join(", "))
+                    }
+                };
+                source.push_str(&format!("                java.lang.foreign.FunctionDescriptor __desc = {};\n", desc_str));
+                source.push_str(&format!("                __roze_ffi_h_{} = __roze_linker().downcallHandle(__addr, __desc);\n", escaped_name));
+                source.push_str("            }\n");
+
+                source.push_str("            try (java.lang.foreign.Arena __arena = java.lang.foreign.Arena.ofConfined()) {\n");
+                let mut call_args = Vec::new();
+                for (i, p) in params.iter().enumerate() {
+                    let p_escaped = escape_java_identifier(&p.name);
+                    if p.type_ == Type::String {
+                        let arg_var = format!("__arg_{}", i);
+                        source.push_str(&format!("                java.lang.foreign.MemorySegment {} = {} == null ? java.lang.foreign.MemorySegment.NULL : __arena.allocateFrom({});\n", arg_var, p_escaped, p_escaped));
+                        call_args.push(arg_var);
+                    } else if matches!(p.type_, Type::RawPointer(_)) {
+                        let arg_var = format!("__arg_{}", i);
+                        source.push_str(&format!("                java.lang.foreign.MemorySegment {} = java.lang.foreign.MemorySegment.ofAddress({});\n", arg_var, p_escaped));
+                        call_args.push(arg_var);
+                    } else {
+                        call_args.push(p_escaped);
+                    }
+                }
+
+                let invoke_expr = format!("__roze_ffi_h_{}.invokeExact({})", escaped_name, call_args.join(", "));
+                match return_type {
+                    Type::Void => {
+                        source.push_str(&format!("                {};\n", invoke_expr));
+                        source.push_str("                return;\n");
+                    }
+                    Type::String => {
+                        source.push_str(&format!("                java.lang.foreign.MemorySegment __res = (java.lang.foreign.MemorySegment) {};\n", invoke_expr));
+                        source.push_str("                return (__res == null || __res.address() == 0) ? \"\" : __res.reinterpret(Long.MAX_VALUE).getString(0);\n");
+                    }
+                    Type::RawPointer(_) => {
+                        source.push_str(&format!("                java.lang.foreign.MemorySegment __res = (java.lang.foreign.MemorySegment) {};\n", invoke_expr));
+                        source.push_str("                return __res == null ? 0L : __res.address();\n");
+                    }
+                    Type::Int | Type::I32 => {
+                        source.push_str(&format!("                return (int) {};\n", invoke_expr));
+                    }
+                    Type::I64 | Type::U64 | Type::Isize | Type::Usize => {
+                        source.push_str(&format!("                return (long) {};\n", invoke_expr));
+                    }
+                    Type::Float | Type::F64 => {
+                        source.push_str(&format!("                return (double) {};\n", invoke_expr));
+                    }
+                    Type::F32 => {
+                        source.push_str(&format!("                return (float) {};\n", invoke_expr));
+                    }
+                    Type::Bool => {
+                        source.push_str(&format!("                return (boolean) {};\n", invoke_expr));
+                    }
+                    _ => {
+                        source.push_str(&format!("                return (Object) {};\n", invoke_expr));
+                    }
+                }
+                source.push_str("            }\n");
+                source.push_str("        } catch (Throwable __t) {\n");
+                source.push_str("            if (__t instanceof RuntimeException) throw (RuntimeException) __t;\n");
+                source.push_str(&format!("            throw new RuntimeException(\"FFI invocation error in '{}': \" + __t.getMessage(), __t);\n", name));
+                source.push_str("        }\n");
                 source.push_str("    }\n");
             }
         }
@@ -5221,6 +5529,7 @@ impl JavaSourceGenerator {
         source.push_str(COLLECTIONS_HELPER_METHODS);
         source.push_str(MEMORY_HELPER_METHODS);
         source.push_str(RAW_NET_HELPER_METHODS);
+        source.push_str(FFI_HELPER_METHODS);
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);

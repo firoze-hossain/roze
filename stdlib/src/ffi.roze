@@ -1,0 +1,124 @@
+// stdlib/src/ffi.roze
+//
+// Universal C-ABI Foreign Function Interface (FFI) & Dynamic Loading Engine
+// Milestone M4-T01: 1:1 Parity with Rust extern "C" FFI & Java 25 Project Panama (FFM API)
+
+extern "C" func dlopen(filename: string, flags: int) -> int;
+extern "C" func dlsym(handle: int, symbol: string) -> int;
+extern "C" func dlclose(handle: int) -> int;
+extern "C" func dlerror() -> string;
+
+extern "C" func ffi_call_i64_0(addr: int) -> int;
+extern "C" func ffi_call_i64_1(addr: int, a1: int) -> int;
+extern "C" func ffi_call_i64_2(addr: int, a1: int, a2: int) -> int;
+extern "C" func ffi_call_f64_1(addr: int, a1: float) -> float;
+extern "C" func ffi_call_str_1(addr: int, a1: string) -> int;
+extern "C" func ffi_call_str_str(addr: int, a1: string, a2: string) -> string;
+
+// Dynamic library loading mode constants
+func rtld_lazy() -> int { return 1; }
+func rtld_now() -> int { return 2; }
+func rtld_global() -> int { return 256; }
+func rtld_local() -> int { return 0; }
+
+// Pointer & Address validation helpers
+func null_ptr() -> int {
+    return 0;
+}
+
+func is_null_ptr(ptr: int) -> bool {
+    return ptr == 0;
+}
+
+func ptr_is_valid(ptr: int) -> bool {
+    return ptr != 0;
+}
+
+// C-String conversion helper
+func c_str_to_string(addr: int) -> string {
+    if (addr == 0) {
+        return "";
+    }
+    return ffi_call_str_str(addr, "", "");
+}
+
+// Standard Dynamic Library Wrapper Class
+class DynamicLibrary {
+    path: string,
+    handle: int,
+    is_loaded: bool
+}
+
+func dl_open(path: string) -> DynamicLibrary {
+    let h = dlopen(path, 1);
+    return new DynamicLibrary(path, h, h != 0);
+}
+
+func dl_open_with_flags(path: string, flags: int) -> DynamicLibrary {
+    let h = dlopen(path, flags);
+    return new DynamicLibrary(path, h, h != 0);
+}
+
+func dl_symbol(lib: DynamicLibrary, name: string) -> int {
+    if (!lib.is_loaded) {
+        return 0;
+    }
+    return dlsym(lib.handle, name);
+}
+
+func dl_has_symbol(lib: DynamicLibrary, name: string) -> bool {
+    return dl_symbol(lib, name) != 0;
+}
+
+func dl_call_i64_0(lib: DynamicLibrary, name: string) -> int {
+    let sym = dl_symbol(lib, name);
+    if (sym == 0) {
+        return 0;
+    }
+    return ffi_call_i64_0(sym);
+}
+
+func dl_call_i64_1(lib: DynamicLibrary, name: string, a1: int) -> int {
+    let sym = dl_symbol(lib, name);
+    if (sym == 0) {
+        return 0;
+    }
+    return ffi_call_i64_1(sym, a1);
+}
+
+func dl_call_i64_2(lib: DynamicLibrary, name: string, a1: int, a2: int) -> int {
+    let sym = dl_symbol(lib, name);
+    if (sym == 0) {
+        return 0;
+    }
+    return ffi_call_i64_2(sym, a1, a2);
+}
+
+func dl_call_f64_1(lib: DynamicLibrary, name: string, a1: float) -> float {
+    let sym = dl_symbol(lib, name);
+    if (sym == 0) {
+        return 0.0;
+    }
+    return ffi_call_f64_1(sym, a1);
+}
+
+func dl_call_str_1(lib: DynamicLibrary, name: string, a1: string) -> int {
+    let sym = dl_symbol(lib, name);
+    if (sym == 0) {
+        return 0;
+    }
+    return ffi_call_str_1(sym, a1);
+}
+
+func dl_last_error() -> string {
+    return dlerror();
+}
+
+func dl_close(lib: DynamicLibrary) -> bool {
+    if (!lib.is_loaded) {
+        return false;
+    }
+    let res = dlclose(lib.handle);
+    lib.is_loaded = false;
+    return res == 0;
+}

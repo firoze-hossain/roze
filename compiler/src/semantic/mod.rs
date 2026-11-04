@@ -2806,9 +2806,12 @@ impl TypeChecker {
         for raw_stmt in &program_statements {
             let stmt = unwrap_annotated_stmt(raw_stmt);
             if let Statement::ExternFunction { abi, name, params, return_type, location } = stmt {
-                if abi != "C" {
+                const SUPPORTED_ABIS: &[&str] = &[
+                    "C", "system", "cdecl", "stdcall", "fastcall", "win64", "sysv64", "sysv", "apple",
+                ];
+                if !SUPPORTED_ABIS.contains(&abi.as_str()) {
                     return Err(RozeError::type_error(
-                        format!("Unsupported ABI '{}'; only \"C\" is supported", abi),
+                        format!("Unsupported ABI '{}'; supported ABIs are: {}", abi, SUPPORTED_ABIS.join(", ")),
                         location.line,
                         location.column,
                     ).into());

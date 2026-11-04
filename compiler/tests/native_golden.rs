@@ -4394,6 +4394,24 @@ fn native_enterprise_web_core_suite() {
     assert!(stdout.contains("ALL 4 ENTERPRISE WEB TEST SUITES PASSED! [100% SUCCESS]"));
 }
 
+#[test]
+fn native_universal_c_ffi_suite() {
+    let source = std::fs::read_to_string("tests/fixtures/universal_c_ffi.roze")
+        .or_else(|_| std::fs::read_to_string("compiler/tests/fixtures/universal_c_ffi.roze"))
+        .expect("read universal_c_ffi fixture");
+
+    let (stdout, stderr, ok) = run_native_source("native_universal_c_ffi", &source);
+    assert!(ok, "native build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("--- Suite 1: Static C-ABI Foreign Function Invocations ---"));
+    assert!(stdout.contains("Roze Universal C FFI Active"));
+    assert!(stdout.contains("abs(-1337):\n1337"));
+    assert!(stdout.contains("strstr result:\nc_ffi_roze"));
+    assert!(stdout.contains("--- Suite 2: Pointer & C-String Utilities ---"));
+    assert!(stdout.contains("--- Suite 3: Dynamic Library Loading & Symbol Resolution ---"));
+    assert!(stdout.contains("has_symbol('cos'):\ntrue"));
+    assert!(stdout.contains("✅ Universal C FFI Engine: 100% Verified on All Backends!"));
+}
+
 
 
 

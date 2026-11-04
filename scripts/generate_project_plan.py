@@ -400,7 +400,7 @@ s1_rows = [
         ("M4-T01", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Universal C FFI", "C-ABI Foreign Function Interface Engine",
         "Universal C FFI supporting extern 'C' declarations, dynamic library loading (dlopen/dlsym/LoadLibrary), and System V / Windows x64 C calling conventions.",
         "Parity with Rust extern 'C' FFI and Java 25 Project Panama (Foreign Function & Memory API).",
-        "All Domains, Native C Interop, GPU/Hardware", "8 Days", ("Critical", 14), ("Planned", 12)
+        "All Domains, Native C Interop, GPU/Hardware", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M4-T02", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Memory Layout & Types", "#[repr(C)] Layout & Raw Pointer Primitives",

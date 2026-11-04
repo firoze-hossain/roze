@@ -99,6 +99,9 @@ const ORM_DISPLAY_NAME: &str = "orm (built-in)";
 const CLOUD_SECURITY_SOURCE: &str = include_str!("../../stdlib/src/cloud_security.roze");
 const CLOUD_SECURITY_DISPLAY_NAME: &str = "cloud_security (built-in)";
 
+const FFI_SOURCE: &str = include_str!("../../stdlib/src/ffi.roze");
+const FFI_DISPLAY_NAME: &str = "ffi (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -258,6 +261,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "cloud_security" || path == "security" || path == "roze::security" || path == "oauth2" || path == "jwt" || path == "metrics" || path == "telemetry" || path == "openapi" || path == "swagger" {
         return Ok((CLOUD_SECURITY_SOURCE.to_string(), CLOUD_SECURITY_DISPLAY_NAME.to_string()));
+    }
+    if path == "ffi" || path == "roze::ffi" || path == "c_ffi" || path == "cabi" || path == "panama" || path == "dl" {
+        return Ok((FFI_SOURCE.to_string(), FFI_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

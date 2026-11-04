@@ -295,6 +295,7 @@ pub fn compile_to_native(program: TypedProgram, input_file: &str, extra_libs: &[
     all_libs.push(temp_concurrency_c.to_string_lossy().to_string());
     all_libs.push("pthread".to_string());
     all_libs.push("m".to_string());
+    all_libs.push("dl".to_string());
 
     link_object_file(&obj_path, &output_name, &all_libs)?;
 
@@ -6127,14 +6128,19 @@ impl<'a> NativeGenerator<'a> {
                 self.functions.insert(name.clone(), func_id);
                 self.function_param_types.insert(name.clone(), params.iter().map(|p| p.type_.clone()).collect());
             }
-            if let TypedStatement::ExternFunction { name, params, return_type, location, .. } = stmt {
+            if let TypedStatement::ExternFunction { abi, name, params, return_type, location } = stmt {
                 for param in params {
                     require_supported_type(&param.type_, location, &format!("parameter '{}' of extern function '{}'", param.name, name))?;
                 }
                 require_supported_type(return_type, location, &format!("the return type of extern function '{}'", name))?;
 
                 let mut sig = self.module.make_signature();
-                sig.call_conv = self.module.target_config().default_call_conv;
+                sig.call_conv = match abi.as_str() {
+                    "win64" | "stdcall" | "fastcall" => isa::CallConv::WindowsFastcall,
+                    "sysv64" | "sysv" => isa::CallConv::SystemV,
+                    "apple" => isa::CallConv::AppleAarch64,
+                    _ => self.module.target_config().default_call_conv,
+                };
                 for param in params {
                     sig.params.push(AbiParam::new(cranelift_type_for(&param.type_)));
                 }

@@ -5290,6 +5290,85 @@ int64_t __roze_pcap_file_size(const char* path) {
     return (int64_t)sz;
 }
 
+// -------------------------------------------------------------
+// Universal C FFI Engine & Dynamic Library Runtime (M4-T01)
+// -------------------------------------------------------------
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
+int64_t roze_dlopen(const char* filename, int64_t flags) {
+#if defined(_WIN32)
+    return (int64_t)LoadLibraryA(filename);
+#else
+    return (int64_t)dlopen(filename, (int)flags);
+#endif
+}
+
+int64_t roze_dlsym(int64_t handle, const char* symbol) {
+#if defined(_WIN32)
+    return (int64_t)GetProcAddress((HMODULE)handle, symbol);
+#else
+    return (int64_t)dlsym((void*)handle, symbol);
+#endif
+}
+
+int64_t roze_dlclose(int64_t handle) {
+#if defined(_WIN32)
+    return (int64_t)!FreeLibrary((HMODULE)handle);
+#else
+    return (int64_t)dlclose((void*)handle);
+#endif
+}
+
+const char* roze_dlerror(void) {
+#if defined(_WIN32)
+    return "Windows dynamic library error";
+#else
+    const char* err = dlerror();
+    return err ? err : "";
+#endif
+}
+
+int64_t ffi_call_i64_0(int64_t addr) {
+    if (!addr) return 0;
+    typedef int64_t (*fn_t)(void);
+    return ((fn_t)addr)();
+}
+
+int64_t ffi_call_i64_1(int64_t addr, int64_t a1) {
+    if (!addr) return 0;
+    typedef int64_t (*fn_t)(int64_t);
+    return ((fn_t)addr)(a1);
+}
+
+int64_t ffi_call_i64_2(int64_t addr, int64_t a1, int64_t a2) {
+    if (!addr) return 0;
+    typedef int64_t (*fn_t)(int64_t, int64_t);
+    return ((fn_t)addr)(a1, a2);
+}
+
+double ffi_call_f64_1(int64_t addr, double a1) {
+    if (!addr) return 0.0;
+    typedef double (*fn_t)(double);
+    return ((fn_t)addr)(a1);
+}
+
+int64_t ffi_call_str_1(int64_t addr, const char* a1) {
+    if (!addr) return 0;
+    typedef int64_t (*fn_t)(const char*);
+    return ((fn_t)addr)(a1);
+}
+
+const char* ffi_call_str_str(int64_t addr, const char* a1, const char* a2) {
+    if (!addr) return "";
+    typedef const char* (*fn_t)(const char*, const char*);
+    const char* res = ((fn_t)addr)(a1, a2);
+    return res ? res : "";
+}
+
 
 
 

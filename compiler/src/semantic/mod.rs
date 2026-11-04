@@ -753,6 +753,14 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("sql_query", vec![Type::Unknown, Type::String], Type::List),
         ("sql_execute", vec![Type::Unknown, Type::String], Type::Int),
         ("sql_close", vec![Type::Unknown], Type::Void),
+        ("sql_begin", vec![Type::Unknown], Type::Void),
+        ("sql_commit", vec![Type::Unknown], Type::Void),
+        ("sql_rollback", vec![Type::Unknown], Type::Void),
+        ("sql_savepoint", vec![Type::Unknown, Type::String], Type::Void),
+        ("sql_rollback_to", vec![Type::Unknown, Type::String], Type::Void),
+        ("sql_set_auto_commit", vec![Type::Unknown, Type::Bool], Type::Void),
+        ("sql_query_params", vec![Type::Unknown, Type::String, Type::List], Type::List),
+        ("sql_execute_params", vec![Type::Unknown, Type::String, Type::List], Type::Int),
 
         // ---- RozeBoot Enterprise Framework (ADV-03) ----
         // Database Connection Pooling (HikariCP / Pooled DataSource)
@@ -763,6 +771,8 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("db_pool_stats", vec![Type::Unknown], Type::Map),
         ("db_pool_query", vec![Type::Unknown, Type::String], Type::List),
         ("db_pool_execute", vec![Type::Unknown, Type::String], Type::Int),
+        ("db_pool_query_params", vec![Type::Unknown, Type::String, Type::List], Type::List),
+        ("db_pool_execute_params", vec![Type::Unknown, Type::String, Type::List], Type::Int),
 
         // JWT Security & Cryptography
         ("jwt_sign", vec![Type::Map, Type::String], Type::String),

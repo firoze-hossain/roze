@@ -811,6 +811,104 @@ const SQL_HELPER_METHODS: &str = r#"
             throw new RuntimeException(e);
         }
     }
+
+    private static void __roze_sql_begin(java.sql.Connection conn) {
+        try {
+            conn.setAutoCommit(false);
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void __roze_sql_commit(java.sql.Connection conn) {
+        try {
+            conn.commit();
+            conn.setAutoCommit(true);
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void __roze_sql_rollback(java.sql.Connection conn) {
+        try {
+            conn.rollback();
+            conn.setAutoCommit(true);
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void __roze_sql_savepoint(java.sql.Connection conn, String name) {
+        try {
+            conn.setSavepoint(name);
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void __roze_sql_rollback_to(java.sql.Connection conn, String name) {
+        try {
+            java.sql.Statement s = conn.createStatement();
+            s.execute("ROLLBACK TO SAVEPOINT " + name);
+            s.close();
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void __roze_sql_set_auto_commit(java.sql.Connection conn, boolean autoCommit) {
+        try {
+            conn.setAutoCommit(autoCommit);
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static java.util.List __roze_sql_query_params(java.sql.Connection conn, String sql, java.util.List params) {
+        try {
+            java.sql.PreparedStatement stmt = conn.prepareStatement(sql);
+            if (params != null) {
+                for (int i = 0; i < params.size(); i++) {
+                    stmt.setObject(i + 1, params.get(i));
+                }
+            }
+            java.sql.ResultSet rs = stmt.executeQuery();
+            java.sql.ResultSetMetaData meta = rs.getMetaData();
+            int columnCount = meta.getColumnCount();
+            java.util.List<Object> rows = new java.util.ArrayList<Object>();
+            while (rs.next()) {
+                java.util.Map<Object, Object> row = new java.util.HashMap<Object, Object>();
+                for (int i = 1; i <= columnCount; i++) {
+                    String label = meta.getColumnLabel(i);
+                    Object val = rs.getObject(i);
+                    row.put(label, val);
+                    row.put(label.toLowerCase(), val);
+                }
+                rows.add(row);
+            }
+            rs.close();
+            stmt.close();
+            return rows;
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static int __roze_sql_execute_params(java.sql.Connection conn, String sql, java.util.List params) {
+        try {
+            java.sql.PreparedStatement stmt = conn.prepareStatement(sql);
+            if (params != null) {
+                for (int i = 0; i < params.size(); i++) {
+                    stmt.setObject(i + 1, params.get(i));
+                }
+            }
+            int affected = stmt.executeUpdate();
+            stmt.close();
+            return affected;
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
 "#;
 
 const ROZEBOOT_HELPER_METHODS: &str = r#"
@@ -823,6 +921,7 @@ const ROZEBOOT_HELPER_METHODS: &str = r#"
         private final int maxPoolSize;
         private final java.util.concurrent.BlockingQueue<java.sql.Connection> available;
         private final java.util.Set<java.sql.Connection> inUse;
+        private final java.util.concurrent.ConcurrentHashMap<java.sql.Connection, Long> checkoutTimes;
         private final java.util.concurrent.atomic.AtomicInteger createdCount;
         private volatile boolean closed = false;
         private Object hikariDs = null;
@@ -832,6 +931,7 @@ const ROZEBOOT_HELPER_METHODS: &str = r#"
             this.maxPoolSize = maxPoolSize > 0 ? maxPoolSize : 10;
             this.available = new java.util.concurrent.LinkedBlockingQueue<java.sql.Connection>();
             this.inUse = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<java.sql.Connection, Boolean>());
+            this.checkoutTimes = new java.util.concurrent.ConcurrentHashMap<java.sql.Connection, Long>();
             this.createdCount = new java.util.concurrent.atomic.AtomicInteger(0);
 
             try {
@@ -869,6 +969,7 @@ const ROZEBOOT_HELPER_METHODS: &str = r#"
                 try {
                     if (!conn.isClosed()) {
                         inUse.add(conn);
+                        checkoutTimes.put(conn, System.currentTimeMillis());
                         return conn;
                     }
                 } catch (Exception ignored) {}
@@ -881,6 +982,7 @@ const ROZEBOOT_HELPER_METHODS: &str = r#"
                     conn = java.sql.DriverManager.getConnection(url);
                     createdCount.incrementAndGet();
                     inUse.add(conn);
+                    checkoutTimes.put(conn, System.currentTimeMillis());
                     return conn;
                 } catch (java.sql.SQLException e) {
                     throw new RuntimeException("Failed to open pooled connection: " + e.getMessage(), e);
@@ -891,6 +993,7 @@ const ROZEBOOT_HELPER_METHODS: &str = r#"
                 conn = available.poll(5, java.util.concurrent.TimeUnit.SECONDS);
                 if (conn == null) throw new RuntimeException("Connection pool exhausted (timed out after 5s)");
                 inUse.add(conn);
+                checkoutTimes.put(conn, System.currentTimeMillis());
                 return conn;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -905,6 +1008,7 @@ const ROZEBOOT_HELPER_METHODS: &str = r#"
                 return;
             }
             inUse.remove(conn);
+            checkoutTimes.remove(conn);
             if (!closed) {
                 try {
                     if (!conn.isClosed()) {
@@ -933,6 +1037,7 @@ const ROZEBOOT_HELPER_METHODS: &str = r#"
                 try { c.close(); } catch (Exception ignored) {}
             }
             inUse.clear();
+            checkoutTimes.clear();
         }
 
         public java.util.Map<Object, Object> getStats() {
@@ -947,6 +1052,15 @@ const ROZEBOOT_HELPER_METHODS: &str = r#"
             s.put("is_hikari", hikariDs != null);
             s.put("is_closed", closed);
             s.put("closed", closed);
+            long now = System.currentTimeMillis();
+            long leaks = 0;
+            for (Long t : checkoutTimes.values()) {
+                if (now - t > 2000) {
+                    leaks++;
+                }
+            }
+            s.put("leaks", leaks);
+            s.put("leak_warnings", leaks);
             return s;
         }
     }
@@ -998,6 +1112,28 @@ const ROZEBOOT_HELPER_METHODS: &str = r#"
         java.sql.Connection conn = pool.getConnection();
         try {
             return __roze_sql_execute(conn, sql);
+        } finally {
+            pool.releaseConnection(conn);
+        }
+    }
+
+    private static java.util.List __roze_db_pool_query_params(Object poolObj, String sql, java.util.List params) {
+        if (!(poolObj instanceof RozeConnectionPool)) throw new RuntimeException("Expected RozeConnectionPool");
+        RozeConnectionPool pool = (RozeConnectionPool) poolObj;
+        java.sql.Connection conn = pool.getConnection();
+        try {
+            return __roze_sql_query_params(conn, sql, params);
+        } finally {
+            pool.releaseConnection(conn);
+        }
+    }
+
+    private static int __roze_db_pool_execute_params(Object poolObj, String sql, java.util.List params) {
+        if (!(poolObj instanceof RozeConnectionPool)) throw new RuntimeException("Expected RozeConnectionPool");
+        RozeConnectionPool pool = (RozeConnectionPool) poolObj;
+        java.sql.Connection conn = pool.getConnection();
+        try {
+            return __roze_sql_execute_params(conn, sql, params);
         } finally {
             pool.releaseConnection(conn);
         }
@@ -4437,6 +4573,9 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "sql_query" => Some("java.util.List"),
         "sql_execute" => Some("int"),
         "sql_close" => Some("void"),
+        "sql_begin" | "sql_commit" | "sql_rollback" | "sql_savepoint" | "sql_rollback_to" | "sql_set_auto_commit" => Some("void"),
+        "sql_query_params" => Some("java.util.List"),
+        "sql_execute_params" => Some("int"),
 
         // Database Connection Pooling (ADV-03)
         "db_pool_create" | "db_pool_get" => Some(OBJECT_TYPE),
@@ -4444,6 +4583,8 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "db_pool_stats" => Some("java.util.Map"),
         "db_pool_query" => Some("java.util.List"),
         "db_pool_execute" => Some("int"),
+        "db_pool_query_params" => Some("java.util.List"),
+        "db_pool_execute_params" => Some("int"),
 
         // JWT Security (ADV-03)
         "jwt_sign" => Some("String"),
@@ -7719,6 +7860,60 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str("))");
             }
+            "sql_begin" if arguments.len() == 1 => {
+                source.push_str("__roze_sql_begin((java.sql.Connection)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "sql_commit" if arguments.len() == 1 => {
+                source.push_str("__roze_sql_commit((java.sql.Connection)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "sql_rollback" if arguments.len() == 1 => {
+                source.push_str("__roze_sql_rollback((java.sql.Connection)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "sql_savepoint" if arguments.len() == 2 => {
+                source.push_str("__roze_sql_savepoint((java.sql.Connection)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("), ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "sql_rollback_to" if arguments.len() == 2 => {
+                source.push_str("__roze_sql_rollback_to((java.sql.Connection)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("), ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "sql_set_auto_commit" if arguments.len() == 2 => {
+                source.push_str("__roze_sql_set_auto_commit((java.sql.Connection)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("), ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "sql_query_params" if arguments.len() == 3 => {
+                source.push_str("__roze_sql_query_params(((java.sql.Connection)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")), ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", (java.util.List)(");
+                self.generate_expression(source, &arguments[2])?;
+                source.push_str("))");
+            }
+            "sql_execute_params" if arguments.len() == 3 => {
+                source.push_str("__roze_sql_execute_params(((java.sql.Connection)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(")), ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", (java.util.List)(");
+                self.generate_expression(source, &arguments[2])?;
+                source.push_str("))");
+            }
 
             // ---- Database Connection Pooling (ADV-03) ----
             "db_pool_create" if arguments.len() == 2 => {
@@ -7763,6 +7958,24 @@ impl JavaSourceGenerator {
                 source.push_str(", ");
                 self.generate_expression(source, &arguments[1])?;
                 source.push(')');
+            }
+            "db_pool_query_params" if arguments.len() == 3 => {
+                source.push_str("__roze_db_pool_query_params(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", (java.util.List)(");
+                self.generate_expression(source, &arguments[2])?;
+                source.push_str("))");
+            }
+            "db_pool_execute_params" if arguments.len() == 3 => {
+                source.push_str("__roze_db_pool_execute_params(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", (java.util.List)(");
+                self.generate_expression(source, &arguments[2])?;
+                source.push_str("))");
             }
 
             // ---- JWT Security (ADV-03) ----

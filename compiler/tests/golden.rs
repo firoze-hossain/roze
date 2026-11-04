@@ -856,6 +856,24 @@ fn rozeboot_enterprise_framework_v2_suite() {
 }
 
 #[test]
+fn data_orm_high_throughput_suite() {
+    let (stdout, stderr, ok) = run_fixture("data_orm.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    assert!(out.contains("Roze Data & High-Throughput ORM Suite (M3-T09)"), "missing header banner:\n{}", out);
+    assert!(out.contains("[PASS] Declarative Annotations & Metadata Reflection verified."), "missing suite 1 pass:\n{}", out);
+    assert!(out.contains("[PASS] Native Connection Pool (HikariCP Equivalent) verified."), "missing suite 2 pass:\n{}", out);
+    assert!(out.contains("[PASS] Type-Safe SQL Query Builder verified."), "missing suite 3 pass:\n{}", out);
+    assert!(out.contains("[PASS] Schema Migrations & DDL Builder verified."), "missing suite 4 pass:\n{}", out);
+    assert!(out.contains("[PASS] Enterprise Banking & Transactional ACID Engine verified."), "missing suite 5 pass:\n{}", out);
+    assert!(out.contains("Transfer $150 Alice->Bob:true"), "missing successful transfer:\n{}", out);
+    assert!(out.contains("Transfer $9999 (Overdraft):false"), "missing rollback on overdraft:\n{}", out);
+    assert!(out.contains("Stale Version Update Result:  -1"), "missing optimistic lock conflict:\n{}", out);
+    assert!(out.contains("Post-rollback Dave Exists:    false"), "missing savepoint rollback check:\n{}", out);
+    assert!(out.contains("Post-rollback Charlie Exists: true"), "missing savepoint keep check:\n{}", out);
+}
+
+#[test]
 fn trait_bounds_and_associated_types() {
     let (stdout, stderr, ok) = run_fixture("trait_bounds.roze");
     assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);

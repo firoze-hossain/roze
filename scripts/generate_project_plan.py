@@ -380,7 +380,7 @@ s1_rows = [
         ("M3-T09", 8), ("Month 3", 5), ("Sprint 6 (W11-W12)", 8), "Data & ORM", "High-Throughput ORM & SQL Query Builder",
         "Native connection pool (HikariCP equivalent), ActiveRecord / Repository entity mapping, type-safe SQL query builder, automatic schema migrations, and transactions.",
         "Matches Spring Data JPA and Rust Diesel/SeaORM.",
-        "Enterprise Banking, SaaS Platforms", "7 Days", ("High", 14), ("Planned", 12)
+        "Enterprise Banking, SaaS Platforms", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M3-T10", 8), ("Month 3", 5), ("Sprint 6 (W11-W12)", 8), "Web Security & Cloud", "JWT, OAuth2, Metrics & OpenAPI 3.1",

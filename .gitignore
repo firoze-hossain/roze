@@ -24,10 +24,8 @@ Cargo.lock
 # still needs care with `git add`) instead.
 *.class
 *.o
-# NOTE: we intentionally do NOT ignore *.java globally, since some tools
-# (e.g. IDE integration) may keep hand-written .java interop files. If you
-# want the compiler's generated .java files ignored too, uncomment:
-# /*.java
+# NOTE: we ignore root-level compiler-generated *.java files:
+/*.java
 
 # --- Debug/scratch files produced while developing the compiler itself ---
 debug_tokens.rs

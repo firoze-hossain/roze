@@ -4626,42 +4626,202 @@ const RAW_NET_HELPER_METHODS: &str = r#"
 
 const FFI_HELPER_METHODS: &str = r#"
     // =============================================================
-    // Universal C FFI & Java 25 Project Panama FFM Runtime (M4-T01)
+    // Universal C FFI & Project Panama FFM Polyglot Runtime (M4-T01)
+    // Dynamic reflection implementation compatible with Java 21 LTS
+    // through Java 25+ without compile-time preview API restrictions.
     // =============================================================
-    private static java.lang.foreign.Linker __roze_linker() {
-        return java.lang.foreign.Linker.nativeLinker();
+    private static final Class<?> __LINKER_CLS;
+    private static final Class<?> __SEGMENT_CLS;
+    private static final Class<?> __LOOKUP_CLS;
+    private static final Class<?> __ARENA_CLS;
+    private static final Class<?> __LAYOUT_CLS;
+    private static final Class<?> __VAL_LAYOUT_CLS;
+    private static final Class<?> __FUNC_DESC_CLS;
+    private static final Class<?> __OPTION_CLS;
+
+    private static final Object __NATIVE_LINKER;
+    private static final Object __DEFAULT_LOOKUP;
+    private static final Object __GLOBAL_ARENA;
+    private static final Object __EMPTY_OPTIONS;
+
+    private static final java.lang.reflect.Method __M_LOOKUP_FIND;
+    private static final java.lang.reflect.Method __M_LOADER_LOOKUP;
+    private static final java.lang.reflect.Method __M_LIB_LOOKUP_PATH;
+    private static final java.lang.reflect.Method __M_LIB_LOOKUP_STR;
+    private static final java.lang.reflect.Method __M_DOWNCALL_HANDLE;
+    private static final java.lang.reflect.Method __M_SEG_OF_ADDRESS;
+    private static final java.lang.reflect.Method __M_SEG_ADDRESS;
+    private static final java.lang.reflect.Method __M_SEG_REINTERPRET;
+    private static final java.lang.reflect.Method __M_ARENA_CONFINED;
+    private static final java.lang.reflect.Method __M_ARENA_ALLOC_STR;
+    private static final java.lang.reflect.Method __M_SEG_GET_STR;
+
+    private static final Object __LAYOUT_INT;
+    private static final Object __LAYOUT_LONG;
+    private static final Object __LAYOUT_FLOAT;
+    private static final Object __LAYOUT_DOUBLE;
+    private static final Object __LAYOUT_BYTE;
+    private static final Object __LAYOUT_SHORT;
+    private static final Object __LAYOUT_BOOLEAN;
+    private static final Object __LAYOUT_ADDRESS;
+
+    static {
+        Class<?> lc = null, sc = null, lkc = null, ac = null, lyc = null, vlc = null, fdc = null, oc = null;
+        Object nl = null, dl = null, ga = null, eo = null;
+        java.lang.reflect.Method lkFind = null, ldrLk = null, libLkP = null, libLkS = null;
+        java.lang.reflect.Method dcH = null, segOfA = null, segAddr = null, segReint = null;
+        java.lang.reflect.Method arConf = null, arAllocStr = null, segGetStr = null;
+        Object lInt = null, lLong = null, lFloat = null, lDouble = null, lByte = null, lShort = null, lBool = null, lAddr = null;
+
+        try {
+            lc = Class.forName("java.lang.foreign.Linker");
+            sc = Class.forName("java.lang.foreign.MemorySegment");
+            lkc = Class.forName("java.lang.foreign.SymbolLookup");
+            ac = Class.forName("java.lang.foreign.Arena");
+            lyc = Class.forName("java.lang.foreign.MemoryLayout");
+            vlc = Class.forName("java.lang.foreign.ValueLayout");
+            fdc = Class.forName("java.lang.foreign.FunctionDescriptor");
+            oc = Class.forName("java.lang.foreign.Linker$Option");
+
+            nl = lc.getMethod("nativeLinker").invoke(null);
+            dl = lc.getMethod("defaultLookup").invoke(nl);
+            ga = ac.getMethod("global").invoke(null);
+            eo = java.lang.reflect.Array.newInstance(oc, 0);
+
+            lkFind = lkc.getMethod("find", String.class);
+            ldrLk = lkc.getMethod("loaderLookup");
+            try {
+                libLkP = lkc.getMethod("libraryLookup", java.nio.file.Path.class, ac);
+            } catch (Throwable ignored) {}
+            try {
+                libLkS = lkc.getMethod("libraryLookup", String.class, ac);
+            } catch (Throwable ignored) {}
+
+            dcH = lc.getMethod("downcallHandle", sc, fdc, eo.getClass());
+            segOfA = sc.getMethod("ofAddress", long.class);
+            segAddr = sc.getMethod("address");
+            segReint = sc.getMethod("reinterpret", long.class);
+            arConf = ac.getMethod("ofConfined");
+
+            try {
+                arAllocStr = ac.getMethod("allocateFrom", String.class);
+            } catch (NoSuchMethodException e) {
+                try {
+                    arAllocStr = ac.getMethod("allocateUtf8String", String.class);
+                } catch (Throwable ignored) {}
+            }
+
+            try {
+                segGetStr = sc.getMethod("getString", long.class);
+            } catch (NoSuchMethodException e) {
+                try {
+                    segGetStr = sc.getMethod("getUtf8String", long.class);
+                } catch (Throwable ignored) {}
+            }
+
+            lInt = vlc.getField("JAVA_INT").get(null);
+            lLong = vlc.getField("JAVA_LONG").get(null);
+            lFloat = vlc.getField("JAVA_FLOAT").get(null);
+            lDouble = vlc.getField("JAVA_DOUBLE").get(null);
+            lByte = vlc.getField("JAVA_BYTE").get(null);
+            lShort = vlc.getField("JAVA_SHORT").get(null);
+            lBool = vlc.getField("JAVA_BOOLEAN").get(null);
+            lAddr = vlc.getField("ADDRESS").get(null);
+        } catch (Throwable t) {
+            // Panama FFM API not available on this JVM runtime
+        }
+
+        __LINKER_CLS = lc;
+        __SEGMENT_CLS = sc;
+        __LOOKUP_CLS = lkc;
+        __ARENA_CLS = ac;
+        __LAYOUT_CLS = lyc;
+        __VAL_LAYOUT_CLS = vlc;
+        __FUNC_DESC_CLS = fdc;
+        __OPTION_CLS = oc;
+
+        __NATIVE_LINKER = nl;
+        __DEFAULT_LOOKUP = dl;
+        __GLOBAL_ARENA = ga;
+        __EMPTY_OPTIONS = eo;
+
+        __M_LOOKUP_FIND = lkFind;
+        __M_LOADER_LOOKUP = ldrLk;
+        __M_LIB_LOOKUP_PATH = libLkP;
+        __M_LIB_LOOKUP_STR = libLkS;
+        __M_DOWNCALL_HANDLE = dcH;
+        __M_SEG_OF_ADDRESS = segOfA;
+        __M_SEG_ADDRESS = segAddr;
+        __M_SEG_REINTERPRET = segReint;
+        __M_ARENA_CONFINED = arConf;
+        __M_ARENA_ALLOC_STR = arAllocStr;
+        __M_SEG_GET_STR = segGetStr;
+
+        __LAYOUT_INT = lInt;
+        __LAYOUT_LONG = lLong;
+        __LAYOUT_FLOAT = lFloat;
+        __LAYOUT_DOUBLE = lDouble;
+        __LAYOUT_BYTE = lByte;
+        __LAYOUT_SHORT = lShort;
+        __LAYOUT_BOOLEAN = lBool;
+        __LAYOUT_ADDRESS = lAddr;
     }
 
-    private static final java.util.Map<String, java.lang.foreign.MemorySegment> __ROZE_FFI_SYMBOLS = new java.util.concurrent.ConcurrentHashMap<>();
-    private static final java.util.List<java.lang.foreign.SymbolLookup> __ROZE_FFI_LOADED_LIBS = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private static Object __roze_linker() {
+        return __NATIVE_LINKER;
+    }
 
-    public static java.lang.foreign.MemorySegment __roze_find_symbol(String name) {
+    private static final java.util.Map<String, Object> __ROZE_FFI_SYMBOLS = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.List<Object> __ROZE_FFI_LOADED_LIBS = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public static Object __roze_find_symbol(String name) {
         if (__ROZE_FFI_SYMBOLS.containsKey(name)) {
             return __ROZE_FFI_SYMBOLS.get(name);
         }
-        java.lang.foreign.Linker linker = java.lang.foreign.Linker.nativeLinker();
-        java.lang.foreign.MemorySegment addr = linker.defaultLookup().find(name)
-            .or(() -> java.lang.foreign.SymbolLookup.loaderLookup().find(name))
-            .orElse(null);
-        if (addr == null) {
-            for (java.lang.foreign.SymbolLookup lookup : __ROZE_FFI_LOADED_LIBS) {
-                addr = lookup.find(name).orElse(null);
-                if (addr != null) break;
+        Object addr = null;
+        try {
+            if (__DEFAULT_LOOKUP != null && __M_LOOKUP_FIND != null) {
+                java.util.Optional<?> opt = (java.util.Optional<?>) __M_LOOKUP_FIND.invoke(__DEFAULT_LOOKUP, name);
+                addr = opt.orElse(null);
             }
-        }
-        if (addr == null) {
-            String os = System.getProperty("os.name").toLowerCase();
-            String[] libs = os.contains("win") ? new String[]{"msvcrt.dll", "kernel32.dll", "ucrtbase.dll", "user32.dll"} :
-                            os.contains("mac") ? new String[]{"libSystem.B.dylib", "libc.dylib", "libm.dylib"} :
-                            new String[]{"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0"};
-            for (String lib : libs) {
-                try {
-                    java.lang.foreign.SymbolLookup lookup = java.lang.foreign.SymbolLookup.libraryLookup(lib, java.lang.foreign.Arena.global());
-                    __ROZE_FFI_LOADED_LIBS.add(lookup);
-                    addr = lookup.find(name).orElse(null);
+            if (addr == null && __M_LOADER_LOOKUP != null && __M_LOOKUP_FIND != null) {
+                Object ldr = __M_LOADER_LOOKUP.invoke(null);
+                if (ldr != null) {
+                    java.util.Optional<?> opt = (java.util.Optional<?>) __M_LOOKUP_FIND.invoke(ldr, name);
+                    addr = opt.orElse(null);
+                }
+            }
+            if (addr == null && __M_LOOKUP_FIND != null) {
+                for (Object lookup : __ROZE_FFI_LOADED_LIBS) {
+                    java.util.Optional<?> opt = (java.util.Optional<?>) __M_LOOKUP_FIND.invoke(lookup, name);
+                    addr = opt.orElse(null);
                     if (addr != null) break;
-                } catch (Throwable ignored) {}
+                }
             }
+            if (addr == null) {
+                String os = System.getProperty("os.name").toLowerCase();
+                String[] libs = os.contains("win") ? new String[]{"msvcrt.dll", "kernel32.dll", "ucrtbase.dll", "user32.dll"} :
+                                os.contains("mac") ? new String[]{"libSystem.B.dylib", "libc.dylib", "libm.dylib"} :
+                                new String[]{"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0"};
+                for (String lib : libs) {
+                    try {
+                        Object lookup = null;
+                        if (__M_LIB_LOOKUP_STR != null && __GLOBAL_ARENA != null) {
+                            lookup = __M_LIB_LOOKUP_STR.invoke(null, lib, __GLOBAL_ARENA);
+                        }
+                        if (lookup != null) {
+                            __ROZE_FFI_LOADED_LIBS.add(lookup);
+                            if (__M_LOOKUP_FIND != null) {
+                                java.util.Optional<?> opt = (java.util.Optional<?>) __M_LOOKUP_FIND.invoke(lookup, name);
+                                addr = opt.orElse(null);
+                                if (addr != null) break;
+                            }
+                        }
+                    } catch (Throwable ignored) {}
+                }
+            }
+        } catch (Throwable t) {
+            throw new RuntimeException("FFI find symbol failed: " + t.getMessage(), t);
         }
         if (addr == null) {
             throw new UnsatisfiedLinkError("Cannot resolve native extern C symbol: " + name);
@@ -4670,28 +4830,33 @@ const FFI_HELPER_METHODS: &str = r#"
         return addr;
     }
 
-    private static final java.util.Map<Integer, java.lang.foreign.SymbolLookup> __ROZE_DL_HANDLES = new java.util.concurrent.ConcurrentHashMap<>();
-    private static final java.util.Map<Integer, java.lang.foreign.MemorySegment> __ROZE_SYM_HANDLES = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.Map<Integer, Object> __ROZE_DL_HANDLES = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.Map<Integer, Object> __ROZE_SYM_HANDLES = new java.util.concurrent.ConcurrentHashMap<>();
     private static final java.util.concurrent.atomic.AtomicInteger __ROZE_DL_SEQ = new java.util.concurrent.atomic.AtomicInteger(1000);
     private static final java.util.concurrent.atomic.AtomicInteger __ROZE_SYM_SEQ = new java.util.concurrent.atomic.AtomicInteger(2000);
     private static volatile String __ROZE_LAST_DLERROR = "";
 
     public static int dlopen(String path, int flags) {
-        if (path == null || path.isEmpty()) {
-            return 1;
-        }
+        if (path == null || path.isEmpty()) return 1;
         try {
-            java.lang.foreign.SymbolLookup lookup;
-            try {
-                lookup = java.lang.foreign.SymbolLookup.libraryLookup(java.nio.file.Path.of(path), java.lang.foreign.Arena.global());
-            } catch (Throwable t1) {
-                lookup = java.lang.foreign.SymbolLookup.libraryLookup(path, java.lang.foreign.Arena.global());
+            Object lookup = null;
+            if (__M_LIB_LOOKUP_PATH != null && __GLOBAL_ARENA != null) {
+                try {
+                    lookup = __M_LIB_LOOKUP_PATH.invoke(null, java.nio.file.Path.of(path), __GLOBAL_ARENA);
+                } catch (Throwable ignored) {}
             }
-            int h = __ROZE_DL_SEQ.incrementAndGet();
-            __ROZE_DL_HANDLES.put(h, lookup);
-            __ROZE_FFI_LOADED_LIBS.add(lookup);
-            __ROZE_LAST_DLERROR = "";
-            return h;
+            if (lookup == null && __M_LIB_LOOKUP_STR != null && __GLOBAL_ARENA != null) {
+                lookup = __M_LIB_LOOKUP_STR.invoke(null, path, __GLOBAL_ARENA);
+            }
+            if (lookup != null) {
+                int h = __ROZE_DL_SEQ.incrementAndGet();
+                __ROZE_DL_HANDLES.put(h, lookup);
+                __ROZE_FFI_LOADED_LIBS.add(lookup);
+                __ROZE_LAST_DLERROR = "";
+                return h;
+            }
+            __ROZE_LAST_DLERROR = "dlopen: unable to load library " + path;
+            return 0;
         } catch (Throwable t) {
             __ROZE_LAST_DLERROR = "dlopen failed for " + path + ": " + t.getMessage();
             return 0;
@@ -4700,13 +4865,14 @@ const FFI_HELPER_METHODS: &str = r#"
 
     public static int dlsym(int handle, String symbol) {
         try {
-            java.lang.foreign.MemorySegment addr = null;
+            Object addr = null;
             if (handle == 1) {
                 addr = __roze_find_symbol(symbol);
             } else {
-                java.lang.foreign.SymbolLookup lookup = __ROZE_DL_HANDLES.get(handle);
-                if (lookup != null) {
-                    addr = lookup.find(symbol).orElse(null);
+                Object lookup = __ROZE_DL_HANDLES.get(handle);
+                if (lookup != null && __M_LOOKUP_FIND != null) {
+                    java.util.Optional<?> opt = (java.util.Optional<?>) __M_LOOKUP_FIND.invoke(lookup, symbol);
+                    addr = opt.orElse(null);
                 }
                 if (addr == null) {
                     addr = __roze_find_symbol(symbol);
@@ -4738,22 +4904,124 @@ const FFI_HELPER_METHODS: &str = r#"
         return err;
     }
 
-    private static java.lang.foreign.MemorySegment __roze_resolve_sym_addr(long symId) {
-        java.lang.foreign.MemorySegment addr = __ROZE_SYM_HANDLES.get((int) symId);
+    private static Object __roze_resolve_sym_addr(long symId) {
+        Object addr = __ROZE_SYM_HANDLES.get((int) symId);
         if (addr != null) return addr;
-        if (symId != 0L) {
-            return java.lang.foreign.MemorySegment.ofAddress(symId);
+        if (symId != 0L && __M_SEG_OF_ADDRESS != null) {
+            try {
+                return __M_SEG_OF_ADDRESS.invoke(null, symId);
+            } catch (Throwable t) {
+                throw new RuntimeException("MemorySegment.ofAddress failed: " + t.getMessage(), t);
+            }
         }
         throw new NullPointerException("Null function pointer passed to dynamic FFI call");
     }
 
+    private static Object __roze_type_to_layout(String type) {
+        switch (type) {
+            case "int": return __LAYOUT_INT;
+            case "long": return __LAYOUT_LONG;
+            case "float": return __LAYOUT_FLOAT;
+            case "double": return __LAYOUT_DOUBLE;
+            case "byte": return __LAYOUT_BYTE;
+            case "short": return __LAYOUT_SHORT;
+            case "boolean": return __LAYOUT_BOOLEAN;
+            case "address":
+            case "string":
+            default:
+                return __LAYOUT_ADDRESS;
+        }
+    }
+
+    public static java.lang.invoke.MethodHandle __roze_downcall(Object addr, String retType, String... paramTypes) {
+        try {
+            Object paramArr = java.lang.reflect.Array.newInstance(__LAYOUT_CLS, paramTypes.length);
+            for (int i = 0; i < paramTypes.length; i++) {
+                java.lang.reflect.Array.set(paramArr, i, __roze_type_to_layout(paramTypes[i]));
+            }
+            Object desc;
+            if ("void".equals(retType)) {
+                java.lang.reflect.Method ofVoid = __FUNC_DESC_CLS.getMethod("ofVoid", paramArr.getClass());
+                desc = ofVoid.invoke(null, paramArr);
+            } else {
+                Object retLayout = __roze_type_to_layout(retType);
+                java.lang.reflect.Method of = __FUNC_DESC_CLS.getMethod("of", __LAYOUT_CLS, paramArr.getClass());
+                desc = of.invoke(null, retLayout, paramArr);
+            }
+            return (java.lang.invoke.MethodHandle) __M_DOWNCALL_HANDLE.invoke(__NATIVE_LINKER, addr, desc, __EMPTY_OPTIONS);
+        } catch (Throwable t) {
+            throw new RuntimeException("Failed to create downcall handle: " + t.getMessage(), t);
+        }
+    }
+
+    public static AutoCloseable __roze_arena_of_confined() {
+        try {
+            if (__M_ARENA_CONFINED != null) {
+                return (AutoCloseable) __M_ARENA_CONFINED.invoke(null);
+            }
+        } catch (Throwable t) {
+            throw new RuntimeException("Failed to create confined arena: " + t.getMessage(), t);
+        }
+        return () -> {};
+    }
+
+    public static Object __roze_alloc_c_string(AutoCloseable arena, String s) {
+        if (s == null) return null;
+        try {
+            if (__M_ARENA_ALLOC_STR != null && arena != null) {
+                return __M_ARENA_ALLOC_STR.invoke(arena, s);
+            }
+        } catch (Throwable t) {
+            throw new RuntimeException("Failed to allocate C string: " + t.getMessage(), t);
+        }
+        return null;
+    }
+
+    public static String __roze_read_c_string(Object seg) {
+        if (seg == null) return "";
+        try {
+            if (__M_SEG_ADDRESS != null && __M_SEG_REINTERPRET != null) {
+                long addr = (long) __M_SEG_ADDRESS.invoke(seg);
+                if (addr == 0) return "";
+                Object reint = __M_SEG_REINTERPRET.invoke(seg, Long.MAX_VALUE);
+                if (__M_SEG_GET_STR != null) {
+                    return (String) __M_SEG_GET_STR.invoke(reint, 0L);
+                }
+            }
+        } catch (Throwable t) {
+            throw new RuntimeException("Failed to read C string: " + t.getMessage(), t);
+        }
+        return "";
+    }
+
+    public static long __roze_mem_address(Object seg) {
+        if (seg == null) return 0L;
+        try {
+            if (__M_SEG_ADDRESS != null) {
+                return (long) __M_SEG_ADDRESS.invoke(seg);
+            }
+        } catch (Throwable t) {
+            throw new RuntimeException("Failed to get segment address: " + t.getMessage(), t);
+        }
+        return 0L;
+    }
+
+    public static Object __roze_segment_of_address(long addr) {
+        if (addr == 0L) return null;
+        try {
+            if (__M_SEG_OF_ADDRESS != null) {
+                return __M_SEG_OF_ADDRESS.invoke(null, addr);
+            }
+        } catch (Throwable t) {
+            throw new RuntimeException("Failed to convert address to segment: " + t.getMessage(), t);
+        }
+        return null;
+    }
+
     public static int ffi_call_i64_0(int symId) {
         try {
-            java.lang.foreign.MemorySegment addr = __roze_resolve_sym_addr(symId);
-            java.lang.invoke.MethodHandle h = __roze_linker().downcallHandle(
-                addr,
-                java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.JAVA_INT)
-            );
+            Object addr = __roze_resolve_sym_addr(symId);
+            java.lang.invoke.MethodHandle h = __roze_downcall(addr, "int");
             return (int) h.invokeExact();
         } catch (Throwable t) {
             throw new RuntimeException("FFI call failed: " + t.getMessage(), t);
@@ -4762,11 +5030,8 @@ const FFI_HELPER_METHODS: &str = r#"
 
     public static int ffi_call_i64_1(int symId, int a1) {
         try {
-            java.lang.foreign.MemorySegment addr = __roze_resolve_sym_addr(symId);
-            java.lang.invoke.MethodHandle h = __roze_linker().downcallHandle(
-                addr,
-                java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.JAVA_INT, java.lang.foreign.ValueLayout.JAVA_INT)
-            );
+            Object addr = __roze_resolve_sym_addr(symId);
+            java.lang.invoke.MethodHandle h = __roze_downcall(addr, "int", "int");
             return (int) h.invokeExact(a1);
         } catch (Throwable t) {
             throw new RuntimeException("FFI call failed: " + t.getMessage(), t);
@@ -4775,11 +5040,8 @@ const FFI_HELPER_METHODS: &str = r#"
 
     public static int ffi_call_i64_2(int symId, int a1, int a2) {
         try {
-            java.lang.foreign.MemorySegment addr = __roze_resolve_sym_addr(symId);
-            java.lang.invoke.MethodHandle h = __roze_linker().downcallHandle(
-                addr,
-                java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.JAVA_INT, java.lang.foreign.ValueLayout.JAVA_INT, java.lang.foreign.ValueLayout.JAVA_INT)
-            );
+            Object addr = __roze_resolve_sym_addr(symId);
+            java.lang.invoke.MethodHandle h = __roze_downcall(addr, "int", "int", "int");
             return (int) h.invokeExact(a1, a2);
         } catch (Throwable t) {
             throw new RuntimeException("FFI call failed: " + t.getMessage(), t);
@@ -4788,11 +5050,8 @@ const FFI_HELPER_METHODS: &str = r#"
 
     public static double ffi_call_f64_1(int symId, double a1) {
         try {
-            java.lang.foreign.MemorySegment addr = __roze_resolve_sym_addr(symId);
-            java.lang.invoke.MethodHandle h = __roze_linker().downcallHandle(
-                addr,
-                java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.JAVA_DOUBLE, java.lang.foreign.ValueLayout.JAVA_DOUBLE)
-            );
+            Object addr = __roze_resolve_sym_addr(symId);
+            java.lang.invoke.MethodHandle h = __roze_downcall(addr, "double", "double");
             return (double) h.invokeExact(a1);
         } catch (Throwable t) {
             throw new RuntimeException("FFI call failed: " + t.getMessage(), t);
@@ -4800,31 +5059,31 @@ const FFI_HELPER_METHODS: &str = r#"
     }
 
     public static int ffi_call_str_1(int symId, String a1) {
-        try (java.lang.foreign.Arena arena = java.lang.foreign.Arena.ofConfined()) {
-            java.lang.foreign.MemorySegment addr = __roze_resolve_sym_addr(symId);
-            java.lang.foreign.MemorySegment cStr = a1 == null ? java.lang.foreign.MemorySegment.NULL : arena.allocateFrom(a1);
-            java.lang.invoke.MethodHandle h = __roze_linker().downcallHandle(
-                addr,
-                java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.JAVA_INT, java.lang.foreign.ValueLayout.ADDRESS)
-            );
-            return (int) h.invokeExact(cStr);
+        try (AutoCloseable arena = __roze_arena_of_confined()) {
+            Object addr = __roze_resolve_sym_addr(symId);
+            Object cStr = __roze_alloc_c_string(arena, a1);
+            java.lang.invoke.MethodHandle h = __roze_downcall(addr, "int", "address");
+            return (int) h.invoke(cStr);
         } catch (Throwable t) {
             throw new RuntimeException("FFI call failed: " + t.getMessage(), t);
         }
     }
 
     public static String ffi_call_str_str(int symId, String a1, String a2) {
-        try (java.lang.foreign.Arena arena = java.lang.foreign.Arena.ofConfined()) {
-            java.lang.foreign.MemorySegment addr = __roze_resolve_sym_addr(symId);
-            java.lang.foreign.MemorySegment s1 = a1 == null ? java.lang.foreign.MemorySegment.NULL : arena.allocateFrom(a1);
-            java.lang.foreign.MemorySegment s2 = a2 == null ? java.lang.foreign.MemorySegment.NULL : arena.allocateFrom(a2);
-            java.lang.invoke.MethodHandle h = __roze_linker().downcallHandle(
-                addr,
-                java.lang.foreign.FunctionDescriptor.of(java.lang.foreign.ValueLayout.ADDRESS, java.lang.foreign.ValueLayout.ADDRESS, java.lang.foreign.ValueLayout.ADDRESS)
-            );
-            java.lang.foreign.MemorySegment res = (java.lang.foreign.MemorySegment) h.invokeExact(s1, s2);
-            return (res == null || res.address() == 0) ? "" : res.reinterpret(Long.MAX_VALUE).getString(0);
+        try {
+            Object addr = __roze_resolve_sym_addr(symId);
+            try (AutoCloseable arena = __roze_arena_of_confined()) {
+                Object s1 = __roze_alloc_c_string(arena, a1);
+                Object s2 = __roze_alloc_c_string(arena, a2);
+                java.lang.invoke.MethodHandle h = __roze_downcall(addr, "address", "address", "address");
+                Object res = h.invoke(s1, s2);
+                return __roze_read_c_string(res);
+            }
         } catch (Throwable t) {
+            try {
+                Object seg = __roze_resolve_sym_addr(symId);
+                return __roze_read_c_string(seg);
+            } catch (Throwable ignored) {}
             throw new RuntimeException("FFI call failed: " + t.getMessage(), t);
         }
     }
@@ -5349,17 +5608,18 @@ fn java_type_name(ty: &Type) -> String {
     }
 }
 
-fn java_layout_for_type(ty: &Type) -> String {
+fn java_ffi_type_code(ty: &Type) -> &'static str {
     match ty {
-        Type::Int | Type::I32 | Type::U32 => "java.lang.foreign.ValueLayout.JAVA_INT".to_string(),
-        Type::I8 | Type::U8 => "java.lang.foreign.ValueLayout.JAVA_BYTE".to_string(),
-        Type::I16 | Type::U16 => "java.lang.foreign.ValueLayout.JAVA_SHORT".to_string(),
-        Type::I64 | Type::U64 | Type::Isize | Type::Usize => "java.lang.foreign.ValueLayout.JAVA_LONG".to_string(),
-        Type::Float | Type::F64 => "java.lang.foreign.ValueLayout.JAVA_DOUBLE".to_string(),
-        Type::F32 => "java.lang.foreign.ValueLayout.JAVA_FLOAT".to_string(),
-        Type::Bool => "java.lang.foreign.ValueLayout.JAVA_BOOLEAN".to_string(),
-        Type::String | Type::RawPointer(_) => "java.lang.foreign.ValueLayout.ADDRESS".to_string(),
-        _ => "java.lang.foreign.ValueLayout.JAVA_LONG".to_string(),
+        Type::Void => "void",
+        Type::Int | Type::I32 | Type::U32 => "int",
+        Type::I8 | Type::U8 => "byte",
+        Type::I16 | Type::U16 => "short",
+        Type::I64 | Type::U64 | Type::Isize | Type::Usize => "long",
+        Type::Float | Type::F64 => "double",
+        Type::F32 => "float",
+        Type::Bool => "boolean",
+        Type::String | Type::RawPointer(_) => "address",
+        _ => "long",
     }
 }
 
@@ -5486,6 +5746,14 @@ impl JavaSourceGenerator {
         source.push_str(&format!("public class {} {{\n", self.class_name));
 
         let mut main_found = false;
+        let has_ffi = self.program.statements.iter().any(|s| {
+            let unwrapped = match s {
+                TypedStatement::Annotated { statement, .. } => statement.as_ref(),
+                other => other,
+            };
+            matches!(unwrapped, TypedStatement::ExternFunction { .. })
+        });
+
         for raw_stmt in &self.program.statements {
             let (stmt, annotations) = match raw_stmt {
                 TypedStatement::Annotated { annotations, statement, .. } => (statement.as_ref(), Some(annotations)),
@@ -5550,56 +5818,52 @@ impl JavaSourceGenerator {
                 ));
                 source.push_str("        try {\n");
                 source.push_str(&format!("            if (__roze_ffi_h_{} == null) {{\n", escaped_name));
-                source.push_str(&format!("                java.lang.foreign.MemorySegment __addr = __roze_find_symbol(\"{}\");\n", name));
-
-                let desc_str = match return_type {
-                    Type::Void => {
-                        let param_layouts: Vec<String> = params.iter().map(|p| java_layout_for_type(&p.type_)).collect();
-                        format!("java.lang.foreign.FunctionDescriptor.ofVoid({})", param_layouts.join(", "))
-                    }
-                    _ => {
-                        let ret_layout = java_layout_for_type(return_type);
-                        let mut all_layouts = vec![ret_layout];
-                        for p in params {
-                            all_layouts.push(java_layout_for_type(&p.type_));
-                        }
-                        format!("java.lang.foreign.FunctionDescriptor.of({})", all_layouts.join(", "))
-                    }
+                source.push_str(&format!("                Object __addr = __roze_find_symbol(\"{}\");\n", name));
+                let ret_code = java_ffi_type_code(return_type);
+                let param_codes: Vec<String> = params.iter()
+                    .map(|p| format!("\"{}\"", java_ffi_type_code(&p.type_)))
+                    .collect();
+                let param_args = if param_codes.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {}", param_codes.join(", "))
                 };
-                source.push_str(&format!("                java.lang.foreign.FunctionDescriptor __desc = {};\n", desc_str));
-                source.push_str(&format!("                __roze_ffi_h_{} = __roze_linker().downcallHandle(__addr, __desc);\n", escaped_name));
+                source.push_str(&format!(
+                    "                __roze_ffi_h_{} = __roze_downcall(__addr, \"{}\"{});\n",
+                    escaped_name, ret_code, param_args
+                ));
                 source.push_str("            }\n");
 
-                source.push_str("            try (java.lang.foreign.Arena __arena = java.lang.foreign.Arena.ofConfined()) {\n");
+                source.push_str("            try (AutoCloseable __arena = __roze_arena_of_confined()) {\n");
                 let mut call_args = Vec::new();
                 for (i, p) in params.iter().enumerate() {
                     let p_escaped = escape_java_identifier(&p.name);
                     if p.type_ == Type::String {
                         let arg_var = format!("__arg_{}", i);
-                        source.push_str(&format!("                java.lang.foreign.MemorySegment {} = {} == null ? java.lang.foreign.MemorySegment.NULL : __arena.allocateFrom({});\n", arg_var, p_escaped, p_escaped));
+                        source.push_str(&format!("                Object {} = __roze_alloc_c_string(__arena, {});\n", arg_var, p_escaped));
                         call_args.push(arg_var);
                     } else if matches!(p.type_, Type::RawPointer(_)) {
                         let arg_var = format!("__arg_{}", i);
-                        source.push_str(&format!("                java.lang.foreign.MemorySegment {} = java.lang.foreign.MemorySegment.ofAddress({});\n", arg_var, p_escaped));
+                        source.push_str(&format!("                Object {} = __roze_segment_of_address({});\n", arg_var, p_escaped));
                         call_args.push(arg_var);
                     } else {
                         call_args.push(p_escaped);
                     }
                 }
 
-                let invoke_expr = format!("__roze_ffi_h_{}.invokeExact({})", escaped_name, call_args.join(", "));
+                let invoke_expr = format!("__roze_ffi_h_{}.invoke({})", escaped_name, call_args.join(", "));
                 match return_type {
                     Type::Void => {
                         source.push_str(&format!("                {};\n", invoke_expr));
                         source.push_str("                return;\n");
                     }
                     Type::String => {
-                        source.push_str(&format!("                java.lang.foreign.MemorySegment __res = (java.lang.foreign.MemorySegment) {};\n", invoke_expr));
-                        source.push_str("                return (__res == null || __res.address() == 0) ? \"\" : __res.reinterpret(Long.MAX_VALUE).getString(0);\n");
+                        source.push_str(&format!("                Object __res = {};\n", invoke_expr));
+                        source.push_str("                return __roze_read_c_string(__res);\n");
                     }
                     Type::RawPointer(_) => {
-                        source.push_str(&format!("                java.lang.foreign.MemorySegment __res = (java.lang.foreign.MemorySegment) {};\n", invoke_expr));
-                        source.push_str("                return __res == null ? 0L : __res.address();\n");
+                        source.push_str(&format!("                Object __res = {};\n", invoke_expr));
+                        source.push_str("                return __roze_mem_address(__res);\n");
                     }
                     Type::Int | Type::I32 => {
                         source.push_str(&format!("                return (int) {};\n", invoke_expr));
@@ -5648,7 +5912,9 @@ impl JavaSourceGenerator {
         source.push_str(COLLECTIONS_HELPER_METHODS);
         source.push_str(MEMORY_HELPER_METHODS);
         source.push_str(RAW_NET_HELPER_METHODS);
-        source.push_str(FFI_HELPER_METHODS);
+        if has_ffi {
+            source.push_str(FFI_HELPER_METHODS);
+        }
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);

@@ -213,10 +213,17 @@ impl Type {
     /// doesn't have user-defined types yet.
     pub fn from_name(name: &str) -> Type {
         let trimmed = name.trim();
-        if trimmed.starts_with("*raw") {
-            let inner = trimmed["*raw".len()..].trim();
-            let pointee = if inner.is_empty() {
-                Type::U8
+        if trimmed.starts_with("*raw") || trimmed.starts_with("*const") || trimmed.starts_with("*mut") {
+            let prefix_len = if trimmed.starts_with("*const") {
+                "*const".len()
+            } else if trimmed.starts_with("*mut") {
+                "*mut".len()
+            } else {
+                "*raw".len()
+            };
+            let inner = trimmed[prefix_len..].trim();
+            let pointee = if inner.is_empty() || inner == "void" {
+                Type::Void
             } else {
                 Type::from_name(inner)
             };
@@ -989,6 +996,35 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("ptr_is_null", vec![Type::RawPointer(Box::new(Type::U8))], Type::Bool),
         ("mem_copy", vec![Type::RawPointer(Box::new(Type::U8)), Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Void),
         ("mem_set", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int, Type::Int], Type::Void),
+        ("ptr_null", vec![], Type::RawPointer(Box::new(Type::U8))),
+        ("ptr_null_mut", vec![], Type::RawPointer(Box::new(Type::U8))),
+        ("ptr_sub", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::RawPointer(Box::new(Type::U8))),
+        ("ptr_read_u16", vec![Type::RawPointer(Box::new(Type::U8))], Type::Int),
+        ("ptr_write_u16", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Void),
+        ("ptr_read_u32", vec![Type::RawPointer(Box::new(Type::U8))], Type::Int),
+        ("ptr_write_u32", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Void),
+        ("ptr_read_f32", vec![Type::RawPointer(Box::new(Type::U8))], Type::F32),
+        ("ptr_read_f32_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::F32),
+        ("ptr_write_f32", vec![Type::RawPointer(Box::new(Type::U8)), Type::F32], Type::Void),
+        ("ptr_write_f32_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int, Type::F32], Type::Void),
+        ("ptr_read_f64", vec![Type::RawPointer(Box::new(Type::U8))], Type::F64),
+        ("ptr_read_f64_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::F64),
+        ("ptr_write_f64", vec![Type::RawPointer(Box::new(Type::U8)), Type::F64], Type::Void),
+        ("ptr_write_f64_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int, Type::F64], Type::Void),
+        ("ptr_read_volatile_u8", vec![Type::RawPointer(Box::new(Type::U8))], Type::Int),
+        ("ptr_write_volatile_u8", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Void),
+        ("ptr_read_volatile_u32", vec![Type::RawPointer(Box::new(Type::U8))], Type::Int),
+        ("ptr_write_volatile_u32", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Void),
+        ("ptr_read_volatile_i64", vec![Type::RawPointer(Box::new(Type::U8))], Type::Int),
+        ("ptr_write_volatile_i64", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Void),
+        ("ptr_copy", vec![Type::RawPointer(Box::new(Type::U8)), Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Void),
+        ("ptr_set", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int, Type::Int], Type::Void),
+        ("c_str_to_ptr", vec![Type::String], Type::RawPointer(Box::new(Type::U8))),
+        ("c_str_from_ptr", vec![Type::RawPointer(Box::new(Type::U8))], Type::String),
+        ("c_str_len", vec![Type::RawPointer(Box::new(Type::U8))], Type::Int),
+        ("struct_size", vec![Type::String], Type::Int),
+        ("struct_align", vec![Type::String], Type::Int),
+        ("field_offset", vec![Type::String, Type::String], Type::Int),
 
         // ---- Freestanding VGA Text Driver (ADV-01) ----
         ("vga_clear", vec![], Type::Void),
@@ -1774,6 +1810,23 @@ fn infer_type_param(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StructRepr {
+    pub is_c: bool,
+    pub is_packed: bool,
+    pub align: Option<usize>,
+}
+
+impl Default for StructRepr {
+    fn default() -> Self {
+        Self {
+            is_c: false,
+            is_packed: false,
+            align: None,
+        }
+    }
+}
+
 pub struct TypeChecker {
     pub symbol_table: SymbolTable,
     pub functions: HashMap<String, FunctionSig>,
@@ -1781,6 +1834,7 @@ pub struct TypeChecker {
     /// `new Name(a, b)`'s arguments are positional, matched against
     /// this order).
     pub classes: HashMap<String, Vec<(String, Type)>>,
+    pub class_repr: HashMap<String, StructRepr>,
     pub enums: HashMap<String, Vec<(String, Vec<Type>)>>,
     pub variant_to_enum: HashMap<String, Vec<String>>,
     pub generic_classes: HashMap<String, GenericClassDef>,
@@ -1852,6 +1906,7 @@ impl TypeChecker {
             symbol_table: SymbolTable::new(),
             functions,
             classes: HashMap::new(),
+            class_repr: HashMap::new(),
             enums: HashMap::new(),
             variant_to_enum: HashMap::new(),
             generic_classes: HashMap::new(),
@@ -1919,15 +1974,21 @@ impl TypeChecker {
             "list" | "map" => Ok((8, 8)),
             class_name => {
                 if let Some(fields) = self.classes.get(class_name) {
+                    let repr = self.class_repr.get(class_name).copied().unwrap_or_default();
+                    let is_packed = repr.is_packed;
                     let mut current_offset = 0;
                     let mut max_align = 1;
                     for (_field_name, field_type) in fields {
-                        let (f_size, f_align) = self.compute_type_type_layout(field_type)?;
+                        let (f_size, natural_align) = self.compute_type_type_layout(field_type)?;
+                        let f_align = if is_packed { 1 } else { natural_align };
                         max_align = max_align.max(f_align);
                         if f_align > 0 {
                             current_offset = (current_offset + f_align - 1) / f_align * f_align;
                         }
                         current_offset += f_size;
+                    }
+                    if let Some(explicit_align) = repr.align {
+                        max_align = max_align.max(explicit_align);
                     }
                     if max_align > 0 {
                         current_offset = (current_offset + max_align - 1) / max_align * max_align;
@@ -1970,9 +2031,12 @@ impl TypeChecker {
 
     pub fn compute_field_offset(&self, class_name: &str, target_field: &str) -> Result<usize> {
         if let Some(fields) = self.classes.get(class_name) {
+            let repr = self.class_repr.get(class_name).copied().unwrap_or_default();
+            let is_packed = repr.is_packed;
             let mut current_offset = 0;
             for (field_name, field_type) in fields {
-                let (f_size, f_align) = self.compute_type_type_layout(field_type)?;
+                let (f_size, natural_align) = self.compute_type_type_layout(field_type)?;
+                let f_align = if is_packed { 1 } else { natural_align };
                 if f_align > 0 {
                     current_offset = (current_offset + f_align - 1) / f_align * f_align;
                 }
@@ -2218,6 +2282,9 @@ impl TypeChecker {
         }
 
         self.classes.insert(spec_name.clone(), specialized_fields.clone());
+        if let Some(repr) = self.class_repr.get(base).copied() {
+            self.class_repr.insert(spec_name.clone(), repr);
+        }
         self.generated_class_decls.push(TypedStatement::ClassDecl {
             name: spec_name.clone(),
             fields: specialized_fields,
@@ -2388,10 +2455,17 @@ impl TypeChecker {
     /// and a class named `Point` resolves to `Type::Class("Point")`).
     fn resolve_type_name(&mut self, name: &str) -> Type {
         let trimmed = name.trim();
-        if trimmed.starts_with("*raw") {
-            let inner = trimmed["*raw".len()..].trim();
-            let pointee = if inner.is_empty() {
-                Type::U8
+        if trimmed.starts_with("*raw") || trimmed.starts_with("*const") || trimmed.starts_with("*mut") {
+            let prefix_len = if trimmed.starts_with("*const") {
+                "*const".len()
+            } else if trimmed.starts_with("*mut") {
+                "*mut".len()
+            } else {
+                "*raw".len()
+            };
+            let inner = trimmed[prefix_len..].trim();
+            let pointee = if inner.is_empty() || inner == "void" {
+                Type::Void
             } else {
                 self.resolve_type_name(inner)
             };
@@ -2629,6 +2703,18 @@ impl TypeChecker {
             }
         }
 
+        fn collect_annotations<'a>(stmt: &'a Statement) -> Vec<&'a Annotation> {
+            let mut annos = Vec::new();
+            let mut curr = stmt;
+            while let Statement::Annotated { annotations, statement, .. } = curr {
+                for a in annotations {
+                    annos.push(a);
+                }
+                curr = statement;
+            }
+            annos
+        }
+
         for raw_stmt in &program_statements {
             let stmt = unwrap_annotated_stmt(raw_stmt);
             if let Statement::EnumDecl { name, type_params, variants, location } = stmt {
@@ -2666,8 +2752,35 @@ impl TypeChecker {
         }
 
         for raw_stmt in &program_statements {
+            let annos = collect_annotations(raw_stmt);
             let stmt = unwrap_annotated_stmt(raw_stmt);
             if let Statement::ClassDecl { name, type_params, fields, location } = stmt {
+                let mut repr = StructRepr { is_c: false, is_packed: false, align: None };
+                for a in &annos {
+                    if a.name == "repr" {
+                        repr.is_c = true;
+                        for arg in &a.args {
+                            let clean = arg.trim_matches('"').trim();
+                            if clean.eq_ignore_ascii_case("c") {
+                                repr.is_c = true;
+                            } else if clean.eq_ignore_ascii_case("packed") {
+                                repr.is_packed = true;
+                            } else if clean.starts_with("align(") && clean.ends_with(')') {
+                                let num_str = clean[6..clean.len() - 1].trim();
+                                if let Ok(val) = num_str.parse::<usize>() {
+                                    repr.align = Some(val);
+                                }
+                            } else if clean.starts_with("align=") {
+                                let num_str = clean[6..].trim().trim_matches('"');
+                                if let Ok(val) = num_str.parse::<usize>() {
+                                    repr.align = Some(val);
+                                }
+                            }
+                        }
+                    }
+                }
+                self.class_repr.insert(name.clone(), repr);
+
                 if !type_params.is_empty() {
                     self.generic_classes.insert(name.clone(), GenericClassDef {
                         name: name.clone(),
@@ -3517,13 +3630,19 @@ impl TypeChecker {
         matches!(name,
             "alloc" | "alloc_zeroed" | "realloc" | "free" |
             "ptr_read_u8" | "ptr_read" | "ptr_read_i64" | "ptr_read_at" | "ptr_read_u8_at" |
-            "ptr_read_u16_at" | "ptr_read_u32_at" |
+            "ptr_read_u16" | "ptr_read_u16_at" | "ptr_read_u32" | "ptr_read_u32_at" |
+            "ptr_read_f32" | "ptr_read_f32_at" | "ptr_read_f64" | "ptr_read_f64_at" |
             "ptr_write_u8" | "ptr_write" | "ptr_write_i64" | "ptr_write_at" | "ptr_write_u8_at" |
-            "ptr_write_u16_at" | "ptr_write_u32_at" |
+            "ptr_write_u16" | "ptr_write_u16_at" | "ptr_write_u32" | "ptr_write_u32_at" |
+            "ptr_write_f32" | "ptr_write_f32_at" | "ptr_write_f64" | "ptr_write_f64_at" |
+            "ptr_read_volatile_u8" | "ptr_write_volatile_u8" |
+            "ptr_read_volatile_u32" | "ptr_write_volatile_u32" |
+            "ptr_read_volatile_i64" | "ptr_write_volatile_i64" |
             "mmio_read32" | "mmio_write32" | "mmio_read16" | "mmio_write16" | "mmio_read8" | "mmio_write8" |
             "mmio_read64" | "mmio_write64" |
-            "ptr_add" | "ptr_offset" | "ptr_diff" | "ptr_to_int" | "int_to_ptr" |
-            "ptr_is_null" | "mem_copy" | "mem_set"
+            "ptr_add" | "ptr_sub" | "ptr_offset" | "ptr_diff" | "ptr_to_int" | "int_to_ptr" |
+            "mem_copy" | "mem_set" | "ptr_copy" | "ptr_set" |
+            "c_str_from_ptr" | "c_str_len"
         )
     }
 
@@ -3882,6 +4001,39 @@ impl TypeChecker {
                 }
 
                 if let Expression::Identifier { name, .. } = function.as_ref() {
+                    if name == "struct_size" && typed_arguments.len() == 1 {
+                        if let TypedExpressionKind::String(ref ty_name) = typed_arguments[0].kind {
+                            let (sz, _) = self.compute_type_layout(ty_name)?;
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::Number(sz.to_string()),
+                                type_: Type::Int,
+                                location: location.clone(),
+                            });
+                        }
+                    }
+                    if name == "struct_align" && typed_arguments.len() == 1 {
+                        if let TypedExpressionKind::String(ref ty_name) = typed_arguments[0].kind {
+                            let (_, al) = self.compute_type_layout(ty_name)?;
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::Number(al.to_string()),
+                                type_: Type::Int,
+                                location: location.clone(),
+                            });
+                        }
+                    }
+                    if name == "field_offset" && typed_arguments.len() == 2 {
+                        if let (TypedExpressionKind::String(ref ty_name), TypedExpressionKind::String(ref f_name)) =
+                            (&typed_arguments[0].kind, &typed_arguments[1].kind)
+                        {
+                            let off = self.compute_field_offset(ty_name, f_name)?;
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::Number(off.to_string()),
+                                type_: Type::Int,
+                                location: location.clone(),
+                            });
+                        }
+                    }
+
                     if self.no_heap && matches!(name.as_str(), "alloc" | "alloc_zeroed" | "realloc" | "new_box" | "new_arc") {
                         return Err(RozeError::type_error(
                             format!("Dynamic heap allocation ('{}') is disabled in zero-heap bare-metal mode", name),

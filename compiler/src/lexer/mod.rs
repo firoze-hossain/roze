@@ -323,6 +323,10 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     Token::At
                 }
+                '#' => {
+                    self.advance();
+                    Token::Hash
+                }
                 '"' => {
                     let string = self.read_string();
                     Token::String(string)
@@ -360,6 +364,7 @@ impl<'a> Lexer<'a> {
                             "extern" => Token::Extern,
                             "unsafe" => Token::Unsafe,
                             "raw" => Token::Raw,
+                            "const" => Token::Const,
                             "type" => Token::Type,
                             "where" => Token::Where,
                             "comptime" => Token::Comptime,

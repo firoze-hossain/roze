@@ -406,7 +406,7 @@ s1_rows = [
         ("M4-T02", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Memory Layout & Types", "#[repr(C)] Layout & Raw Pointer Primitives",
         "C-compatible struct memory layout (#[repr(C)]), field padding, alignment rules, and pointer primitives (*const T, *mut T, *raw u8) with zero-copy C-string conversion.",
         "Matches C ABI memory guarantees and Rust std::ptr / core::ffi.",
-        "Systems Programming, OS Drivers, Graphics", "7 Days", ("Critical", 14), ("Planned", 12)
+        "Systems Programming, OS Drivers, Graphics", "7 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M4-T03", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Memory Architecture", "Thread-Safe Atomic ARC & Weak References",

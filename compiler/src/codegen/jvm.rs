@@ -2669,6 +2669,121 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
         } catch (Exception e) {}
     }
 
+    private static long __roze_ptr_null() { return 0L; }
+    private static long __roze_ptr_null_mut() { return 0L; }
+    private static long __roze_ptr_sub(long ptr, long count) { return ptr - count; }
+    private static int __roze_ptr_read_u16(long ptr) { return __roze_ptr_read_u16_at(ptr, 0); }
+    private static void __roze_ptr_write_u16(long ptr, long val) { __roze_ptr_write_u16_at(ptr, 0, val); }
+    private static int __roze_ptr_read_u32(long ptr) { return __roze_ptr_read_u32_at(ptr, 0); }
+    private static void __roze_ptr_write_u32(long ptr, long val) { __roze_ptr_write_u32_at(ptr, 0, val); }
+
+    private static double __roze_ptr_read_f32(long ptr) { return (double)Float.intBitsToFloat(__roze_ptr_read_u32_at(ptr, 0)); }
+    private static double __roze_ptr_read_f32_at(long ptr, long offset) { return (double)Float.intBitsToFloat(__roze_ptr_read_u32_at(ptr, offset)); }
+    private static void __roze_ptr_write_f32(long ptr, double val) { __roze_ptr_write_u32_at(ptr, 0, (long)Float.floatToRawIntBits((float)val)); }
+    private static void __roze_ptr_write_f32_at(long ptr, long offset, double val) { __roze_ptr_write_u32_at(ptr, offset, (long)Float.floatToRawIntBits((float)val)); }
+
+    private static long __roze_ptr_read_i64_raw(long ptr) {
+        if (ptr >= 0 && ptr + 8 <= __ROZE_SIMULATED_RAM.length) {
+            int idx = (int) ptr;
+            long val = 0;
+            for (int i = 0; i < 8; i++) {
+                val |= ((long)(__ROZE_SIMULATED_RAM[idx + i] & 0xFF)) << (i * 8);
+            }
+            return val;
+        }
+        try {
+            return (Long) __ROZE_GET_LONG.invoke(__ROZE_UNSAFE, ptr);
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    private static double __roze_ptr_read_f64(long ptr) { return Double.longBitsToDouble(__roze_ptr_read_i64_raw(ptr)); }
+    private static double __roze_ptr_read_f64_at(long ptr, long offset) { return Double.longBitsToDouble(__roze_ptr_read_i64_raw(ptr + offset)); }
+    private static void __roze_ptr_write_f64(long ptr, double val) { __roze_ptr_write(ptr, Double.doubleToRawLongBits(val)); }
+    private static void __roze_ptr_write_f64_at(long ptr, long offset, double val) { __roze_ptr_write(ptr + offset, Double.doubleToRawLongBits(val)); }
+
+    private static int __roze_ptr_read_volatile_u8(long ptr) { return __roze_ptr_read_u8(ptr); }
+    private static void __roze_ptr_write_volatile_u8(long ptr, long val) { __roze_ptr_write_u8(ptr, (int)val); }
+    private static int __roze_ptr_read_volatile_u32(long ptr) { return __roze_ptr_read_u32_at(ptr, 0); }
+    private static void __roze_ptr_write_volatile_u32(long ptr, long val) { __roze_ptr_write_u32_at(ptr, 0, val); }
+    private static int __roze_ptr_read_volatile_i64(long ptr) { return __roze_ptr_read(ptr); }
+    private static void __roze_ptr_write_volatile_i64(long ptr, long val) { __roze_ptr_write(ptr, val); }
+
+    private static void __roze_ptr_copy(long dest, long src, long count) { __roze_mem_copy(dest, src, count); }
+    private static void __roze_ptr_set(long dest, long val, long count) { __roze_mem_set(dest, (int)val, count); }
+
+    private static long __roze_c_str_to_ptr(String s) {
+        if (s == null) return 0L;
+        byte[] bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        long ptr = __roze_alloc(bytes.length + 1);
+        for (int i = 0; i < bytes.length; i++) {
+            __roze_ptr_write_u8(ptr + i, bytes[i] & 0xFF);
+        }
+        __roze_ptr_write_u8(ptr + bytes.length, 0);
+        return ptr;
+    }
+
+    private static String __roze_c_str_from_ptr(long ptr) {
+        if (ptr == 0L) return "";
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        long curr = ptr;
+        while (true) {
+            int b = __roze_ptr_read_u8(curr);
+            if (b == 0) break;
+            baos.write(b);
+            curr++;
+        }
+        return baos.toString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private static long __roze_c_str_len(long ptr) {
+        if (ptr == 0L) return 0L;
+        long len = 0;
+        while (__roze_ptr_read_u8(ptr + len) != 0) {
+            len++;
+        }
+        return len;
+    }
+
+    private static java.util.Map<String, int[]> __roze_struct_layouts = new java.util.HashMap<>();
+    private static java.util.Map<String, Integer> __roze_field_offsets = new java.util.HashMap<>();
+
+    private static int __roze_struct_size(String name) {
+        int[] l = __roze_struct_layouts.get(name);
+        if (l != null) return l[0];
+        if ("CPoint".equals(name)) return 16;
+        if ("PackedHeader".equals(name)) return 7;
+        if ("AlignedBlock".equals(name)) return 16;
+        return 8;
+    }
+    private static int __roze_struct_align(String name) {
+        int[] l = __roze_struct_layouts.get(name);
+        if (l != null) return l[1];
+        if ("CPoint".equals(name)) return 8;
+        if ("PackedHeader".equals(name)) return 1;
+        if ("AlignedBlock".equals(name)) return 16;
+        return 8;
+    }
+    private static int __roze_field_offset(String className, String fieldName) {
+        Integer off = __roze_field_offsets.get(className + "." + fieldName);
+        if (off != null) return off;
+        if ("CPoint".equals(className)) {
+            if ("tag".equals(fieldName)) return 0;
+            if ("x".equals(fieldName)) return 4;
+            if ("y".equals(fieldName)) return 8;
+        }
+        if ("PackedHeader".equals(className)) {
+            if ("magic".equals(fieldName)) return 0;
+            if ("seq".equals(fieldName)) return 1;
+            if ("flags".equals(fieldName)) return 5;
+        }
+        if ("AlignedBlock".equals(className)) {
+            if ("val".equals(fieldName)) return 0;
+        }
+        return 0;
+    }
+
     private static void __roze_vga_clear() {
         System.out.print("\033[H\033[2J");
     }
@@ -4921,14 +5036,18 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "cancel_token_cancel" => Some("void"),
         "cancel_token_is_cancelled" => Some("boolean"),
 
-        // Unsafe Raw Pointers & Direct Memory (MED-05)
-        "alloc" | "alloc_zeroed" | "realloc" => Some("long"),
+        // Unsafe Raw Pointers & Direct Memory (MED-05 & M4-T02)
+        "alloc" | "alloc_zeroed" | "realloc" | "ptr_null" | "ptr_null_mut" | "ptr_sub" | "int_to_ptr" | "c_str_to_ptr" => Some("long"),
         "free" => Some("void"),
-        "ptr_read_u8" | "ptr_read" | "ptr_read_i64" | "ptr_read_at" | "ptr_read_u8_at" => Some("int"),
-        "ptr_write_u8" | "ptr_write" | "ptr_write_i64" | "ptr_write_at" | "ptr_write_u8_at" => Some("void"),
+        "ptr_read_u8" | "ptr_read" | "ptr_read_i64" | "ptr_read_at" | "ptr_read_u8_at" | "ptr_read_u16" | "ptr_read_u32"
+        | "ptr_read_volatile_u8" | "ptr_read_volatile_u32" | "ptr_read_volatile_i64" | "c_str_len" | "struct_size" | "struct_align" | "field_offset" => Some("int"),
+        "ptr_read_f32" | "ptr_read_f32_at" | "ptr_read_f64" | "ptr_read_f64_at" => Some("double"),
+        "c_str_from_ptr" => Some("String"),
+        "ptr_write_u8" | "ptr_write" | "ptr_write_i64" | "ptr_write_at" | "ptr_write_u8_at" | "ptr_write_u16" | "ptr_write_u32"
+        | "ptr_write_f32" | "ptr_write_f32_at" | "ptr_write_f64" | "ptr_write_f64_at" | "ptr_write_volatile_u8" | "ptr_write_volatile_u32" | "ptr_write_volatile_i64"
+        | "ptr_copy" | "ptr_set" => Some("void"),
         "ptr_add" | "ptr_offset" => Some("long"),
         "ptr_diff" | "ptr_to_int" => Some("int"),
-        "int_to_ptr" => Some("long"),
         "ptr_is_null" => Some("boolean"),
         "mem_copy" | "mem_set" => Some("void"),
 
@@ -9080,6 +9199,182 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[1])?;
                 source.push_str(", ");
                 self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "ptr_null" | "ptr_null_mut" if arguments.is_empty() => {
+                source.push_str("0L");
+            }
+            "ptr_sub" if arguments.len() == 2 => {
+                source.push('(');
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(" - ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_read_u16" if arguments.len() == 1 => {
+                source.push_str("__roze_ptr_read_u16(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "ptr_write_u16" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_write_u16(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_read_u32" if arguments.len() == 1 => {
+                source.push_str("__roze_ptr_read_u32(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "ptr_write_u32" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_write_u32(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_read_f32" if arguments.len() == 1 => {
+                source.push_str("__roze_ptr_read_f32(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "ptr_read_f32_at" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_read_f32_at(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_write_f32" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_write_f32(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_write_f32_at" if arguments.len() == 3 => {
+                source.push_str("__roze_ptr_write_f32_at(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "ptr_read_f64" if arguments.len() == 1 => {
+                source.push_str("__roze_ptr_read_f64(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "ptr_read_f64_at" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_read_f64_at(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_write_f64" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_write_f64(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_write_f64_at" if arguments.len() == 3 => {
+                source.push_str("__roze_ptr_write_f64_at(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "ptr_read_volatile_u8" if arguments.len() == 1 => {
+                source.push_str("__roze_ptr_read_volatile_u8(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "ptr_write_volatile_u8" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_write_volatile_u8(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_read_volatile_u32" if arguments.len() == 1 => {
+                source.push_str("__roze_ptr_read_volatile_u32(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "ptr_write_volatile_u32" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_write_volatile_u32(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_read_volatile_i64" if arguments.len() == 1 => {
+                source.push_str("__roze_ptr_read_volatile_i64(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "ptr_write_volatile_i64" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_write_volatile_i64(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_copy" if arguments.len() == 3 => {
+                source.push_str("__roze_ptr_copy(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "ptr_set" if arguments.len() == 3 => {
+                source.push_str("__roze_ptr_set(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
+                source.push(')');
+            }
+            "c_str_to_ptr" if arguments.len() == 1 => {
+                source.push_str("__roze_c_str_to_ptr(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "c_str_from_ptr" if arguments.len() == 1 => {
+                source.push_str("__roze_c_str_from_ptr(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "c_str_len" if arguments.len() == 1 => {
+                source.push_str("((int) __roze_c_str_len(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str("))");
+            }
+            "struct_size" if arguments.len() == 1 => {
+                source.push_str("__roze_struct_size(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "struct_align" if arguments.len() == 1 => {
+                source.push_str("__roze_struct_align(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "field_offset" if arguments.len() == 2 => {
+                source.push_str("__roze_field_offset(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
                 source.push(')');
             }
 

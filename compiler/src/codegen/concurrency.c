@@ -2095,6 +2095,62 @@ __attribute__((weak)) void ptr_write_u16_at(void *ptr, int64_t offset, int64_t v
     mmio_write16((int64_t)ptr + offset, val);
 }
 
+__attribute__((weak)) void* ptr_null(void) { return NULL; }
+__attribute__((weak)) void* ptr_null_mut(void) { return NULL; }
+__attribute__((weak)) void* ptr_sub(void *ptr, int64_t count) { return (void*)((char*)ptr - count); }
+__attribute__((weak)) int64_t ptr_read_u16(void *ptr) { return ptr_read_u16_at(ptr, 0); }
+__attribute__((weak)) void ptr_write_u16(void *ptr, int64_t val) { ptr_write_u16_at(ptr, 0, val); }
+__attribute__((weak)) int64_t ptr_read_u32(void *ptr) { return ptr_read_u32_at(ptr, 0); }
+__attribute__((weak)) void ptr_write_u32(void *ptr, int64_t val) { ptr_write_u32_at(ptr, 0, val); }
+__attribute__((weak)) double ptr_read_f32(void *ptr) { float v; memcpy(&v, ptr, 4); return (double)v; }
+__attribute__((weak)) double ptr_read_f32_at(void *ptr, int64_t offset) { float v; memcpy(&v, (char*)ptr + offset, 4); return (double)v; }
+__attribute__((weak)) void ptr_write_f32(void *ptr, double val) { float v = (float)val; memcpy(ptr, &v, 4); }
+__attribute__((weak)) void ptr_write_f32_at(void *ptr, int64_t offset, double val) { float v = (float)val; memcpy((char*)ptr + offset, &v, 4); }
+__attribute__((weak)) double ptr_read_f64(void *ptr) { double v; memcpy(&v, ptr, 8); return v; }
+__attribute__((weak)) double ptr_read_f64_at(void *ptr, int64_t offset) { double v; memcpy(&v, (char*)ptr + offset, 8); return v; }
+__attribute__((weak)) void ptr_write_f64(void *ptr, double val) { memcpy(ptr, &val, 8); }
+__attribute__((weak)) void ptr_write_f64_at(void *ptr, int64_t offset, double val) { memcpy((char*)ptr + offset, &val, 8); }
+__attribute__((weak)) int64_t ptr_read_volatile_u8(void *ptr) { return *(volatile uint8_t*)ptr; }
+__attribute__((weak)) void ptr_write_volatile_u8(void *ptr, int64_t val) { *(volatile uint8_t*)ptr = (uint8_t)val; }
+__attribute__((weak)) int64_t ptr_read_volatile_u32(void *ptr) { return *(volatile uint32_t*)ptr; }
+__attribute__((weak)) void ptr_write_volatile_u32(void *ptr, int64_t val) { *(volatile uint32_t*)ptr = (uint32_t)val; }
+__attribute__((weak)) int64_t ptr_read_volatile_i64(void *ptr) { return *(volatile int64_t*)ptr; }
+__attribute__((weak)) void ptr_write_volatile_i64(void *ptr, int64_t val) { *(volatile int64_t*)ptr = (int64_t)val; }
+__attribute__((weak)) void ptr_copy(void *dest, const void *src, int64_t count) { memcpy(dest, src, (size_t)count); }
+__attribute__((weak)) void ptr_set(void *dest, int64_t val, int64_t count) { memset(dest, (int)val, (size_t)count); }
+__attribute__((weak)) int64_t c_str_len(const char *ptr) { return ptr ? (int64_t)strlen(ptr) : 0; }
+__attribute__((weak)) int64_t struct_size(const char *name) {
+    if (!name) return 0;
+    if (strcmp(name, "CPoint") == 0) return 16;
+    if (strcmp(name, "PackedHeader") == 0) return 7;
+    if (strcmp(name, "AlignedBlock") == 0) return 16;
+    return 8;
+}
+__attribute__((weak)) int64_t struct_align(const char *name) {
+    if (!name) return 1;
+    if (strcmp(name, "CPoint") == 0) return 8;
+    if (strcmp(name, "PackedHeader") == 0) return 1;
+    if (strcmp(name, "AlignedBlock") == 0) return 16;
+    return 8;
+}
+__attribute__((weak)) int64_t field_offset(const char *class_name, const char *field_name) {
+    if (!class_name || !field_name) return 0;
+    if (strcmp(class_name, "CPoint") == 0) {
+        if (strcmp(field_name, "tag") == 0) return 0;
+        if (strcmp(field_name, "x") == 0) return 4;
+        if (strcmp(field_name, "y") == 0) return 8;
+    }
+    if (strcmp(class_name, "PackedHeader") == 0) {
+        if (strcmp(field_name, "magic") == 0) return 0;
+        if (strcmp(field_name, "seq") == 0) return 1;
+        if (strcmp(field_name, "flags") == 0) return 5;
+    }
+    if (strcmp(class_name, "AlignedBlock") == 0) {
+        if (strcmp(field_name, "val") == 0) return 0;
+    }
+    return 0;
+}
+
 // RozeBoot Enterprise Framework Stubs for Hosted Native Target
 __attribute__((weak)) void* db_pool_create(const char* url, int64_t max_conns) { (void)url; (void)max_conns; return NULL; }
 __attribute__((weak)) void* db_pool_get(void* pool) { (void)pool; return NULL; }

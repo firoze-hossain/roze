@@ -1,0 +1,282 @@
+// stdlib/src/ptr.roze
+//
+// Raw Pointer Primitives, Memory Layout & C-ABI Memory Guarantees
+// Milestone M4-T02: 1:1 Parity with Rust std::ptr, core::ffi, and C ABI
+
+// Null pointer constructors
+func null_ptr() -> *raw u8 {
+    return ptr_null();
+}
+
+func null_mut() -> *raw u8 {
+    return ptr_null_mut();
+}
+
+func is_null(p: *raw u8) -> bool {
+    return ptr_is_null(p);
+}
+
+// Pointer arithmetic
+func offset(p: *raw u8, count: int) -> *raw u8 {
+    unsafe {
+        return ptr_offset(p, count);
+    }
+}
+
+func add(p: *raw u8, count: int) -> *raw u8 {
+    unsafe {
+        return ptr_add(p, count);
+    }
+}
+
+func sub(p: *raw u8, count: int) -> *raw u8 {
+    unsafe {
+        return ptr_sub(p, count);
+    }
+}
+
+func diff(p1: *raw u8, p2: *raw u8) -> int {
+    unsafe {
+        return ptr_diff(p1, p2);
+    }
+}
+
+func to_int(p: *raw u8) -> int {
+    unsafe {
+        return ptr_to_int(p);
+    }
+}
+
+func from_int(addr: int) -> *raw u8 {
+    unsafe {
+        return int_to_ptr(addr);
+    }
+}
+
+// Typed memory reads
+func read_u8(p: *raw u8) -> int {
+    unsafe {
+        return ptr_read_u8(p);
+    }
+}
+
+func read_u8_at(p: *raw u8, off: int) -> int {
+    unsafe {
+        return ptr_read_u8_at(p, off);
+    }
+}
+
+func read_u16(p: *raw u8) -> int {
+    unsafe {
+        return ptr_read_u16(p);
+    }
+}
+
+func read_u16_at(p: *raw u8, off: int) -> int {
+    unsafe {
+        return ptr_read_u16_at(p, off);
+    }
+}
+
+func read_u32(p: *raw u8) -> int {
+    unsafe {
+        return ptr_read_u32(p);
+    }
+}
+
+func read_u32_at(p: *raw u8, off: int) -> int {
+    unsafe {
+        return ptr_read_u32_at(p, off);
+    }
+}
+
+func read_i64(p: *raw u8) -> int {
+    unsafe {
+        return ptr_read_i64(p);
+    }
+}
+
+func read_i64_at(p: *raw u8, off: int) -> int {
+    unsafe {
+        return ptr_read_at(p, off);
+    }
+}
+
+func read_f32(p: *raw u8) -> float {
+    unsafe {
+        return ptr_read_f32(p);
+    }
+}
+
+func read_f32_at(p: *raw u8, off: int) -> float {
+    unsafe {
+        return ptr_read_f32_at(p, off);
+    }
+}
+
+func read_f64(p: *raw u8) -> float {
+    unsafe {
+        return ptr_read_f64(p);
+    }
+}
+
+func read_f64_at(p: *raw u8, off: int) -> float {
+    unsafe {
+        return ptr_read_f64_at(p, off);
+    }
+}
+
+// Typed memory writes
+func write_u8(p: *raw u8, val: int) -> void {
+    unsafe {
+        ptr_write_u8(p, val);
+    }
+}
+
+func write_u8_at(p: *raw u8, off: int, val: int) -> void {
+    unsafe {
+        ptr_write_u8_at(p, off, val);
+    }
+}
+
+func write_u16(p: *raw u8, val: int) -> void {
+    unsafe {
+        ptr_write_u16(p, val);
+    }
+}
+
+func write_u16_at(p: *raw u8, off: int, val: int) -> void {
+    unsafe {
+        ptr_write_u16_at(p, off, val);
+    }
+}
+
+func write_u32(p: *raw u8, val: int) -> void {
+    unsafe {
+        ptr_write_u32(p, val);
+    }
+}
+
+func write_u32_at(p: *raw u8, off: int, val: int) -> void {
+    unsafe {
+        ptr_write_u32_at(p, off, val);
+    }
+}
+
+func write_i64(p: *raw u8, val: int) -> void {
+    unsafe {
+        ptr_write_i64(p, val);
+    }
+}
+
+func write_i64_at(p: *raw u8, off: int, val: int) -> void {
+    unsafe {
+        ptr_write_at(p, off, val);
+    }
+}
+
+func write_f32(p: *raw u8, val: float) -> void {
+    unsafe {
+        ptr_write_f32(p, val);
+    }
+}
+
+func write_f32_at(p: *raw u8, off: int, val: float) -> void {
+    unsafe {
+        ptr_write_f32_at(p, off, val);
+    }
+}
+
+func write_f64(p: *raw u8, val: float) -> void {
+    unsafe {
+        ptr_write_f64(p, val);
+    }
+}
+
+func write_f64_at(p: *raw u8, off: int, val: float) -> void {
+    unsafe {
+        ptr_write_f64_at(p, off, val);
+    }
+}
+
+// Volatile memory operations (MMIO / Hardware registers)
+func read_volatile_u8(p: *raw u8) -> int {
+    unsafe {
+        return ptr_read_volatile_u8(p);
+    }
+}
+
+func write_volatile_u8(p: *raw u8, val: int) -> void {
+    unsafe {
+        ptr_write_volatile_u8(p, val);
+    }
+}
+
+func read_volatile_u32(p: *raw u8) -> int {
+    unsafe {
+        return ptr_read_volatile_u32(p);
+    }
+}
+
+func write_volatile_u32(p: *raw u8, val: int) -> void {
+    unsafe {
+        ptr_write_volatile_u32(p, val);
+    }
+}
+
+func read_volatile_i64(p: *raw u8) -> int {
+    unsafe {
+        return ptr_read_volatile_i64(p);
+    }
+}
+
+func write_volatile_i64(p: *raw u8, val: int) -> void {
+    unsafe {
+        ptr_write_volatile_i64(p, val);
+    }
+}
+
+// Bulk memory operations
+func copy(src: *raw u8, dst: *raw u8, count: int) -> void {
+    unsafe {
+        ptr_copy(src, dst, count);
+    }
+}
+
+func set(dst: *raw u8, val: int, count: int) -> void {
+    unsafe {
+        ptr_set(dst, val, count);
+    }
+}
+
+// Zero-copy C-string conversion
+func to_c_str(s: string) -> *raw u8 {
+    return c_str_to_ptr(s);
+}
+
+func from_c_str(p: *raw u8) -> string {
+    unsafe {
+        return c_str_from_ptr(p);
+    }
+}
+
+func c_strlen(p: *raw u8) -> int {
+    unsafe {
+        return c_str_len(p);
+    }
+}
+
+// Struct layout metadata
+class StructLayout {
+    name: string,
+    size: int,
+    align: int
+}
+
+func get_struct_layout(name: string) -> StructLayout {
+    return new StructLayout(name, struct_size(name), struct_align(name));
+}
+
+func get_field_offset(class_name: string, field_name: string) -> int {
+    return field_offset(class_name, field_name);
+}

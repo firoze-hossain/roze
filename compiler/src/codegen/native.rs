@@ -9632,6 +9632,216 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[dest_val, val, count_val]);
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
+            "ptr_null" | "ptr_null_mut" if arguments.is_empty() => {
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_sub" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                return Ok(self.builder.ins().isub(ptr_val, offset_val));
+            }
+            "ptr_read_u16" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let val = self.builder.ins().load(types::I16, MemFlags::trusted(), ptr_val, 0);
+                return Ok(self.builder.ins().uextend(VALUE_TYPE, val));
+            }
+            "ptr_write_u16" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let reduced = self.builder.ins().ireduce(types::I16, val);
+                self.builder.ins().store(MemFlags::trusted(), reduced, ptr_val, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_read_u32" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let val = self.builder.ins().load(types::I32, MemFlags::trusted(), ptr_val, 0);
+                return Ok(self.builder.ins().uextend(VALUE_TYPE, val));
+            }
+            "ptr_write_u32" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let reduced = self.builder.ins().ireduce(types::I32, val);
+                self.builder.ins().store(MemFlags::trusted(), reduced, ptr_val, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_read_f32" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                return Ok(self.builder.ins().load(types::F32, MemFlags::trusted(), ptr_val, 0));
+            }
+            "ptr_read_f32_at" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                return Ok(self.builder.ins().load(types::F32, MemFlags::trusted(), addr, 0));
+            }
+            "ptr_write_f32" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let f_val = if self.builder.func.dfg.value_type(val) == types::F64 {
+                    self.builder.ins().fdemote(types::F32, val)
+                } else {
+                    val
+                };
+                self.builder.ins().store(MemFlags::trusted(), f_val, ptr_val, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_write_f32_at" if arguments.len() == 3 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let val = self.compile_expression(&arguments[2])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                let f_val = if self.builder.func.dfg.value_type(val) == types::F64 {
+                    self.builder.ins().fdemote(types::F32, val)
+                } else {
+                    val
+                };
+                self.builder.ins().store(MemFlags::trusted(), f_val, addr, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_read_f64" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                return Ok(self.builder.ins().load(types::F64, MemFlags::trusted(), ptr_val, 0));
+            }
+            "ptr_read_f64_at" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                return Ok(self.builder.ins().load(types::F64, MemFlags::trusted(), addr, 0));
+            }
+            "ptr_write_f64" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                self.builder.ins().store(MemFlags::trusted(), val, ptr_val, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_write_f64_at" if arguments.len() == 3 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let val = self.compile_expression(&arguments[2])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                self.builder.ins().store(MemFlags::trusted(), val, addr, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_read_volatile_u8" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let byte_val = self.builder.ins().load(types::I8, MemFlags::new(), ptr_val, 0);
+                return Ok(self.builder.ins().uextend(VALUE_TYPE, byte_val));
+            }
+            "ptr_write_volatile_u8" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let byte_val = self.builder.ins().ireduce(types::I8, val);
+                self.builder.ins().store(MemFlags::new(), byte_val, ptr_val, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_read_volatile_u32" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let val = self.builder.ins().load(types::I32, MemFlags::new(), ptr_val, 0);
+                return Ok(self.builder.ins().uextend(VALUE_TYPE, val));
+            }
+            "ptr_write_volatile_u32" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let reduced = self.builder.ins().ireduce(types::I32, val);
+                self.builder.ins().store(MemFlags::new(), reduced, ptr_val, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_read_volatile_i64" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                return Ok(self.builder.ins().load(types::I64, MemFlags::new(), ptr_val, 0));
+            }
+            "ptr_write_volatile_i64" if arguments.len() == 2 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                self.builder.ins().store(MemFlags::new(), val, ptr_val, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_copy" if arguments.len() == 3 => {
+                let dest_val = self.compile_expression(&arguments[0])?;
+                let src_val = self.compile_expression(&arguments[1])?;
+                let count_val = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_memory.memcpy_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[dest_val, src_val, count_val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_set" if arguments.len() == 3 => {
+                let dest_val = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let count_val = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.raw_memory.memset_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[dest_val, val, count_val]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "c_str_to_ptr" if arguments.len() == 1 => {
+                let s_val = self.compile_expression(&arguments[0])?;
+                return Ok(s_val);
+            }
+            "c_str_from_ptr" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.string_from_c_str_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ptr_val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "c_str_len" if arguments.len() == 1 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let header_block = self.builder.create_block();
+                let body_block = self.builder.create_block();
+                let exit_block = self.builder.create_block();
+                self.builder.append_block_param(header_block, VALUE_TYPE);
+                let zero = self.builder.ins().iconst(VALUE_TYPE, 0);
+                self.builder.ins().jump(header_block, &[zero]);
+
+                self.builder.switch_to_block(header_block);
+                let curr_len = self.builder.block_params(header_block)[0];
+                let curr_ptr = self.builder.ins().iadd(ptr_val, curr_len);
+                let byte_val = self.builder.ins().load(types::I8, MemFlags::trusted(), curr_ptr, 0);
+                let zero_byte = self.builder.ins().iconst(types::I8, 0);
+                let is_zero = self.builder.ins().icmp(IntCC::Equal, byte_val, zero_byte);
+                self.builder.ins().brif(is_zero, exit_block, &[], body_block, &[]);
+
+                self.builder.switch_to_block(body_block);
+                self.builder.seal_block(body_block);
+                let one = self.builder.ins().iconst(VALUE_TYPE, 1);
+                let next_len = self.builder.ins().iadd(curr_len, one);
+                self.builder.ins().jump(header_block, &[next_len]);
+
+                self.builder.seal_block(header_block);
+                self.builder.switch_to_block(exit_block);
+                self.builder.seal_block(exit_block);
+                return Ok(curr_len);
+            }
+            "struct_size" if arguments.len() == 1 => {
+                let s_val = self.compile_expression(&arguments[0])?;
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.returns.push(AbiParam::new(VALUE_TYPE));
+                let func_id = self.module.declare_function("struct_size", Linkage::Import, &sig).map_err(|e| anyhow!(e.to_string()))?;
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s_val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "struct_align" if arguments.len() == 1 => {
+                let s_val = self.compile_expression(&arguments[0])?;
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.returns.push(AbiParam::new(VALUE_TYPE));
+                let func_id = self.module.declare_function("struct_align", Linkage::Import, &sig).map_err(|e| anyhow!(e.to_string()))?;
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s_val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "field_offset" if arguments.len() == 2 => {
+                let c_val = self.compile_expression(&arguments[0])?;
+                let f_val = self.compile_expression(&arguments[1])?;
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.returns.push(AbiParam::new(VALUE_TYPE));
+                let func_id = self.module.declare_function("field_offset", Linkage::Import, &sig).map_err(|e| anyhow!(e.to_string()))?;
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[c_val, f_val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
             "vga_clear" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.vga.clear_id, self.builder.func);
                 self.builder.ins().call(func_ref, &[]);

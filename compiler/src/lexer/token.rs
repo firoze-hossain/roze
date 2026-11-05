@@ -23,6 +23,7 @@ pub enum Token {
     Extern,
     Unsafe,
     Raw,
+    Const,
     Type,
     Where,
     Comptime,
@@ -76,6 +77,7 @@ pub enum Token {
     Underscore,  // _
     Pipe,        // |
     At,          // @
+    Hash,        // #
 
     // Special
     Newline,
@@ -105,6 +107,7 @@ impl fmt::Display for Token {
             Token::Extern => write!(f, "extern"),
             Token::Unsafe => write!(f, "unsafe"),
             Token::Raw => write!(f, "raw"),
+            Token::Const => write!(f, "const"),
             Token::Type => write!(f, "type"),
             Token::Where => write!(f, "where"),
             Token::Comptime => write!(f, "comptime"),
@@ -152,6 +155,7 @@ impl fmt::Display for Token {
             Token::Underscore => write!(f, "_"),
             Token::Pipe => write!(f, "|"),
             Token::At => write!(f, "@"),
+            Token::Hash => write!(f, "#"),
             Token::Newline => write!(f, "\\n"),
             Token::EOF => write!(f, "EOF"),
             Token::Error => write!(f, "ERROR"),

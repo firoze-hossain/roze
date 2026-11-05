@@ -129,7 +129,7 @@ impl Parser {
             Token::Comptime => self.parse_comptime_statement(),
             Token::AsmBang => self.parse_asm_statement(),
             Token::Identifier(id) if id == "asm" && self.peek_is_not() => self.parse_asm_statement(),
-            Token::At => self.parse_annotated_statement(),
+            Token::At | Token::Hash => self.parse_annotated_statement(),
             _ => {
                 // Parse a full expression first, then decide: if `=`
                 // follows, this is an assignment (either to a bare name
@@ -253,12 +253,115 @@ impl Parser {
         })
     }
 
+    fn parse_hash_attribute(&mut self) -> Result<crate::parser::ast::Annotation> {
+        let location = Location::new(self.current().line, self.current().column);
+        self.advance(); // consume '#'
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        if !self.check(&Token::LeftBracket) {
+            return Err(self.error("Expected '[' after '#' for attribute (e.g. '#[repr(C)]')"));
+        }
+        self.advance(); // consume '['
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+
+        let name = match &self.current().token {
+            Token::Identifier(n) => {
+                let n = n.clone();
+                self.advance();
+                n
+            }
+            other => return Err(self.error(format!("Expected an attribute name in '#[...]', found {}", other))),
+        };
+
+        let mut args = Vec::new();
+        if self.check(&Token::LeftParen) {
+            self.advance(); // consume '('
+            while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::RightParen) {
+                    break;
+                }
+                let mut arg_str = match &self.current().token {
+                    Token::String(s) => {
+                        let s = s.clone();
+                        self.advance();
+                        s
+                    }
+                    Token::Identifier(id) => {
+                        let id = id.clone();
+                        self.advance();
+                        id
+                    }
+                    Token::Number(n) => {
+                        let n = n.clone();
+                        self.advance();
+                        n
+                    }
+                    other => {
+                        let s = format!("{}", other);
+                        self.advance();
+                        s
+                    }
+                };
+                if self.check(&Token::LeftParen) {
+                    self.advance(); // consume '('
+                    let mut inner_parts = Vec::new();
+                    while !self.check(&Token::RightParen) && !self.check(&Token::EOF) {
+                        inner_parts.push(format!("{}", self.current().token));
+                        self.advance();
+                    }
+                    if self.check(&Token::RightParen) {
+                        self.advance();
+                    }
+                    arg_str = format!("{}({})", arg_str, inner_parts.join(""));
+                }
+                args.push(arg_str);
+
+                while self.check(&Token::Newline) {
+                    self.advance();
+                }
+                if self.check(&Token::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            if !self.check(&Token::RightParen) {
+                return Err(self.error("Expected ')' after attribute arguments"));
+            }
+            self.advance(); // consume ')'
+        }
+
+        while self.check(&Token::Newline) {
+            self.advance();
+        }
+        if !self.check(&Token::RightBracket) {
+            return Err(self.error("Expected ']' at end of attribute (e.g. '#[repr(C)]')"));
+        }
+        self.advance(); // consume ']'
+
+        Ok(crate::parser::ast::Annotation {
+            name,
+            args,
+            location,
+        })
+    }
+
     fn parse_annotated_statement(&mut self) -> Result<Statement> {
         let location = Location::new(self.current().line, self.current().column);
         let mut annotations = Vec::new();
 
-        while self.check(&Token::At) {
-            annotations.push(self.parse_annotation()?);
+        while self.check(&Token::At) || self.check(&Token::Hash) {
+            if self.check(&Token::At) {
+                annotations.push(self.parse_annotation()?);
+            } else if self.check(&Token::Hash) {
+                annotations.push(self.parse_hash_attribute()?);
+            }
             while self.check(&Token::Newline) {
                 self.advance();
             }
@@ -2180,15 +2283,23 @@ impl Parser {
             while self.check(&Token::Newline) {
                 self.advance();
             }
-            if !self.check(&Token::Raw) {
-                return Err(self.error("Expected 'raw' after '*' in pointer type (e.g. '*raw u8')"));
-            }
-            self.advance(); // Skip 'raw'
+            let kind = if self.check(&Token::Raw) {
+                self.advance();
+                "raw"
+            } else if self.check(&Token::Const) {
+                self.advance();
+                "const"
+            } else if self.check(&Token::Mut) {
+                self.advance();
+                "mut"
+            } else {
+                return Err(self.error("Expected 'const', 'mut', or 'raw' after '*' in pointer type (e.g. '*const T', '*mut T', '*raw u8')"));
+            };
             while self.check(&Token::Newline) {
                 self.advance();
             }
             let pointee_type = self.parse_type_name()?;
-            return Ok(format!("*raw {}", pointee_type));
+            return Ok(format!("*{} {}", kind, pointee_type));
         }
 
         if self.check(&Token::Func) {

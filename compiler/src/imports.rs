@@ -102,6 +102,9 @@ const CLOUD_SECURITY_DISPLAY_NAME: &str = "cloud_security (built-in)";
 const FFI_SOURCE: &str = include_str!("../../stdlib/src/ffi.roze");
 const FFI_DISPLAY_NAME: &str = "ffi (built-in)";
 
+const PTR_SOURCE: &str = include_str!("../../stdlib/src/ptr.roze");
+const PTR_DISPLAY_NAME: &str = "ptr (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -264,6 +267,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "ffi" || path == "roze::ffi" || path == "c_ffi" || path == "cabi" || path == "panama" || path == "dl" {
         return Ok((FFI_SOURCE.to_string(), FFI_DISPLAY_NAME.to_string()));
+    }
+    if path == "ptr" || path == "roze::ptr" || path == "core::ffi" || path == "ffi::ptr" || path == "std::ptr" || path == "memory_layout" {
+        return Ok((PTR_SOURCE.to_string(), PTR_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

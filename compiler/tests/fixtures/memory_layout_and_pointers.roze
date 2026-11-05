@@ -1,0 +1,162 @@
+// Memory Layout & Raw Pointer Primitives Test Suite (M4-T02)
+// C ABI memory guarantees, field padding, alignment rules, raw pointers, zero-copy C strings
+
+import "ptr";
+
+#[repr(C)]
+class CPoint {
+    tag: u8,
+    x: i32,
+    y: i64
+}
+
+#[repr(packed)]
+class PackedHeader {
+    magic: u8,
+    seq: u32,
+    flags: u16
+}
+
+#[repr(align(16))]
+class AlignedBlock {
+    val: i64
+}
+
+func main() {
+    println("=== M4-T02 Memory Layout & Pointer Verification ===");
+
+    // 1. C-ABI Struct Layout & Field Padding Verification
+    let cpoint_size = struct_size("CPoint");
+    let cpoint_align = struct_align("CPoint");
+    let off_tag = field_offset("CPoint", "tag");
+    let off_x = field_offset("CPoint", "x");
+    let off_y = field_offset("CPoint", "y");
+
+    println("CPoint size:");
+    println(cpoint_size);
+    println("CPoint align:");
+    println(cpoint_align);
+    println("CPoint off_tag:");
+    println(off_tag);
+    println("CPoint off_x:");
+    println(off_x);
+    println("CPoint off_y:");
+    println(off_y);
+
+    // 2. Packed Struct Layout (Zero Padding) Verification
+    let packed_size = struct_size("PackedHeader");
+    let packed_align = struct_align("PackedHeader");
+    let packed_off_magic = field_offset("PackedHeader", "magic");
+    let packed_off_seq = field_offset("PackedHeader", "seq");
+    let packed_off_flags = field_offset("PackedHeader", "flags");
+
+    println("PackedHeader size:");
+    println(packed_size);
+    println("PackedHeader align:");
+    println(packed_align);
+    println("PackedHeader off_magic:");
+    println(packed_off_magic);
+    println("PackedHeader off_seq:");
+    println(packed_off_seq);
+    println("PackedHeader off_flags:");
+    println(packed_off_flags);
+
+    // 3. Explicit Alignment Verification
+    let aligned_size = struct_size("AlignedBlock");
+    let aligned_align = struct_align("AlignedBlock");
+    println("AlignedBlock size:");
+    println(aligned_size);
+    println("AlignedBlock align:");
+    println(aligned_align);
+
+    // 4. Pointer Primitives & Arithmetic
+    let p_null: *const void = ptr_null();
+    let is_null_result = ptr_is_null(p_null);
+    println("p_null is null:");
+    println(is_null_result);
+
+    unsafe {
+        let buf: *mut u8 = alloc(64);
+        println("allocated buffer valid:");
+        println(!ptr_is_null(buf));
+
+        // Typed write & read
+        ptr_write_u8(buf, 42);
+        let val_u8 = ptr_read_u8(buf);
+        println("val_u8:");
+        println(val_u8);
+
+        ptr_write_u16_at(buf, 2, 1024);
+        let val_u16 = ptr_read_u16_at(buf, 2);
+        println("val_u16:");
+        println(val_u16);
+
+        ptr_write_u32_at(buf, 4, 305419896); // 0x12345678
+        let val_u32 = ptr_read_u32_at(buf, 4);
+        println("val_u32:");
+        println(val_u32);
+
+        ptr_write_at(buf, 8, 987654321);
+        let val_i64 = ptr_read_at(buf, 8);
+        println("val_i64:");
+        println(val_i64);
+
+        ptr_write_f64_at(buf, 16, 3.1415926535);
+        let val_f64 = ptr_read_f64_at(buf, 16);
+        println("val_f64 > 3.14:");
+        println(val_f64 > 3.14 && val_f64 < 3.15);
+
+        // Volatile operations (hardware MMIO)
+        ptr_write_volatile_u32(buf, 88888);
+        let vol_val = ptr_read_volatile_u32(buf);
+        println("volatile val:");
+        println(vol_val);
+
+        // Pointer arithmetic
+        let p2 = ptr_add(buf, 16);
+        let diff = ptr_diff(p2, buf);
+        println("pointer diff:");
+        println(diff);
+
+        let p_back = ptr_sub(p2, 16);
+        let back_diff = ptr_diff(p_back, buf);
+        println("pointer sub diff:");
+        println(back_diff);
+
+        // Memory set and copy
+        let dst: *raw u8 = alloc(64);
+        ptr_set(dst, 0, 64);
+        ptr_write_u8(buf, 77);
+        ptr_copy(dst, buf, 8);
+        let copied_val = ptr_read_u8(dst);
+        println("copied_val:");
+        println(copied_val);
+
+        free(dst);
+        free(buf);
+    }
+
+    // 5. Zero-Copy C-String Conversions
+    let orig_str = "Roze Native C ABI";
+    let c_ptr = c_str_to_ptr(orig_str);
+    let slen = c_strlen(c_ptr);
+    println("c_str_len:");
+    println(slen);
+
+    let roundtrip_str = from_c_str(c_ptr);
+    println("roundtrip string:");
+    println(roundtrip_str);
+    println("roundtrip match:");
+    println(orig_str == roundtrip_str);
+
+    // 6. stdlib/ptr.roze API check
+    let layout = get_struct_layout("CPoint");
+    println("stdlib layout name:");
+    println(layout.name);
+    println("stdlib layout size:");
+    println(layout.size);
+    println("stdlib layout align:");
+    println(layout.align);
+
+    println("=== M4-T02 Complete ===");
+}

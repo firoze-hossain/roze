@@ -693,14 +693,12 @@ Beep boop, I am R2D2.
 }
 
 #[test]
-fn c_ffi_throws_unsupported_on_jvm() {
-    let (_stdout, stderr, ok) = run_fixture("ffi.roze");
-    assert!(!ok, "JVM run should fail with UnsupportedOperationException");
-    assert!(
-        stderr.contains("UnsupportedOperationException") && stderr.contains("native-only"),
-        "stderr should mention UnsupportedOperationException and native-only, got:\n{}",
-        stderr
-    );
+fn c_ffi_on_jvm() {
+    let (stdout, stderr, ok) = run_fixture("ffi.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    assert!(out.contains("Hello from C FFI!"));
+    assert!(out.contains("42"));
 }
 
 #[test]
@@ -1782,6 +1780,39 @@ fn universal_c_ffi_integration_suite() {
     assert!(stdout.contains("--- Suite 3: Dynamic Library Loading & Symbol Resolution ---"));
     assert!(stdout.contains("has_symbol('cos'):\ntrue"));
     assert!(stdout.contains("✅ Universal C FFI Engine: 100% Verified on All Backends!"));
+}
+
+#[test]
+fn memory_layout_and_pointers_suite() {
+    let (stdout, stderr, ok) = run_fixture("memory_layout_and_pointers.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== M4-T02 Memory Layout & Pointer Verification ==="));
+    assert!(stdout.contains("CPoint size:\n16"));
+    assert!(stdout.contains("CPoint align:\n8"));
+    assert!(stdout.contains("CPoint off_tag:\n0"));
+    assert!(stdout.contains("CPoint off_x:\n4"));
+    assert!(stdout.contains("CPoint off_y:\n8"));
+    assert!(stdout.contains("PackedHeader size:\n7"));
+    assert!(stdout.contains("PackedHeader align:\n1"));
+    assert!(stdout.contains("PackedHeader off_magic:\n0"));
+    assert!(stdout.contains("PackedHeader off_seq:\n1"));
+    assert!(stdout.contains("PackedHeader off_flags:\n5"));
+    assert!(stdout.contains("AlignedBlock size:\n16"));
+    assert!(stdout.contains("AlignedBlock align:\n16"));
+    assert!(stdout.contains("p_null is null:\ntrue"));
+    assert!(stdout.contains("val_u8:\n42"));
+    assert!(stdout.contains("val_u16:\n1024"));
+    assert!(stdout.contains("val_u32:\n305419896"));
+    assert!(stdout.contains("val_i64:\n987654321"));
+    assert!(stdout.contains("val_f64 > 3.14:\ntrue"));
+    assert!(stdout.contains("volatile val:\n88888"));
+    assert!(stdout.contains("pointer diff:\n16"));
+    assert!(stdout.contains("pointer sub diff:\n0"));
+    assert!(stdout.contains("copied_val:\n77"));
+    assert!(stdout.contains("c_str_len:\n17"));
+    assert!(stdout.contains("roundtrip match:\ntrue"));
+    assert!(stdout.contains("stdlib layout name:\nCPoint"));
+    assert!(stdout.contains("=== M4-T02 Complete ==="));
 }
 
 

@@ -1591,6 +1591,9 @@ long __roze_arc_clone(long a) { (void)a; return 0; }
 long __roze_arc_strong_count(long a) { (void)a; return 0; }
 long __roze_arc_weak_count(long a) { (void)a; return 0; }
 long __roze_arc_downgrade(long a) { (void)a; return 0; }
+long __roze_arc_is_unique(long a) { (void)a; return 0; }
+long __roze_arc_try_unwrap(long a) { (void)a; return 0; }
+long __roze_arc_ptr_eq(long a1, long a2) { return a1 == a2; }
 
 long __roze_weak_new(void) { return 0; }
 void __roze_weak_retain(long w) { (void)w; }
@@ -1600,6 +1603,29 @@ long __roze_weak_strong_count(long w) { (void)w; return 0; }
 long __roze_weak_weak_count(long w) { (void)w; return 0; }
 long __roze_weak_is_expired(long w) { (void)w; return 1; }
 long __roze_weak_is_alive(long w) { (void)w; return 0; }
+long __roze_weak_ptr_eq(long w1, long w2) { return w1 == w2; }
+
+long __roze_rc_new(long val) { (void)val; return 0; }
+void __roze_rc_retain(long r) { (void)r; }
+void __roze_rc_release(long r) { (void)r; }
+long __roze_rc_get(long r) { (void)r; return 0; }
+long __roze_rc_clone(long r) { (void)r; return 0; }
+long __roze_rc_strong_count(long r) { (void)r; return 0; }
+long __roze_rc_weak_count(long r) { (void)r; return 0; }
+long __roze_rc_downgrade(long r) { (void)r; return 0; }
+long __roze_rc_is_unique(long r) { (void)r; return 0; }
+long __roze_rc_try_unwrap(long r) { (void)r; return 0; }
+long __roze_rc_ptr_eq(long r1, long r2) { return r1 == r2; }
+
+long __roze_rc_weak_new(void) { return 0; }
+void __roze_rc_weak_retain(long w) { (void)w; }
+void __roze_rc_weak_release(long w) { (void)w; }
+long __roze_rc_weak_upgrade(long w) { (void)w; return 0; }
+long __roze_rc_weak_strong_count(long w) { (void)w; return 0; }
+long __roze_rc_weak_weak_count(long w) { (void)w; return 0; }
+long __roze_rc_weak_is_expired(long w) { (void)w; return 1; }
+long __roze_rc_weak_is_alive(long w) { (void)w; return 0; }
+long __roze_rc_weak_ptr_eq(long w1, long w2) { return w1 == w2; }
 
 long __roze_bump_allocator_new(long cap) { (void)cap; return 0; }
 long __roze_bump_allocator_new_default(void) { return 0; }
@@ -5251,6 +5277,9 @@ pub struct MemoryRuntime {
     pub arc_strong_count: FuncId,
     pub arc_weak_count: FuncId,
     pub arc_downgrade: FuncId,
+    pub arc_is_unique: FuncId,
+    pub arc_try_unwrap: FuncId,
+    pub arc_ptr_eq: FuncId,
 
     pub weak_new: FuncId,
     pub weak_retain: FuncId,
@@ -5260,6 +5289,30 @@ pub struct MemoryRuntime {
     pub weak_weak_count: FuncId,
     pub weak_is_expired: FuncId,
     pub weak_is_alive: FuncId,
+    pub weak_ptr_eq: FuncId,
+
+    // Rc<T> & RcWeak<T>
+    pub rc_new: FuncId,
+    pub rc_retain: FuncId,
+    pub rc_release: FuncId,
+    pub rc_get: FuncId,
+    pub rc_clone: FuncId,
+    pub rc_strong_count: FuncId,
+    pub rc_weak_count: FuncId,
+    pub rc_downgrade: FuncId,
+    pub rc_is_unique: FuncId,
+    pub rc_try_unwrap: FuncId,
+    pub rc_ptr_eq: FuncId,
+
+    pub rc_weak_new: FuncId,
+    pub rc_weak_retain: FuncId,
+    pub rc_weak_release: FuncId,
+    pub rc_weak_upgrade: FuncId,
+    pub rc_weak_strong_count: FuncId,
+    pub rc_weak_weak_count: FuncId,
+    pub rc_weak_is_expired: FuncId,
+    pub rc_weak_is_alive: FuncId,
+    pub rc_weak_ptr_eq: FuncId,
 
     // BumpAllocator
     pub bump_allocator_new: FuncId,
@@ -5352,6 +5405,9 @@ fn declare_memory_runtime(module: &mut ObjectModule) -> Result<MemoryRuntime> {
         arc_strong_count: decl!("__roze_arc_strong_count", sig_i64_to_i64),
         arc_weak_count: decl!("__roze_arc_weak_count", sig_i64_to_i64),
         arc_downgrade: decl!("__roze_arc_downgrade", sig_i64_to_i64),
+        arc_is_unique: decl!("__roze_arc_is_unique", sig_i64_to_i64),
+        arc_try_unwrap: decl!("__roze_arc_try_unwrap", sig_i64_to_i64),
+        arc_ptr_eq: decl!("__roze_arc_ptr_eq", sig_i64_i64_to_i64),
 
         weak_new: decl!("__roze_weak_new", sig_void_to_i64),
         weak_retain: decl!("__roze_weak_retain", sig_i64_to_void),
@@ -5361,6 +5417,30 @@ fn declare_memory_runtime(module: &mut ObjectModule) -> Result<MemoryRuntime> {
         weak_weak_count: decl!("__roze_weak_weak_count", sig_i64_to_i64),
         weak_is_expired: decl!("__roze_weak_is_expired", sig_i64_to_i64),
         weak_is_alive: decl!("__roze_weak_is_alive", sig_i64_to_i64),
+        weak_ptr_eq: decl!("__roze_weak_ptr_eq", sig_i64_i64_to_i64),
+
+        // Rc<T> & RcWeak<T>
+        rc_new: decl!("__roze_rc_new", sig_i64_to_i64),
+        rc_retain: decl!("__roze_rc_retain", sig_i64_to_void),
+        rc_release: decl!("__roze_rc_release", sig_i64_to_void),
+        rc_get: decl!("__roze_rc_get", sig_i64_to_i64),
+        rc_clone: decl!("__roze_rc_clone", sig_i64_to_i64),
+        rc_strong_count: decl!("__roze_rc_strong_count", sig_i64_to_i64),
+        rc_weak_count: decl!("__roze_rc_weak_count", sig_i64_to_i64),
+        rc_downgrade: decl!("__roze_rc_downgrade", sig_i64_to_i64),
+        rc_is_unique: decl!("__roze_rc_is_unique", sig_i64_to_i64),
+        rc_try_unwrap: decl!("__roze_rc_try_unwrap", sig_i64_to_i64),
+        rc_ptr_eq: decl!("__roze_rc_ptr_eq", sig_i64_i64_to_i64),
+
+        rc_weak_new: decl!("__roze_rc_weak_new", sig_void_to_i64),
+        rc_weak_retain: decl!("__roze_rc_weak_retain", sig_i64_to_void),
+        rc_weak_release: decl!("__roze_rc_weak_release", sig_i64_to_void),
+        rc_weak_upgrade: decl!("__roze_rc_weak_upgrade", sig_i64_to_i64),
+        rc_weak_strong_count: decl!("__roze_rc_weak_strong_count", sig_i64_to_i64),
+        rc_weak_weak_count: decl!("__roze_rc_weak_weak_count", sig_i64_to_i64),
+        rc_weak_is_expired: decl!("__roze_rc_weak_is_expired", sig_i64_to_i64),
+        rc_weak_is_alive: decl!("__roze_rc_weak_is_alive", sig_i64_to_i64),
+        rc_weak_ptr_eq: decl!("__roze_rc_weak_ptr_eq", sig_i64_i64_to_i64),
 
         bump_allocator_new: decl!("__roze_bump_allocator_new", sig_i64_to_i64),
         bump_allocator_new_default: decl!("__roze_bump_allocator_new_default", sig_void_to_i64),
@@ -6927,6 +7007,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
             }
+            Type::Generic { base, .. } if base == "RozeRc" || base == "Rc" || base == "rc" => {
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "RozeRcWeak" || base == "RcWeak" || base == "rc_weak" => {
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_weak_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
             Type::Generic { base, .. } if base == "BumpAllocator" || base == "bump_allocator" => {
                 let func_ref = self.module.declare_func_in_func(self.memory.bump_allocator_retain, self.builder.func);
                 self.builder.ins().call(func_ref, &[val]);
@@ -7148,6 +7238,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             Type::Generic { base, .. } if base == "RozeWeak" || base == "Weak" || base == "weak" => {
                 let release_ref = self.module.declare_func_in_func(self.memory.weak_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "RozeRc" || base == "Rc" || base == "rc" => {
+                let release_ref = self.module.declare_func_in_func(self.memory.rc_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "RozeRcWeak" || base == "RcWeak" || base == "rc_weak" => {
+                let release_ref = self.module.declare_func_in_func(self.memory.rc_weak_release, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
@@ -11855,6 +11955,32 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.release_if_fresh(&arguments[0], a)?;
                 return Ok(res);
             }
+            "arc_is_unique" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arc_is_unique, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(res);
+            }
+            "arc_try_unwrap" if arguments.len() == 1 => {
+                let a = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arc_try_unwrap, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a)?;
+                return Ok(res);
+            }
+            "arc_ptr_eq" if arguments.len() == 2 => {
+                let a1 = self.compile_expression(&arguments[0])?;
+                let a2 = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.arc_ptr_eq, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[a1, a2]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], a1)?;
+                self.release_if_fresh(&arguments[1], a2)?;
+                return Ok(res);
+            }
 
             "weak_new" | "Weak_new" | "new_weak" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.memory.weak_new, self.builder.func);
@@ -11899,6 +12025,148 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let call = self.builder.ins().call(func_ref, &[w]);
                 let res = self.builder.inst_results(call)[0];
                 self.release_if_fresh(&arguments[0], w)?;
+                return Ok(res);
+            }
+            "weak_ptr_eq" if arguments.len() == 2 => {
+                let w1 = self.compile_expression(&arguments[0])?;
+                let w2 = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.weak_ptr_eq, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[w1, w2]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], w1)?;
+                self.release_if_fresh(&arguments[1], w2)?;
+                return Ok(res);
+            }
+
+            // Rc<T> & RcWeak<T>
+            "rc_new" | "Rc_new" | "new_rc" if arguments.len() == 1 => {
+                let val = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_new, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[val]);
+                let r = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], val)?;
+                return Ok(r);
+            }
+            "rc_get" if arguments.len() == 1 => {
+                let r = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_get, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[r]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], r)?;
+                return Ok(res);
+            }
+            "rc_clone" if arguments.len() == 1 => {
+                let r = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_clone, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[r]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], r)?;
+                return Ok(res);
+            }
+            "rc_strong_count" if arguments.len() == 1 => {
+                let r = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_strong_count, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[r]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], r)?;
+                return Ok(res);
+            }
+            "rc_weak_count" if arguments.len() == 1 => {
+                let r = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_weak_count, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[r]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], r)?;
+                return Ok(res);
+            }
+            "rc_downgrade" if arguments.len() == 1 => {
+                let r = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_downgrade, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[r]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], r)?;
+                return Ok(res);
+            }
+            "rc_is_unique" if arguments.len() == 1 => {
+                let r = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_is_unique, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[r]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], r)?;
+                return Ok(res);
+            }
+            "rc_try_unwrap" if arguments.len() == 1 => {
+                let r = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_try_unwrap, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[r]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], r)?;
+                return Ok(res);
+            }
+            "rc_ptr_eq" if arguments.len() == 2 => {
+                let r1 = self.compile_expression(&arguments[0])?;
+                let r2 = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_ptr_eq, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[r1, r2]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], r1)?;
+                self.release_if_fresh(&arguments[1], r2)?;
+                return Ok(res);
+            }
+
+            "rc_weak_new" | "RcWeak_new" | "new_rc_weak" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_weak_new, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "rc_weak_upgrade" if arguments.len() == 1 => {
+                let w = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_weak_upgrade, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[w]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], w)?;
+                return Ok(res);
+            }
+            "rc_weak_strong_count" if arguments.len() == 1 => {
+                let w = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_weak_strong_count, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[w]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], w)?;
+                return Ok(res);
+            }
+            "rc_weak_weak_count" if arguments.len() == 1 => {
+                let w = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_weak_weak_count, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[w]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], w)?;
+                return Ok(res);
+            }
+            "rc_weak_is_expired" if arguments.len() == 1 => {
+                let w = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_weak_is_expired, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[w]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], w)?;
+                return Ok(res);
+            }
+            "rc_weak_is_alive" if arguments.len() == 1 => {
+                let w = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_weak_is_alive, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[w]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], w)?;
+                return Ok(res);
+            }
+            "rc_weak_ptr_eq" if arguments.len() == 2 => {
+                let w1 = self.compile_expression(&arguments[0])?;
+                let w2 = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.memory.rc_weak_ptr_eq, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[w1, w2]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], w1)?;
+                self.release_if_fresh(&arguments[1], w2)?;
                 return Ok(res);
             }
 

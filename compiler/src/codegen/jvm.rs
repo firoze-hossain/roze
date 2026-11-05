@@ -4174,9 +4174,118 @@ class RozeArc {
         return new RozeWeak(ctrl);
     }
 
+    public boolean isUnique() {
+        return ctrl != null && ctrl.strongCount.get() == 1 && ctrl.weakCount.get() == 0;
+    }
+
+    public Object tryUnwrap() {
+        return isUnique() ? ctrl.value : null;
+    }
+
     @Override
     public String toString() {
         return "Arc(" + String.valueOf(get()) + ")";
+    }
+}
+
+class RozeRcControlBlock {
+    Object value;
+    int strongCount = 1;
+    int weakCount = 0;
+    boolean isDropped = false;
+
+    public RozeRcControlBlock(Object value) {
+        this.value = value;
+    }
+}
+
+class RozeRcWeak {
+    final RozeRcControlBlock ctrl;
+
+    public RozeRcWeak(RozeRcControlBlock ctrl) {
+        this.ctrl = ctrl;
+    }
+
+    public RozeRcWeak() {
+        this.ctrl = null;
+    }
+
+    public int strongCount() {
+        return (ctrl == null || ctrl.isDropped) ? 0 : ctrl.strongCount;
+    }
+
+    public int weakCount() {
+        return ctrl == null ? 0 : ctrl.weakCount;
+    }
+
+    public boolean isExpired() {
+        return ctrl == null || ctrl.isDropped || ctrl.strongCount <= 0;
+    }
+
+    public boolean isAlive() {
+        return !isExpired();
+    }
+
+    public RozeRc upgrade() {
+        if (ctrl == null || ctrl.isDropped || ctrl.strongCount <= 0) return null;
+        ctrl.strongCount++;
+        return new RozeRc(ctrl);
+    }
+
+    @Override
+    public String toString() {
+        return isAlive() ? ("RcWeak(strong=" + strongCount() + ", weak=" + weakCount() + ")") : "RcWeak(expired)";
+    }
+}
+
+class RozeRc {
+    final RozeRcControlBlock ctrl;
+
+    public RozeRc(RozeRcControlBlock ctrl) {
+        this.ctrl = ctrl;
+    }
+
+    public RozeRc(Object value) {
+        this.ctrl = new RozeRcControlBlock(value);
+    }
+
+    public Object get() {
+        return ctrl != null ? ctrl.value : null;
+    }
+
+    public RozeRc cloneRc() {
+        if (ctrl != null) {
+            ctrl.strongCount++;
+        }
+        return new RozeRc(ctrl);
+    }
+
+    public int strongCount() {
+        return ctrl != null ? ctrl.strongCount : 0;
+    }
+
+    public int weakCount() {
+        return ctrl != null ? ctrl.weakCount : 0;
+    }
+
+    public RozeRcWeak downgrade() {
+        if (ctrl != null) {
+            ctrl.weakCount++;
+        }
+        return new RozeRcWeak(ctrl);
+    }
+
+    public boolean isUnique() {
+        return ctrl != null && ctrl.strongCount == 1 && ctrl.weakCount == 0;
+    }
+
+    public Object tryUnwrap() {
+        return isUnique() ? ctrl.value : null;
+    }
+
+    @Override
+    public String toString() {
+        return "Rc(" + String.valueOf(get()) + ")";
     }
 }
 
@@ -4426,6 +4535,11 @@ const MEMORY_HELPER_METHODS: &str = r#"
     private static int arc_strong_count(Object a) { return ((RozeArc) a).strongCount(); }
     private static int arc_weak_count(Object a) { return ((RozeArc) a).weakCount(); }
     private static RozeWeak arc_downgrade(Object a) { return ((RozeArc) a).downgrade(); }
+    private static boolean arc_is_unique(Object a) { return ((RozeArc) a).isUnique(); }
+    private static Object arc_try_unwrap(Object a) { return ((RozeArc) a).tryUnwrap(); }
+    private static boolean arc_ptr_eq(Object a1, Object a2) {
+        return a1 != null && a2 != null && ((RozeArc) a1).ctrl == ((RozeArc) a2).ctrl;
+    }
 
     // Weak<T>
     private static RozeWeak weak_new() { return new RozeWeak(); }
@@ -4436,6 +4550,37 @@ const MEMORY_HELPER_METHODS: &str = r#"
     private static int weak_weak_count(Object w) { return ((RozeWeak) w).weakCount(); }
     private static boolean weak_is_expired(Object w) { return ((RozeWeak) w).isExpired(); }
     private static boolean weak_is_alive(Object w) { return ((RozeWeak) w).isAlive(); }
+    private static boolean weak_ptr_eq(Object w1, Object w2) {
+        return w1 != null && w2 != null && ((RozeWeak) w1).ctrl == ((RozeWeak) w2).ctrl;
+    }
+
+    // Rc<T>
+    private static RozeRc rc_new(Object val) { return new RozeRc(val); }
+    private static RozeRc Rc_new(Object val) { return new RozeRc(val); }
+    private static RozeRc new_rc(Object val) { return new RozeRc(val); }
+    private static Object rc_get(Object r) { return ((RozeRc) r).get(); }
+    private static RozeRc rc_clone(Object r) { return ((RozeRc) r).cloneRc(); }
+    private static int rc_strong_count(Object r) { return ((RozeRc) r).strongCount(); }
+    private static int rc_weak_count(Object r) { return ((RozeRc) r).weakCount(); }
+    private static RozeRcWeak rc_downgrade(Object r) { return ((RozeRc) r).downgrade(); }
+    private static boolean rc_is_unique(Object r) { return ((RozeRc) r).isUnique(); }
+    private static Object rc_try_unwrap(Object r) { return ((RozeRc) r).tryUnwrap(); }
+    private static boolean rc_ptr_eq(Object r1, Object r2) {
+        return r1 != null && r2 != null && ((RozeRc) r1).ctrl == ((RozeRc) r2).ctrl;
+    }
+
+    // RcWeak<T>
+    private static RozeRcWeak rc_weak_new() { return new RozeRcWeak(); }
+    private static RozeRcWeak RcWeak_new() { return new RozeRcWeak(); }
+    private static RozeRcWeak new_rc_weak() { return new RozeRcWeak(); }
+    private static RozeRc rc_weak_upgrade(Object w) { return ((RozeRcWeak) w).upgrade(); }
+    private static int rc_weak_strong_count(Object w) { return ((RozeRcWeak) w).strongCount(); }
+    private static int rc_weak_weak_count(Object w) { return ((RozeRcWeak) w).weakCount(); }
+    private static boolean rc_weak_is_expired(Object w) { return ((RozeRcWeak) w).isExpired(); }
+    private static boolean rc_weak_is_alive(Object w) { return ((RozeRcWeak) w).isAlive(); }
+    private static boolean rc_weak_ptr_eq(Object w1, Object w2) {
+        return w1 != null && w2 != null && ((RozeRcWeak) w1).ctrl == ((RozeRcWeak) w2).ctrl;
+    }
 
     // BumpAllocator
     private static RozeBumpAllocator bump_allocator_new(int cap) { return new RozeBumpAllocator(cap); }
@@ -5453,11 +5598,20 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "arc_clone" => Some("RozeArc"),
         "arc_strong_count" | "arc_weak_count" => Some("int"),
         "arc_downgrade" => Some("RozeWeak"),
+        "arc_is_unique" | "arc_ptr_eq" | "weak_ptr_eq" => Some("boolean"),
+        "arc_try_unwrap" => Some(OBJECT_TYPE),
 
         "weak_new" | "Weak_new" | "new_weak" => Some("RozeWeak"),
         "weak_upgrade" => Some("RozeArc"),
         "weak_strong_count" | "weak_weak_count" => Some("int"),
         "weak_is_expired" | "weak_is_alive" => Some("boolean"),
+
+        // Rc<T> & RcWeak<T>
+        "rc_new" | "Rc_new" | "new_rc" | "rc_clone" | "rc_weak_upgrade" => Some("RozeRc"),
+        "rc_get" | "rc_try_unwrap" => Some(OBJECT_TYPE),
+        "rc_strong_count" | "rc_weak_count" | "rc_weak_strong_count" | "rc_weak_weak_count" => Some("int"),
+        "rc_downgrade" | "rc_weak_new" | "RcWeak_new" | "new_rc_weak" => Some("RozeRcWeak"),
+        "rc_is_unique" | "rc_ptr_eq" | "rc_weak_is_expired" | "rc_weak_is_alive" | "rc_weak_ptr_eq" => Some("boolean"),
 
         // BumpAllocator
         "bump_allocator_new" | "BumpAllocator_new" | "bump_allocator_new_default" | "new_bump_allocator" => Some("RozeBumpAllocator"),
@@ -5594,6 +5748,10 @@ fn java_type_name(ty: &Type) -> String {
                 "RozeArc".to_string()
             } else if base == "RozeWeak" || base == "Weak" || base == "weak" {
                 "RozeWeak".to_string()
+            } else if base == "RozeRc" || base == "Rc" || base == "rc" {
+                "RozeRc".to_string()
+            } else if base == "RozeRcWeak" || base == "RcWeak" || base == "rc_weak" {
+                "RozeRcWeak".to_string()
             } else if base == "BumpAllocator" || base == "bump_allocator" {
                 "RozeBumpAllocator".to_string()
             } else if base == "ArenaAllocator" || base == "arena_allocator" {

@@ -1815,6 +1815,60 @@ fn memory_layout_and_pointers_suite() {
     assert!(stdout.contains("=== M4-T02 Complete ==="));
 }
 
+#[test]
+fn thread_safe_atomic_arc_weak_suite() {
+    let (stdout, stderr, ok) = run_fixture("atomic_arc_weak.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+--- Atomic ARC & Ownership ---
+42
+1
+0
+true
+42
+2
+false
+true
+false
+52
+ATOMIC_ARC_OK
+--- Weak References & Cyclic Graph ---
+true
+1
+false
+true
+false
+1
+2
+true
+100
+2
+WEAK_CYCLIC_OK
+--- Thread-Local Rc & RcWeak ---
+777
+1
+0
+true
+777
+2
+false
+true
+false
+1
+false
+true
+false
+2
+2
+true
+777
+3
+THREAD_LOCAL_RC_OK
+ALL_ARC_WEAK_TESTS_PASSED";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
+
 
 
 

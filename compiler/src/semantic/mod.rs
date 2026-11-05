@@ -295,6 +295,8 @@ impl Type {
             "RozeBox" => Type::Generic { base: "RozeBox".to_string(), type_args: vec![] },
             "RozeArc" | "arc" | "Arc" => Type::Generic { base: "RozeArc".to_string(), type_args: vec![] },
             "RozeWeak" | "weak" | "Weak" => Type::Generic { base: "RozeWeak".to_string(), type_args: vec![] },
+            "RozeRc" | "rc" | "Rc" => Type::Generic { base: "RozeRc".to_string(), type_args: vec![] },
+            "RozeRcWeak" | "rc_weak" | "RcWeak" => Type::Generic { base: "RozeRcWeak".to_string(), type_args: vec![] },
             "bump_allocator" | "BumpAllocator" => Type::Generic { base: "BumpAllocator".to_string(), type_args: vec![] },
             "arena_allocator" | "ArenaAllocator" => Type::Generic { base: "ArenaAllocator".to_string(), type_args: vec![] },
             "pool_allocator" | "PoolAllocator" | "fixed_block_pool_allocator" | "FixedBlockPoolAllocator" => Type::Generic { base: "PoolAllocator".to_string(), type_args: vec![] },
@@ -390,6 +392,10 @@ impl Type {
                     "RozeArc".to_string()
                 } else if base == "RozeWeak" || base == "Weak" || base == "weak" {
                     "RozeWeak".to_string()
+                } else if base == "RozeRc" || base == "Rc" || base == "rc" {
+                    "RozeRc".to_string()
+                } else if base == "RozeRcWeak" || base == "RcWeak" || base == "rc_weak" {
+                    "RozeRcWeak".to_string()
                 } else if base == "BumpAllocator" || base == "bump_allocator" {
                     "RozeBumpAllocator".to_string()
                 } else if base == "ArenaAllocator" || base == "arena_allocator" {
@@ -541,6 +547,8 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
             if ((b1 == "RozeBox" || b1.eq_ignore_ascii_case("Box")) && (b2 == "RozeBox" || b2.eq_ignore_ascii_case("Box")))
             || ((b1 == "RozeArc" || b1.eq_ignore_ascii_case("Arc")) && (b2 == "RozeArc" || b2.eq_ignore_ascii_case("Arc")))
             || ((b1 == "RozeWeak" || b1.eq_ignore_ascii_case("Weak")) && (b2 == "RozeWeak" || b2.eq_ignore_ascii_case("Weak")))
+            || ((b1 == "RozeRc" || b1.eq_ignore_ascii_case("Rc")) && (b2 == "RozeRc" || b2.eq_ignore_ascii_case("Rc")))
+            || ((b1 == "RozeRcWeak" || b1.eq_ignore_ascii_case("RcWeak")) && (b2 == "RozeRcWeak" || b2.eq_ignore_ascii_case("RcWeak")))
             || (b1.eq_ignore_ascii_case("BumpAllocator") && b2.eq_ignore_ascii_case("BumpAllocator"))
             || (b1.eq_ignore_ascii_case("ArenaAllocator") && b2.eq_ignore_ascii_case("ArenaAllocator"))
             || (b1.eq_ignore_ascii_case("PoolAllocator") && b2.eq_ignore_ascii_case("PoolAllocator")) => true,
@@ -1377,13 +1385,40 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("arc_strong_count", vec![Type::Unknown], Type::Int),
         ("arc_weak_count", vec![Type::Unknown], Type::Int),
         ("arc_downgrade", vec![Type::Unknown], Type::Generic { base: "RozeWeak".to_string(), type_args: vec![] }),
+        ("arc_is_unique", vec![Type::Unknown], Type::Bool),
+        ("arc_try_unwrap", vec![Type::Unknown], Type::Unknown),
+        ("arc_ptr_eq", vec![Type::Unknown, Type::Unknown], Type::Bool),
         ("weak_new", vec![], Type::Generic { base: "RozeWeak".to_string(), type_args: vec![] }),
         ("Weak_new", vec![], Type::Generic { base: "RozeWeak".to_string(), type_args: vec![] }),
+        ("new_weak", vec![], Type::Generic { base: "RozeWeak".to_string(), type_args: vec![] }),
         ("weak_upgrade", vec![Type::Unknown], Type::Generic { base: "RozeArc".to_string(), type_args: vec![] }),
         ("weak_strong_count", vec![Type::Unknown], Type::Int),
         ("weak_weak_count", vec![Type::Unknown], Type::Int),
         ("weak_is_expired", vec![Type::Unknown], Type::Bool),
         ("weak_is_alive", vec![Type::Unknown], Type::Bool),
+        ("weak_ptr_eq", vec![Type::Unknown, Type::Unknown], Type::Bool),
+
+        // Rc<T> & RcWeak<T>
+        ("rc_new", vec![Type::Unknown], Type::Generic { base: "RozeRc".to_string(), type_args: vec![] }),
+        ("Rc_new", vec![Type::Unknown], Type::Generic { base: "RozeRc".to_string(), type_args: vec![] }),
+        ("new_rc", vec![Type::Unknown], Type::Generic { base: "RozeRc".to_string(), type_args: vec![] }),
+        ("rc_get", vec![Type::Unknown], Type::Unknown),
+        ("rc_clone", vec![Type::Unknown], Type::Generic { base: "RozeRc".to_string(), type_args: vec![] }),
+        ("rc_strong_count", vec![Type::Unknown], Type::Int),
+        ("rc_weak_count", vec![Type::Unknown], Type::Int),
+        ("rc_downgrade", vec![Type::Unknown], Type::Generic { base: "RozeRcWeak".to_string(), type_args: vec![] }),
+        ("rc_is_unique", vec![Type::Unknown], Type::Bool),
+        ("rc_try_unwrap", vec![Type::Unknown], Type::Unknown),
+        ("rc_ptr_eq", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("rc_weak_new", vec![], Type::Generic { base: "RozeRcWeak".to_string(), type_args: vec![] }),
+        ("RcWeak_new", vec![], Type::Generic { base: "RozeRcWeak".to_string(), type_args: vec![] }),
+        ("new_rc_weak", vec![], Type::Generic { base: "RozeRcWeak".to_string(), type_args: vec![] }),
+        ("rc_weak_upgrade", vec![Type::Unknown], Type::Generic { base: "RozeRc".to_string(), type_args: vec![] }),
+        ("rc_weak_strong_count", vec![Type::Unknown], Type::Int),
+        ("rc_weak_weak_count", vec![Type::Unknown], Type::Int),
+        ("rc_weak_is_expired", vec![Type::Unknown], Type::Bool),
+        ("rc_weak_is_alive", vec![Type::Unknown], Type::Bool),
+        ("rc_weak_ptr_eq", vec![Type::Unknown, Type::Unknown], Type::Bool),
 
         // BumpAllocator
         ("bump_allocator_new", vec![Type::Int], Type::Generic { base: "BumpAllocator".to_string(), type_args: vec![] }),
@@ -2529,6 +2564,8 @@ impl TypeChecker {
                     "Box" | "box" | "RozeBox" => "RozeBox",
                     "Arc" | "arc" | "RozeArc" => "RozeArc",
                     "Weak" | "weak" | "RozeWeak" => "RozeWeak",
+                    "Rc" | "rc" | "RozeRc" => "RozeRc",
+                    "RcWeak" | "rc_weak" | "RozeRcWeak" => "RozeRcWeak",
                     _ => base,
                 };
 
@@ -4034,7 +4071,7 @@ impl TypeChecker {
                         }
                     }
 
-                    if self.no_heap && matches!(name.as_str(), "alloc" | "alloc_zeroed" | "realloc" | "new_box" | "new_arc") {
+                    if self.no_heap && matches!(name.as_str(), "alloc" | "alloc_zeroed" | "realloc" | "new_box" | "new_arc" | "new_rc" | "rc_new") {
                         return Err(RozeError::type_error(
                             format!("Dynamic heap allocation ('{}') is disabled in zero-heap bare-metal mode", name),
                             location.line,
@@ -4404,15 +4441,28 @@ impl TypeChecker {
                             Type::Generic { base, type_args } if (base == "RozeBox" || base == "Box" || base == "box") && !type_args.is_empty() => type_args[0].clone(),
                             _ => Type::Unknown,
                         }
-                    } else if (name == "arc_get" || name == "arc_clone" || name == "arc_downgrade") && typed_arguments.len() == 1 {
+                    } else if (name == "arc_get" || name == "arc_clone" || name == "arc_downgrade" || name == "arc_try_unwrap") && typed_arguments.len() == 1 {
                         match &typed_arguments[0].type_ {
                             Type::Generic { base, type_args } if (base == "RozeArc" || base == "Arc" || base == "arc") => {
-                                if name == "arc_get" {
+                                if name == "arc_get" || name == "arc_try_unwrap" {
                                     if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }
                                 } else if name == "arc_clone" {
                                     typed_arguments[0].type_.clone()
                                 } else {
                                     Type::Generic { base: "RozeWeak".to_string(), type_args: type_args.clone() }
+                                }
+                            }
+                            _ => Type::Unknown,
+                        }
+                    } else if (name == "rc_get" || name == "rc_clone" || name == "rc_downgrade" || name == "rc_try_unwrap") && typed_arguments.len() == 1 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "RozeRc" || base == "Rc" || base == "rc") => {
+                                if name == "rc_get" || name == "rc_try_unwrap" {
+                                    if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }
+                                } else if name == "rc_clone" {
+                                    typed_arguments[0].type_.clone()
+                                } else {
+                                    Type::Generic { base: "RozeRcWeak".to_string(), type_args: type_args.clone() }
                                 }
                             }
                             _ => Type::Unknown,
@@ -4423,6 +4473,13 @@ impl TypeChecker {
                                 Type::Generic { base: "RozeArc".to_string(), type_args: type_args.clone() }
                             }
                             _ => Type::Generic { base: "RozeArc".to_string(), type_args: vec![] },
+                        }
+                    } else if name == "rc_weak_upgrade" && typed_arguments.len() == 1 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base == "RozeRcWeak" || base == "RcWeak" || base == "rc_weak") => {
+                                Type::Generic { base: "RozeRc".to_string(), type_args: type_args.clone() }
+                            }
+                            _ => Type::Generic { base: "RozeRc".to_string(), type_args: vec![] },
                         }
                     } else if let Some(sig) = self.functions.get(name) {
                         // Validate argument count and each argument's
@@ -4584,6 +4641,7 @@ impl TypeChecker {
                     | "BinaryHeap" | "binary_heap" | "IndexMap" | "index_map" | "RingBuffer" | "ring_buffer"
                     | "BitSet" | "bit_set"
                     | "Box" | "box" | "RozeBox" | "Arc" | "arc" | "RozeArc" | "Weak" | "weak" | "RozeWeak"
+                    | "Rc" | "rc" | "RozeRc" | "RcWeak" | "rc_weak" | "RozeRcWeak"
                     | "BumpAllocator" | "bump_allocator" | "ArenaAllocator" | "arena_allocator"
                     | "PoolAllocator" | "pool_allocator" | "FixedBlockPoolAllocator" | "fixed_block_pool_allocator"
                 );
@@ -4635,6 +4693,13 @@ impl TypeChecker {
                             ("arc_new", "RozeArc")
                         }
                         "Weak" | "weak" | "RozeWeak" => ("weak_new", "RozeWeak"),
+                        "Rc" | "rc" | "RozeRc" => {
+                            if concrete_args.is_empty() && !typed_args.is_empty() {
+                                concrete_args.push(typed_args[0].type_.clone());
+                            }
+                            ("rc_new", "RozeRc")
+                        }
+                        "RcWeak" | "rc_weak" | "RozeRcWeak" => ("rc_weak_new", "RozeRcWeak"),
                         "BumpAllocator" | "bump_allocator" => {
                             (if typed_args.is_empty() { "bump_allocator_new_default" } else { "bump_allocator_new" }, "BumpAllocator")
                         }
@@ -5284,6 +5349,9 @@ impl TypeChecker {
                             ("RozeArc" | "Arc" | "arc", "strong_count") => ("arc_strong_count", Type::Int),
                             ("RozeArc" | "Arc" | "arc", "weak_count") => ("arc_weak_count", Type::Int),
                             ("RozeArc" | "Arc" | "arc", "downgrade") => ("arc_downgrade", Type::Generic { base: "RozeWeak".to_string(), type_args: type_args.clone() }),
+                            ("RozeArc" | "Arc" | "arc", "is_unique") => ("arc_is_unique", Type::Bool),
+                            ("RozeArc" | "Arc" | "arc", "try_unwrap") => ("arc_try_unwrap", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("RozeArc" | "Arc" | "arc", "ptr_eq") => ("arc_ptr_eq", Type::Bool),
 
                             // Weak<T>
                             ("RozeWeak" | "Weak" | "weak", "upgrade") => ("weak_upgrade", Type::Generic { base: "RozeArc".to_string(), type_args: type_args.clone() }),
@@ -5291,6 +5359,25 @@ impl TypeChecker {
                             ("RozeWeak" | "Weak" | "weak", "weak_count") => ("weak_weak_count", Type::Int),
                             ("RozeWeak" | "Weak" | "weak", "is_expired") => ("weak_is_expired", Type::Bool),
                             ("RozeWeak" | "Weak" | "weak", "is_alive") => ("weak_is_alive", Type::Bool),
+                            ("RozeWeak" | "Weak" | "weak", "ptr_eq") => ("weak_ptr_eq", Type::Bool),
+
+                            // Rc<T>
+                            ("RozeRc" | "Rc" | "rc", "get") => ("rc_get", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("RozeRc" | "Rc" | "rc", "clone") => ("rc_clone", Type::Generic { base: "RozeRc".to_string(), type_args: type_args.clone() }),
+                            ("RozeRc" | "Rc" | "rc", "strong_count") => ("rc_strong_count", Type::Int),
+                            ("RozeRc" | "Rc" | "rc", "weak_count") => ("rc_weak_count", Type::Int),
+                            ("RozeRc" | "Rc" | "rc", "downgrade") => ("rc_downgrade", Type::Generic { base: "RozeRcWeak".to_string(), type_args: type_args.clone() }),
+                            ("RozeRc" | "Rc" | "rc", "is_unique") => ("rc_is_unique", Type::Bool),
+                            ("RozeRc" | "Rc" | "rc", "try_unwrap") => ("rc_try_unwrap", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("RozeRc" | "Rc" | "rc", "ptr_eq") => ("rc_ptr_eq", Type::Bool),
+
+                            // RcWeak<T>
+                            ("RozeRcWeak" | "RcWeak" | "rc_weak", "upgrade") => ("rc_weak_upgrade", Type::Generic { base: "RozeRc".to_string(), type_args: type_args.clone() }),
+                            ("RozeRcWeak" | "RcWeak" | "rc_weak", "strong_count") => ("rc_weak_strong_count", Type::Int),
+                            ("RozeRcWeak" | "RcWeak" | "rc_weak", "weak_count") => ("rc_weak_weak_count", Type::Int),
+                            ("RozeRcWeak" | "RcWeak" | "rc_weak", "is_expired") => ("rc_weak_is_expired", Type::Bool),
+                            ("RozeRcWeak" | "RcWeak" | "rc_weak", "is_alive") => ("rc_weak_is_alive", Type::Bool),
+                            ("RozeRcWeak" | "RcWeak" | "rc_weak", "ptr_eq") => ("rc_weak_ptr_eq", Type::Bool),
 
                             // BumpAllocator
                             ("BumpAllocator" | "bump_allocator", "alloc") => ("bump_alloc", Type::Int),

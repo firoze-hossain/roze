@@ -5,13 +5,15 @@
 //   - Box<T>: Unique ownership heap-allocated pointer.
 //   - Arc<T>: Atomically reference-counted thread-safe pointer with weak references.
 //   - Weak<T>: Non-owning weak pointer with cyclic reference avoidance and expiry detection.
+//   - Rc<T>: Fast thread-local single-threaded reference-counted pointer (zero atomic overhead).
+//   - RcWeak<T>: Non-owning weak pointer for Rc<T> cycle avoidance.
 //   - BumpAllocator: High-throughput linear allocator with cache alignment.
 //   - ArenaAllocator: Chunked arena allocator with bulk reset and deallocation.
 //   - PoolAllocator: Fixed-size block pool allocator with O(1) allocation and deallocation.
 //   - align_to(value, align): Align integer or pointer to power-of-two alignment boundary.
 //   - cache_line_size(): CPU cache line size (64 bytes).
 //
-// Full parity with Rust Allocator API and modern C++ PMR (Polymorphic Memory Resources).
+// Full parity with Rust std::sync::Arc, std::rc::Rc, Allocator API, and modern C++ PMR.
 
 // ---- Allocator Interface ----
 trait Allocator {
@@ -31,6 +33,14 @@ func new_arc<T>(val: T) -> Arc<T> {
 
 func new_weak<T>() -> Weak<T> {
     return weak_new();
+}
+
+func new_rc<T>(val: T) -> Rc<T> {
+    return rc_new(val);
+}
+
+func new_rc_weak<T>() -> RcWeak<T> {
+    return rc_weak_new();
 }
 
 // ---- Allocator Factory Functions ----

@@ -4707,6 +4707,172 @@ int64_t __roze_weak_is_alive(int64_t w_val) {
     return __roze_weak_is_expired(w_val) ? 0 : 1;
 }
 
+int64_t __roze_arc_is_unique(int64_t a_val) {
+    if (!a_val) return 0;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)a_val;
+    return (__atomic_load_n(&cb->strong_count, __ATOMIC_SEQ_CST) == 1 &&
+            __atomic_load_n(&cb->weak_count, __ATOMIC_SEQ_CST) == 0) ? 1 : 0;
+}
+
+int64_t __roze_arc_try_unwrap(int64_t a_val) {
+    if (!a_val) return 0;
+    RozeArcControlBlock* cb = (RozeArcControlBlock*)a_val;
+    if (__atomic_load_n(&cb->strong_count, __ATOMIC_SEQ_CST) == 1 &&
+        __atomic_load_n(&cb->weak_count, __ATOMIC_SEQ_CST) == 0) {
+        return cb->value;
+    }
+    return 0;
+}
+
+int64_t __roze_arc_ptr_eq(int64_t a1, int64_t a2) {
+    return a1 == a2 ? 1 : 0;
+}
+
+int64_t __roze_weak_ptr_eq(int64_t w1, int64_t w2) {
+    return w1 == w2 ? 1 : 0;
+}
+
+// ---- Thread-Local Rc<T> & RcWeak<T> (Single-Threaded, Zero Atomic Overhead) ----
+typedef struct {
+    int64_t strong_count;
+    int64_t weak_count;
+    int64_t value;
+    int64_t is_dropped;
+} RozeRcControlBlock;
+
+int64_t __roze_rc_new(int64_t val) {
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)malloc(sizeof(RozeRcControlBlock));
+    if (!cb) return 0;
+    cb->strong_count = 1;
+    cb->weak_count = 0;
+    cb->value = val;
+    cb->is_dropped = 0;
+    return (int64_t)cb;
+}
+
+void __roze_rc_retain(int64_t r_val) {
+    if (!r_val) return;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)r_val;
+    cb->strong_count++;
+}
+
+void __roze_rc_release(int64_t r_val) {
+    if (!r_val) return;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)r_val;
+    cb->strong_count--;
+    if (cb->strong_count <= 0) {
+        cb->is_dropped = 1;
+        if (cb->weak_count <= 0) {
+            free(cb);
+        }
+    }
+}
+
+int64_t __roze_rc_get(int64_t r_val) {
+    if (!r_val) return 0;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)r_val;
+    return cb->value;
+}
+
+int64_t __roze_rc_clone(int64_t r_val) {
+    if (!r_val) return 0;
+    __roze_rc_retain(r_val);
+    return r_val;
+}
+
+int64_t __roze_rc_strong_count(int64_t r_val) {
+    if (!r_val) return 0;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)r_val;
+    return cb->strong_count;
+}
+
+int64_t __roze_rc_weak_count(int64_t r_val) {
+    if (!r_val) return 0;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)r_val;
+    return cb->weak_count;
+}
+
+int64_t __roze_rc_downgrade(int64_t r_val) {
+    if (!r_val) return 0;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)r_val;
+    cb->weak_count++;
+    return r_val;
+}
+
+int64_t __roze_rc_is_unique(int64_t r_val) {
+    if (!r_val) return 0;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)r_val;
+    return (cb->strong_count == 1 && cb->weak_count == 0) ? 1 : 0;
+}
+
+int64_t __roze_rc_try_unwrap(int64_t r_val) {
+    if (!r_val) return 0;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)r_val;
+    if (cb->strong_count == 1 && cb->weak_count == 0) {
+        return cb->value;
+    }
+    return 0;
+}
+
+int64_t __roze_rc_ptr_eq(int64_t r1, int64_t r2) {
+    return r1 == r2 ? 1 : 0;
+}
+
+int64_t __roze_rc_weak_new(void) {
+    return 0;
+}
+
+void __roze_rc_weak_retain(int64_t w_val) {
+    if (!w_val) return;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)w_val;
+    cb->weak_count++;
+}
+
+void __roze_rc_weak_release(int64_t w_val) {
+    if (!w_val) return;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)w_val;
+    cb->weak_count--;
+    if (cb->weak_count <= 0 && (cb->strong_count <= 0 || cb->is_dropped)) {
+        free(cb);
+    }
+}
+
+int64_t __roze_rc_weak_upgrade(int64_t w_val) {
+    if (!w_val) return 0;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)w_val;
+    if (cb->strong_count <= 0 || cb->is_dropped) {
+        return 0; // expired
+    }
+    cb->strong_count++;
+    return w_val;
+}
+
+int64_t __roze_rc_weak_strong_count(int64_t w_val) {
+    if (!w_val) return 0;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)w_val;
+    return cb->is_dropped ? 0 : cb->strong_count;
+}
+
+int64_t __roze_rc_weak_weak_count(int64_t w_val) {
+    if (!w_val) return 0;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)w_val;
+    return cb->weak_count;
+}
+
+int64_t __roze_rc_weak_is_expired(int64_t w_val) {
+    if (!w_val) return 1;
+    RozeRcControlBlock* cb = (RozeRcControlBlock*)w_val;
+    return (cb->is_dropped || cb->strong_count <= 0) ? 1 : 0;
+}
+
+int64_t __roze_rc_weak_is_alive(int64_t w_val) {
+    return __roze_rc_weak_is_expired(w_val) ? 0 : 1;
+}
+
+int64_t __roze_rc_weak_ptr_eq(int64_t w1, int64_t w2) {
+    return w1 == w2 ? 1 : 0;
+}
+
 // ---- BumpAllocator ----
 typedef struct {
     int64_t refcount;

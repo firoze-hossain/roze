@@ -4449,6 +4449,66 @@ fn native_memory_layout_and_pointers() {
     assert!(stdout.contains("=== M4-T02 Complete ==="));
 }
 
+#[test]
+fn native_thread_safe_atomic_arc_weak_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("atomic_arc_weak.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read atomic_arc_weak.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("atomic_arc_weak_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let out = program_output(&stdout);
+    let expected = "\
+--- Atomic ARC & Ownership ---
+42
+1
+0
+true
+42
+2
+false
+true
+false
+52
+ATOMIC_ARC_OK
+--- Weak References & Cyclic Graph ---
+true
+1
+false
+true
+false
+1
+2
+true
+100
+2
+WEAK_CYCLIC_OK
+--- Thread-Local Rc & RcWeak ---
+777
+1
+0
+true
+777
+2
+false
+true
+false
+1
+false
+true
+false
+2
+2
+true
+777
+3
+THREAD_LOCAL_RC_OK
+ALL_ARC_WEAK_TESTS_PASSED";
+    assert_eq!(out.trim_end(), expected);
+}
+
+
 
 
 

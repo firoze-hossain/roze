@@ -1,0 +1,106 @@
+import "memory";
+import "concurrency";
+
+func test_atomic_arc() {
+    println("--- Atomic ARC & Ownership ---");
+    let a = new Arc<int>(42);
+    println(a.get());
+    println(a.strong_count());
+    println(a.weak_count());
+    println(a.is_unique());
+    println(a.try_unwrap());
+
+    // Cloning Arc increases strong count and unique becomes false
+    let a2 = a.clone();
+    println(a.strong_count());
+    println(a.is_unique());
+    println(arc_ptr_eq(a, a2));
+
+    let a3 = new Arc<int>(42);
+    println(arc_ptr_eq(a, a3));
+
+    // Multi-threaded atomic retain/release
+    let ch = channel_new(4);
+    let t1 = thread_spawn(|| {
+        let val = a.get();
+        send(ch, val + 10);
+        return 0;
+    });
+    let res = recv(ch);
+    println(res);
+    thread_join(t1);
+
+    println("ATOMIC_ARC_OK");
+}
+
+func test_weak_cyclic_detection() {
+    println("--- Weak References & Cyclic Graph ---");
+    let a = new Arc<int>(100);
+    println(a.is_unique());
+
+    // Creating weak reference sets weak_count to 1 and is_unique to false
+    let w = a.downgrade();
+    println(a.weak_count());
+    println(a.is_unique());
+    println(w.is_alive());
+    println(w.is_expired());
+    println(w.strong_count());
+
+    // Weak pointer equality
+    let w2 = a.downgrade();
+    println(a.weak_count());
+    println(weak_ptr_eq(w, w2));
+
+    // Upgrade weak reference to strong Arc
+    let up = w.upgrade();
+    println(up.get());
+    println(a.strong_count());
+
+    println("WEAK_CYCLIC_OK");
+}
+
+func test_thread_local_rc() {
+    println("--- Thread-Local Rc & RcWeak ---");
+    let r = new Rc<int>(777);
+    println(r.get());
+    println(r.strong_count());
+    println(r.weak_count());
+    println(r.is_unique());
+    println(r.try_unwrap());
+
+    // Clone Rc
+    let r2 = r.clone();
+    println(r.strong_count());
+    println(r.is_unique());
+    println(rc_ptr_eq(r, r2));
+
+    let r3 = new Rc<int>(777);
+    println(rc_ptr_eq(r, r3));
+
+    // Downgrade to RcWeak
+    let rw = r.downgrade();
+    println(r.weak_count());
+    println(r.is_unique());
+    println(rw.is_alive());
+    println(rw.is_expired());
+    println(rw.strong_count());
+
+    // RcWeak pointer equality
+    let rw2 = r.downgrade();
+    println(r.weak_count());
+    println(rc_weak_ptr_eq(rw, rw2));
+
+    // Upgrade RcWeak
+    let up_rc = rw.upgrade();
+    println(up_rc.get());
+    println(r.strong_count());
+
+    println("THREAD_LOCAL_RC_OK");
+}
+
+func main() {
+    test_atomic_arc();
+    test_weak_cyclic_detection();
+    test_thread_local_rc();
+    println("ALL_ARC_WEAK_TESTS_PASSED");
+}

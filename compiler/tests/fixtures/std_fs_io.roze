@@ -1,0 +1,124 @@
+// compiler/tests/fixtures/std_fs_io.roze
+//
+// Integration test fixture for M4-T04: Standard I/O Streams & Filesystem Engine.
+// Verifies File, OpenOptions, BufferedReader, BufferedWriter, Path, PathBuf,
+// directory operations (walk_dir, copy, rename, remove), metadata, and streams.
+
+import "fs";
+import "io";
+
+func main() {
+    println("--- Test 1: Path and PathBuf ---");
+    let p = path_new("/tmp/roze_fs_test/subdir/file.txt");
+    println("Path: " + p.to_string());
+    println("Parent: " + p.parent());
+    println("File name: " + p.file_name());
+    println("File stem: " + p.file_stem());
+    println("Extension: " + p.extension());
+    println("Is absolute: " + to_string(p.is_absolute()));
+
+    let base = path_new("/tmp/roze_fs_test");
+    let joined = base.join("data.log");
+    println("Joined: " + joined.to_string());
+
+    let buf = path_buf_new("/tmp/roze_fs_test");
+    buf.push("nested");
+    buf.push("app.cfg");
+    println("PathBuf: " + buf.to_string());
+
+    println("--- Test 2: Directory operations & walking ---");
+    let test_dir = "/tmp/roze_test_m4t04";
+    if fs_exists(test_dir) {
+        remove_dir_all(test_dir);
+    }
+    let d1 = test_dir + "/sub1";
+    let d2 = test_dir + "/sub2/nested";
+    create_dir_all(d1);
+    create_dir_all(d2);
+
+    println("Created dir exists: " + to_string(fs_exists(d1)));
+    println("Is dir: " + to_string(fs_is_dir(d1)));
+
+    let f1_path = d1 + "/sample1.txt";
+    let f2_path = d2 + "/sample2.txt";
+    write_to_file(f1_path, "Hello from file 1\n");
+    write_to_file(f2_path, "Hello from file 2\n");
+
+    let entries = read_dir(test_dir);
+    println("Root dir has entries: " + to_string(list_length(entries) >= 2));
+
+    let all_files = walk_dir(test_dir);
+    println("Walk dir total files found: " + to_string(list_length(all_files)));
+
+    println("--- Test 3: Metadata ---");
+    let meta = get_metadata(f1_path);
+    println("Meta is_file: " + to_string(meta.is_file()));
+    println("Meta is_dir: " + to_string(meta.is_dir()));
+    println("Meta len > 0: " + to_string(meta.len() > 0));
+
+    println("--- Test 4: File and OpenOptions ---");
+    let file_path = test_dir + "/rw_test.txt";
+    let opts = open_options().write(true).create(true).truncate(true);
+    let f = opts.open(file_path);
+    f.write("Line 1: Roze Engine\n");
+    f.write_line("Line 2: High Performance");
+    f.flush();
+    f.close();
+
+    let f_read = file_open(file_path);
+    let l1 = f_read.read_line();
+    let l2 = f_read.read_line();
+    println("Read line 1: " + l1);
+    println("Read line 2: " + l2);
+    f_read.seek_start(0);
+    println("Seeked back to pos: " + to_string(f_read.position()));
+    let full_content = f_read.read_to_string();
+    println("Read to string len: " + to_string(string_length(full_content)));
+    f_read.close();
+
+    println("--- Test 5: BufferedReader and BufferedWriter ---");
+    let stream_path = test_dir + "/buffered.txt";
+    let f_out = file_create(stream_path);
+    let bw = buffered_writer(f_out);
+    bw.write_line("Alpha");
+    bw.write_line("Beta");
+    bw.write_line("Gamma");
+    bw.close();
+
+    let f_in = file_open(stream_path);
+    let br = buffered_reader(f_in);
+    let lines = br.lines();
+    println("Buffered lines count: " + to_string(list_length(lines)));
+    let line1: string = list_get(lines, 0);
+    let line2: string = list_get(lines, 1);
+    let line3: string = list_get(lines, 2);
+    println("First line: " + line1);
+    println("Second line: " + line2);
+    println("Third line: " + line3);
+    br.close();
+
+    println("--- Test 6: Copy, Rename, and Remove ---");
+    let copy_dest = test_dir + "/copied.txt";
+    let copied_bytes = copy_file(stream_path, copy_dest);
+    println("Copied bytes > 0: " + to_string(copied_bytes > 0));
+    println("Copy exists: " + to_string(fs_exists(copy_dest)));
+
+    let rename_dest = test_dir + "/renamed.txt";
+    let renamed = rename(copy_dest, rename_dest);
+    println("Rename ok: " + to_string(renamed));
+    println("Old exists: " + to_string(fs_exists(copy_dest)));
+    println("New exists: " + to_string(fs_exists(rename_dest)));
+
+    remove_file(rename_dest);
+    println("Removed file exists: " + to_string(fs_exists(rename_dest)));
+
+    remove_dir_all(test_dir);
+    println("Cleaned up root dir: " + to_string(!fs_exists(test_dir)));
+
+    println("--- Test 7: Standard Stream Helpers ---");
+    print("Stream test: print ok\n");
+    stdout_flush();
+    eprintln("Stream test: eprintln ok");
+
+    println("✅ M4-T04 Filesystem & I/O Engine Complete!");
+}

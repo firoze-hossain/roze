@@ -1675,6 +1675,44 @@ long __roze_pcap_write_dump(const char *path, const void *buf, long len) { (void
 long __roze_pcap_read_dump(const char *path, void *buf, long max_len) { (void)path; (void)buf; (void)max_len; return -1; }
 long __roze_pcap_file_size(const char *path) { (void)path; return -1; }
 
+long __roze_fs_open(const char *path, const char *mode) { (void)path; (void)mode; return 0; }
+void __roze_fs_close(long handle) { (void)handle; }
+const char *__roze_fs_read(long handle, long max_bytes) { (void)handle; (void)max_bytes; return ""; }
+const char *__roze_fs_read_all(long handle) { (void)handle; return ""; }
+const char *__roze_fs_read_line(long handle) { (void)handle; return ""; }
+long __roze_fs_write(long handle, const char *content) { (void)handle; (void)content; return 0; }
+void __roze_fs_flush(long handle) { (void)handle; }
+long __roze_fs_seek(long handle, long offset, long whence) { (void)handle; (void)offset; (void)whence; return -1; }
+long __roze_fs_tell(long handle) { (void)handle; return -1; }
+long __roze_fs_create_dir(const char *path) { (void)path; return 0; }
+long __roze_fs_create_dir_all(const char *path) { (void)path; return 0; }
+long __roze_fs_remove_dir(const char *path) { (void)path; return 0; }
+long __roze_fs_remove_dir_all(const char *path) { (void)path; return 0; }
+long __roze_fs_remove_file(const char *path) { (void)path; return 0; }
+void *__roze_fs_read_dir(const char *path) { (void)path; return 0; }
+long __roze_fs_copy(const char *src, const char *dest) { (void)src; (void)dest; return -1; }
+long __roze_fs_rename(const char *src, const char *dest) { (void)src; (void)dest; return 0; }
+const char *__roze_fs_canonicalize(const char *path) { return path; }
+long __roze_fs_exists(const char *path) { (void)path; return 0; }
+long __roze_fs_is_file(const char *path) { (void)path; return 0; }
+long __roze_fs_is_dir(const char *path) { (void)path; return 0; }
+long __roze_fs_is_symlink(const char *path) { (void)path; return 0; }
+long __roze_fs_file_size(const char *path) { (void)path; return 0; }
+long __roze_fs_modified_time(const char *path) { (void)path; return 0; }
+long __roze_fs_is_readonly(const char *path) { (void)path; return 0; }
+const char *__roze_fs_stdin_read_line(void) { return ""; }
+long __roze_fs_stdout_write(const char *content) { (void)content; return 0; }
+void __roze_fs_stdout_flush(void) {}
+long __roze_fs_stderr_write(const char *content) { (void)content; return 0; }
+void __roze_fs_stderr_flush(void) {}
+
+long __roze_string_starts_with(const char *s, const char *p) { (void)s; (void)p; return 0; }
+long __roze_string_ends_with(const char *s, const char *p) { (void)s; (void)p; return 0; }
+long __roze_string_contains(const char *s, const char *p) { (void)s; (void)p; return 0; }
+const char *__roze_string_substring(const char *s, long start, long end) { (void)s; (void)start; (void)end; return ""; }
+const char *__roze_to_string_i64(long val) { (void)val; return ""; }
+const char *__roze_to_string_bool(long val) { (void)val; return ""; }
+
 // 6. Bootstrap entry point called by entry64
 __attribute__((weak))
 void __roze_main(void);
@@ -5533,6 +5571,116 @@ fn declare_raw_net_runtime(module: &mut ObjectModule) -> Result<RawNetRuntime> {
     })
 }
 
+#[derive(Clone, Copy)]
+pub struct FsRuntime {
+    pub fs_open: FuncId,
+    pub fs_close: FuncId,
+    pub fs_read: FuncId,
+    pub fs_read_all: FuncId,
+    pub fs_read_line: FuncId,
+    pub fs_write: FuncId,
+    pub fs_flush: FuncId,
+    pub fs_seek: FuncId,
+    pub fs_tell: FuncId,
+    pub fs_create_dir: FuncId,
+    pub fs_create_dir_all: FuncId,
+    pub fs_remove_dir: FuncId,
+    pub fs_remove_dir_all: FuncId,
+    pub fs_remove_file: FuncId,
+    pub fs_read_dir: FuncId,
+    pub fs_copy: FuncId,
+    pub fs_rename: FuncId,
+    pub fs_canonicalize: FuncId,
+    pub fs_exists: FuncId,
+    pub fs_is_file: FuncId,
+    pub fs_is_dir: FuncId,
+    pub fs_is_symlink: FuncId,
+    pub fs_file_size: FuncId,
+    pub fs_modified_time: FuncId,
+    pub fs_is_readonly: FuncId,
+    pub fs_stdin_read_line: FuncId,
+    pub fs_stdout_write: FuncId,
+    pub fs_stdout_flush: FuncId,
+    pub fs_stderr_write: FuncId,
+    pub fs_stderr_flush: FuncId,
+    pub string_starts_with: FuncId,
+    pub string_ends_with: FuncId,
+    pub string_contains: FuncId,
+    pub string_substring: FuncId,
+    pub to_string_i64: FuncId,
+    pub to_string_bool: FuncId,
+}
+
+fn declare_fs_runtime(module: &mut ObjectModule) -> Result<FsRuntime> {
+    macro_rules! decl {
+        ($name:expr, $sig:expr) => {
+            module.declare_function($name, Linkage::Import, &$sig).map_err(|e| anyhow!(e.to_string()))?
+        };
+    }
+
+    let sig_void_to_void = module.make_signature();
+
+    let mut sig_void_to_i64 = module.make_signature();
+    sig_void_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_to_void = module.make_signature();
+    sig_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_to_i64 = module.make_signature();
+    sig_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_i64_to_i64 = module.make_signature();
+    sig_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_i64_i64_to_i64 = module.make_signature();
+    sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    Ok(FsRuntime {
+        fs_open: decl!("__roze_fs_open", sig_i64_i64_to_i64),
+        fs_close: decl!("__roze_fs_close", sig_i64_to_void),
+        fs_read: decl!("__roze_fs_read", sig_i64_i64_to_i64),
+        fs_read_all: decl!("__roze_fs_read_all", sig_i64_to_i64),
+        fs_read_line: decl!("__roze_fs_read_line", sig_i64_to_i64),
+        fs_write: decl!("__roze_fs_write", sig_i64_i64_to_i64),
+        fs_flush: decl!("__roze_fs_flush", sig_i64_to_void),
+        fs_seek: decl!("__roze_fs_seek", sig_i64_i64_i64_to_i64),
+        fs_tell: decl!("__roze_fs_tell", sig_i64_to_i64),
+        fs_create_dir: decl!("__roze_fs_create_dir", sig_i64_to_i64),
+        fs_create_dir_all: decl!("__roze_fs_create_dir_all", sig_i64_to_i64),
+        fs_remove_dir: decl!("__roze_fs_remove_dir", sig_i64_to_i64),
+        fs_remove_dir_all: decl!("__roze_fs_remove_dir_all", sig_i64_to_i64),
+        fs_remove_file: decl!("__roze_fs_remove_file", sig_i64_to_i64),
+        fs_read_dir: decl!("__roze_fs_read_dir", sig_i64_to_i64),
+        fs_copy: decl!("__roze_fs_copy", sig_i64_i64_to_i64),
+        fs_rename: decl!("__roze_fs_rename", sig_i64_i64_to_i64),
+        fs_canonicalize: decl!("__roze_fs_canonicalize", sig_i64_to_i64),
+        fs_exists: decl!("__roze_fs_exists", sig_i64_to_i64),
+        fs_is_file: decl!("__roze_fs_is_file", sig_i64_to_i64),
+        fs_is_dir: decl!("__roze_fs_is_dir", sig_i64_to_i64),
+        fs_is_symlink: decl!("__roze_fs_is_symlink", sig_i64_to_i64),
+        fs_file_size: decl!("__roze_fs_file_size", sig_i64_to_i64),
+        fs_modified_time: decl!("__roze_fs_modified_time", sig_i64_to_i64),
+        fs_is_readonly: decl!("__roze_fs_is_readonly", sig_i64_to_i64),
+        fs_stdin_read_line: decl!("__roze_fs_stdin_read_line", sig_void_to_i64),
+        fs_stdout_write: decl!("__roze_fs_stdout_write", sig_i64_to_i64),
+        fs_stdout_flush: decl!("__roze_fs_stdout_flush", sig_void_to_void),
+        fs_stderr_write: decl!("__roze_fs_stderr_write", sig_i64_to_i64),
+        fs_stderr_flush: decl!("__roze_fs_stderr_flush", sig_void_to_void),
+        string_starts_with: decl!("__roze_string_starts_with", sig_i64_i64_to_i64),
+        string_ends_with: decl!("__roze_string_ends_with", sig_i64_i64_to_i64),
+        string_contains: decl!("__roze_string_contains", sig_i64_i64_to_i64),
+        string_substring: decl!("__roze_string_substring", sig_i64_i64_i64_to_i64),
+        to_string_i64: decl!("__roze_to_string_i64", sig_i64_to_i64),
+        to_string_bool: decl!("__roze_to_string_bool", sig_i64_to_i64),
+    })
+}
+
 /// A native class instance is a pointer to a heap block:
 ///
 ///   [0..8)          i64  refcount
@@ -5881,6 +6029,7 @@ struct NativeGenerator<'a> {
     collections: CollectionsRuntime,
     memory: MemoryRuntime,
     raw_net: RawNetRuntime,
+    fs: FsRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -5972,6 +6121,7 @@ impl<'a> NativeGenerator<'a> {
         let collections = declare_collections_runtime(module)?;
         let memory = declare_memory_runtime(module)?;
         let raw_net = declare_raw_net_runtime(module)?;
+        let fs = declare_fs_runtime(module)?;
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
@@ -6008,6 +6158,7 @@ impl<'a> NativeGenerator<'a> {
             collections,
             memory,
             raw_net,
+            fs,
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
@@ -6387,6 +6538,7 @@ impl<'a> NativeGenerator<'a> {
                     collections: &self.collections,
                     memory: &self.memory,
                     raw_net: &self.raw_net,
+                    fs: &self.fs,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
@@ -6511,6 +6663,7 @@ impl<'a> NativeGenerator<'a> {
                                 collections: &self.collections,
                                 memory: &self.memory,
                                 raw_net: &self.raw_net,
+                                fs: &self.fs,
                                 classes: &self.classes,
                                 class_retain_id: self.class_retain_id,
                                 literal_counter: &mut self.literal_counter,
@@ -6623,6 +6776,7 @@ impl<'a> NativeGenerator<'a> {
                         collections: &self.collections,
                         memory: &self.memory,
                         raw_net: &self.raw_net,
+                        fs: &self.fs,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
@@ -6778,6 +6932,7 @@ struct FunctionCompiler<'a, 'b> {
     collections: &'a CollectionsRuntime,
     memory: &'a MemoryRuntime,
     raw_net: &'a RawNetRuntime,
+    fs: &'a FsRuntime,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -12511,6 +12666,310 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let call = self.builder.ins().call(func_ref, &[path]);
                 let res = self.builder.inst_results(call)[0];
                 self.release_if_fresh(&arguments[0], path)?;
+                return Ok(res);
+            }
+
+            // ---- Filesystem & Standard I/O Engine (M4-T04) ----
+            "fs_open" if arguments.len() == 2 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let m = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_open, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p, m]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                self.release_if_fresh(&arguments[1], m)?;
+                return Ok(res);
+            }
+            "fs_close" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_close, self.builder.func);
+                self.builder.ins().call(func_ref, &[h]);
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "fs_read" if arguments.len() == 2 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let mb = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_read, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h, mb]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                self.release_if_fresh(&arguments[1], mb)?;
+                return Ok(res);
+            }
+            "fs_read_all" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_read_all, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(res);
+            }
+            "fs_read_line" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_read_line, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(res);
+            }
+            "fs_write" if arguments.len() == 2 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let s = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_write, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h, s]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                self.release_if_fresh(&arguments[1], s)?;
+                return Ok(res);
+            }
+            "fs_flush" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_flush, self.builder.func);
+                self.builder.ins().call(func_ref, &[h]);
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "fs_seek" if arguments.len() == 3 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let off = self.compile_expression(&arguments[1])?;
+                let w = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_seek, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h, off, w]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                self.release_if_fresh(&arguments[1], off)?;
+                self.release_if_fresh(&arguments[2], w)?;
+                return Ok(res);
+            }
+            "fs_tell" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_tell, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(res);
+            }
+            "fs_create_dir" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_create_dir, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_create_dir_all" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_create_dir_all, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_remove_dir" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_remove_dir, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_remove_dir_all" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_remove_dir_all, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_remove_file" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_remove_file, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_read_dir" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_read_dir, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_copy" if arguments.len() == 2 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let d = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_copy, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s, d]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], s)?;
+                self.release_if_fresh(&arguments[1], d)?;
+                return Ok(res);
+            }
+            "fs_rename" if arguments.len() == 2 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let d = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_rename, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s, d]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], s)?;
+                self.release_if_fresh(&arguments[1], d)?;
+                return Ok(res);
+            }
+            "fs_canonicalize" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_canonicalize, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_exists" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_exists, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_is_file" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_is_file, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_is_dir" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_is_dir, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_is_symlink" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_is_symlink, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_file_size" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_file_size, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_modified_time" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_modified_time, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_is_readonly" if arguments.len() == 1 => {
+                let p = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_is_readonly, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], p)?;
+                return Ok(res);
+            }
+            "fs_stdin_read_line" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_stdin_read_line, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                let res = self.builder.inst_results(call)[0];
+                return Ok(res);
+            }
+            "fs_stdout_write" if arguments.len() == 1 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_stdout_write, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], s)?;
+                return Ok(res);
+            }
+            "fs_stdout_flush" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_stdout_flush, self.builder.func);
+                self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "fs_stderr_write" if arguments.len() == 1 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_stderr_write, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], s)?;
+                return Ok(res);
+            }
+            "fs_stderr_flush" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.fs.fs_stderr_flush, self.builder.func);
+                self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "string_starts_with" if arguments.len() == 2 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let p = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.string_starts_with, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s, p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], s)?;
+                self.release_if_fresh(&arguments[1], p)?;
+                return Ok(res);
+            }
+            "string_ends_with" if arguments.len() == 2 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let p = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.string_ends_with, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s, p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], s)?;
+                self.release_if_fresh(&arguments[1], p)?;
+                return Ok(res);
+            }
+            "string_contains" if arguments.len() == 2 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let p = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.string_contains, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s, p]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], s)?;
+                self.release_if_fresh(&arguments[1], p)?;
+                return Ok(res);
+            }
+            "substring" | "string_substring" if arguments.len() == 3 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let start = self.compile_expression(&arguments[1])?;
+                let end = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.fs.string_substring, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s, start, end]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], s)?;
+                self.release_if_fresh(&arguments[1], start)?;
+                self.release_if_fresh(&arguments[2], end)?;
+                return Ok(res);
+            }
+            "to_string" if arguments.len() == 1 => {
+                let arg = self.compile_expression(&arguments[0])?;
+                if arguments[0].type_ == Type::String {
+                    return Ok(arg);
+                }
+                let func_id = if arguments[0].type_ == Type::Bool {
+                    self.fs.to_string_bool
+                } else {
+                    self.fs.to_string_i64
+                };
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[arg]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], arg)?;
                 return Ok(res);
             }
             _ => {}

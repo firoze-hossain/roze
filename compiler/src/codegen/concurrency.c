@@ -21,6 +21,9 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <dirent.h>
 #if defined(__linux__)
 #include <linux/if_packet.h>
 #include <net/ethernet.h>
@@ -5590,6 +5593,546 @@ const char* ffi_call_str_str(int64_t addr, const char* a1, const char* a2) {
     const char* res = ((fn_t)addr)(a1, a2);
     return res ? res : "";
 }
+
+// ============================================================================
+// Filesystem & Standard I/O Engine Runtime (M4-T04)
+// ============================================================================
+
+typedef struct {
+    int in_use;
+    FILE* fp;
+} RozeFileEntry;
+
+#define ROZE_MAX_FILES 256
+static RozeFileEntry g_roze_file_table[ROZE_MAX_FILES];
+static pthread_mutex_t g_roze_file_table_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static char* __roze_make_string_with_len(const char* s, int64_t len) {
+    if (!s) {
+        s = "";
+        len = 0;
+    }
+    if (len < 0) {
+        len = (int64_t)strlen(s);
+    }
+    int64_t* mem = (int64_t*)malloc(16 + (size_t)len + 1);
+    if (!mem) return NULL;
+    mem[0] = 1;   // refcount = 1
+    mem[1] = len; // length
+    char* data = (char*)(mem + 2);
+    if (len > 0) {
+        memcpy(data, s, (size_t)len);
+    }
+    data[len] = '\0';
+    return data;
+}
+
+int64_t __roze_string_starts_with(const char *s, const char *prefix) {
+    if (!s || !prefix) return 0;
+    int64_t slen = ((const int64_t*)s)[-1];
+    int64_t plen = ((const int64_t*)prefix)[-1];
+    if (plen > slen) return 0;
+    return memcmp(s, prefix, (size_t)plen) == 0 ? 1 : 0;
+}
+
+int64_t __roze_string_ends_with(const char *s, const char *suffix) {
+    if (!s || !suffix) return 0;
+    int64_t slen = ((const int64_t*)s)[-1];
+    int64_t sublen = ((const int64_t*)suffix)[-1];
+    if (sublen > slen) return 0;
+    return memcmp(s + slen - sublen, suffix, (size_t)sublen) == 0 ? 1 : 0;
+}
+
+int64_t __roze_string_contains(const char *s, const char *needle) {
+    if (!s || !needle) return 0;
+    return strstr(s, needle) != NULL ? 1 : 0;
+}
+
+const char* __roze_string_substring(const char *s, int64_t start, int64_t end) {
+    if (!s) return __roze_make_string_with_len("", 0);
+    int64_t slen = ((const int64_t*)s)[-1];
+    if (start < 0) start = 0;
+    if (end > slen) end = slen;
+    if (start >= end) return __roze_make_string_with_len("", 0);
+    return __roze_make_string_with_len(s + start, end - start);
+}
+
+const char* __roze_to_string_i64(int64_t val) {
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), "%lld", (long long)val);
+    return __roze_make_string_with_len(buf, (int64_t)n);
+}
+
+const char* __roze_to_string_bool(int64_t val) {
+    if (val) {
+        return __roze_make_string_with_len("true", 4);
+    } else {
+        return __roze_make_string_with_len("false", 5);
+    }
+}
+
+typedef struct {
+    int64_t refcount;
+    int64_t length;
+    int64_t capacity;
+    int64_t* data;
+} RozeListRepr;
+
+static int64_t __roze_make_empty_list(void) {
+    RozeListRepr* h = (RozeListRepr*)malloc(sizeof(RozeListRepr));
+    if (!h) return 0;
+    h->refcount = 1;
+    h->length = 0;
+    h->capacity = 4;
+    h->data = (int64_t*)malloc(sizeof(int64_t) * 4);
+    return (int64_t)h;
+}
+
+static void __roze_list_push_item(int64_t list_val, int64_t item) {
+    if (!list_val) return;
+    RozeListRepr* h = (RozeListRepr*)list_val;
+    if (h->length >= h->capacity) {
+        int64_t new_cap = h->capacity * 2;
+        int64_t* new_data = (int64_t*)realloc(h->data, sizeof(int64_t) * (size_t)new_cap);
+        if (!new_data) return;
+        h->data = new_data;
+        h->capacity = new_cap;
+    }
+    h->data[h->length++] = item;
+}
+
+int64_t __roze_fs_create_dir_all(const char* path);
+
+int64_t __roze_fs_open(const char* path, const char* mode) {
+    if (!path || !mode) return 0;
+    pthread_mutex_lock(&g_roze_file_table_lock);
+    int slot = -1;
+    for (int i = 0; i < ROZE_MAX_FILES; i++) {
+        if (!g_roze_file_table[i].in_use) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return 0;
+    }
+
+    FILE* fp = fopen(path, mode);
+    if (!fp && (strchr(mode, 'w') || strchr(mode, 'a'))) {
+        const char* last_slash = strrchr(path, '/');
+        if (last_slash) {
+            char pdir[1024];
+            size_t dlen = (size_t)(last_slash - path);
+            if (dlen < sizeof(pdir)) {
+                memcpy(pdir, path, dlen);
+                pdir[dlen] = '\0';
+                __roze_fs_create_dir_all(pdir);
+                fp = fopen(path, mode);
+            }
+        }
+    }
+
+    if (!fp) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return 0;
+    }
+
+    g_roze_file_table[slot].in_use = 1;
+    g_roze_file_table[slot].fp = fp;
+    pthread_mutex_unlock(&g_roze_file_table_lock);
+    return (int64_t)(slot + 1);
+}
+
+int64_t __roze_fs_close(int64_t handle) {
+    if (handle < 1 || handle > ROZE_MAX_FILES) return 0;
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_file_table_lock);
+    if (!g_roze_file_table[slot].in_use) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return 0;
+    }
+    if (g_roze_file_table[slot].fp) {
+        fclose(g_roze_file_table[slot].fp);
+        g_roze_file_table[slot].fp = NULL;
+    }
+    g_roze_file_table[slot].in_use = 0;
+    pthread_mutex_unlock(&g_roze_file_table_lock);
+    return 1;
+}
+
+int64_t __roze_fs_read(int64_t handle, int64_t max_bytes) {
+    if (handle < 1 || handle > ROZE_MAX_FILES || max_bytes <= 0) {
+        return (int64_t)__roze_make_string_with_len("", 0);
+    }
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_file_table_lock);
+    if (!g_roze_file_table[slot].in_use || !g_roze_file_table[slot].fp) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return (int64_t)__roze_make_string_with_len("", 0);
+    }
+    FILE* fp = g_roze_file_table[slot].fp;
+    char* buf = (char*)malloc((size_t)max_bytes + 1);
+    if (!buf) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return (int64_t)__roze_make_string_with_len("", 0);
+    }
+    size_t n = fread(buf, 1, (size_t)max_bytes, fp);
+    pthread_mutex_unlock(&g_roze_file_table_lock);
+    buf[n] = '\0';
+    int64_t res = (int64_t)__roze_make_string_with_len(buf, (int64_t)n);
+    free(buf);
+    return res;
+}
+
+int64_t __roze_fs_read_all(int64_t handle) {
+    if (handle < 1 || handle > ROZE_MAX_FILES) {
+        return (int64_t)__roze_make_string_with_len("", 0);
+    }
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_file_table_lock);
+    if (!g_roze_file_table[slot].in_use || !g_roze_file_table[slot].fp) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return (int64_t)__roze_make_string_with_len("", 0);
+    }
+    FILE* fp = g_roze_file_table[slot].fp;
+    long cur = ftell(fp);
+    fseek(fp, 0, SEEK_END);
+    long end = ftell(fp);
+    fseek(fp, cur, SEEK_SET);
+    long rem = end - cur;
+    if (rem <= 0) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return (int64_t)__roze_make_string_with_len("", 0);
+    }
+    char* buf = (char*)malloc((size_t)rem + 1);
+    if (!buf) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return (int64_t)__roze_make_string_with_len("", 0);
+    }
+    size_t n = fread(buf, 1, (size_t)rem, fp);
+    pthread_mutex_unlock(&g_roze_file_table_lock);
+    buf[n] = '\0';
+    int64_t res = (int64_t)__roze_make_string_with_len(buf, (int64_t)n);
+    free(buf);
+    return res;
+}
+
+int64_t __roze_fs_read_line(int64_t handle) {
+    if (handle < 1 || handle > ROZE_MAX_FILES) {
+        return (int64_t)__roze_make_string_with_len("", 0);
+    }
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_file_table_lock);
+    if (!g_roze_file_table[slot].in_use || !g_roze_file_table[slot].fp) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return (int64_t)__roze_make_string_with_len("", 0);
+    }
+    FILE* fp = g_roze_file_table[slot].fp;
+    size_t cap = 256;
+    size_t len = 0;
+    char* buf = (char*)malloc(cap);
+    if (!buf) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return (int64_t)__roze_make_string_with_len("", 0);
+    }
+    int c;
+    while ((c = fgetc(fp)) != EOF) {
+        if (c == '\r') {
+            int next = fgetc(fp);
+            if (next != '\n' && next != EOF) {
+                ungetc(next, fp);
+            }
+            break;
+        }
+        if (c == '\n') {
+            break;
+        }
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char* new_buf = (char*)realloc(buf, cap);
+            if (!new_buf) break;
+            buf = new_buf;
+        }
+        buf[len++] = (char)c;
+    }
+    pthread_mutex_unlock(&g_roze_file_table_lock);
+    buf[len] = '\0';
+    int64_t res = (int64_t)__roze_make_string_with_len(buf, (int64_t)len);
+    free(buf);
+    return res;
+}
+
+int64_t __roze_fs_write(int64_t handle, const char* content) {
+    if (handle < 1 || handle > ROZE_MAX_FILES || !content) return 0;
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_file_table_lock);
+    if (!g_roze_file_table[slot].in_use || !g_roze_file_table[slot].fp) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return 0;
+    }
+    FILE* fp = g_roze_file_table[slot].fp;
+    size_t len = strlen(content);
+    size_t written = fwrite(content, 1, len, fp);
+    pthread_mutex_unlock(&g_roze_file_table_lock);
+    return (int64_t)written;
+}
+
+int64_t __roze_fs_flush(int64_t handle) {
+    if (handle < 1 || handle > ROZE_MAX_FILES) return 0;
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_file_table_lock);
+    if (!g_roze_file_table[slot].in_use || !g_roze_file_table[slot].fp) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return 0;
+    }
+    fflush(g_roze_file_table[slot].fp);
+    pthread_mutex_unlock(&g_roze_file_table_lock);
+    return 1;
+}
+
+int64_t __roze_fs_seek(int64_t handle, int64_t offset, int64_t whence) {
+    if (handle < 1 || handle > ROZE_MAX_FILES) return -1;
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_file_table_lock);
+    if (!g_roze_file_table[slot].in_use || !g_roze_file_table[slot].fp) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return -1;
+    }
+    FILE* fp = g_roze_file_table[slot].fp;
+    int w = (whence == 0 ? SEEK_SET : (whence == 1 ? SEEK_CUR : SEEK_END));
+    fseek(fp, (long)offset, w);
+    long pos = ftell(fp);
+    pthread_mutex_unlock(&g_roze_file_table_lock);
+    return (int64_t)pos;
+}
+
+int64_t __roze_fs_tell(int64_t handle) {
+    if (handle < 1 || handle > ROZE_MAX_FILES) return -1;
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_file_table_lock);
+    if (!g_roze_file_table[slot].in_use || !g_roze_file_table[slot].fp) {
+        pthread_mutex_unlock(&g_roze_file_table_lock);
+        return -1;
+    }
+    long pos = ftell(g_roze_file_table[slot].fp);
+    pthread_mutex_unlock(&g_roze_file_table_lock);
+    return (int64_t)pos;
+}
+
+int64_t __roze_fs_create_dir(const char* path) {
+    if (!path) return 0;
+    #if defined(_WIN32)
+    int rc = _mkdir(path);
+    #else
+    int rc = mkdir(path, 0755);
+    #endif
+    return (rc == 0 || errno == EEXIST) ? 1 : 0;
+}
+
+int64_t __roze_fs_create_dir_all(const char* path) {
+    if (!path || !path[0]) return 0;
+    char tmp[1024];
+    size_t len = strlen(path);
+    if (len >= sizeof(tmp)) return 0;
+    memcpy(tmp, path, len + 1);
+
+    for (size_t i = 1; i <= len; i++) {
+        if (tmp[i] == '/' || tmp[i] == '\\' || tmp[i] == '\0') {
+            char old = tmp[i];
+            tmp[i] = '\0';
+            #if defined(_WIN32)
+            _mkdir(tmp);
+            #else
+            mkdir(tmp, 0755);
+            #endif
+            tmp[i] = old;
+        }
+    }
+    return 1;
+}
+
+int64_t __roze_fs_remove_dir(const char* path) {
+    if (!path) return 0;
+    return rmdir(path) == 0 ? 1 : 0;
+}
+
+int64_t __roze_fs_remove_dir_all(const char* path) {
+    if (!path || !path[0]) return 0;
+    DIR* dir = opendir(path);
+    if (!dir) {
+        return unlink(path) == 0 ? 1 : 0;
+    }
+    struct dirent* entry;
+    char subpath[1024];
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        snprintf(subpath, sizeof(subpath), "%s/%s", path, entry->d_name);
+        struct stat st;
+        if (stat(subpath, &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                __roze_fs_remove_dir_all(subpath);
+            } else {
+                unlink(subpath);
+            }
+        }
+    }
+    closedir(dir);
+    return rmdir(path) == 0 ? 1 : 0;
+}
+
+int64_t __roze_fs_remove_file(const char* path) {
+    if (!path) return 0;
+    return unlink(path) == 0 ? 1 : 0;
+}
+
+int64_t __roze_fs_read_dir(const char* path) {
+    int64_t list = __roze_make_empty_list();
+    if (!path) return list;
+    DIR* dir = opendir(path);
+    if (!dir) return list;
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        int64_t s = (int64_t)__roze_make_string_with_len(entry->d_name, (int64_t)strlen(entry->d_name));
+        __roze_list_push_item(list, s);
+    }
+    closedir(dir);
+    return list;
+}
+
+int64_t __roze_fs_copy(const char* src, const char* dest) {
+    if (!src || !dest) return -1;
+    FILE* in = fopen(src, "rb");
+    if (!in) return -1;
+    const char* last_slash = strrchr(dest, '/');
+    if (last_slash) {
+        char pdir[1024];
+        size_t dlen = (size_t)(last_slash - dest);
+        if (dlen < sizeof(pdir)) {
+            memcpy(pdir, dest, dlen);
+            pdir[dlen] = '\0';
+            __roze_fs_create_dir_all(pdir);
+        }
+    }
+    FILE* out = fopen(dest, "wb");
+    if (!out) {
+        fclose(in);
+        return -1;
+    }
+    char buf[4096];
+    size_t total = 0;
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        fwrite(buf, 1, n, out);
+        total += n;
+    }
+    fclose(in);
+    fclose(out);
+    return (int64_t)total;
+}
+
+int64_t __roze_fs_rename(const char* src, const char* dest) {
+    if (!src || !dest) return 0;
+    return rename(src, dest) == 0 ? 1 : 0;
+}
+
+int64_t __roze_fs_canonicalize(const char* path) {
+    if (!path) return (int64_t)__roze_make_string_with_len("", 0);
+    char resolved[1024];
+    #if defined(_WIN32)
+    if (_fullpath(resolved, path, sizeof(resolved))) {
+        return (int64_t)__roze_make_string_with_len(resolved, (int64_t)strlen(resolved));
+    }
+    #else
+    if (realpath(path, resolved)) {
+        return (int64_t)__roze_make_string_with_len(resolved, (int64_t)strlen(resolved));
+    }
+    #endif
+    return (int64_t)__roze_make_string_with_len(path, (int64_t)strlen(path));
+}
+
+int64_t __roze_fs_exists(const char* path) {
+    if (!path) return 0;
+    struct stat st;
+    return stat(path, &st) == 0 ? 1 : 0;
+}
+
+int64_t __roze_fs_is_file(const char* path) {
+    if (!path) return 0;
+    struct stat st;
+    return (stat(path, &st) == 0 && S_ISREG(st.st_mode)) ? 1 : 0;
+}
+
+int64_t __roze_fs_is_dir(const char* path) {
+    if (!path) return 0;
+    struct stat st;
+    return (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) ? 1 : 0;
+}
+
+int64_t __roze_fs_is_symlink(const char* path) {
+    if (!path) return 0;
+    struct stat st;
+    #if defined(_WIN32)
+    return 0;
+    #else
+    return (lstat(path, &st) == 0 && S_ISLNK(st.st_mode)) ? 1 : 0;
+    #endif
+}
+
+int64_t __roze_fs_file_size(const char* path) {
+    if (!path) return 0;
+    struct stat st;
+    return stat(path, &st) == 0 ? (int64_t)st.st_size : 0;
+}
+
+int64_t __roze_fs_modified_time(const char* path) {
+    if (!path) return 0;
+    struct stat st;
+    return stat(path, &st) == 0 ? (int64_t)st.st_mtime * 1000 : 0;
+}
+
+int64_t __roze_fs_is_readonly(const char* path) {
+    if (!path) return 0;
+    return access(path, W_OK) != 0 ? 1 : 0;
+}
+
+int64_t __roze_fs_stdin_read_line(void) {
+    char buf[1024];
+    if (fgets(buf, sizeof(buf), stdin)) {
+        size_t len = strlen(buf);
+        while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) {
+            buf[--len] = '\0';
+        }
+        return (int64_t)__roze_make_string_with_len(buf, (int64_t)len);
+    }
+    return (int64_t)__roze_make_string_with_len("", 0);
+}
+
+void __roze_fs_stdout_write(const char* s) {
+    if (s) {
+        fputs(s, stdout);
+    }
+}
+
+void __roze_fs_stdout_flush(void) {
+    fflush(stdout);
+}
+
+void __roze_fs_stderr_write(const char* s) {
+    if (s) {
+        fputs(s, stderr);
+    }
+}
+
+void __roze_fs_stderr_flush(void) {
+    fflush(stderr);
+}
+
 
 
 

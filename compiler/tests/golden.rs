@@ -1868,6 +1868,50 @@ ALL_ARC_WEAK_TESTS_PASSED";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
 
+#[test]
+fn standard_fs_and_io_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_fs_io.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("--- Test 1: Path and PathBuf ---"));
+    assert!(stdout.contains("Path: /tmp/roze_fs_test/subdir/file.txt"));
+    assert!(stdout.contains("Parent: /tmp/roze_fs_test/subdir"));
+    assert!(stdout.contains("File name: file.txt"));
+    assert!(stdout.contains("File stem: file"));
+    assert!(stdout.contains("Extension: txt"));
+    assert!(stdout.contains("Is absolute: true"));
+    assert!(stdout.contains("--- Test 2: Directory operations & walking ---"));
+    assert!(stdout.contains("Created dir exists: true"));
+    assert!(stdout.contains("Is dir: true"));
+    assert!(stdout.contains("Root dir has entries: true"));
+    assert!(stdout.contains("Walk dir total files found: 2"));
+    assert!(stdout.contains("--- Test 3: Metadata ---"));
+    assert!(stdout.contains("Meta is_file: true"));
+    assert!(stdout.contains("Meta is_dir: false"));
+    assert!(stdout.contains("Meta len > 0: true"));
+    assert!(stdout.contains("--- Test 4: File and OpenOptions ---"));
+    assert!(stdout.contains("Read line 1: Line 1: Roze Engine"));
+    assert!(stdout.contains("Read line 2: Line 2: High Performance"));
+    assert!(stdout.contains("Seeked back to pos: 0"));
+    assert!(stdout.contains("Read to string len: 45"));
+    assert!(stdout.contains("--- Test 5: BufferedReader and BufferedWriter ---"));
+    assert!(stdout.contains("Buffered lines count: 3"));
+    assert!(stdout.contains("First line: Alpha"));
+    assert!(stdout.contains("Second line: Beta"));
+    assert!(stdout.contains("Third line: Gamma"));
+    assert!(stdout.contains("--- Test 6: Copy, Rename, and Remove ---"));
+    assert!(stdout.contains("Copied bytes > 0: true"));
+    assert!(stdout.contains("Copy exists: true"));
+    assert!(stdout.contains("Rename ok: true"));
+    assert!(stdout.contains("Old exists: false"));
+    assert!(stdout.contains("New exists: true"));
+    assert!(stdout.contains("Removed file exists: false"));
+    assert!(stdout.contains("Cleaned up root dir: true"));
+    assert!(stdout.contains("--- Test 7: Standard Stream Helpers ---"));
+    assert!(stdout.contains("Stream test: print ok"));
+    assert!(stderr.contains("Stream test: eprintln ok"));
+    assert!(stdout.contains("✅ M4-T04 Filesystem & I/O Engine Complete!"));
+}
+
 
 
 

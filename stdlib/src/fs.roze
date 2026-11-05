@@ -1,0 +1,534 @@
+// stdlib/src/fs.roze
+//
+// Roze Cross-Platform Filesystem Engine (M4-T04)
+// Full architectural parity with Rust std::fs and Java 25 java.nio.file.
+
+class Metadata {
+    file_size: int,
+    is_reg_file: bool,
+    is_directory: bool,
+    is_sym_link: bool,
+    is_read_only: bool,
+    mod_time: int,
+}
+
+impl Metadata {
+    func len() -> int {
+        return this.file_size;
+    }
+
+    func size() -> int {
+        return this.file_size;
+    }
+
+    func is_file() -> bool {
+        return this.is_reg_file;
+    }
+
+    func is_dir() -> bool {
+        return this.is_directory;
+    }
+
+    func is_symlink() -> bool {
+        return this.is_sym_link;
+    }
+
+    func readonly() -> bool {
+        return this.is_read_only;
+    }
+
+    func modified() -> int {
+        return this.mod_time;
+    }
+}
+
+class BufferedReader {
+    file: File,
+    is_closed: bool,
+}
+
+class BufferedWriter {
+    file: File,
+    buffer: string,
+    capacity: int,
+    is_closed: bool,
+}
+
+class File {
+    handle: int,
+    path: string,
+    is_open: bool,
+}
+
+impl File {
+    func read_to_string() -> string {
+        return fs_read_all(this.handle);
+    }
+
+    func read(max_bytes: int) -> string {
+        return fs_read(this.handle, max_bytes);
+    }
+
+    func read_line() -> string {
+        return fs_read_line(this.handle);
+    }
+
+    func read_lines() -> list {
+        let lines = list_new();
+        let line = this.read_line();
+        while string_length(line) > 0 {
+            let item: any = line;
+            list_push(lines, item);
+            line = this.read_line();
+        }
+        return lines;
+    }
+
+    func write(content: string) -> int {
+        return fs_write(this.handle, content);
+    }
+
+    func write_line(line: string) -> int {
+        return fs_write(this.handle, line + "\n");
+    }
+
+    func flush() -> void {
+        fs_flush(this.handle);
+    }
+
+    func seek(offset: int, whence: int) -> int {
+        return fs_seek(this.handle, offset, whence);
+    }
+
+    func seek_start(offset: int) -> int {
+        return fs_seek(this.handle, offset, 0);
+    }
+
+    func seek_current(offset: int) -> int {
+        return fs_seek(this.handle, offset, 1);
+    }
+
+    func seek_end(offset: int) -> int {
+        return fs_seek(this.handle, offset, 2);
+    }
+
+    func position() -> int {
+        return fs_tell(this.handle);
+    }
+
+    func metadata() -> Metadata {
+        return get_metadata(this.path);
+    }
+
+    func close() -> void {
+        if this.is_open {
+            fs_close(this.handle);
+            this.is_open = false;
+        }
+    }
+
+    func buffered_reader() -> BufferedReader {
+        return new BufferedReader(this, false);
+    }
+
+    func buffered_writer() -> BufferedWriter {
+        return new BufferedWriter(this, "", 8192, false);
+    }
+}
+
+class OpenOptions {
+    read_flag: bool,
+    write_flag: bool,
+    append_flag: bool,
+    create_flag: bool,
+    create_new_flag: bool,
+    truncate_flag: bool,
+}
+
+impl OpenOptions {
+    func read(enable: bool) -> OpenOptions {
+        this.read_flag = enable;
+        return this;
+    }
+
+    func write(enable: bool) -> OpenOptions {
+        this.write_flag = enable;
+        return this;
+    }
+
+    func append(enable: bool) -> OpenOptions {
+        this.append_flag = enable;
+        return this;
+    }
+
+    func create(enable: bool) -> OpenOptions {
+        this.create_flag = enable;
+        return this;
+    }
+
+    func create_new(enable: bool) -> OpenOptions {
+        this.create_new_flag = enable;
+        return this;
+    }
+
+    func truncate(enable: bool) -> OpenOptions {
+        this.truncate_flag = enable;
+        return this;
+    }
+
+    func open(path: string) -> File {
+        let mode = "r";
+        if this.append_flag {
+            if this.read_flag {
+                mode = "a+";
+            } else {
+                mode = "a";
+            }
+        } else if this.write_flag {
+            if this.read_flag {
+                mode = "w+";
+            } else {
+                mode = "w";
+            }
+        } else if this.read_flag {
+            mode = "r";
+        }
+
+        let h = fs_open(path, mode);
+        return new File(h, path, h > 0);
+    }
+}
+
+impl BufferedReader {
+    func read_line() -> string {
+        if this.is_closed {
+            return "";
+        }
+        return this.file.read_line();
+    }
+
+    func lines() -> list {
+        let res = list_new();
+        let line = this.read_line();
+        while string_length(line) > 0 {
+            let item: any = line;
+            list_push(res, item);
+            line = this.read_line();
+        }
+        return res;
+    }
+
+    func has_next() -> bool {
+        if this.is_closed {
+            return false;
+        }
+        let pos = this.file.position();
+        let line = this.file.read_line();
+        if string_length(line) > 0 {
+            this.file.seek_start(pos);
+            return true;
+        }
+        return false;
+    }
+
+    func close() -> void {
+        this.is_closed = true;
+        this.file.close();
+    }
+}
+
+impl BufferedWriter {
+    func write(s: string) -> void {
+        if this.is_closed {
+            return;
+        }
+        this.buffer = this.buffer + s;
+        if string_length(this.buffer) >= this.capacity {
+            this.flush();
+        }
+    }
+
+    func write_line(line: string) -> void {
+        this.write(line + "\n");
+    }
+
+    func flush() -> void {
+        if this.is_closed {
+            return;
+        }
+        if string_length(this.buffer) > 0 {
+            this.file.write(this.buffer);
+            this.buffer = "";
+        }
+        this.file.flush();
+    }
+
+    func close() -> void {
+        this.flush();
+        this.is_closed = true;
+        this.file.close();
+    }
+}
+
+class Path {
+    path_str: string,
+}
+
+impl Path {
+    func join(other: string) -> Path {
+        if string_starts_with(other, "/") || string_contains(other, ":\\") || string_contains(other, ":/") {
+            return new Path(other);
+        }
+        if string_ends_with(this.path_str, "/") || string_ends_with(this.path_str, "\\") {
+            return new Path(this.path_str + other);
+        }
+        return new Path(this.path_str + "/" + other);
+    }
+
+    func parent() -> string {
+        let p = this.path_str;
+        let len = string_length(p);
+        let i = len - 1;
+        while i >= 0 {
+            let ch = string_char_at(p, i);
+            if ch == 47 || ch == 92 { // '/' or '\'
+                if i == 0 {
+                    return "/";
+                }
+                return string_substring(p, 0, i);
+            }
+            i = i - 1;
+        }
+        return "";
+    }
+
+    func file_name() -> string {
+        let p = this.path_str;
+        let len = string_length(p);
+        let i = len - 1;
+        while i >= 0 {
+            let ch = string_char_at(p, i);
+            if ch == 47 || ch == 92 {
+                return string_substring(p, i + 1, len);
+            }
+            i = i - 1;
+        }
+        return p;
+    }
+
+    func file_stem() -> string {
+        let name = this.file_name();
+        let len = string_length(name);
+        let i = len - 1;
+        while i >= 0 {
+            let ch = string_char_at(name, i);
+            if ch == 46 { // '.'
+                return string_substring(name, 0, i);
+            }
+            i = i - 1;
+        }
+        return name;
+    }
+
+    func extension() -> string {
+        let name = this.file_name();
+        let len = string_length(name);
+        let i = len - 1;
+        while i >= 0 {
+            let ch = string_char_at(name, i);
+            if ch == 46 {
+                return string_substring(name, i + 1, len);
+            }
+            i = i - 1;
+        }
+        return "";
+    }
+
+    func is_absolute() -> bool {
+        if string_starts_with(this.path_str, "/") || string_starts_with(this.path_str, "\\") {
+            return true;
+        }
+        return string_contains(this.path_str, ":\\") || string_contains(this.path_str, ":/");
+    }
+
+    func is_relative() -> bool {
+        return !this.is_absolute();
+    }
+
+    func exists() -> bool {
+        return fs_exists(this.path_str);
+    }
+
+    func is_file() -> bool {
+        return fs_is_file(this.path_str);
+    }
+
+    func is_dir() -> bool {
+        return fs_is_dir(this.path_str);
+    }
+
+    func metadata() -> Metadata {
+        return get_metadata(this.path_str);
+    }
+
+    func to_string() -> string {
+        return this.path_str;
+    }
+}
+
+class PathBuf {
+    current_path: Path,
+}
+
+impl PathBuf {
+    func push(segment: string) -> void {
+        this.current_path = this.current_path.join(segment);
+    }
+
+    func to_path() -> Path {
+        return this.current_path;
+    }
+
+    func to_string() -> string {
+        return this.current_path.to_string();
+    }
+
+    func exists() -> bool {
+        return this.current_path.exists();
+    }
+
+    func is_file() -> bool {
+        return this.current_path.is_file();
+    }
+
+    func is_dir() -> bool {
+        return this.current_path.is_dir();
+    }
+}
+
+// ---- Factory Functions ----
+func open_options() -> OpenOptions {
+    return new OpenOptions(false, false, false, false, false, false);
+}
+
+func file_open(path: string) -> File {
+    let opts = open_options().read(true);
+    return opts.open(path);
+}
+
+func file_create(path: string) -> File {
+    let opts = open_options().write(true).create(true).truncate(true);
+    return opts.open(path);
+}
+
+func buffered_reader(file: File) -> BufferedReader {
+    return new BufferedReader(file, false);
+}
+
+func buffered_writer(file: File) -> BufferedWriter {
+    return new BufferedWriter(file, "", 8192, false);
+}
+
+func path_new(p: string) -> Path {
+    return new Path(p);
+}
+
+func path_buf_new(p: string) -> PathBuf {
+    return new PathBuf(new Path(p));
+}
+
+func get_metadata(path: string) -> Metadata {
+    let size = fs_file_size(path);
+    let is_reg = fs_is_file(path);
+    let is_directory = fs_is_dir(path);
+    let is_sym = fs_is_symlink(path);
+    let ro = fs_is_readonly(path);
+    let mtime = fs_modified_time(path);
+    return new Metadata(size, is_reg, is_directory, is_sym, ro, mtime);
+}
+
+// ---- Directory Operations ----
+func create_dir(path: string) -> bool {
+    return fs_create_dir(path);
+}
+
+func create_dir_all(path: string) -> bool {
+    return fs_create_dir_all(path);
+}
+
+func remove_dir(path: string) -> bool {
+    return fs_remove_dir(path);
+}
+
+func remove_dir_all(path: string) -> bool {
+    return fs_remove_dir_all(path);
+}
+
+func remove_file(path: string) -> bool {
+    return fs_remove_file(path);
+}
+
+func read_dir(path: string) -> list {
+    return fs_read_dir(path);
+}
+
+func walk_dir(root_path: string) -> list {
+    let results = list_new();
+    let queue = list_new();
+    let root: any = root_path;
+    list_push(queue, root);
+
+    while !list_is_empty(queue) {
+        let current: string = list_get(queue, 0);
+        list_remove(queue, 0);
+
+        let entries = read_dir(current);
+        let n = list_length(entries);
+        let i = 0;
+        while i < n {
+            let entry_name: string = list_get(entries, i);
+            if entry_name != "." && entry_name != ".." {
+                let full_path = current;
+                if !string_ends_with(full_path, "/") && !string_ends_with(full_path, "\\") {
+                    full_path = full_path + "/" + entry_name;
+                } else {
+                    full_path = full_path + entry_name;
+                }
+
+                let fp: any = full_path;
+                if fs_is_dir(full_path) {
+                    list_push(queue, fp);
+                } else {
+                    list_push(results, fp);
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return results;
+}
+
+func copy_file(src: string, dest: string) -> int {
+    return fs_copy(src, dest);
+}
+
+func rename(src: string, dest: string) -> bool {
+    return fs_rename(src, dest);
+}
+
+func canonicalize(path: string) -> string {
+    return fs_canonicalize(path);
+}
+
+func read_to_string(path: string) -> string {
+    let f = file_open(path);
+    let s = f.read_to_string();
+    f.close();
+    return s;
+}
+
+func write_to_file(path: string, content: string) -> void {
+    let f = file_create(path);
+    f.write(content);
+    f.close();
+}

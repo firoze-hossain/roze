@@ -1,47 +1,53 @@
 // stdlib/src/io.roze
 //
-// IO (file, network) reference for Roze.
-//
-// STATUS: every function below is a compiler INTRINSIC, the same way
-// Core's string/math functions are (see stdlib/src/core.roze) -- the
-// compiler recognizes these names directly (see
-// compiler/src/codegen/jvm.rs) and maps them to real JVM calls. They're
-// available in every program automatically, with no import required,
-// and this file is never actually read by the compiler.
-//
-// Errors (file not found, permission denied, a network request that
-// fails) can either surface as a runtime crash using legacy intrinsics,
-// or safely handled using Result-returning intrinsics (`read_file_result`,
-// `write_file_result`, `http_get_result`, etc.) combined with `?` error propagation.
-// See ROADMAP.md.
+// Roze Standard I/O Streams and File Helpers (M4-T04)
+// Full architectural parity with Rust std::io and Java 25 java.io / java.nio.file.
 
-// ---- File ----
-// read_file(path)            -> string : the file's full contents (crashes on error)
-// read_file_result(path)     -> Result : Ok(contents) or Err(message)
-// write_file(path, content)  -> void   : overwrites the file with content (crashes on error)
-// write_file_result(path, c) -> Result : Ok(true) or Err(message)
-// append_file(path, content) -> void   : appends content to the end of the file
-// append_file_result(path, c)-> Result : Ok(true) or Err(message)
-// file_exists(path)          -> bool   : true if a file exists at path
-// delete_file(path)          -> bool   : true if a file existed and was deleted
-// delete_file_result(path)   -> Result : Ok(bool) or Err(message)
-// read_lines(path)           -> list   : the file's contents, one string per line
-// read_lines_result(path)    -> Result : Ok(list) or Err(message)
+import "fs";
 
-// ---- Network ----
-// http_get(url)              -> string : the response body of a GET request
-// http_get_result(url)       -> Result : Ok(response body) or Err(message)
-// http_post(url, body)       -> string : the response body of a POST request
-// http_post_result(url, body)-> Result : Ok(response body) or Err(message)
+// ---- Seek Whence Constants ----
+func seek_set() -> int { return 0; }
+func seek_start() -> int { return 0; }
+func seek_cur() -> int { return 1; }
+func seek_current() -> int { return 1; }
+func seek_end() -> int { return 2; }
 
-// Example:
-//
-// func main() {
-//     write_file("notes.txt", "hello");
-//     append_file("notes.txt", "\nworld");
-//     println(read_file("notes.txt"));
-//     println(file_exists("notes.txt"));
-//     delete_file("notes.txt");
-//
-//     println(http_get("https://example.com"));
-// }
+// ---- Standard I/O Streams ----
+func stdin_read_line() -> string {
+    return fs_stdin_read_line();
+}
+
+func stdout_write(s: string) -> int {
+    return fs_stdout_write(s);
+}
+
+func stdout_flush() -> void {
+    fs_stdout_flush();
+}
+
+func stderr_write(s: string) -> int {
+    return fs_stderr_write(s);
+}
+
+func stderr_write_line(s: string) -> int {
+    let res = fs_stderr_write(s + "\n");
+    fs_stderr_flush();
+    return res;
+}
+
+func stderr_flush() -> void {
+    fs_stderr_flush();
+}
+
+func print(s: string) -> void {
+    fs_stdout_write(s);
+}
+
+func eprint(s: string) -> void {
+    fs_stderr_write(s);
+}
+
+func eprintln(s: string) -> void {
+    fs_stderr_write(s + "\n");
+    fs_stderr_flush();
+}

@@ -5234,6 +5234,284 @@ const FFI_HELPER_METHODS: &str = r#"
     }
 "#;
 
+const FS_HELPER_METHODS: &str = r#"
+    // =============================================================
+    // Cross-Platform Filesystem & Standard I/O Engine (M4-T04)
+    // =============================================================
+    private static final java.util.Map<Integer, java.io.RandomAccessFile> __ROZE_FS_FILES = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.atomic.AtomicInteger __ROZE_FS_HANDLE_GEN = new java.util.concurrent.atomic.AtomicInteger(1);
+    private static final java.io.BufferedReader __ROZE_STDIN_READER = new java.io.BufferedReader(new java.io.InputStreamReader(System.in));
+
+    public static int fs_open(String path, String mode) {
+        try {
+            String rafMode = mode.contains("w") || mode.contains("a") || mode.contains("+") ? "rw" : "r";
+            java.io.File file = new java.io.File(path);
+            if (mode.contains("w")) {
+                if (file.getParentFile() != null) file.getParentFile().mkdirs();
+                if (file.exists()) {
+                    java.io.RandomAccessFile trunc = new java.io.RandomAccessFile(file, "rw");
+                    trunc.setLength(0);
+                    trunc.close();
+                }
+            } else if (mode.contains("a")) {
+                if (file.getParentFile() != null) file.getParentFile().mkdirs();
+            }
+            if (!file.exists() && mode.equals("r")) {
+                return 0;
+            }
+            java.io.RandomAccessFile raf = new java.io.RandomAccessFile(file, rafMode);
+            if (mode.contains("a")) {
+                raf.seek(raf.length());
+            }
+            int h = __ROZE_FS_HANDLE_GEN.getAndIncrement();
+            __ROZE_FS_FILES.put(h, raf);
+            return h;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    public static void fs_close(int handle) {
+        java.io.RandomAccessFile raf = __ROZE_FS_FILES.remove(handle);
+        if (raf != null) {
+            try { raf.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    public static String fs_read(int handle, int maxBytes) {
+        java.io.RandomAccessFile raf = __ROZE_FS_FILES.get(handle);
+        if (raf == null || maxBytes <= 0) return "";
+        try {
+            byte[] buf = new byte[maxBytes];
+            int n = raf.read(buf);
+            if (n <= 0) return "";
+            return new String(buf, 0, n, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    public static String fs_read_all(int handle) {
+        java.io.RandomAccessFile raf = __ROZE_FS_FILES.get(handle);
+        if (raf == null) return "";
+        try {
+            long rem = raf.length() - raf.getFilePointer();
+            if (rem <= 0) return "";
+            byte[] buf = new byte[(int) rem];
+            raf.readFully(buf);
+            return new String(buf, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    public static String fs_read_line(int handle) {
+        java.io.RandomAccessFile raf = __ROZE_FS_FILES.get(handle);
+        if (raf == null) return "";
+        try {
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            int b;
+            while ((b = raf.read()) != -1) {
+                if (b == '\n') break;
+                if (b != '\r') baos.write(b);
+            }
+            if (baos.size() == 0 && b == -1) return "";
+            return baos.toString(java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    public static int fs_write(int handle, String content) {
+        java.io.RandomAccessFile raf = __ROZE_FS_FILES.get(handle);
+        if (raf == null || content == null) return -1;
+        try {
+            byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            raf.write(bytes);
+            return bytes.length;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    public static void fs_flush(int handle) {
+        java.io.RandomAccessFile raf = __ROZE_FS_FILES.get(handle);
+        if (raf != null) {
+            try { raf.getChannel().force(true); } catch (Exception ignored) {}
+        }
+    }
+
+    public static int fs_seek(int handle, int offset, int whence) {
+        java.io.RandomAccessFile raf = __ROZE_FS_FILES.get(handle);
+        if (raf == null) return -1;
+        try {
+            long target;
+            if (whence == 0) {
+                target = offset;
+            } else if (whence == 1) {
+                target = raf.getFilePointer() + offset;
+            } else if (whence == 2) {
+                target = raf.length() + offset;
+            } else {
+                return -1;
+            }
+            if (target < 0) target = 0;
+            raf.seek(target);
+            return (int) raf.getFilePointer();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    public static int fs_tell(int handle) {
+        java.io.RandomAccessFile raf = __ROZE_FS_FILES.get(handle);
+        if (raf == null) return -1;
+        try {
+            return (int) raf.getFilePointer();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    public static boolean fs_create_dir(String path) {
+        return new java.io.File(path).mkdir();
+    }
+
+    public static boolean fs_create_dir_all(String path) {
+        java.io.File f = new java.io.File(path);
+        return f.mkdirs() || f.isDirectory();
+    }
+
+    public static boolean fs_remove_dir(String path) {
+        return new java.io.File(path).delete();
+    }
+
+    public static boolean fs_remove_dir_all(String path) {
+        java.io.File f = new java.io.File(path);
+        if (!f.exists()) return true;
+        if (f.isDirectory()) {
+            java.io.File[] children = f.listFiles();
+            if (children != null) {
+                for (java.io.File c : children) {
+                    if (c.isDirectory()) fs_remove_dir_all(c.getPath());
+                    else c.delete();
+                }
+            }
+        }
+        return f.delete();
+    }
+
+    public static boolean fs_remove_file(String path) {
+        return new java.io.File(path).delete();
+    }
+
+    public static java.util.List fs_read_dir(String path) {
+        java.util.List res = new java.util.ArrayList();
+        java.io.File[] files = new java.io.File(path).listFiles();
+        if (files != null) {
+            for (java.io.File f : files) {
+                res.add(f.getName());
+            }
+        }
+        return res;
+    }
+
+    public static int fs_copy(String src, String dest) {
+        try {
+            java.nio.file.Path source = java.nio.file.Paths.get(src);
+            java.nio.file.Path target = java.nio.file.Paths.get(dest);
+            if (target.getParent() != null) java.nio.file.Files.createDirectories(target.getParent());
+            java.nio.file.Files.copy(source, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            return (int) java.nio.file.Files.size(target);
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    public static boolean fs_rename(String src, String dest) {
+        try {
+            return new java.io.File(src).renameTo(new java.io.File(dest));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static String fs_canonicalize(String path) {
+        try {
+            return new java.io.File(path).getCanonicalPath();
+        } catch (Exception e) {
+            return new java.io.File(path).getAbsolutePath();
+        }
+    }
+
+    public static boolean fs_exists(String path) {
+        return new java.io.File(path).exists();
+    }
+
+    public static boolean fs_is_file(String path) {
+        return new java.io.File(path).isFile();
+    }
+
+    public static boolean fs_is_dir(String path) {
+        return new java.io.File(path).isDirectory();
+    }
+
+    public static boolean fs_is_symlink(String path) {
+        try {
+            return java.nio.file.Files.isSymbolicLink(java.nio.file.Paths.get(path));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static int fs_file_size(String path) {
+        return (int) new java.io.File(path).length();
+    }
+
+    public static int fs_modified_time(String path) {
+        return (int) (new java.io.File(path).lastModified() / 1000);
+    }
+
+    public static boolean fs_is_readonly(String path) {
+        java.io.File f = new java.io.File(path);
+        return f.exists() && !f.canWrite();
+    }
+
+    public static String fs_stdin_read_line() {
+        try {
+            String s = __ROZE_STDIN_READER.readLine();
+            return s == null ? "" : s;
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    public static int fs_stdout_write(String content) {
+        if (content != null) {
+            System.out.print(content);
+            return content.length();
+        }
+        return 0;
+    }
+
+    public static void fs_stdout_flush() {
+        System.out.flush();
+    }
+
+    public static int fs_stderr_write(String content) {
+        if (content != null) {
+            System.err.print(content);
+            return content.length();
+        }
+        return 0;
+    }
+
+    public static void fs_stderr_flush() {
+        System.err.flush();
+    }
+"#;
+
+
 
 /// Returns the Java return type for a built-in Core (string/math)
 /// intrinsic, or None if `name` isn't one. Keep this in sync with
@@ -5636,6 +5914,13 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         | "raw_socket_is_mock" | "raw_socket_inject_mock" | "raw_socket_mock_count"
         | "pcap_write_dump" | "pcap_read_dump" | "pcap_file_size" => Some("int"),
 
+        // Filesystem & Standard I/O (M4-T04)
+        "fs_open" | "fs_write" | "fs_seek" | "fs_tell" | "fs_file_size" | "fs_modified_time" | "fs_copy" | "fs_stdout_write" | "fs_stderr_write" => Some("int"),
+        "fs_close" | "fs_flush" | "fs_stdout_flush" | "fs_stderr_flush" => Some("void"),
+        "fs_read" | "fs_read_all" | "fs_read_line" | "fs_canonicalize" | "fs_stdin_read_line" => Some("String"),
+        "fs_create_dir" | "fs_create_dir_all" | "fs_remove_dir" | "fs_remove_dir_all" | "fs_remove_file" | "fs_rename" | "fs_exists" | "fs_is_file" | "fs_is_dir" | "fs_is_symlink" | "fs_is_readonly" => Some("boolean"),
+        "fs_read_dir" => Some("java.util.List"),
+
         _ => None,
     }
 }
@@ -5877,6 +6162,7 @@ pub struct JavaSourceGenerator {
     program: TypedProgram,
     class_name: String,
     try_counter: std::cell::Cell<usize>,
+    in_class: std::cell::Cell<bool>,
 }
 
 impl JavaSourceGenerator {
@@ -5891,6 +6177,7 @@ impl JavaSourceGenerator {
             program,
             class_name,
             try_counter: std::cell::Cell::new(0),
+            in_class: std::cell::Cell::new(false),
         }
     }
 
@@ -6073,6 +6360,7 @@ impl JavaSourceGenerator {
         if has_ffi {
             source.push_str(FFI_HELPER_METHODS);
         }
+        source.push_str(FS_HELPER_METHODS);
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);
@@ -6239,6 +6527,7 @@ impl JavaSourceGenerator {
         }
         source.push_str("    }\n");
 
+        self.in_class.set(true);
         for method_stmt in class_methods {
             if let TypedStatement::Function { name: m_name, params, return_type, body, .. } = method_stmt {
                 let params_sig: Vec<String> = params.iter()
@@ -6255,6 +6544,7 @@ impl JavaSourceGenerator {
                 source.push_str("    }\n");
             }
         }
+        self.in_class.set(false);
 
         source.push_str("}\n\n");
         Ok(())
@@ -10168,6 +10458,10 @@ impl JavaSourceGenerator {
                 source.push(')');
             }
             _ => {
+                if self.in_class.get() {
+                    source.push_str(&self.class_name);
+                    source.push('.');
+                }
                 source.push_str(&escape_java_identifier(name));
                 source.push('(');
                 for (i, arg) in arguments.iter().enumerate() {

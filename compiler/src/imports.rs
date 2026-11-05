@@ -105,6 +105,12 @@ const FFI_DISPLAY_NAME: &str = "ffi (built-in)";
 const PTR_SOURCE: &str = include_str!("../../stdlib/src/ptr.roze");
 const PTR_DISPLAY_NAME: &str = "ptr (built-in)";
 
+const FS_SOURCE: &str = include_str!("../../stdlib/src/fs.roze");
+const FS_DISPLAY_NAME: &str = "fs (built-in)";
+
+const IO_SOURCE: &str = include_str!("../../stdlib/src/io.roze");
+const IO_DISPLAY_NAME: &str = "io (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -270,6 +276,12 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "ptr" || path == "roze::ptr" || path == "core::ffi" || path == "ffi::ptr" || path == "std::ptr" || path == "memory_layout" {
         return Ok((PTR_SOURCE.to_string(), PTR_DISPLAY_NAME.to_string()));
+    }
+    if path == "fs" || path == "std::fs" || path == "roze::fs" || path == "filesystem" || path == "path" || path == "std::path" {
+        return Ok((FS_SOURCE.to_string(), FS_DISPLAY_NAME.to_string()));
+    }
+    if path == "io" || path == "std::io" || path == "roze::io" {
+        return Ok((IO_SOURCE.to_string(), IO_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

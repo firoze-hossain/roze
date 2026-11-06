@@ -24,6 +24,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <sys/wait.h>
+#include <signal.h>
 #if defined(__linux__)
 #include <linux/if_packet.h>
 #include <net/ethernet.h>
@@ -6131,6 +6133,458 @@ void __roze_fs_stderr_write(const char* s) {
 
 void __roze_fs_stderr_flush(void) {
     fflush(stderr);
+}
+
+// =============================================================
+// Process Spawning, Pipes & OS Interop Runtime (M4-T05)
+// =============================================================
+
+#define ROZE_MAX_PROCESSES 128
+
+typedef struct {
+    pid_t pid;
+    int stdin_fd;   // write end of child's stdin pipe, or -1
+    int stdout_fd;  // read end of child's stdout pipe, or -1
+    int stderr_fd;  // read end of child's stderr pipe, or -1
+    int in_use;
+    int exited;
+    int exit_code;
+} RozeProcEntry;
+
+static RozeProcEntry g_roze_proc_table[ROZE_MAX_PROCESSES];
+static pthread_mutex_t g_roze_proc_table_lock = PTHREAD_MUTEX_INITIALIZER;
+
+int64_t __roze_proc_spawn(const char* cmd, int64_t args_list, int64_t env_keys_list, int64_t env_vals_list, const char* cwd, int64_t in_mode, int64_t out_mode, int64_t err_mode) {
+    if (!cmd || cmd[0] == '\0') return 0;
+
+    pthread_mutex_lock(&g_roze_proc_table_lock);
+    int slot = -1;
+    for (int i = 0; i < ROZE_MAX_PROCESSES; i++) {
+        if (!g_roze_proc_table[i].in_use) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        pthread_mutex_unlock(&g_roze_proc_table_lock);
+        return 0;
+    }
+
+    int pipe_stdin[2] = {-1, -1};
+    int pipe_stdout[2] = {-1, -1};
+    int pipe_stderr[2] = {-1, -1};
+
+    if (in_mode == 1) {
+        if (pipe(pipe_stdin) < 0) {
+            pthread_mutex_unlock(&g_roze_proc_table_lock);
+            return 0;
+        }
+    }
+    if (out_mode == 1) {
+        if (pipe(pipe_stdout) < 0) {
+            if (pipe_stdin[0] >= 0) { close(pipe_stdin[0]); close(pipe_stdin[1]); }
+            pthread_mutex_unlock(&g_roze_proc_table_lock);
+            return 0;
+        }
+    }
+    if (err_mode == 1) {
+        if (pipe(pipe_stderr) < 0) {
+            if (pipe_stdin[0] >= 0) { close(pipe_stdin[0]); close(pipe_stdin[1]); }
+            if (pipe_stdout[0] >= 0) { close(pipe_stdout[0]); close(pipe_stdout[1]); }
+            pthread_mutex_unlock(&g_roze_proc_table_lock);
+            return 0;
+        }
+    }
+
+    // Prepare argv
+    int64_t num_args = 0;
+    if (args_list) {
+        RozeListRepr* alist = (RozeListRepr*)args_list;
+        num_args = alist->length;
+    }
+    char** argv = (char**)malloc(sizeof(char*) * (size_t)(num_args + 2));
+    if (!argv) {
+        if (pipe_stdin[0] >= 0) { close(pipe_stdin[0]); close(pipe_stdin[1]); }
+        if (pipe_stdout[0] >= 0) { close(pipe_stdout[0]); close(pipe_stdout[1]); }
+        if (pipe_stderr[0] >= 0) { close(pipe_stderr[0]); close(pipe_stderr[1]); }
+        pthread_mutex_unlock(&g_roze_proc_table_lock);
+        return 0;
+    }
+    argv[0] = (char*)cmd;
+    if (args_list) {
+        RozeListRepr* alist = (RozeListRepr*)args_list;
+        for (int64_t i = 0; i < num_args; i++) {
+            argv[i + 1] = (char*)alist->data[i];
+        }
+    }
+    argv[num_args + 1] = NULL;
+
+    signal(SIGPIPE, SIG_IGN);
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        free(argv);
+        if (pipe_stdin[0] >= 0) { close(pipe_stdin[0]); close(pipe_stdin[1]); }
+        if (pipe_stdout[0] >= 0) { close(pipe_stdout[0]); close(pipe_stdout[1]); }
+        if (pipe_stderr[0] >= 0) { close(pipe_stderr[0]); close(pipe_stderr[1]); }
+        pthread_mutex_unlock(&g_roze_proc_table_lock);
+        return 0;
+    }
+
+    if (pid == 0) {
+        // ---- CHILD PROCESS ----
+        if (in_mode == 1) {
+            close(pipe_stdin[1]);
+            dup2(pipe_stdin[0], STDIN_FILENO);
+            close(pipe_stdin[0]);
+        } else if (in_mode == 2) {
+            int devnull = open("/dev/null", O_RDONLY);
+            if (devnull >= 0) { dup2(devnull, STDIN_FILENO); close(devnull); }
+        }
+
+        if (out_mode == 1) {
+            close(pipe_stdout[0]);
+            dup2(pipe_stdout[1], STDOUT_FILENO);
+            close(pipe_stdout[1]);
+        } else if (out_mode == 2) {
+            int devnull = open("/dev/null", O_WRONLY);
+            if (devnull >= 0) { dup2(devnull, STDOUT_FILENO); close(devnull); }
+        }
+
+        if (err_mode == 1) {
+            close(pipe_stderr[0]);
+            dup2(pipe_stderr[1], STDERR_FILENO);
+            close(pipe_stderr[1]);
+        } else if (err_mode == 2) {
+            int devnull = open("/dev/null", O_WRONLY);
+            if (devnull >= 0) { dup2(devnull, STDERR_FILENO); close(devnull); }
+        }
+
+        if (cwd && cwd[0] != '\0') {
+            if (chdir(cwd) != 0) {
+                // ignore
+            }
+        }
+
+        if (env_keys_list && env_vals_list) {
+            RozeListRepr* klist = (RozeListRepr*)env_keys_list;
+            RozeListRepr* vlist = (RozeListRepr*)env_vals_list;
+            int64_t count = klist->length < vlist->length ? klist->length : vlist->length;
+            for (int64_t i = 0; i < count; i++) {
+                const char* k = (const char*)klist->data[i];
+                const char* v = (const char*)vlist->data[i];
+                if (k && v) {
+                    setenv(k, v, 1);
+                }
+            }
+        }
+
+        execvp(cmd, argv);
+        _exit(127);
+    }
+
+    // ---- PARENT PROCESS ----
+    free(argv);
+
+    if (pipe_stdin[0] >= 0) close(pipe_stdin[0]);
+    if (pipe_stdout[1] >= 0) close(pipe_stdout[1]);
+    if (pipe_stderr[1] >= 0) close(pipe_stderr[1]);
+
+    g_roze_proc_table[slot].pid = pid;
+    g_roze_proc_table[slot].stdin_fd = pipe_stdin[1];
+    g_roze_proc_table[slot].stdout_fd = pipe_stdout[0];
+    g_roze_proc_table[slot].stderr_fd = pipe_stderr[0];
+    g_roze_proc_table[slot].in_use = 1;
+    g_roze_proc_table[slot].exited = 0;
+    g_roze_proc_table[slot].exit_code = 0;
+
+    pthread_mutex_unlock(&g_roze_proc_table_lock);
+    return (int64_t)(slot + 1);
+}
+
+int64_t __roze_proc_wait(int64_t handle) {
+    if (handle <= 0 || handle > ROZE_MAX_PROCESSES) return -1;
+    pthread_mutex_lock(&g_roze_proc_table_lock);
+    int slot = (int)(handle - 1);
+    if (!g_roze_proc_table[slot].in_use) {
+        pthread_mutex_unlock(&g_roze_proc_table_lock);
+        return -1;
+    }
+    if (g_roze_proc_table[slot].exited) {
+        int64_t code = g_roze_proc_table[slot].exit_code;
+        pthread_mutex_unlock(&g_roze_proc_table_lock);
+        return code;
+    }
+
+    pid_t pid = g_roze_proc_table[slot].pid;
+    pthread_mutex_unlock(&g_roze_proc_table_lock);
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+
+    int code = 0;
+    if (WIFEXITED(status)) {
+        code = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+        code = 128 + WTERMSIG(status);
+    } else {
+        code = status;
+    }
+
+    pthread_mutex_lock(&g_roze_proc_table_lock);
+    g_roze_proc_table[slot].exited = 1;
+    g_roze_proc_table[slot].exit_code = code;
+    pthread_mutex_unlock(&g_roze_proc_table_lock);
+
+    return (int64_t)code;
+}
+
+int64_t __roze_proc_is_running(int64_t handle) {
+    if (handle <= 0 || handle > ROZE_MAX_PROCESSES) return 0;
+    pthread_mutex_lock(&g_roze_proc_table_lock);
+    int slot = (int)(handle - 1);
+    if (!g_roze_proc_table[slot].in_use) {
+        pthread_mutex_unlock(&g_roze_proc_table_lock);
+        return 0;
+    }
+    if (g_roze_proc_table[slot].exited) {
+        pthread_mutex_unlock(&g_roze_proc_table_lock);
+        return 0;
+    }
+
+    pid_t pid = g_roze_proc_table[slot].pid;
+    pthread_mutex_unlock(&g_roze_proc_table_lock);
+
+    int status = 0;
+    pid_t res = waitpid(pid, &status, WNOHANG);
+    if (res == 0) {
+        return 1;
+    } else if (res > 0) {
+        pthread_mutex_lock(&g_roze_proc_table_lock);
+        g_roze_proc_table[slot].exited = 1;
+        g_roze_proc_table[slot].exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : (WIFSIGNALED(status) ? 128 + WTERMSIG(status) : status);
+        pthread_mutex_unlock(&g_roze_proc_table_lock);
+        return 0;
+    } else {
+        return 0;
+    }
+}
+
+int64_t __roze_proc_kill(int64_t handle) {
+    if (handle <= 0 || handle > ROZE_MAX_PROCESSES) return 0;
+    pthread_mutex_lock(&g_roze_proc_table_lock);
+    int slot = (int)(handle - 1);
+    if (!g_roze_proc_table[slot].in_use) {
+        pthread_mutex_unlock(&g_roze_proc_table_lock);
+        return 0;
+    }
+    pid_t pid = g_roze_proc_table[slot].pid;
+    pthread_mutex_unlock(&g_roze_proc_table_lock);
+
+    return kill(pid, SIGKILL) == 0 ? 1 : 0;
+}
+
+int64_t __roze_proc_stdin_write(int64_t handle, const char* data) {
+    if (handle <= 0 || handle > ROZE_MAX_PROCESSES || !data) return 0;
+    pthread_mutex_lock(&g_roze_proc_table_lock);
+    int slot = (int)(handle - 1);
+    if (!g_roze_proc_table[slot].in_use || g_roze_proc_table[slot].stdin_fd < 0) {
+        pthread_mutex_unlock(&g_roze_proc_table_lock);
+        return 0;
+    }
+    int fd = g_roze_proc_table[slot].stdin_fd;
+    pthread_mutex_unlock(&g_roze_proc_table_lock);
+
+    size_t len = strlen(data);
+    ssize_t written = write(fd, data, len);
+    return written > 0 ? (int64_t)written : 0;
+}
+
+void __roze_proc_stdin_close(int64_t handle) {
+    if (handle <= 0 || handle > ROZE_MAX_PROCESSES) return;
+    pthread_mutex_lock(&g_roze_proc_table_lock);
+    int slot = (int)(handle - 1);
+    if (g_roze_proc_table[slot].in_use && g_roze_proc_table[slot].stdin_fd >= 0) {
+        close(g_roze_proc_table[slot].stdin_fd);
+        g_roze_proc_table[slot].stdin_fd = -1;
+    }
+    pthread_mutex_unlock(&g_roze_proc_table_lock);
+}
+
+const char* __roze_proc_stdout_read(int64_t handle) {
+    if (handle <= 0 || handle > ROZE_MAX_PROCESSES) return __roze_make_string_with_len("", 0);
+    pthread_mutex_lock(&g_roze_proc_table_lock);
+    int slot = (int)(handle - 1);
+    if (!g_roze_proc_table[slot].in_use || g_roze_proc_table[slot].stdout_fd < 0) {
+        pthread_mutex_unlock(&g_roze_proc_table_lock);
+        return __roze_make_string_with_len("", 0);
+    }
+    int fd = g_roze_proc_table[slot].stdout_fd;
+    pthread_mutex_unlock(&g_roze_proc_table_lock);
+
+    size_t cap = 2048;
+    size_t len = 0;
+    char* buf = (char*)malloc(cap);
+    if (!buf) return __roze_make_string_with_len("", 0);
+
+    while (1) {
+        if (len + 1024 >= cap) {
+            cap *= 2;
+            char* nb = (char*)realloc(buf, cap);
+            if (!nb) break;
+            buf = nb;
+        }
+        ssize_t n = read(fd, buf + len, cap - len - 1);
+        if (n <= 0) break;
+        len += (size_t)n;
+    }
+    buf[len] = '\0';
+    const char* res = __roze_make_string_with_len(buf, (int64_t)len);
+    free(buf);
+    return res;
+}
+
+const char* __roze_proc_stderr_read(int64_t handle) {
+    if (handle <= 0 || handle > ROZE_MAX_PROCESSES) return __roze_make_string_with_len("", 0);
+    pthread_mutex_lock(&g_roze_proc_table_lock);
+    int slot = (int)(handle - 1);
+    if (!g_roze_proc_table[slot].in_use || g_roze_proc_table[slot].stderr_fd < 0) {
+        pthread_mutex_unlock(&g_roze_proc_table_lock);
+        return __roze_make_string_with_len("", 0);
+    }
+    int fd = g_roze_proc_table[slot].stderr_fd;
+    pthread_mutex_unlock(&g_roze_proc_table_lock);
+
+    size_t cap = 2048;
+    size_t len = 0;
+    char* buf = (char*)malloc(cap);
+    if (!buf) return __roze_make_string_with_len("", 0);
+
+    while (1) {
+        if (len + 1024 >= cap) {
+            cap *= 2;
+            char* nb = (char*)realloc(buf, cap);
+            if (!nb) break;
+            buf = nb;
+        }
+        ssize_t n = read(fd, buf + len, cap - len - 1);
+        if (n <= 0) break;
+        len += (size_t)n;
+    }
+    buf[len] = '\0';
+    const char* res = __roze_make_string_with_len(buf, (int64_t)len);
+    free(buf);
+    return res;
+}
+
+void __roze_proc_close(int64_t handle) {
+    if (handle <= 0 || handle > ROZE_MAX_PROCESSES) return;
+    pthread_mutex_lock(&g_roze_proc_table_lock);
+    int slot = (int)(handle - 1);
+    if (g_roze_proc_table[slot].in_use) {
+        if (g_roze_proc_table[slot].stdin_fd >= 0) close(g_roze_proc_table[slot].stdin_fd);
+        if (g_roze_proc_table[slot].stdout_fd >= 0) close(g_roze_proc_table[slot].stdout_fd);
+        if (g_roze_proc_table[slot].stderr_fd >= 0) close(g_roze_proc_table[slot].stderr_fd);
+        g_roze_proc_table[slot].stdin_fd = -1;
+        g_roze_proc_table[slot].stdout_fd = -1;
+        g_roze_proc_table[slot].stderr_fd = -1;
+        g_roze_proc_table[slot].in_use = 0;
+        g_roze_proc_table[slot].pid = 0;
+    }
+    pthread_mutex_unlock(&g_roze_proc_table_lock);
+}
+
+int64_t __roze_proc_get_pid(int64_t handle) {
+    if (handle <= 0 || handle > ROZE_MAX_PROCESSES) return 0;
+    pthread_mutex_lock(&g_roze_proc_table_lock);
+    int slot = (int)(handle - 1);
+    int64_t pid = g_roze_proc_table[slot].in_use ? (int64_t)g_roze_proc_table[slot].pid : 0;
+    pthread_mutex_unlock(&g_roze_proc_table_lock);
+    return pid;
+}
+
+int64_t __roze_proc_self_pid(void) {
+    return (int64_t)getpid();
+}
+
+void __roze_proc_exit(int64_t code) {
+    exit((int)code);
+}
+
+int64_t __roze_proc_signal(int64_t pid, int64_t sig) {
+    return kill((pid_t)pid, (int)sig) == 0 ? 1 : 0;
+}
+
+const char* __roze_sys_env_var(const char* key) {
+    if (!key) return __roze_make_string_with_len("", 0);
+    const char* val = getenv(key);
+    if (!val) return __roze_make_string_with_len("", 0);
+    return __roze_make_string_with_len(val, (int64_t)strlen(val));
+}
+
+int64_t __roze_sys_env_has(const char* key) {
+    if (!key) return 0;
+    return getenv(key) != NULL ? 1 : 0;
+}
+
+void __roze_sys_env_set(const char* key, const char* val) {
+    if (key && val) {
+        setenv(key, val, 1);
+    }
+}
+
+void __roze_sys_env_remove(const char* key) {
+    if (key) {
+        unsetenv(key);
+    }
+}
+
+const char* __roze_sys_env_cwd(void) {
+    char buf[4096];
+    if (getcwd(buf, sizeof(buf))) {
+        return __roze_make_string_with_len(buf, (int64_t)strlen(buf));
+    }
+    return __roze_make_string_with_len(".", 1);
+}
+
+int64_t __roze_sys_env_set_cwd(const char* dir) {
+    if (!dir) return 0;
+    return chdir(dir) == 0 ? 1 : 0;
+}
+
+int64_t __roze_sys_env_args(void) {
+    int64_t list = __roze_make_empty_list();
+    FILE* f = fopen("/proc/self/cmdline", "rb");
+    if (f) {
+        char buf[4096];
+        size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+        fclose(f);
+        size_t start = 0;
+        for (size_t i = 0; i < n; i++) {
+            if (buf[i] == '\0') {
+                if (i > start) {
+                    int64_t s = (int64_t)__roze_make_string_with_len(buf + start, (int64_t)(i - start));
+                    __roze_list_push_item(list, s);
+                }
+                start = i + 1;
+            }
+        }
+    }
+    return list;
+}
+
+int64_t __roze_sys_env_vars(void) {
+    int64_t list = __roze_make_empty_list();
+    extern char** environ;
+    if (environ) {
+        for (char** env = environ; *env != NULL; env++) {
+            int64_t s = (int64_t)__roze_make_string_with_len(*env, (int64_t)strlen(*env));
+            __roze_list_push_item(list, s);
+        }
+    }
+    return list;
 }
 
 

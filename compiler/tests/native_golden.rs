@@ -4557,6 +4557,50 @@ fn native_standard_fs_and_io_suite() {
     assert!(stdout.contains("✅ M4-T04 Filesystem & I/O Engine Complete!"));
 }
 
+#[test]
+fn native_standard_process_and_env_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_process_env.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_process_env.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_proc_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("--- Test 1: Environment Variables Query & Mutation ---"));
+    assert!(stdout.contains("env_has(ROZE_TEST_VAR): true"));
+    assert!(stdout.contains("env_var(ROZE_TEST_VAR): roze_value_42"));
+    assert!(stdout.contains("Env.has(ROZE_OOP_VAR): true"));
+    assert!(stdout.contains("Env.var(ROZE_OOP_VAR): oop_value_99"));
+    assert!(stdout.contains("after remove env_has: false"));
+    assert!(stdout.contains("--- Test 2: Working Directory Inspection ---"));
+    assert!(stdout.contains("cwd not empty: true"));
+    assert!(stdout.contains("set_current_dir ok: true"));
+    assert!(stdout.contains("--- Test 3: Process Execution & Exit Status ---"));
+    assert!(stdout.contains("status success: true"));
+    assert!(stdout.contains("exit code 0: 0"));
+    assert!(stdout.contains("fail success: false"));
+    assert!(stdout.contains("fail exit code 42: 42"));
+    assert!(stdout.contains("--- Test 4: Output Redirection & Capture ---"));
+    assert!(stdout.contains("echo success: true"));
+    assert!(stdout.contains("echo stdout contains: true"));
+    assert!(stdout.contains("err stderr contains: true"));
+    assert!(stdout.contains("--- Test 5: Subprocess Environment Passing ---"));
+    assert!(stdout.contains("sub env stdout contains: true"));
+    assert!(stdout.contains("--- Test 6: Subprocess Working Directory ---"));
+    assert!(stdout.contains("pwd stdout contains tmp: true"));
+    assert!(stdout.contains("--- Test 7: Piped Stdin & Streaming ---"));
+    assert!(stdout.contains("child pid > 0: true"));
+    assert!(stdout.contains("cat success: true"));
+    assert!(stdout.contains("cat output contains: true"));
+    assert!(stdout.contains("--- Test 8: Process ID, Signals & Child Termination ---"));
+    assert!(stdout.contains("my pid > 0: true"));
+    assert!(stdout.contains("self signal 0 alive: true"));
+    assert!(stdout.contains("sleep is running: true"));
+    assert!(stdout.contains("sleep killed: true"));
+    assert!(stdout.contains("sleep wait completed: true"));
+    assert!(stdout.contains("M4-T05 PROCESS & ENV SUITE ALL PASSED!"));
+}
+
 
 
 

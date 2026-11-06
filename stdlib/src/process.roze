@@ -1,0 +1,276 @@
+// stdlib/src/process.roze
+//
+// Roze Cross-Platform Process Spawning, Pipes & OS Interop Engine (M4-T05)
+// Full architectural parity with Rust std::process and Java 25 java.lang.ProcessBuilder.
+
+import "env";
+
+class ExitStatus {
+    code: int,
+}
+
+impl ExitStatus {
+    func success() -> bool {
+        return this.code == 0;
+    }
+
+    func exit_code() -> int {
+        return this.code;
+    }
+
+    func to_string() -> string {
+        return "ExitStatus(" + to_string(this.code) + ")";
+    }
+}
+
+class Output {
+    status: ExitStatus,
+    stdout: string,
+    stderr: string,
+}
+
+impl Output {
+    func success() -> bool {
+        return this.status.success();
+    }
+
+    func exit_code() -> int {
+        return this.status.exit_code();
+    }
+
+    func stdout_str() -> string {
+        return this.stdout;
+    }
+
+    func stderr_str() -> string {
+        return this.stderr;
+    }
+}
+
+class Child {
+    handle: int,
+    pid: int,
+    is_waited: bool,
+    cached_code: int,
+}
+
+impl Child {
+    func id() -> int {
+        return this.pid;
+    }
+
+    func wait() -> ExitStatus {
+        if (this.is_waited) {
+            return new ExitStatus(this.cached_code);
+        }
+        let c = proc_wait(this.handle);
+        this.is_waited = true;
+        this.cached_code = c;
+        return new ExitStatus(c);
+    }
+
+    func wait_with_output() -> Output {
+        let out = proc_stdout_read(this.handle);
+        let err = proc_stderr_read(this.handle);
+        let st = this.wait();
+        proc_close(this.handle);
+        return new Output(st, out, err);
+    }
+
+    func is_running() -> bool {
+        if (this.is_waited) {
+            return false;
+        }
+        return proc_is_running(this.handle);
+    }
+
+    func kill() -> bool {
+        return proc_kill(this.handle);
+    }
+
+    func stdin_write(data: string) -> int {
+        return proc_stdin_write(this.handle, data);
+    }
+
+    func stdin_close() -> void {
+        proc_stdin_close(this.handle);
+    }
+
+    func stdout_read() -> string {
+        return proc_stdout_read(this.handle);
+    }
+
+    func stderr_read() -> string {
+        return proc_stderr_read(this.handle);
+    }
+}
+
+class Command {
+    program: string,
+    arg_list: list,
+    env_keys: list,
+    env_vals: list,
+    working_dir: string,
+    stdin_mode: int,
+    stdout_mode: int,
+    stderr_mode: int,
+}
+
+impl Command {
+    func arg(a: string) -> Command {
+        let item: any = a;
+        list_push(this.arg_list, item);
+        return this;
+    }
+
+    func args(items: list) -> Command {
+        let len = list_length(items);
+        let i = 0;
+        while (i < len) {
+            let val: any = list_get(items, i);
+            list_push(this.arg_list, val);
+            i = i + 1;
+        }
+        return this;
+    }
+
+    func env(key: string, val: string) -> Command {
+        let k: any = key;
+        let v: any = val;
+        list_push(this.env_keys, k);
+        list_push(this.env_vals, v);
+        return this;
+    }
+
+    func current_dir(dir: string) -> Command {
+        this.working_dir = dir;
+        return this;
+    }
+
+    func stdin_inherit() -> Command {
+        this.stdin_mode = 0;
+        return this;
+    }
+
+    func stdin_piped() -> Command {
+        this.stdin_mode = 1;
+        return this;
+    }
+
+    func stdin_null() -> Command {
+        this.stdin_mode = 2;
+        return this;
+    }
+
+    func stdout_inherit() -> Command {
+        this.stdout_mode = 0;
+        return this;
+    }
+
+    func stdout_piped() -> Command {
+        this.stdout_mode = 1;
+        return this;
+    }
+
+    func stdout_null() -> Command {
+        this.stdout_mode = 2;
+        return this;
+    }
+
+    func stderr_inherit() -> Command {
+        this.stderr_mode = 0;
+        return this;
+    }
+
+    func stderr_piped() -> Command {
+        this.stderr_mode = 1;
+        return this;
+    }
+
+    func stderr_null() -> Command {
+        this.stderr_mode = 2;
+        return this;
+    }
+
+    func spawn() -> Child {
+        let h = proc_spawn(this.program, this.arg_list, this.env_keys, this.env_vals, this.working_dir, this.stdin_mode, this.stdout_mode, this.stderr_mode);
+        let p = proc_get_pid(h);
+        return new Child(h, p, false, 0);
+    }
+
+    func output() -> Output {
+        this.stdout_mode = 1;
+        this.stderr_mode = 1;
+        let ch = this.spawn();
+        return ch.wait_with_output();
+    }
+
+    func status() -> ExitStatus {
+        let ch = this.spawn();
+        return ch.wait();
+    }
+}
+
+// ---- Constructor / Factory Functions ----
+
+func command_new(program: string) -> Command {
+    return new Command(program, list_new(), list_new(), list_new(), "", 0, 0, 0);
+}
+
+func command(program: string) -> Command {
+    return new Command(program, list_new(), list_new(), list_new(), "", 0, 0, 0);
+}
+
+func exit_status_new(code: int) -> ExitStatus {
+    return new ExitStatus(code);
+}
+
+func output_new(status: ExitStatus, stdout: string, stderr: string) -> Output {
+    return new Output(status, stdout, stderr);
+}
+
+func child_new(handle: int, pid: int) -> Child {
+    return new Child(handle, pid, false, 0);
+}
+
+// ---- Top-level Process & Signal Helpers ----
+
+func process_id() -> int {
+    return proc_self_pid();
+}
+
+func getpid() -> int {
+    return proc_self_pid();
+}
+
+func exit(code: int) -> void {
+    proc_exit(code);
+}
+
+func exit_process(code: int) -> void {
+    proc_exit(code);
+}
+
+func abort() -> void {
+    proc_exit(134);
+}
+
+func send_signal(pid: int, sig: int) -> bool {
+    return proc_signal(pid, sig);
+}
+
+// ---- POSIX Signal Constants ----
+
+func sig_hup() -> int { return 1; }
+func sig_int() -> int { return 2; }
+func sig_quit() -> int { return 3; }
+func sig_ill() -> int { return 4; }
+func sig_abrt() -> int { return 6; }
+func sig_fpe() -> int { return 8; }
+func sig_kill() -> int { return 9; }
+func sig_segv() -> int { return 11; }
+func sig_pipe() -> int { return 13; }
+func sig_alrm() -> int { return 14; }
+func sig_term() -> int { return 15; }
+func sig_usr1() -> int { return 10; }
+func sig_usr2() -> int { return 12; }

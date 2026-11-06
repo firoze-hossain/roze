@@ -5511,6 +5511,242 @@ const FS_HELPER_METHODS: &str = r#"
     }
 "#;
 
+const PROCESS_HELPER_METHODS: &str = r#"
+    // =============================================================
+    // Process Spawning, Pipes & OS Interop (M4-T05)
+    // =============================================================
+    private static final java.util.Map<Integer, java.lang.Process> __ROZE_PROCESS_TABLE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.atomic.AtomicInteger __ROZE_PROC_HANDLE_GEN = new java.util.concurrent.atomic.AtomicInteger(1);
+    private static final java.util.Map<String, String> __ROZE_CUSTOM_ENV = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.Set<String> __ROZE_REMOVED_ENV = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    public static final java.util.List<String> __ROZE_CLI_ARGS = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public static int proc_spawn(String cmd, java.util.List args, java.util.List envKeys, java.util.List envVals, String cwd, int inMode, int outMode, int errMode) {
+        try {
+            java.util.List<String> commandList = new java.util.ArrayList<>();
+            commandList.add(cmd);
+            if (args != null) {
+                for (Object a : args) {
+                    commandList.add(String.valueOf(a));
+                }
+            }
+            java.lang.ProcessBuilder pb = new java.lang.ProcessBuilder(commandList);
+
+            java.util.Map<String, String> env = pb.environment();
+            for (String rem : __ROZE_REMOVED_ENV) {
+                env.remove(rem);
+            }
+            for (java.util.Map.Entry<String, String> entry : __ROZE_CUSTOM_ENV.entrySet()) {
+                env.put(entry.getKey(), entry.getValue());
+            }
+            if (envKeys != null && envVals != null) {
+                int count = Math.min(envKeys.size(), envVals.size());
+                for (int i = 0; i < count; i++) {
+                    env.put(String.valueOf(envKeys.get(i)), String.valueOf(envVals.get(i)));
+                }
+            }
+
+            if (cwd != null && !cwd.isEmpty()) {
+                pb.directory(new java.io.File(cwd));
+            }
+
+            if (inMode == 0) pb.redirectInput(java.lang.ProcessBuilder.Redirect.INHERIT);
+            else if (inMode == 1) pb.redirectInput(java.lang.ProcessBuilder.Redirect.PIPE);
+            else if (inMode == 2) pb.redirectInput(new java.io.File(System.getProperty("os.name", "").toLowerCase().contains("win") ? "NUL" : "/dev/null"));
+
+            if (outMode == 0) pb.redirectOutput(java.lang.ProcessBuilder.Redirect.INHERIT);
+            else if (outMode == 1) pb.redirectOutput(java.lang.ProcessBuilder.Redirect.PIPE);
+            else if (outMode == 2) pb.redirectOutput(new java.io.File(System.getProperty("os.name", "").toLowerCase().contains("win") ? "NUL" : "/dev/null"));
+
+            if (errMode == 0) pb.redirectError(java.lang.ProcessBuilder.Redirect.INHERIT);
+            else if (errMode == 1) pb.redirectError(java.lang.ProcessBuilder.Redirect.PIPE);
+            else if (errMode == 2) pb.redirectError(new java.io.File(System.getProperty("os.name", "").toLowerCase().contains("win") ? "NUL" : "/dev/null"));
+
+            java.lang.Process proc = pb.start();
+            int h = __ROZE_PROC_HANDLE_GEN.getAndIncrement();
+            __ROZE_PROCESS_TABLE.put(h, proc);
+            return h;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    public static int proc_wait(int handle) {
+        java.lang.Process proc = __ROZE_PROCESS_TABLE.get(handle);
+        if (proc == null) return -1;
+        try {
+            return proc.waitFor();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    public static boolean proc_is_running(int handle) {
+        java.lang.Process proc = __ROZE_PROCESS_TABLE.get(handle);
+        if (proc == null) return false;
+        return proc.isAlive();
+    }
+
+    public static boolean proc_kill(int handle) {
+        java.lang.Process proc = __ROZE_PROCESS_TABLE.get(handle);
+        if (proc == null) return false;
+        proc.destroyForcibly();
+        return true;
+    }
+
+    public static int proc_stdin_write(int handle, String data) {
+        java.lang.Process proc = __ROZE_PROCESS_TABLE.get(handle);
+        if (proc == null || data == null) return 0;
+        try {
+            java.io.OutputStream out = proc.getOutputStream();
+            byte[] bytes = data.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            out.write(bytes);
+            out.flush();
+            return bytes.length;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    public static void proc_stdin_close(int handle) {
+        java.lang.Process proc = __ROZE_PROCESS_TABLE.get(handle);
+        if (proc != null) {
+            try { proc.getOutputStream().close(); } catch (Exception ignored) {}
+        }
+    }
+
+    public static String proc_stdout_read(int handle) {
+        java.lang.Process proc = __ROZE_PROCESS_TABLE.get(handle);
+        if (proc == null) return "";
+        try {
+            java.io.InputStream in = proc.getInputStream();
+            byte[] bytes = in.readAllBytes();
+            return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    public static String proc_stderr_read(int handle) {
+        java.lang.Process proc = __ROZE_PROCESS_TABLE.get(handle);
+        if (proc == null) return "";
+        try {
+            java.io.InputStream in = proc.getErrorStream();
+            byte[] bytes = in.readAllBytes();
+            return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    public static void proc_close(int handle) {
+        java.lang.Process proc = __ROZE_PROCESS_TABLE.remove(handle);
+        if (proc != null) {
+            try { proc.getInputStream().close(); } catch (Exception ignored) {}
+            try { proc.getErrorStream().close(); } catch (Exception ignored) {}
+            try { proc.getOutputStream().close(); } catch (Exception ignored) {}
+        }
+    }
+
+    public static int proc_get_pid(int handle) {
+        java.lang.Process proc = __ROZE_PROCESS_TABLE.get(handle);
+        if (proc == null) return 0;
+        return (int) proc.pid();
+    }
+
+    public static int proc_self_pid() {
+        return (int) ProcessHandle.current().pid();
+    }
+
+    public static void proc_exit(int code) {
+        System.exit(code);
+    }
+
+    public static boolean proc_signal(int pid, int sig) {
+        try {
+            if (sig == 0) {
+                return ProcessHandle.of((long) pid).isPresent() || new ProcessBuilder("kill", "-0", String.valueOf(pid)).start().waitFor() == 0;
+            }
+            if (sig == 9) {
+                java.util.Optional<ProcessHandle> ph = ProcessHandle.of((long) pid);
+                if (ph.isPresent()) { ph.get().destroyForcibly(); return true; }
+            }
+            if (sig == 15) {
+                java.util.Optional<ProcessHandle> ph = ProcessHandle.of((long) pid);
+                if (ph.isPresent()) { ph.get().destroy(); return true; }
+            }
+            Process p = new ProcessBuilder("kill", "-" + sig, String.valueOf(pid)).start();
+            return p.waitFor() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static String sys_env_var(String key) {
+        if (key == null || __ROZE_REMOVED_ENV.contains(key)) return "";
+        String custom = __ROZE_CUSTOM_ENV.get(key);
+        if (custom != null) return custom;
+        String val = System.getenv(key);
+        if (val != null) return val;
+        String prop = System.getProperty(key);
+        return prop != null ? prop : "";
+    }
+
+    public static boolean sys_env_has(String key) {
+        if (key == null || __ROZE_REMOVED_ENV.contains(key)) return false;
+        if (__ROZE_CUSTOM_ENV.containsKey(key)) return true;
+        if (System.getenv(key) != null) return true;
+        return System.getProperty(key) != null;
+    }
+
+    public static void sys_env_set(String key, String val) {
+        if (key != null && val != null) {
+            __ROZE_REMOVED_ENV.remove(key);
+            __ROZE_CUSTOM_ENV.put(key, val);
+            System.setProperty(key, val);
+        }
+    }
+
+    public static void sys_env_remove(String key) {
+        if (key != null) {
+            __ROZE_REMOVED_ENV.add(key);
+            __ROZE_CUSTOM_ENV.remove(key);
+            System.clearProperty(key);
+        }
+    }
+
+    public static String sys_env_cwd() {
+        return System.getProperty("user.dir", ".");
+    }
+
+    public static boolean sys_env_set_cwd(String dir) {
+        if (dir == null) return false;
+        java.io.File f = new java.io.File(dir);
+        if (f.isDirectory()) {
+            System.setProperty("user.dir", f.getAbsolutePath());
+            return true;
+        }
+        return false;
+    }
+
+    public static java.util.List sys_env_args() {
+        return new java.util.ArrayList<>(__ROZE_CLI_ARGS);
+    }
+
+    public static java.util.List sys_env_vars() {
+        java.util.List<String> res = new java.util.ArrayList<>();
+        java.util.Map<String, String> all = new java.util.HashMap<>(System.getenv());
+        all.putAll(__ROZE_CUSTOM_ENV);
+        for (String rem : __ROZE_REMOVED_ENV) {
+            all.remove(rem);
+        }
+        for (java.util.Map.Entry<String, String> e : all.entrySet()) {
+            res.add(e.getKey() + "=" + e.getValue());
+        }
+        return res;
+    }
+"#;
+
 
 
 /// Returns the Java return type for a built-in Core (string/math)
@@ -5921,6 +6157,13 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "fs_create_dir" | "fs_create_dir_all" | "fs_remove_dir" | "fs_remove_dir_all" | "fs_remove_file" | "fs_rename" | "fs_exists" | "fs_is_file" | "fs_is_dir" | "fs_is_symlink" | "fs_is_readonly" => Some("boolean"),
         "fs_read_dir" => Some("java.util.List"),
 
+        // Process Spawning, Pipes & OS Interop (M4-T05)
+        "proc_spawn" | "proc_wait" | "proc_stdin_write" | "proc_get_pid" | "proc_self_pid" => Some("int"),
+        "proc_stdin_close" | "proc_close" | "proc_exit" | "sys_env_set" | "sys_env_remove" => Some("void"),
+        "proc_stdout_read" | "proc_stderr_read" | "sys_env_var" | "sys_env_cwd" => Some("String"),
+        "proc_is_running" | "proc_kill" | "proc_signal" | "sys_env_has" | "sys_env_set_cwd" => Some("boolean"),
+        "sys_env_args" | "sys_env_vars" => Some("java.util.List"),
+
         _ => None,
     }
 }
@@ -5946,6 +6189,8 @@ const JAVA_RESERVED_WORDS: &[&str] = &[
     "transient", "try", "void", "volatile", "while",
     "true", "false", "null",
     "_",
+    // java.lang.Object final methods that cannot be overridden by class methods
+    "wait", "notify", "notifyAll", "getClass",
 ];
 
 /// Escapes a Roze identifier that happens to collide with a Java
@@ -6214,6 +6459,7 @@ impl JavaSourceGenerator {
 
                 if name == "main" {
                     source.push_str("    public static void main(String[] args) {\n");
+                    source.push_str("        if (args != null) { for (String a : args) __ROZE_CLI_ARGS.add(a); }\n");
                     self.generate_statement(&mut source, body, 2, &Type::Void, false)?;
                     source.push_str("    }\n");
                     main_found = true;
@@ -6340,6 +6586,7 @@ impl JavaSourceGenerator {
 
         if !main_found {
             source.push_str("    public static void main(String[] args) {\n");
+            source.push_str("        if (args != null) { for (String a : args) __ROZE_CLI_ARGS.add(a); }\n");
             source.push_str("        System.out.println(\"No main function found!\");\n");
             source.push_str("    }\n");
         }
@@ -6361,6 +6608,7 @@ impl JavaSourceGenerator {
             source.push_str(FFI_HELPER_METHODS);
         }
         source.push_str(FS_HELPER_METHODS);
+        source.push_str(PROCESS_HELPER_METHODS);
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);

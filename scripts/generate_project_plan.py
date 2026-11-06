@@ -412,19 +412,19 @@ s1_rows = [
         ("M4-T03", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Memory Architecture", "Thread-Safe Atomic ARC & Weak References",
         "Upgrade ARC to multi-threaded atomic retain/release (atomic_fetch_add/sub), implement Weak<T> cyclic reference detection, and distinguish thread-local Rc<T> from atomic Arc<T>.",
         "100% thread-safe memory management matching Rust Arc<T>/Weak<T> and C++ std::shared_ptr.",
-        "Multi-Core Systems, Concurrency, Servers", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Multi-Core Systems, Concurrency, Servers", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M4-T04", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "Filesystem & I/O", "Standard I/O Streams & Filesystem Engine",
         "Cross-platform std::io and std::fs: File, OpenOptions (read, write, append, create), BufferedReader, BufferedWriter, Path/PathBuf, directory walking, and metadata.",
         "Parity with Rust std::fs / std::io and Java 25 java.nio.file.",
-        "CLI Tools, Backend Servers, Compilers", "7 Days", ("High", 14), ("Planned", 12)
+        "CLI Tools, Backend Servers, Compilers", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M4-T05", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "OS & Processes", "Process Spawning, Pipes & Signal Handling",
         "Cross-platform process execution (Command::new), standard I/O redirection (pipes for stdin/stdout/stderr), exit status codes, environment variables (std::env), and POSIX/Win32 signals.",
         "Matches Rust std::process and Java java.lang.ProcessBuilder.",
-        "Systems Administration, DevOps, Build Tools", "7 Days", ("High", 14), ("Planned", 12)
+        "Systems Administration, DevOps, Build Tools", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M4-T06", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "High-Precision Time", "Instant, Duration & Monotonic Timer Reactor",

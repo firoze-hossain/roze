@@ -111,6 +111,12 @@ const FS_DISPLAY_NAME: &str = "fs (built-in)";
 const IO_SOURCE: &str = include_str!("../../stdlib/src/io.roze");
 const IO_DISPLAY_NAME: &str = "io (built-in)";
 
+const PROCESS_SOURCE: &str = include_str!("../../stdlib/src/process.roze");
+const PROCESS_DISPLAY_NAME: &str = "process (built-in)";
+
+const ENV_SOURCE: &str = include_str!("../../stdlib/src/env.roze");
+const ENV_DISPLAY_NAME: &str = "env (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -282,6 +288,12 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "io" || path == "std::io" || path == "roze::io" {
         return Ok((IO_SOURCE.to_string(), IO_DISPLAY_NAME.to_string()));
+    }
+    if path == "process" || path == "std::process" || path == "roze::process" {
+        return Ok((PROCESS_SOURCE.to_string(), PROCESS_DISPLAY_NAME.to_string()));
+    }
+    if path == "env" || path == "std::env" || path == "roze::env" || path == "os" || path == "std::os" {
+        return Ok((ENV_SOURCE.to_string(), ENV_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

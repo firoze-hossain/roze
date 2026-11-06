@@ -1713,6 +1713,31 @@ const char *__roze_string_substring(const char *s, long start, long end) { (void
 const char *__roze_to_string_i64(long val) { (void)val; return ""; }
 const char *__roze_to_string_bool(long val) { (void)val; return ""; }
 
+long __roze_proc_spawn(const char *cmd, long args, long env_keys, long env_vals, const char *cwd, long in_mode, long out_mode, long err_mode) {
+    (void)cmd; (void)args; (void)env_keys; (void)env_vals; (void)cwd; (void)in_mode; (void)out_mode; (void)err_mode; return 0;
+}
+long __roze_proc_wait(long handle) { (void)handle; return 0; }
+long __roze_proc_is_running(long handle) { (void)handle; return 0; }
+long __roze_proc_kill(long handle) { (void)handle; return 0; }
+long __roze_proc_stdin_write(long handle, const char *data) { (void)handle; (void)data; return 0; }
+void __roze_proc_stdin_close(long handle) { (void)handle; }
+const char *__roze_proc_stdout_read(long handle) { (void)handle; return ""; }
+const char *__roze_proc_stderr_read(long handle) { (void)handle; return ""; }
+void __roze_proc_close(long handle) { (void)handle; }
+long __roze_proc_get_pid(long handle) { (void)handle; return 0; }
+long __roze_proc_self_pid(void) { return 0; }
+void __roze_proc_exit(long code) { (void)code; }
+long __roze_proc_signal(long pid, long sig) { (void)pid; (void)sig; return 0; }
+
+const char *__roze_sys_env_var(const char *key) { (void)key; return ""; }
+long __roze_sys_env_has(const char *key) { (void)key; return 0; }
+void __roze_sys_env_set(const char *key, const char *val) { (void)key; (void)val; }
+void __roze_sys_env_remove(const char *key) { (void)key; }
+const char *__roze_sys_env_cwd(void) { return "/"; }
+long __roze_sys_env_set_cwd(const char *dir) { (void)dir; return 0; }
+void *__roze_sys_env_args(void) { return 0; }
+void *__roze_sys_env_vars(void) { return 0; }
+
 // 6. Bootstrap entry point called by entry64
 __attribute__((weak))
 void __roze_main(void);
@@ -5681,6 +5706,88 @@ fn declare_fs_runtime(module: &mut ObjectModule) -> Result<FsRuntime> {
     })
 }
 
+#[derive(Clone, Copy)]
+pub struct ProcRuntime {
+    pub proc_spawn: FuncId,
+    pub proc_wait: FuncId,
+    pub proc_is_running: FuncId,
+    pub proc_kill: FuncId,
+    pub proc_stdin_write: FuncId,
+    pub proc_stdin_close: FuncId,
+    pub proc_stdout_read: FuncId,
+    pub proc_stderr_read: FuncId,
+    pub proc_close: FuncId,
+    pub proc_get_pid: FuncId,
+    pub proc_self_pid: FuncId,
+    pub proc_exit: FuncId,
+    pub proc_signal: FuncId,
+    pub sys_env_var: FuncId,
+    pub sys_env_has: FuncId,
+    pub sys_env_set: FuncId,
+    pub sys_env_remove: FuncId,
+    pub sys_env_cwd: FuncId,
+    pub sys_env_set_cwd: FuncId,
+    pub sys_env_args: FuncId,
+    pub sys_env_vars: FuncId,
+}
+
+fn declare_proc_runtime(module: &mut ObjectModule) -> Result<ProcRuntime> {
+    macro_rules! decl {
+        ($name:expr, $sig:expr) => {
+            module.declare_function($name, Linkage::Import, &$sig).map_err(|e| anyhow!(e.to_string()))?
+        };
+    }
+
+    let mut sig_void_to_i64 = module.make_signature();
+    sig_void_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_to_void = module.make_signature();
+    sig_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_to_i64 = module.make_signature();
+    sig_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_i64_to_i64 = module.make_signature();
+    sig_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_i64_to_void = module.make_signature();
+    sig_i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_8 = module.make_signature();
+    for _ in 0..8 {
+        sig_8.params.push(AbiParam::new(VALUE_TYPE));
+    }
+    sig_8.returns.push(AbiParam::new(VALUE_TYPE));
+
+    Ok(ProcRuntime {
+        proc_spawn: decl!("__roze_proc_spawn", sig_8),
+        proc_wait: decl!("__roze_proc_wait", sig_i64_to_i64),
+        proc_is_running: decl!("__roze_proc_is_running", sig_i64_to_i64),
+        proc_kill: decl!("__roze_proc_kill", sig_i64_to_i64),
+        proc_stdin_write: decl!("__roze_proc_stdin_write", sig_i64_i64_to_i64),
+        proc_stdin_close: decl!("__roze_proc_stdin_close", sig_i64_to_void),
+        proc_stdout_read: decl!("__roze_proc_stdout_read", sig_i64_to_i64),
+        proc_stderr_read: decl!("__roze_proc_stderr_read", sig_i64_to_i64),
+        proc_close: decl!("__roze_proc_close", sig_i64_to_void),
+        proc_get_pid: decl!("__roze_proc_get_pid", sig_i64_to_i64),
+        proc_self_pid: decl!("__roze_proc_self_pid", sig_void_to_i64),
+        proc_exit: decl!("__roze_proc_exit", sig_i64_to_void),
+        proc_signal: decl!("__roze_proc_signal", sig_i64_i64_to_i64),
+        sys_env_var: decl!("__roze_sys_env_var", sig_i64_to_i64),
+        sys_env_has: decl!("__roze_sys_env_has", sig_i64_to_i64),
+        sys_env_set: decl!("__roze_sys_env_set", sig_i64_i64_to_void),
+        sys_env_remove: decl!("__roze_sys_env_remove", sig_i64_to_void),
+        sys_env_cwd: decl!("__roze_sys_env_cwd", sig_void_to_i64),
+        sys_env_set_cwd: decl!("__roze_sys_env_set_cwd", sig_i64_to_i64),
+        sys_env_args: decl!("__roze_sys_env_args", sig_void_to_i64),
+        sys_env_vars: decl!("__roze_sys_env_vars", sig_void_to_i64),
+    })
+}
+
 /// A native class instance is a pointer to a heap block:
 ///
 ///   [0..8)          i64  refcount
@@ -6030,6 +6137,7 @@ struct NativeGenerator<'a> {
     memory: MemoryRuntime,
     raw_net: RawNetRuntime,
     fs: FsRuntime,
+    proc: ProcRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -6122,6 +6230,7 @@ impl<'a> NativeGenerator<'a> {
         let memory = declare_memory_runtime(module)?;
         let raw_net = declare_raw_net_runtime(module)?;
         let fs = declare_fs_runtime(module)?;
+        let proc = declare_proc_runtime(module)?;
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
@@ -6159,6 +6268,7 @@ impl<'a> NativeGenerator<'a> {
             memory,
             raw_net,
             fs,
+            proc,
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
@@ -6351,6 +6461,8 @@ impl<'a> NativeGenerator<'a> {
                     (name.as_str(), Linkage::Export)
                 } else if name == "main" {
                     ("__roze_main", if self.is_freestanding { Linkage::Export } else { Linkage::Local })
+                } else if name == "exit" {
+                    ("__roze_user_exit", Linkage::Local)
                 } else {
                     (name.as_str(), Linkage::Local)
                 };
@@ -6539,6 +6651,7 @@ impl<'a> NativeGenerator<'a> {
                     memory: &self.memory,
                     raw_net: &self.raw_net,
                     fs: &self.fs,
+                    proc: &self.proc,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
@@ -6664,6 +6777,7 @@ impl<'a> NativeGenerator<'a> {
                                 memory: &self.memory,
                                 raw_net: &self.raw_net,
                                 fs: &self.fs,
+                    proc: &self.proc,
                                 classes: &self.classes,
                                 class_retain_id: self.class_retain_id,
                                 literal_counter: &mut self.literal_counter,
@@ -6777,6 +6891,7 @@ impl<'a> NativeGenerator<'a> {
                         memory: &self.memory,
                         raw_net: &self.raw_net,
                         fs: &self.fs,
+                    proc: &self.proc,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
@@ -6933,6 +7048,7 @@ struct FunctionCompiler<'a, 'b> {
     memory: &'a MemoryRuntime,
     raw_net: &'a RawNetRuntime,
     fs: &'a FsRuntime,
+    proc: &'a ProcRuntime,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -12971,6 +13087,179 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let res = self.builder.inst_results(call)[0];
                 self.release_if_fresh(&arguments[0], arg)?;
                 return Ok(res);
+            }
+
+            // ---- Process Spawning, Pipes & OS Interop Engine (M4-T05) ----
+            "proc_spawn" if arguments.len() == 8 => {
+                let cmd = self.compile_expression(&arguments[0])?;
+                let args = self.compile_expression(&arguments[1])?;
+                let env_keys = self.compile_expression(&arguments[2])?;
+                let env_vals = self.compile_expression(&arguments[3])?;
+                let cwd = self.compile_expression(&arguments[4])?;
+                let in_mode = self.compile_expression(&arguments[5])?;
+                let out_mode = self.compile_expression(&arguments[6])?;
+                let err_mode = self.compile_expression(&arguments[7])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_spawn, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[cmd, args, env_keys, env_vals, cwd, in_mode, out_mode, err_mode]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], cmd)?;
+                self.release_if_fresh(&arguments[1], args)?;
+                self.release_if_fresh(&arguments[2], env_keys)?;
+                self.release_if_fresh(&arguments[3], env_vals)?;
+                self.release_if_fresh(&arguments[4], cwd)?;
+                self.release_if_fresh(&arguments[5], in_mode)?;
+                self.release_if_fresh(&arguments[6], out_mode)?;
+                self.release_if_fresh(&arguments[7], err_mode)?;
+                return Ok(res);
+            }
+            "proc_wait" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_wait, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(res);
+            }
+            "proc_is_running" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_is_running, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(res);
+            }
+            "proc_kill" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_kill, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(res);
+            }
+            "proc_stdin_write" if arguments.len() == 2 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let data = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_stdin_write, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h, data]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                self.release_if_fresh(&arguments[1], data)?;
+                return Ok(res);
+            }
+            "proc_stdin_close" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_stdin_close, self.builder.func);
+                self.builder.ins().call(func_ref, &[h]);
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "proc_stdout_read" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_stdout_read, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(res);
+            }
+            "proc_stderr_read" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_stderr_read, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(res);
+            }
+            "proc_close" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_close, self.builder.func);
+                self.builder.ins().call(func_ref, &[h]);
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "proc_get_pid" if arguments.len() == 1 => {
+                let h = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_get_pid, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[h]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], h)?;
+                return Ok(res);
+            }
+            "proc_self_pid" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_self_pid, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "proc_exit" if arguments.len() == 1 => {
+                let code = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_exit, self.builder.func);
+                self.builder.ins().call(func_ref, &[code]);
+                self.release_if_fresh(&arguments[0], code)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "proc_signal" if arguments.len() == 2 => {
+                let pid = self.compile_expression(&arguments[0])?;
+                let sig = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.proc_signal, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[pid, sig]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], pid)?;
+                self.release_if_fresh(&arguments[1], sig)?;
+                return Ok(res);
+            }
+            "sys_env_var" if arguments.len() == 1 => {
+                let k = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.sys_env_var, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[k]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], k)?;
+                return Ok(res);
+            }
+            "sys_env_has" if arguments.len() == 1 => {
+                let k = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.sys_env_has, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[k]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], k)?;
+                return Ok(res);
+            }
+            "sys_env_set" if arguments.len() == 2 => {
+                let k = self.compile_expression(&arguments[0])?;
+                let v = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.sys_env_set, self.builder.func);
+                self.builder.ins().call(func_ref, &[k, v]);
+                self.release_if_fresh(&arguments[0], k)?;
+                self.release_if_fresh(&arguments[1], v)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "sys_env_remove" if arguments.len() == 1 => {
+                let k = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.sys_env_remove, self.builder.func);
+                self.builder.ins().call(func_ref, &[k]);
+                self.release_if_fresh(&arguments[0], k)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "sys_env_cwd" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.proc.sys_env_cwd, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "sys_env_set_cwd" if arguments.len() == 1 => {
+                let dir = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.proc.sys_env_set_cwd, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[dir]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], dir)?;
+                return Ok(res);
+            }
+            "sys_env_args" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.proc.sys_env_args, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "sys_env_vars" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.proc.sys_env_vars, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
             }
             _ => {}
         }

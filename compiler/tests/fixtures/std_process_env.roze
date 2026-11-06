@@ -1,0 +1,90 @@
+// compiler/tests/fixtures/std_process_env.roze
+//
+// Integration test fixture for M4-T05: Process Spawning, Pipes & Signal Handling.
+// Full architectural parity with Rust std::process / std::env and Java ProcessBuilder.
+
+import "process";
+import "env";
+
+func main() {
+    println("--- Test 1: Environment Variables Query & Mutation ---");
+    env_set("ROZE_TEST_VAR", "roze_value_42");
+    println("env_has(ROZE_TEST_VAR): " + to_string(env_has("ROZE_TEST_VAR")));
+    println("env_var(ROZE_TEST_VAR): " + env_var("ROZE_TEST_VAR"));
+
+    let env_helper = new Env(0);
+    env_helper.set("ROZE_OOP_VAR", "oop_value_99");
+    println("Env.has(ROZE_OOP_VAR): " + to_string(env_helper.has("ROZE_OOP_VAR")));
+    println("Env.var(ROZE_OOP_VAR): " + env_helper.var("ROZE_OOP_VAR"));
+
+    env_remove("ROZE_TEST_VAR");
+    println("after remove env_has: " + to_string(env_has("ROZE_TEST_VAR")));
+
+    let v_list = env_vars();
+    println("env_vars has entries: " + to_string(list_length(v_list) > 0));
+
+    println("--- Test 2: Working Directory Inspection ---");
+    let cwd = current_dir();
+    println("cwd not empty: " + to_string(string_length(cwd) > 0));
+    let set_ok = set_current_dir("/tmp");
+    println("set_current_dir ok: " + to_string(set_ok));
+    // Restore
+    set_current_dir(cwd);
+
+    println("--- Test 3: Process Execution & Exit Status ---");
+    let cmd1 = command("sh").arg("-c").arg("exit 0");
+    let st1 = cmd1.status();
+    println("status success: " + to_string(st1.success()));
+    println("exit code 0: " + to_string(st1.exit_code()));
+
+    let cmd_fail = command("sh").arg("-c").arg("exit 42");
+    let st_fail = cmd_fail.status();
+    println("fail success: " + to_string(st_fail.success()));
+    println("fail exit code 42: " + to_string(st_fail.exit_code()));
+
+    println("--- Test 4: Output Redirection & Capture ---");
+    let echo_cmd = command("sh").arg("-c").arg("echo 'Hello Roze Process'");
+    let echo_out = echo_cmd.output();
+    println("echo success: " + to_string(echo_out.success()));
+    println("echo stdout contains: " + to_string(string_contains(echo_out.stdout_str(), "Hello Roze Process")));
+
+    let err_cmd = command("sh").arg("-c").arg("echo 'Err Log Output' >&2");
+    let err_out = err_cmd.output();
+    println("err stderr contains: " + to_string(string_contains(err_out.stderr_str(), "Err Log Output")));
+
+    println("--- Test 5: Subprocess Environment Passing ---");
+    let env_cmd = command("sh").arg("-c").arg("echo $SUB_KEY").env("SUB_KEY", "SubProcessEnvVal");
+    let sub_out = env_cmd.output();
+    println("sub env stdout contains: " + to_string(string_contains(sub_out.stdout_str(), "SubProcessEnvVal")));
+
+    println("--- Test 6: Subprocess Working Directory ---");
+    let pwd_cmd = command("sh").arg("-c").arg("pwd").current_dir("/tmp");
+    let pwd_out = pwd_cmd.output();
+    println("pwd stdout contains tmp: " + to_string(string_contains(pwd_out.stdout_str(), "tmp")));
+
+    println("--- Test 7: Piped Stdin & Streaming ---");
+    let cat_cmd = command("cat").stdin_piped().stdout_piped();
+    let ch = cat_cmd.spawn();
+    println("child pid > 0: " + to_string(ch.id() > 0));
+    ch.stdin_write("Streaming Data to Piped Child\n");
+    ch.stdin_close();
+    let cat_out = ch.wait_with_output();
+    println("cat success: " + to_string(cat_out.success()));
+    println("cat output contains: " + to_string(string_contains(cat_out.stdout_str(), "Streaming Data to Piped Child")));
+
+    println("--- Test 8: Process ID, Signals & Child Termination ---");
+    let my_pid = process_id();
+    println("my pid > 0: " + to_string(my_pid > 0));
+    let self_alive = send_signal(my_pid, 0);
+    println("self signal 0 alive: " + to_string(self_alive));
+
+    let sleep_cmd = command("sleep").arg("30");
+    let sleep_ch = sleep_cmd.spawn();
+    println("sleep is running: " + to_string(sleep_ch.is_running()));
+    let killed = sleep_ch.kill();
+    println("sleep killed: " + to_string(killed));
+    let sleep_st = sleep_ch.wait();
+    println("sleep wait completed: " + to_string(sleep_st.success() == false));
+
+    println("M4-T05 PROCESS & ENV SUITE ALL PASSED!");
+}

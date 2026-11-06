@@ -1500,6 +1500,31 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("fs_stdout_flush", vec![], Type::Void),
         ("fs_stderr_write", vec![Type::String], Type::Int),
         ("fs_stderr_flush", vec![], Type::Void),
+
+        // ---- Process Spawning, Pipes & OS Interop (M4-T05) ----
+        ("proc_spawn", vec![Type::String, Type::List, Type::List, Type::List, Type::String, Type::Int, Type::Int, Type::Int], Type::Int),
+        ("proc_wait", vec![Type::Int], Type::Int),
+        ("proc_is_running", vec![Type::Int], Type::Bool),
+        ("proc_kill", vec![Type::Int], Type::Bool),
+        ("proc_stdin_write", vec![Type::Int, Type::String], Type::Int),
+        ("proc_stdin_close", vec![Type::Int], Type::Void),
+        ("proc_stdout_read", vec![Type::Int], Type::String),
+        ("proc_stderr_read", vec![Type::Int], Type::String),
+        ("proc_close", vec![Type::Int], Type::Void),
+        ("proc_get_pid", vec![Type::Int], Type::Int),
+        ("proc_self_pid", vec![], Type::Int),
+        ("proc_exit", vec![Type::Int], Type::Void),
+        ("proc_signal", vec![Type::Int, Type::Int], Type::Bool),
+
+        // ---- Environment & OS State (M4-T05) ----
+        ("sys_env_var", vec![Type::String], Type::String),
+        ("sys_env_has", vec![Type::String], Type::Bool),
+        ("sys_env_set", vec![Type::String, Type::String], Type::Void),
+        ("sys_env_remove", vec![Type::String], Type::Void),
+        ("sys_env_cwd", vec![], Type::String),
+        ("sys_env_set_cwd", vec![Type::String], Type::Bool),
+        ("sys_env_args", vec![], Type::List),
+        ("sys_env_vars", vec![], Type::List),
     ]
 }
 

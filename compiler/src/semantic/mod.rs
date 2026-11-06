@@ -1525,6 +1525,17 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("sys_env_set_cwd", vec![Type::String], Type::Bool),
         ("sys_env_args", vec![], Type::List),
         ("sys_env_vars", vec![], Type::List),
+
+        // ---- High-Precision Time & Monotonic Reactor (M4-T06) ----
+        ("time_monotonic_nanos", vec![], Type::I64),
+        ("time_monotonic_micros", vec![], Type::I64),
+        ("time_monotonic_millis", vec![], Type::I64),
+        ("time_realtime_secs", vec![], Type::I64),
+        ("time_realtime_millis", vec![], Type::I64),
+        ("time_realtime_nanos", vec![], Type::I64),
+        ("time_sleep_nanos", vec![Type::I64], Type::Void),
+        ("time_sleep_micros", vec![Type::I64], Type::Void),
+        ("time_sleep_millis", vec![Type::I64], Type::Void),
     ]
 }
 

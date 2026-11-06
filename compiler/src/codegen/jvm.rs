@@ -5747,6 +5747,67 @@ const PROCESS_HELPER_METHODS: &str = r#"
     }
 "#;
 
+const TIME_HELPER_METHODS: &str = r#"
+    // ---- High-Precision Time & Monotonic Reactor Helpers (M4-T06) ----
+    private static final long __ROZE_MONOTONIC_START_NS = System.nanoTime();
+
+    public static long time_monotonic_nanos() {
+        return System.nanoTime() - __ROZE_MONOTONIC_START_NS;
+    }
+
+    public static long time_monotonic_micros() {
+        return (System.nanoTime() - __ROZE_MONOTONIC_START_NS) / 1000L;
+    }
+
+    public static long time_monotonic_millis() {
+        return (System.nanoTime() - __ROZE_MONOTONIC_START_NS) / 1000000L;
+    }
+
+    public static long time_realtime_secs() {
+        return System.currentTimeMillis() / 1000L;
+    }
+
+    public static long time_realtime_millis() {
+        return System.currentTimeMillis();
+    }
+
+    public static long time_realtime_nanos() {
+        java.time.Instant inst = java.time.Instant.now();
+        return inst.getEpochSecond() * 1000000000L + (long) inst.getNano();
+    }
+
+    public static void time_sleep_nanos(long ns) {
+        if (ns <= 0) return;
+        long ms = ns / 1000000L;
+        int remNs = (int) (ns % 1000000L);
+        try {
+            Thread.sleep(ms, remNs);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    public static void time_sleep_micros(long us) {
+        if (us <= 0) return;
+        long ms = us / 1000L;
+        int remNs = (int) ((us % 1000L) * 1000L);
+        try {
+            Thread.sleep(ms, remNs);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    public static void time_sleep_millis(long ms) {
+        if (ms <= 0) return;
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+    }
+"#;
+
 
 
 /// Returns the Java return type for a built-in Core (string/math)
@@ -6163,6 +6224,11 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "proc_stdout_read" | "proc_stderr_read" | "sys_env_var" | "sys_env_cwd" => Some("String"),
         "proc_is_running" | "proc_kill" | "proc_signal" | "sys_env_has" | "sys_env_set_cwd" => Some("boolean"),
         "sys_env_args" | "sys_env_vars" => Some("java.util.List"),
+
+        // High-Precision Time & Monotonic Reactor (M4-T06)
+        "time_monotonic_nanos" | "time_monotonic_micros" | "time_monotonic_millis"
+        | "time_realtime_secs" | "time_realtime_millis" | "time_realtime_nanos" => Some("long"),
+        "time_sleep_nanos" | "time_sleep_micros" | "time_sleep_millis" => Some("void"),
 
         _ => None,
     }
@@ -6609,6 +6675,7 @@ impl JavaSourceGenerator {
         }
         source.push_str(FS_HELPER_METHODS);
         source.push_str(PROCESS_HELPER_METHODS);
+        source.push_str(TIME_HELPER_METHODS);
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);

@@ -6587,6 +6587,68 @@ int64_t __roze_sys_env_vars(void) {
     return list;
 }
 
+// ---- High-Precision Monotonic Time & Timer Reactor Engine (M4-T06) ----
+
+int64_t __roze_time_monotonic_nanos(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
+        return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
+    }
+    return 0;
+}
+
+int64_t __roze_time_monotonic_micros(void) {
+    return __roze_time_monotonic_nanos() / 1000LL;
+}
+
+int64_t __roze_time_monotonic_millis(void) {
+    return __roze_time_monotonic_nanos() / 1000000LL;
+}
+
+int64_t __roze_time_realtime_secs(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+        return (int64_t)ts.tv_sec;
+    }
+    return (int64_t)time(NULL);
+}
+
+int64_t __roze_time_realtime_millis(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+        return (int64_t)ts.tv_sec * 1000LL + (int64_t)(ts.tv_nsec / 1000000LL);
+    }
+    return (int64_t)time(NULL) * 1000LL;
+}
+
+int64_t __roze_time_realtime_nanos(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+        return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
+    }
+    return (int64_t)time(NULL) * 1000000000LL;
+}
+
+void __roze_time_sleep_nanos(int64_t ns) {
+    if (ns <= 0) return;
+    struct timespec req, rem;
+    req.tv_sec = (time_t)(ns / 1000000000LL);
+    req.tv_nsec = (long)(ns % 1000000000LL);
+    while (nanosleep(&req, &rem) == -1 && errno == EINTR) {
+        req = rem;
+    }
+}
+
+void __roze_time_sleep_micros(int64_t us) {
+    if (us <= 0) return;
+    __roze_time_sleep_nanos(us * 1000LL);
+}
+
+void __roze_time_sleep_millis(int64_t ms) {
+    if (ms <= 0) return;
+    __roze_time_sleep_nanos(ms * 1000000LL);
+}
+
 
 
 

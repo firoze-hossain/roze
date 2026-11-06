@@ -1738,6 +1738,16 @@ long __roze_sys_env_set_cwd(const char *dir) { (void)dir; return 0; }
 void *__roze_sys_env_args(void) { return 0; }
 void *__roze_sys_env_vars(void) { return 0; }
 
+long __roze_time_monotonic_nanos(void) { return 0; }
+long __roze_time_monotonic_micros(void) { return 0; }
+long __roze_time_monotonic_millis(void) { return 0; }
+long __roze_time_realtime_secs(void) { return 0; }
+long __roze_time_realtime_millis(void) { return 0; }
+long __roze_time_realtime_nanos(void) { return 0; }
+void __roze_time_sleep_nanos(long ns) { (void)ns; }
+void __roze_time_sleep_micros(long us) { (void)us; }
+void __roze_time_sleep_millis(long ms) { (void)ms; }
+
 // 6. Bootstrap entry point called by entry64
 __attribute__((weak))
 void __roze_main(void);
@@ -5788,6 +5798,45 @@ fn declare_proc_runtime(module: &mut ObjectModule) -> Result<ProcRuntime> {
     })
 }
 
+#[derive(Clone, Copy)]
+pub struct TimeRuntime {
+    pub time_monotonic_nanos: FuncId,
+    pub time_monotonic_micros: FuncId,
+    pub time_monotonic_millis: FuncId,
+    pub time_realtime_secs: FuncId,
+    pub time_realtime_millis: FuncId,
+    pub time_realtime_nanos: FuncId,
+    pub time_sleep_nanos: FuncId,
+    pub time_sleep_micros: FuncId,
+    pub time_sleep_millis: FuncId,
+}
+
+fn declare_time_runtime(module: &mut ObjectModule) -> Result<TimeRuntime> {
+    macro_rules! decl {
+        ($name:expr, $sig:expr) => {
+            module.declare_function($name, Linkage::Import, &$sig).map_err(|e| anyhow!(e.to_string()))?
+        };
+    }
+
+    let mut sig_void_to_i64 = module.make_signature();
+    sig_void_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_to_void = module.make_signature();
+    sig_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    Ok(TimeRuntime {
+        time_monotonic_nanos: decl!("__roze_time_monotonic_nanos", sig_void_to_i64),
+        time_monotonic_micros: decl!("__roze_time_monotonic_micros", sig_void_to_i64),
+        time_monotonic_millis: decl!("__roze_time_monotonic_millis", sig_void_to_i64),
+        time_realtime_secs: decl!("__roze_time_realtime_secs", sig_void_to_i64),
+        time_realtime_millis: decl!("__roze_time_realtime_millis", sig_void_to_i64),
+        time_realtime_nanos: decl!("__roze_time_realtime_nanos", sig_void_to_i64),
+        time_sleep_nanos: decl!("__roze_time_sleep_nanos", sig_i64_to_void),
+        time_sleep_micros: decl!("__roze_time_sleep_micros", sig_i64_to_void),
+        time_sleep_millis: decl!("__roze_time_sleep_millis", sig_i64_to_void),
+    })
+}
+
 /// A native class instance is a pointer to a heap block:
 ///
 ///   [0..8)          i64  refcount
@@ -6138,6 +6187,7 @@ struct NativeGenerator<'a> {
     raw_net: RawNetRuntime,
     fs: FsRuntime,
     proc: ProcRuntime,
+    time: TimeRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -6231,6 +6281,7 @@ impl<'a> NativeGenerator<'a> {
         let raw_net = declare_raw_net_runtime(module)?;
         let fs = declare_fs_runtime(module)?;
         let proc = declare_proc_runtime(module)?;
+        let time = declare_time_runtime(module)?;
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
@@ -6269,6 +6320,7 @@ impl<'a> NativeGenerator<'a> {
             raw_net,
             fs,
             proc,
+            time,
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
@@ -6652,6 +6704,7 @@ impl<'a> NativeGenerator<'a> {
                     raw_net: &self.raw_net,
                     fs: &self.fs,
                     proc: &self.proc,
+                    time: &self.time,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
@@ -6777,7 +6830,8 @@ impl<'a> NativeGenerator<'a> {
                                 memory: &self.memory,
                                 raw_net: &self.raw_net,
                                 fs: &self.fs,
-                    proc: &self.proc,
+                                proc: &self.proc,
+                                time: &self.time,
                                 classes: &self.classes,
                                 class_retain_id: self.class_retain_id,
                                 literal_counter: &mut self.literal_counter,
@@ -6891,7 +6945,8 @@ impl<'a> NativeGenerator<'a> {
                         memory: &self.memory,
                         raw_net: &self.raw_net,
                         fs: &self.fs,
-                    proc: &self.proc,
+                        proc: &self.proc,
+                        time: &self.time,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
@@ -7049,6 +7104,7 @@ struct FunctionCompiler<'a, 'b> {
     raw_net: &'a RawNetRuntime,
     fs: &'a FsRuntime,
     proc: &'a ProcRuntime,
+    time: &'a TimeRuntime,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -13260,6 +13316,59 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let func_ref = self.module.declare_func_in_func(self.proc.sys_env_vars, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.inst_results(call)[0]);
+            }
+
+            // ---- High-Precision Monotonic Time & Timer Reactor Engine (M4-T06) ----
+            "time_monotonic_nanos" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.time.time_monotonic_nanos, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "time_monotonic_micros" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.time.time_monotonic_micros, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "time_monotonic_millis" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.time.time_monotonic_millis, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "time_realtime_secs" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.time.time_realtime_secs, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "time_realtime_millis" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.time.time_realtime_millis, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "time_realtime_nanos" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.time.time_realtime_nanos, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "time_sleep_nanos" if arguments.len() == 1 => {
+                let ns = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.time.time_sleep_nanos, self.builder.func);
+                self.builder.ins().call(func_ref, &[ns]);
+                self.release_if_fresh(&arguments[0], ns)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "time_sleep_micros" if arguments.len() == 1 => {
+                let us = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.time.time_sleep_micros, self.builder.func);
+                self.builder.ins().call(func_ref, &[us]);
+                self.release_if_fresh(&arguments[0], us)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "time_sleep_millis" if arguments.len() == 1 => {
+                let ms = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.time.time_sleep_millis, self.builder.func);
+                self.builder.ins().call(func_ref, &[ms]);
+                self.release_if_fresh(&arguments[0], ms)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
             _ => {}
         }

@@ -430,7 +430,7 @@ s1_rows = [
         ("M4-T06", 8), ("Month 4", 6), ("Sprint 7 (W13-W14)", 8), "High-Precision Time", "Instant, Duration & Monotonic Timer Reactor",
         "Monotonic high-precision Instant, nanosecond Duration arithmetic, clock conversions, high-resolution sleep timers, and timeout reactor integration.",
         "Matches Rust std::time and Java java.time.Instant / Duration.",
-        "Networking, Game Loops, Real-Time Systems", "6 Days", ("Medium", 14), ("Planned", 12)
+        "Networking, Game Loops, Real-Time Systems", "6 Days", ("Medium", 14), ("Completed", 16)
     ],
     [
         ("M4-T07", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Text & Regex", "High-Performance Linear-Time Regex Engine",

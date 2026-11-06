@@ -4601,6 +4601,25 @@ fn native_standard_process_and_env_suite() {
     assert!(stdout.contains("M4-T05 PROCESS & ENV SUITE ALL PASSED!"));
 }
 
+#[test]
+fn native_standard_time_and_reactor_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_time.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_time.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_time_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== M4-T06 High-Precision Time & Reactor Engine ==="));
+    assert!(stdout.contains("SUITE 1 PASSED: Duration creation and conversion"));
+    assert!(stdout.contains("SUITE 2 PASSED: Duration arithmetic and scalar math"));
+    assert!(stdout.contains("SUITE 3 PASSED: Monotonic Instant measurement"));
+    assert!(stdout.contains("SUITE 4 PASSED: SystemTime Unix epoch timestamps"));
+    assert!(stdout.contains("SUITE 5 PASSED: High-resolution sleep timers"));
+    assert!(stdout.contains("SUITE 6 PASSED: Monotonic TimerReactor deadline management"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: High-Precision Time Engine 100% OPERATIONAL"));
+}
+
 
 
 

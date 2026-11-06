@@ -1,0 +1,183 @@
+// compiler/tests/fixtures/std_time.roze
+//
+// Verification of Roze High-Precision Time, Duration & Monotonic Timer Reactor (M4-T06)
+
+import "time";
+
+func main() {
+    println("=== M4-T06 High-Precision Time & Reactor Engine ===");
+
+    // Suite 1: Duration creation, normalization, and conversion
+    let d1 = duration_new(2, 500000000);
+    if (d1.as_secs() != 2) {
+        println("FAIL: d1.as_secs != 2");
+        return;
+    }
+    if (d1.subsec_millis() != 500) {
+        println("FAIL: d1.subsec_millis != 500");
+        return;
+    }
+    if (d1.as_millis() != 2500) {
+        println("FAIL: d1.as_millis != 2500");
+        return;
+    }
+    if (d1.as_micros() != 2500000) {
+        println("FAIL: d1.as_micros != 2500000");
+        return;
+    }
+    if (d1.as_nanos() != 2500000000i64) {
+        println("FAIL: d1.as_nanos != 2500000000");
+        return;
+    }
+
+    // Overflow normalization: 1s + 1,500,000,000ns = 2s + 500,000,000ns
+    let d_norm = duration_new(1, 1500000000);
+    if (d_norm.as_secs() != 2 || d_norm.subsec_millis() != 500) {
+        println("FAIL: d_norm normalization failed");
+        return;
+    }
+
+    // Factory functions
+    let d_ms = duration_from_millis(1500);
+    if (d_ms.as_secs() != 1 || d_ms.subsec_millis() != 500) {
+        println("FAIL: duration_from_millis failed");
+        return;
+    }
+
+    let d_us = duration_from_micros(2500000);
+    if (d_us.as_secs() != 2 || d_us.subsec_micros() != 500000) {
+        println("FAIL: duration_from_micros failed");
+        return;
+    }
+
+    let d_ns = duration_from_nanos(5000000);
+    if (d_ns.as_millis() != 5 || d_ns.as_micros() != 5000) {
+        println("FAIL: duration_from_nanos failed");
+        return;
+    }
+
+    let d_zero = duration_zero();
+    if (!d_zero.is_zero()) {
+        println("FAIL: duration_zero is_zero failed");
+        return;
+    }
+    println("SUITE 1 PASSED: Duration creation and conversion");
+
+    // Suite 2: Duration arithmetic
+    let da = duration_new(1, 400000000); // 1.4s
+    let db = duration_new(1, 800000000); // 1.8s
+    let d_sum = da.add(db);             // 3.2s
+    if (d_sum.as_secs() != 3 || d_sum.subsec_millis() != 200) {
+        println("FAIL: Duration.add failed");
+        return;
+    }
+
+    let d_diff = db.sub(da); // 1.8s - 1.4s = 0.4s
+    if (d_diff.as_secs() != 0 || d_diff.subsec_millis() != 400) {
+        println("FAIL: Duration.sub failed");
+        return;
+    }
+
+    let d_sat = da.sub(db); // saturating subtraction -> 0
+    if (!d_sat.is_zero()) {
+        println("FAIL: Duration.sub saturating failed");
+        return;
+    }
+
+    let d_mul = duration_from_millis(500).mul_scalar(3); // 1500ms
+    if (d_mul.as_millis() != 1500) {
+        println("FAIL: Duration.mul_scalar failed");
+        return;
+    }
+
+    let d_div = duration_from_millis(1500).div_scalar(3); // 500ms
+    if (d_div.as_millis() != 500) {
+        println("FAIL: Duration.div_scalar failed");
+        return;
+    }
+    println("SUITE 2 PASSED: Duration arithmetic and scalar math");
+
+    // Suite 3: Monotonic Instant measurement
+    let t0 = instant_now();
+    sleep_millis(15);
+    let el = t0.elapsed();
+    if (el.as_millis() < 10) {
+        println("FAIL: Instant.elapsed took less than 10ms");
+        return;
+    }
+
+    let t1 = instant_now();
+    let diff = t1.duration_since(t0);
+    if (diff.as_millis() < 10) {
+        println("FAIL: Instant.duration_since took less than 10ms");
+        return;
+    }
+
+    let t_fut = t0.add_duration(duration_from_secs(2));
+    if (t_fut.as_nanos() <= t0.as_nanos()) {
+        println("FAIL: Instant.add_duration failed");
+        return;
+    }
+
+    let t_past = t_fut.sub_duration(duration_from_secs(2));
+    if (t_past.as_nanos() != t0.as_nanos()) {
+        println("FAIL: Instant.sub_duration failed");
+        return;
+    }
+    println("SUITE 3 PASSED: Monotonic Instant measurement");
+
+    // Suite 4: SystemTime Unix epoch timestamps
+    let sys = system_time_now();
+    if (sys.as_unix_secs() < 1700000000) {
+        println("FAIL: SystemTime secs before 2024");
+        return;
+    }
+    if (sys.as_unix_millis() < 1700000000000) {
+        println("FAIL: SystemTime millis before 2024");
+        return;
+    }
+    let epoch = system_time_unix_epoch();
+    if (epoch.as_unix_secs() != 0 || epoch.as_unix_nanos() != 0) {
+        println("FAIL: SystemTime unix epoch not zero");
+        return;
+    }
+    println("SUITE 4 PASSED: SystemTime Unix epoch timestamps");
+
+    // Suite 5: High-resolution sleep timers
+    let s_start = time_monotonic_nanos();
+    sleep_micros(5000); // 5ms = 5000us
+    let s_end = time_monotonic_nanos();
+    let s_delta = s_end - s_start;
+    if (s_delta < 4000000) {
+        println("FAIL: sleep_micros(5000) slept less than 4ms");
+        return;
+    }
+
+    sleep(duration_from_millis(5));
+    println("SUITE 5 PASSED: High-resolution sleep timers");
+
+    // Suite 6: Monotonic TimerReactor
+    let reactor = timer_reactor_with_timeout(duration_from_millis(20));
+    if (reactor.has_expired()) {
+        println("FAIL: reactor should not be expired immediately");
+        return;
+    }
+    let rem = reactor.remaining();
+    if (rem.as_millis() < 10) {
+        println("FAIL: reactor remaining time should be >= 10ms");
+        return;
+    }
+
+    sleep_millis(30);
+    if (!reactor.has_expired()) {
+        println("FAIL: reactor should be expired after 30ms sleep");
+        return;
+    }
+    if (!reactor.remaining().is_zero()) {
+        println("FAIL: reactor remaining should be zero after expiration");
+        return;
+    }
+    println("SUITE 6 PASSED: Monotonic TimerReactor deadline management");
+
+    println("ALL SUITES COMPLETED: High-Precision Time Engine 100% OPERATIONAL");
+}

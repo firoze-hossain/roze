@@ -1,0 +1,280 @@
+// stdlib/src/time.roze
+//
+// Roze High-Precision Monotonic Time & Timer Reactor Engine (M4-T06)
+// Full architectural parity with Rust std::time (Instant, Duration, SystemTime)
+// and Java 25 java.time.Instant / java.time.Duration.
+
+class Duration {
+    secs: i64,
+    nanos: i64,
+}
+
+impl Duration {
+    func as_secs() -> i64 {
+        return this.secs;
+    }
+
+    func as_millis() -> i64 {
+        return this.secs * 1000 + this.nanos / 1000000;
+    }
+
+    func as_micros() -> i64 {
+        return this.secs * 1000000 + this.nanos / 1000;
+    }
+
+    func as_nanos() -> i64 {
+        return this.secs * 1000000000 + this.nanos;
+    }
+
+    func subsec_millis() -> i64 {
+        return this.nanos / 1000000;
+    }
+
+    func subsec_micros() -> i64 {
+        return this.nanos / 1000;
+    }
+
+    func subsec_nanos() -> i64 {
+        return this.nanos;
+    }
+
+    func is_zero() -> bool {
+        return this.secs == 0 && this.nanos == 0;
+    }
+
+    func add(other: Duration) -> Duration {
+        return duration_new(this.secs + other.secs, this.nanos + other.nanos);
+    }
+
+    func sub(other: Duration) -> Duration {
+        let diff_secs = this.secs - other.secs;
+        let diff_nanos = this.nanos - other.nanos;
+        if (diff_nanos < 0) {
+            diff_secs = diff_secs - 1;
+            diff_nanos = diff_nanos + 1000000000;
+        }
+        if (diff_secs < 0) {
+            return duration_zero();
+        }
+        return new Duration(diff_secs, diff_nanos);
+    }
+
+    func mul_scalar(n: i64) -> Duration {
+        if (n <= 0) {
+            return duration_zero();
+        }
+        let total_ns = (this.secs * 1000000000 + this.nanos) * n;
+        return duration_from_nanos(total_ns);
+    }
+
+    func div_scalar(n: i64) -> Duration {
+        if (n <= 0) {
+            return duration_zero();
+        }
+        let total_ns = (this.secs * 1000000000 + this.nanos) / n;
+        return duration_from_nanos(total_ns);
+    }
+
+    func to_string() -> string {
+        return to_string(this.secs) + "." + to_string(this.subsec_millis()) + "s";
+    }
+}
+
+class Instant {
+    nanos: i64,
+}
+
+impl Instant {
+    func elapsed() -> Duration {
+        let now_ns = time_monotonic_nanos();
+        let diff = now_ns - this.nanos;
+        if (diff < 0) {
+            diff = 0;
+        }
+        return duration_from_nanos(diff);
+    }
+
+    func duration_since(earlier: Instant) -> Duration {
+        let diff = this.nanos - earlier.nanos;
+        if (diff < 0) {
+            diff = 0;
+        }
+        return duration_from_nanos(diff);
+    }
+
+    func add_duration(d: Duration) -> Instant {
+        return new Instant(this.nanos + d.as_nanos());
+    }
+
+    func sub_duration(d: Duration) -> Instant {
+        let ns = this.nanos - d.as_nanos();
+        if (ns < 0) {
+            ns = 0;
+        }
+        return new Instant(ns);
+    }
+
+    func as_nanos() -> i64 {
+        return this.nanos;
+    }
+
+    func as_millis() -> i64 {
+        return this.nanos / 1000000;
+    }
+
+    func to_string() -> string {
+        return "Instant(" + to_string(this.nanos) + " ns)";
+    }
+}
+
+class SystemTime {
+    secs: i64,
+    nanos: i64,
+}
+
+impl SystemTime {
+    func duration_since_epoch() -> Duration {
+        return new Duration(this.secs, this.nanos);
+    }
+
+    func elapsed() -> Duration {
+        let now = system_time_now();
+        let diff_secs = now.secs - this.secs;
+        let diff_nanos = now.nanos - this.nanos;
+        if (diff_nanos < 0) {
+            diff_secs = diff_secs - 1;
+            diff_nanos = diff_nanos + 1000000000;
+        }
+        if (diff_secs < 0) {
+            return duration_zero();
+        }
+        return new Duration(diff_secs, diff_nanos);
+    }
+
+    func as_unix_secs() -> i64 {
+        return this.secs;
+    }
+
+    func as_unix_millis() -> i64 {
+        return this.secs * 1000 + this.nanos / 1000000;
+    }
+
+    func as_unix_nanos() -> i64 {
+        return this.secs * 1000000000 + this.nanos;
+    }
+
+    func to_string() -> string {
+        return "SystemTime(" + to_string(this.secs) + "s)";
+    }
+}
+
+class TimerReactor {
+    deadline: Instant,
+}
+
+impl TimerReactor {
+    func has_expired() -> bool {
+        let now = instant_now();
+        return now.as_nanos() >= this.deadline.as_nanos();
+    }
+
+    func remaining() -> Duration {
+        let now = instant_now();
+        if (now.as_nanos() >= this.deadline.as_nanos()) {
+            return duration_zero();
+        }
+        return duration_from_nanos(this.deadline.as_nanos() - now.as_nanos());
+    }
+}
+
+// ---- Constructor / Factory Functions ----
+
+func duration_new(secs: i64, nanos: i64) -> Duration {
+    let extra_secs = nanos / 1000000000;
+    let rem_nanos = nanos % 1000000000;
+    if (rem_nanos < 0) {
+        rem_nanos = rem_nanos + 1000000000;
+        extra_secs = extra_secs - 1;
+    }
+    let total_secs = secs + extra_secs;
+    if (total_secs < 0) {
+        total_secs = 0;
+        rem_nanos = 0;
+    }
+    return new Duration(total_secs, rem_nanos);
+}
+
+func duration_from_nanos(nanos: i64) -> Duration {
+    return duration_new(0, nanos);
+}
+
+func duration_from_micros(micros: i64) -> Duration {
+    return duration_new(micros / 1000000, (micros % 1000000) * 1000);
+}
+
+func duration_from_millis(millis: i64) -> Duration {
+    return duration_new(millis / 1000, (millis % 1000) * 1000000);
+}
+
+func duration_from_secs(secs: i64) -> Duration {
+    return duration_new(secs, 0);
+}
+
+func duration_zero() -> Duration {
+    return new Duration(0, 0);
+}
+
+func instant_now() -> Instant {
+    return new Instant(time_monotonic_nanos());
+}
+
+func instant_from_nanos(ns: i64) -> Instant {
+    return new Instant(ns);
+}
+
+func system_time_now() -> SystemTime {
+    let total_ns = time_realtime_nanos();
+    let s = total_ns / 1000000000;
+    let ns = total_ns % 1000000000;
+    if (ns < 0) {
+        ns = ns + 1000000000;
+        s = s - 1;
+    }
+    return new SystemTime(s, ns);
+}
+
+func system_time_unix_epoch() -> SystemTime {
+    return new SystemTime(0, 0);
+}
+
+func system_time_from_millis(ms: i64) -> SystemTime {
+    return new SystemTime(ms / 1000, (ms % 1000) * 1000000);
+}
+
+func timer_reactor_with_timeout(timeout: Duration) -> TimerReactor {
+    let now = instant_now();
+    let dl = now.add_duration(timeout);
+    return new TimerReactor(dl);
+}
+
+// ---- High-Resolution Sleep Functions ----
+
+func sleep(d: Duration) -> void {
+    time_sleep_nanos(d.as_nanos());
+}
+
+func sleep_ms(ms: i64) -> void {
+    time_sleep_millis(ms);
+}
+
+func sleep_millis(ms: i64) -> void {
+    time_sleep_millis(ms);
+}
+
+func sleep_micros(us: i64) -> void {
+    time_sleep_micros(us);
+}
+
+func sleep_nanos(ns: i64) -> void {
+    time_sleep_nanos(ns);
+}

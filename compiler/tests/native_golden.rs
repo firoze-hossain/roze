@@ -4640,6 +4640,25 @@ fn native_standard_regex_engine_suite() {
     assert!(stdout.contains("SUCCESS: ALL REGEX ENGINE SUITES PASSED"));
 }
 
+#[test]
+fn native_standard_serde_engine_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_serde.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_serde.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_serde_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== M4-T08 Universal Serialization (Serde) Engine Suite ==="));
+    assert!(stdout.contains("SUITE 1 PASS: Type-safe Serialize trait abstraction"));
+    assert!(stdout.contains("SUITE 2 PASS: JSON parsing, minified & pretty serialization"));
+    assert!(stdout.contains("SUITE 3 PASS: TOML configuration parsing and roundtrip"));
+    assert!(stdout.contains("SUITE 4 PASS: YAML configuration parsing and serialization"));
+    assert!(stdout.contains("SUITE 5 PASS: Compact binary (Bincode) serialization and roundtrip"));
+    assert!(stdout.contains("SUITE 6 PASS: Universal cross-format transcoding across all formats"));
+    assert!(stdout.contains("SUCCESS: ALL UNIVERSAL SERIALIZATION (SERDE) SUITES PASSED"));
+}
+
 
 
 

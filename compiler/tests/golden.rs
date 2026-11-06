@@ -1980,6 +1980,20 @@ fn standard_regex_engine_suite() {
     assert!(stdout.contains("SUCCESS: ALL REGEX ENGINE SUITES PASSED"));
 }
 
+#[test]
+fn standard_serde_engine_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_serde.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== M4-T08 Universal Serialization (Serde) Engine Suite ==="));
+    assert!(stdout.contains("SUITE 1 PASS: Type-safe Serialize trait abstraction"));
+    assert!(stdout.contains("SUITE 2 PASS: JSON parsing, minified & pretty serialization"));
+    assert!(stdout.contains("SUITE 3 PASS: TOML configuration parsing and roundtrip"));
+    assert!(stdout.contains("SUITE 4 PASS: YAML configuration parsing and serialization"));
+    assert!(stdout.contains("SUITE 5 PASS: Compact binary (Bincode) serialization and roundtrip"));
+    assert!(stdout.contains("SUITE 6 PASS: Universal cross-format transcoding across all formats"));
+    assert!(stdout.contains("SUCCESS: ALL UNIVERSAL SERIALIZATION (SERDE) SUITES PASSED"));
+}
+
 
 
 

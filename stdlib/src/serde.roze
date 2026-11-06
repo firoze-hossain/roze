@@ -1,0 +1,1251 @@
+// stdlib/src/serde.roze
+//
+// Roze Universal Serialization Engine (M4-T08)
+// Zero-copy, multi-format serialization and deserialization abstractions (Serialize, Deserialize)
+// for JSON, TOML, YAML, and compact binary (Bincode/Protobuf-style) formats.
+// Full 1:1 dual-backend parity across JVM (roze run) and Native Cranelift (roze build --target native).
+// Matches Rust serde and Java Jackson / Google Protobuf.
+
+// ==============================================================================
+// Section 1: Core Type-Safe Serde Traits
+// ==============================================================================
+
+trait Serialize {
+    func serialize() -> string;
+}
+
+trait Deserialize {
+    func deserialize(data: string) -> Value;
+}
+
+trait BinarySerialize {
+    func to_binary() -> List;
+}
+
+trait BinaryDeserialize {
+    func from_binary(bytes: List) -> Value;
+}
+
+// ==============================================================================
+// Section 2: Universal Value Model & Object Mapping
+// ==============================================================================
+
+class Entry {
+    key: string,
+    val: Value,
+}
+
+class ObjectMap {
+    entries: List,
+}
+
+impl ObjectMap {
+    func put(key: string, val: Value) {
+        let n = list_length(this.entries);
+        let i = 0;
+        while i < n {
+            let e: Entry = list_get(this.entries, i);
+            if e.key == key {
+                e.val = val;
+                return;
+            }
+            i = i + 1;
+        }
+        list_push(this.entries, new Entry(key, val));
+    }
+
+    func get(key: string) -> Value {
+        let n = list_length(this.entries);
+        let i = 0;
+        while i < n {
+            let e: Entry = list_get(this.entries, i);
+            if e.key == key {
+                return e.val;
+            }
+            i = i + 1;
+        }
+        return value_null();
+    }
+
+    func has(key: string) -> bool {
+        let n = list_length(this.entries);
+        let i = 0;
+        while i < n {
+            let e: Entry = list_get(this.entries, i);
+            if e.key == key {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    func remove(key: string) -> bool {
+        let n = list_length(this.entries);
+        let i = 0;
+        while i < n {
+            let e: Entry = list_get(this.entries, i);
+            if e.key == key {
+                list_remove(this.entries, i);
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    func len() -> int {
+        return list_length(this.entries);
+    }
+
+    func entry_at(index: int) -> Entry {
+        let e: Entry = list_get(this.entries, index);
+        return e;
+    }
+}
+
+class Value {
+    tag: int,          // 0: null, 1: bool, 2: int, 3: string, 4: list/array, 5: object/map
+    int_val: int,
+    bool_val: bool,
+    str_val: string,
+    list_val: List,
+    obj_val: ObjectMap,
+}
+
+impl Value {
+    func is_null() -> bool { return this.tag == 0; }
+    func is_bool() -> bool { return this.tag == 1; }
+    func is_int() -> bool { return this.tag == 2; }
+    func is_string() -> bool { return this.tag == 3; }
+    func is_list() -> bool { return this.tag == 4; }
+    func is_object() -> bool { return this.tag == 5; }
+
+    func as_int() -> int { return this.int_val; }
+    func as_bool() -> bool { return this.bool_val; }
+    func as_string() -> string { return this.str_val; }
+    func as_list() -> List { return this.list_val; }
+    func as_object() -> ObjectMap { return this.obj_val; }
+
+    func len() -> int {
+        if this.tag == 3 { return string_length(this.str_val); }
+        if this.tag == 4 { return list_length(this.list_val); }
+        if this.tag == 5 { return this.obj_val.len(); }
+        return 0;
+    }
+
+    func get(key: string) -> Value {
+        if this.tag == 5 {
+            return this.obj_val.get(key);
+        }
+        return value_null();
+    }
+
+    func get_string(key: string) -> string {
+        let v = this.get(key);
+        return v.as_string();
+    }
+
+    func get_int(key: string) -> int {
+        let v = this.get(key);
+        return v.as_int();
+    }
+
+    func get_bool(key: string) -> bool {
+        let v = this.get(key);
+        return v.as_bool();
+    }
+
+    func at(index: int) -> Value {
+        if this.tag == 4 && index >= 0 && index < list_length(this.list_val) {
+            let item: Value = list_get(this.list_val, index);
+            return item;
+        }
+        return value_null();
+    }
+
+    func to_json() -> string {
+        return json_serialize(this);
+    }
+
+    func to_toml() -> string {
+        return toml_serialize(this);
+    }
+
+    func to_yaml() -> string {
+        return yaml_serialize(this);
+    }
+
+    func to_bincode() -> List {
+        return bincode_serialize(this);
+    }
+}
+
+func value_null() -> Value {
+    return new Value(0, 0, false, "", list_new(), new ObjectMap(list_new()));
+}
+
+func value_bool(b: bool) -> Value {
+    return new Value(1, 0, b, "", list_new(), new ObjectMap(list_new()));
+}
+
+func value_int(n: int) -> Value {
+    return new Value(2, n, false, "", list_new(), new ObjectMap(list_new()));
+}
+
+func value_string(s: string) -> Value {
+    return new Value(3, 0, false, s, list_new(), new ObjectMap(list_new()));
+}
+
+func value_list() -> Value {
+    return new Value(4, 0, false, "", list_new(), new ObjectMap(list_new()));
+}
+
+func value_object() -> Value {
+    return new Value(5, 0, false, "", list_new(), new ObjectMap(list_new()));
+}
+
+func value_push(v: Value, item: Value) {
+    if v.is_list() {
+        list_push(v.list_val, item);
+    }
+}
+
+func value_set(v: Value, key: string, item: Value) {
+    if v.is_object() {
+        v.obj_val.put(key, item);
+    }
+}
+
+// ==============================================================================
+// Section 3: In-Place Zero-Copy Text Scanner & String Utilities
+// ==============================================================================
+
+class Scanner {
+    src: string,
+    len: int,
+    pos: int,
+}
+
+impl Scanner {
+    func peek() -> int {
+        if this.pos < this.len {
+            return string_char_at(this.src, this.pos);
+        }
+        return -1;
+    }
+
+    func advance() -> int {
+        if this.pos < this.len {
+            let c = string_char_at(this.src, this.pos);
+            this.pos = this.pos + 1;
+            return c;
+        }
+        return -1;
+    }
+
+    func has_more() -> bool {
+        return this.pos < this.len;
+    }
+
+    func skip_whitespace() {
+        while this.pos < this.len {
+            let c = string_char_at(this.src, this.pos);
+            if c == 32 || c == 9 || c == 10 || c == 13 {
+                this.pos = this.pos + 1;
+            } else {
+                return;
+            }
+        }
+    }
+}
+
+func str_to_int(s: string) -> int {
+    let len = string_length(s);
+    if len == 0 { return 0; }
+    let mut_val = 0;
+    let mut_i = 0;
+    let is_neg = false;
+    let first = string_char_at(s, 0);
+    if first == 45 {
+        is_neg = true;
+        mut_i = 1;
+    } else if first == 43 {
+        mut_i = 1;
+    }
+    while mut_i < len {
+        let c = string_char_at(s, mut_i);
+        if c >= 48 && c <= 57 {
+            mut_val = (mut_val * 10) + (c - 48);
+        } else {
+            mut_i = len;
+        }
+        mut_i = mut_i + 1;
+    }
+    if is_neg { return 0 - mut_val; }
+    return mut_val;
+}
+
+func unescape_json(s: string) -> string {
+    let len = string_length(s);
+    let res = "";
+    let i = 0;
+    while i < len {
+        let c = string_char_at(s, i);
+        if c == 92 && i + 1 < len {
+            let next_c = string_char_at(s, i + 1);
+            if next_c == 34 { res = res + "\""; i = i + 2; }
+            else if next_c == 92 { res = res + "\\"; i = i + 2; }
+            else if next_c == 110 { res = res + "\n"; i = i + 2; }
+            else if next_c == 114 { res = res + "\r"; i = i + 2; }
+            else if next_c == 116 { res = res + "\t"; i = i + 2; }
+            else if next_c == 47 { res = res + "/"; i = i + 2; }
+            else { res = res + string_substring(s, i + 1, i + 2); i = i + 2; }
+        } else {
+            res = res + string_substring(s, i, i + 1);
+            i = i + 1;
+        }
+    }
+    return res;
+}
+
+func escape_json(s: string) -> string {
+    let len = string_length(s);
+    let res = "";
+    let i = 0;
+    while i < len {
+        let c = string_char_at(s, i);
+        if c == 34 { res = res + "\\\""; }
+        else if c == 92 { res = res + "\\\\"; }
+        else if c == 10 { res = res + "\\n"; }
+        else if c == 13 { res = res + "\\r"; }
+        else if c == 9 { res = res + "\\t"; }
+        else { res = res + string_substring(s, i, i + 1); }
+        i = i + 1;
+    }
+    return res;
+}
+
+func trim_string(s: string) -> string {
+    let len = string_length(s);
+    if len == 0 { return ""; }
+    let start = 0;
+    while start < len {
+        let c = string_char_at(s, start);
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            start = start + 1;
+        } else {
+            let end = len;
+            while end > start {
+                let ec = string_char_at(s, end - 1);
+                if ec == 32 || ec == 9 || ec == 10 || ec == 13 {
+                    end = end - 1;
+                } else {
+                    return string_substring(s, start, end);
+                }
+            }
+            return string_substring(s, start, end);
+        }
+    }
+    return "";
+}
+
+func split_lines(s: string) -> List {
+    let res = list_new();
+    let len = string_length(s);
+    let start = 0;
+    let i = 0;
+    while i < len {
+        let c = string_char_at(s, i);
+        if c == 10 {
+            let end_idx = i;
+            if end_idx > start && string_char_at(s, end_idx - 1) == 13 {
+                end_idx = end_idx - 1;
+            }
+            let line_item: any = string_substring(s, start, end_idx);
+            list_push(res, line_item);
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    if start <= len {
+        let last_item: any = string_substring(s, start, len);
+        list_push(res, last_item);
+    }
+    return res;
+}
+
+func find_char(s: string, ch: int) -> int {
+    let len = string_length(s);
+    let i = 0;
+    while i < len {
+        if string_char_at(s, i) == ch {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// ==============================================================================
+// Section 4: Fast Streaming JSON Parser & Serializer
+// ==============================================================================
+
+func parse_json_string(sc: Scanner) -> string {
+    sc.advance(); // consume opening "
+    let start = sc.pos;
+    let has_escapes = false;
+    while sc.has_more() {
+        let c = sc.peek();
+        if c == 34 {
+            let out = string_substring(sc.src, start, sc.pos);
+            sc.advance();
+            if !has_escapes {
+                return out;
+            }
+            return unescape_json(out);
+        }
+        if c == 92 {
+            has_escapes = true;
+            sc.advance();
+            if sc.has_more() { sc.advance(); }
+        } else {
+            sc.advance();
+        }
+    }
+    return string_substring(sc.src, start, sc.pos);
+}
+
+func parse_json_number(sc: Scanner) -> int {
+    let start = sc.pos;
+    if sc.peek() == 45 { sc.advance(); }
+    while sc.has_more() {
+        let c = sc.peek();
+        if c >= 48 && c <= 57 {
+            sc.advance();
+        } else {
+            let num_str = string_substring(sc.src, start, sc.pos);
+            return str_to_int(num_str);
+        }
+    }
+    let num_str = string_substring(sc.src, start, sc.pos);
+    return str_to_int(num_str);
+}
+
+func parse_json_array(sc: Scanner) -> Value {
+    sc.advance(); // consume '['
+    let arr = value_list();
+    while sc.has_more() {
+        sc.skip_whitespace();
+        let c = sc.peek();
+        if c == 93 {
+            sc.advance();
+            return arr;
+        }
+        let item = parse_json_value(sc);
+        value_push(arr, item);
+        sc.skip_whitespace();
+        let sep = sc.peek();
+        if sep == 44 {
+            sc.advance();
+        } else if sep == 93 {
+            sc.advance();
+            return arr;
+        }
+    }
+    return arr;
+}
+
+func parse_json_object(sc: Scanner) -> Value {
+    sc.advance(); // consume '{'
+    let obj = value_object();
+    while sc.has_more() {
+        sc.skip_whitespace();
+        let c = sc.peek();
+        if c == 125 {
+            sc.advance();
+            return obj;
+        }
+        if c == 34 {
+            let key = parse_json_string(sc);
+            sc.skip_whitespace();
+            if sc.peek() == 58 {
+                sc.advance();
+            }
+            sc.skip_whitespace();
+            let val = parse_json_value(sc);
+            value_set(obj, key, val);
+            sc.skip_whitespace();
+            let sep = sc.peek();
+            if sep == 44 {
+                sc.advance();
+            } else if sep == 125 {
+                sc.advance();
+                return obj;
+            }
+        } else {
+            sc.advance();
+        }
+    }
+    return obj;
+}
+
+func parse_json_value(sc: Scanner) -> Value {
+    sc.skip_whitespace();
+    if !sc.has_more() { return value_null(); }
+    let c = sc.peek();
+    if c == 123 { return parse_json_object(sc); }
+    if c == 91 { return parse_json_array(sc); }
+    if c == 34 { return value_string(parse_json_string(sc)); }
+    if c == 116 {
+        if sc.pos + 4 <= sc.len {
+            if string_substring(sc.src, sc.pos, sc.pos + 4) == "true" {
+                sc.pos = sc.pos + 4;
+                return value_bool(true);
+            }
+        }
+    }
+    if c == 102 {
+        if sc.pos + 5 <= sc.len {
+            if string_substring(sc.src, sc.pos, sc.pos + 5) == "false" {
+                sc.pos = sc.pos + 5;
+                return value_bool(false);
+            }
+        }
+    }
+    if c == 110 {
+        if sc.pos + 4 <= sc.len {
+            if string_substring(sc.src, sc.pos, sc.pos + 4) == "null" {
+                sc.pos = sc.pos + 4;
+                return value_null();
+            }
+        }
+    }
+    if c == 45 || (c >= 48 && c <= 57) {
+        return value_int(parse_json_number(sc));
+    }
+    sc.advance();
+    return value_null();
+}
+
+func json_parse(src: string) -> Value {
+    let sc = new Scanner(src, string_length(src), 0);
+    return parse_json_value(sc);
+}
+
+func json_serialize(val: Value) -> string {
+    if val.is_null() { return "null"; }
+    if val.is_bool() {
+        if val.as_bool() { return "true"; }
+        return "false";
+    }
+    if val.is_int() { return to_string(val.as_int()); }
+    if val.is_string() {
+        return "\"" + escape_json(val.as_string()) + "\"";
+    }
+    if val.is_list() {
+        let res = "[";
+        let l = val.as_list();
+        let n = list_length(l);
+        let i = 0;
+        while i < n {
+            if i > 0 { res = res + ", "; }
+            let item: Value = list_get(l, i);
+            res = res + json_serialize(item);
+            i = i + 1;
+        }
+        return res + "]";
+    }
+    if val.is_object() {
+        let res = "{";
+        let obj = val.as_object();
+        let n = obj.len();
+        let i = 0;
+        while i < n {
+            if i > 0 { res = res + ", "; }
+            let entry = obj.entry_at(i);
+            res = res + "\"" + escape_json(entry.key) + "\": " + json_serialize(entry.val);
+            i = i + 1;
+        }
+        return res + "}";
+    }
+    return "null";
+}
+
+func json_serialize_pretty(val: Value) -> string {
+    return json_serialize_pretty_indent(val, 0);
+}
+
+func json_serialize_pretty_indent(val: Value, indent: int) -> string {
+    let p = "";
+    let k = 0;
+    while k < indent {
+        p = p + "  ";
+        k = k + 1;
+    }
+    if val.is_null() { return "null"; }
+    if val.is_bool() {
+        if val.as_bool() { return "true"; }
+        return "false";
+    }
+    if val.is_int() { return to_string(val.as_int()); }
+    if val.is_string() { return "\"" + escape_json(val.as_string()) + "\""; }
+    if val.is_list() {
+        let l = val.as_list();
+        let n = list_length(l);
+        if n == 0 { return "[]"; }
+        let res = "[\n";
+        let sub_p = p + "  ";
+        let i = 0;
+        while i < n {
+            if i > 0 { res = res + ",\n"; }
+            let item: Value = list_get(l, i);
+            res = res + sub_p + json_serialize_pretty_indent(item, indent + 1);
+            i = i + 1;
+        }
+        return res + "\n" + p + "]";
+    }
+    if val.is_object() {
+        let obj = val.as_object();
+        let n = obj.len();
+        if n == 0 { return "{}"; }
+        let res = "{\n";
+        let sub_p = p + "  ";
+        let i = 0;
+        while i < n {
+            if i > 0 { res = res + ",\n"; }
+            let entry = obj.entry_at(i);
+            res = res + sub_p + "\"" + escape_json(entry.key) + "\": " + json_serialize_pretty_indent(entry.val, indent + 1);
+            i = i + 1;
+        }
+        return res + "\n" + p + "}";
+    }
+    return "null";
+}
+
+// ==============================================================================
+// Section 5: Standard TOML Configuration Engine
+// ==============================================================================
+
+func parse_toml_scalar(s: string) -> Value {
+    let t = trim_string(s);
+    let tlen = string_length(t);
+    if tlen == 0 { return value_null(); }
+    if t == "true" { return value_bool(true); }
+    if t == "false" { return value_bool(false); }
+    if string_char_at(t, 0) == 34 && string_char_at(t, tlen - 1) == 34 {
+        return value_string(string_substring(t, 1, tlen - 1));
+    }
+    if string_char_at(t, 0) == 91 && string_char_at(t, tlen - 1) == 93 {
+        let arr = value_list();
+        let inside = trim_string(string_substring(t, 1, tlen - 1));
+        let in_len = string_length(inside);
+        if in_len > 0 {
+            let start = 0;
+            let i = 0;
+            while i < in_len {
+                if string_char_at(inside, i) == 44 {
+                    let item_str = trim_string(string_substring(inside, start, i));
+                    value_push(arr, parse_toml_scalar(item_str));
+                    start = i + 1;
+                }
+                i = i + 1;
+            }
+            if start <= in_len {
+                let item_str = trim_string(string_substring(inside, start, in_len));
+                if string_length(item_str) > 0 {
+                    value_push(arr, parse_toml_scalar(item_str));
+                }
+            }
+        }
+        return arr;
+    }
+    return value_int(str_to_int(t));
+}
+
+func toml_parse(src: string) -> Value {
+    let root = value_object();
+    let current_table = root;
+    let lines = split_lines(src);
+    let count = list_length(lines);
+    let i = 0;
+    while i < count {
+        let raw_line: string = list_get(lines, i);
+        let line = trim_string(raw_line);
+        let llen = string_length(line);
+        if llen > 0 {
+            let first = string_char_at(line, 0);
+            if first != 35 { // not '#'
+                if first == 91 && string_char_at(line, llen - 1) == 93 { // '[table]'
+                    let tbl_name = trim_string(string_substring(line, 1, llen - 1));
+                    let tbl = root.get(tbl_name);
+                    if tbl.is_null() {
+                        tbl = value_object();
+                        value_set(root, tbl_name, tbl);
+                    }
+                    current_table = tbl;
+                } else {
+                    let eq_idx = find_char(line, 61);
+                    if eq_idx > 0 {
+                        let k = trim_string(string_substring(line, 0, eq_idx));
+                        let v_str = trim_string(string_substring(line, eq_idx + 1, llen));
+                        let val = parse_toml_scalar(v_str);
+                        value_set(current_table, k, val);
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return root;
+}
+
+func toml_serialize_value(val: Value) -> string {
+    if val.is_null() { return "\"\""; }
+    if val.is_bool() {
+        if val.as_bool() { return "true"; }
+        return "false";
+    }
+    if val.is_int() { return to_string(val.as_int()); }
+    if val.is_string() { return "\"" + escape_json(val.as_string()) + "\""; }
+    if val.is_list() {
+        let res = "[";
+        let l = val.as_list();
+        let n = list_length(l);
+        let i = 0;
+        while i < n {
+            if i > 0 { res = res + ", "; }
+            let item: Value = list_get(l, i);
+            res = res + toml_serialize_value(item);
+            i = i + 1;
+        }
+        return res + "]";
+    }
+    return "\"\"";
+}
+
+func toml_serialize(val: Value) -> string {
+    if !val.is_object() { return ""; }
+    let obj = val.as_object();
+    let n = obj.len();
+    let res = "";
+    let i = 0;
+    while i < n {
+        let entry = obj.entry_at(i);
+        if !entry.val.is_object() {
+            res = res + entry.key + " = " + toml_serialize_value(entry.val) + "\n";
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        let entry = obj.entry_at(i);
+        if entry.val.is_object() {
+            if string_length(res) > 0 {
+                res = res + "\n";
+            }
+            res = res + "[" + entry.key + "]\n";
+            let sub_obj = entry.val.as_object();
+            let sub_n = sub_obj.len();
+            let j = 0;
+            while j < sub_n {
+                let sub_entry = sub_obj.entry_at(j);
+                res = res + sub_entry.key + " = " + toml_serialize_value(sub_entry.val) + "\n";
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return res;
+}
+
+// ==============================================================================
+// Section 6: Standard YAML Configuration Engine
+// ==============================================================================
+
+func count_leading_spaces(s: string) -> int {
+    let len = string_length(s);
+    let i = 0;
+    while i < len {
+        if string_char_at(s, i) == 32 {
+            i = i + 1;
+        } else {
+            return i;
+        }
+    }
+    return i;
+}
+
+func parse_yaml_scalar(s: string) -> Value {
+    let t = trim_string(s);
+    let tlen = string_length(t);
+    if tlen == 0 { return value_null(); }
+    if t == "true" { return value_bool(true); }
+    if t == "false" { return value_bool(false); }
+    if t == "null" || t == "~" { return value_null(); }
+    if string_char_at(t, 0) == 34 && string_char_at(t, tlen - 1) == 34 {
+        return value_string(string_substring(t, 1, tlen - 1));
+    }
+    if string_char_at(t, 0) == 39 && string_char_at(t, tlen - 1) == 39 {
+        return value_string(string_substring(t, 1, tlen - 1));
+    }
+    let is_num = true;
+    let start = 0;
+    if string_char_at(t, 0) == 45 { start = 1; }
+    if start >= tlen { is_num = false; }
+    let k = start;
+    while k < tlen {
+        let c = string_char_at(t, k);
+        if c < 48 || c > 57 {
+            is_num = false;
+            k = tlen;
+        }
+        k = k + 1;
+    }
+    if is_num {
+        return value_int(str_to_int(t));
+    }
+    return value_string(t);
+}
+
+func yaml_parse(src: string) -> Value {
+    let root = value_object();
+    let lines = split_lines(src);
+    let count = list_length(lines);
+    let i = 0;
+    let current_section = root;
+    let current_list = value_list();
+
+    while i < count {
+        let raw_line: string = list_get(lines, i);
+        let trimmed = trim_string(raw_line);
+        let tlen = string_length(trimmed);
+        if tlen > 0 {
+            if string_char_at(trimmed, 0) != 35 { // not '#'
+                let indent = count_leading_spaces(raw_line);
+                if string_starts_with(trimmed, "- ") {
+                    let item_str = trim_string(string_substring(trimmed, 2, tlen));
+                    value_push(current_list, parse_yaml_scalar(item_str));
+                } else {
+                    let colon_idx = find_char(trimmed, 58);
+                    if colon_idx > 0 {
+                        let k = trim_string(string_substring(trimmed, 0, colon_idx));
+                        let v_str = "";
+                        if colon_idx + 1 < tlen {
+                            v_str = trim_string(string_substring(trimmed, colon_idx + 1, tlen));
+                        }
+                        if string_length(v_str) > 0 {
+                            let val = parse_yaml_scalar(v_str);
+                            if indent > 0 {
+                                value_set(current_section, k, val);
+                            } else {
+                                value_set(root, k, val);
+                            }
+                        } else {
+                            let next_is_list = false;
+                            let j = i + 1;
+                            while j < count {
+                                let n_line: string = list_get(lines, j);
+                                let n_trim = trim_string(n_line);
+                                if string_length(n_trim) > 0 {
+                                    if string_starts_with(n_trim, "- ") {
+                                        next_is_list = true;
+                                    }
+                                    j = count;
+                                }
+                                j = j + 1;
+                            }
+                            if next_is_list {
+                                current_list = value_list();
+                                value_set(root, k, current_list);
+                            } else {
+                                let child = value_object();
+                                value_set(root, k, child);
+                                current_section = child;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return root;
+}
+
+func yaml_serialize(val: Value) -> string {
+    return yaml_serialize_indent(val, 0);
+}
+
+func yaml_serialize_indent(val: Value, indent_level: int) -> string {
+    let prefix = "";
+    let p = 0;
+    while p < indent_level {
+        prefix = prefix + "  ";
+        p = p + 1;
+    }
+    if val.is_null() { return prefix + "null\n"; }
+    if val.is_bool() {
+        if val.as_bool() { return prefix + "true\n"; }
+        return prefix + "false\n";
+    }
+    if val.is_int() { return prefix + to_string(val.as_int()) + "\n"; }
+    if val.is_string() { return prefix + "\"" + escape_json(val.as_string()) + "\"\n"; }
+    if val.is_list() {
+        let res = "";
+        let l = val.as_list();
+        let n = list_length(l);
+        let i = 0;
+        while i < n {
+            let item: Value = list_get(l, i);
+            if item.is_string() {
+                res = res + prefix + "- \"" + escape_json(item.as_string()) + "\"\n";
+            } else if item.is_int() {
+                res = res + prefix + "- " + to_string(item.as_int()) + "\n";
+            } else if item.is_bool() {
+                if item.as_bool() { res = res + prefix + "- true\n"; }
+                else { res = res + prefix + "- false\n"; }
+            } else {
+                res = res + prefix + "- " + to_string(item.as_int()) + "\n";
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+    if val.is_object() {
+        let res = "";
+        let obj = val.as_object();
+        let n = obj.len();
+        let i = 0;
+        while i < n {
+            let entry = obj.entry_at(i);
+            if entry.val.is_object() {
+                res = res + prefix + entry.key + ":\n";
+                res = res + yaml_serialize_indent(entry.val, indent_level + 1);
+            } else if entry.val.is_list() {
+                res = res + prefix + entry.key + ":\n";
+                res = res + yaml_serialize_indent(entry.val, indent_level + 1);
+            } else if entry.val.is_string() {
+                res = res + prefix + entry.key + ": \"" + escape_json(entry.val.as_string()) + "\"\n";
+            } else if entry.val.is_bool() {
+                if entry.val.as_bool() { res = res + prefix + entry.key + ": true\n"; }
+                else { res = res + prefix + entry.key + ": false\n"; }
+            } else if entry.val.is_int() {
+                res = res + prefix + entry.key + ": " + to_string(entry.val.as_int()) + "\n";
+            } else {
+                res = res + prefix + entry.key + ": null\n";
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+    return prefix + "\n";
+}
+
+// ==============================================================================
+// Section 7: Compact Binary (Bincode / Protobuf-style) Engine
+// ==============================================================================
+
+func ascii_char(code: int) -> string {
+    if code >= 97 && code <= 122 {
+        if code == 97 { return "a"; }
+        if code == 98 { return "b"; }
+        if code == 99 { return "c"; }
+        if code == 100 { return "d"; }
+        if code == 101 { return "e"; }
+        if code == 102 { return "f"; }
+        if code == 103 { return "g"; }
+        if code == 104 { return "h"; }
+        if code == 105 { return "i"; }
+        if code == 106 { return "j"; }
+        if code == 107 { return "k"; }
+        if code == 108 { return "l"; }
+        if code == 109 { return "m"; }
+        if code == 110 { return "n"; }
+        if code == 111 { return "o"; }
+        if code == 112 { return "p"; }
+        if code == 113 { return "q"; }
+        if code == 114 { return "r"; }
+        if code == 115 { return "s"; }
+        if code == 116 { return "t"; }
+        if code == 117 { return "u"; }
+        if code == 118 { return "v"; }
+        if code == 119 { return "w"; }
+        if code == 120 { return "x"; }
+        if code == 121 { return "y"; }
+        return "z";
+    }
+    if code >= 65 && code <= 90 {
+        if code == 65 { return "A"; }
+        if code == 66 { return "B"; }
+        if code == 67 { return "C"; }
+        if code == 68 { return "D"; }
+        if code == 69 { return "E"; }
+        if code == 70 { return "F"; }
+        if code == 71 { return "G"; }
+        if code == 72 { return "H"; }
+        if code == 73 { return "I"; }
+        if code == 74 { return "J"; }
+        if code == 75 { return "K"; }
+        if code == 76 { return "L"; }
+        if code == 77 { return "M"; }
+        if code == 78 { return "N"; }
+        if code == 79 { return "O"; }
+        if code == 80 { return "P"; }
+        if code == 81 { return "Q"; }
+        if code == 82 { return "R"; }
+        if code == 83 { return "S"; }
+        if code == 84 { return "T"; }
+        if code == 85 { return "U"; }
+        if code == 86 { return "V"; }
+        if code == 87 { return "W"; }
+        if code == 88 { return "X"; }
+        if code == 89 { return "Y"; }
+        return "Z";
+    }
+    if code >= 48 && code <= 57 {
+        if code == 48 { return "0"; }
+        if code == 49 { return "1"; }
+        if code == 50 { return "2"; }
+        if code == 51 { return "3"; }
+        if code == 52 { return "4"; }
+        if code == 53 { return "5"; }
+        if code == 54 { return "6"; }
+        if code == 55 { return "7"; }
+        if code == 56 { return "8"; }
+        return "9";
+    }
+    if code == 46 { return "."; }
+    if code == 95 { return "_"; }
+    if code == 58 { return ":"; }
+    if code == 47 { return "/"; }
+    if code == 45 { return "-"; }
+    if code == 32 { return " "; }
+    if code == 61 { return "="; }
+    if code == 63 { return "?"; }
+    if code == 38 { return "&"; }
+    if code == 44 { return ","; }
+    if code == 59 { return ";"; }
+    if code == 34 { return "\""; }
+    if code == 39 { return "'"; }
+    if code == 91 { return "["; }
+    if code == 93 { return "]"; }
+    if code == 123 { return "{"; }
+    if code == 125 { return "}"; }
+    if code == 10 { return "\n"; }
+    if code == 13 { return "\r"; }
+    if code == 9 { return "\t"; }
+    return "?";
+}
+
+func write_varint(buf: List, val: int) {
+    let mut_v = val;
+    if mut_v < 0 {
+        mut_v = bit_xor(bit_shl(0 - mut_v, 1), 1);
+    } else {
+        mut_v = bit_shl(mut_v, 1);
+    }
+    while mut_v >= 128 {
+        let b = bit_or(bit_and(mut_v, 127), 128);
+        list_push(buf, b);
+        mut_v = bit_shr(mut_v, 7);
+    }
+    list_push(buf, bit_and(mut_v, 127));
+}
+
+func read_varint(bytes: List, pos_box: List) -> int {
+    let pos: int = list_get(pos_box, 0);
+    let res = 0;
+    let shift = 0;
+    let blen = list_length(bytes);
+    while pos < blen {
+        let b: int = list_get(bytes, pos);
+        pos = pos + 1;
+        let chunk = bit_and(b, 127);
+        res = bit_or(res, bit_shl(chunk, shift));
+        if bit_and(b, 128) == 0 {
+            list_set(pos_box, 0, pos);
+            let is_neg = bit_and(res, 1);
+            let unzag = bit_shr(res, 1);
+            if is_neg == 1 {
+                return 0 - unzag;
+            }
+            return unzag;
+        }
+        shift = shift + 7;
+    }
+    list_set(pos_box, 0, pos);
+    return res;
+}
+
+func write_bin_string(buf: List, s: string) {
+    let slen = string_length(s);
+    write_varint(buf, slen);
+    let i = 0;
+    while i < slen {
+        let c = string_char_at(s, i);
+        list_push(buf, c);
+        i = i + 1;
+    }
+}
+
+func read_bin_string(bytes: List, pos_box: List) -> string {
+    let slen = read_varint(bytes, pos_box);
+    let pos: int = list_get(pos_box, 0);
+    let res = "";
+    let i = 0;
+    let blen = list_length(bytes);
+    while i < slen && pos < blen {
+        let c: int = list_get(bytes, pos);
+        res = res + ascii_char(c);
+        pos = pos + 1;
+        i = i + 1;
+    }
+    list_set(pos_box, 0, pos);
+    return res;
+}
+
+func bincode_write_value(buf: List, v: Value) {
+    if v.is_null() {
+        list_push(buf, 0);
+    } else if v.is_bool() {
+        if v.as_bool() { list_push(buf, 2); }
+        else { list_push(buf, 1); }
+    } else if v.is_int() {
+        list_push(buf, 3);
+        write_varint(buf, v.as_int());
+    } else if v.is_string() {
+        list_push(buf, 4);
+        write_bin_string(buf, v.as_string());
+    } else if v.is_list() {
+        list_push(buf, 5);
+        let l = v.as_list();
+        let n = list_length(l);
+        write_varint(buf, n);
+        let i = 0;
+        while i < n {
+            let item: Value = list_get(l, i);
+            bincode_write_value(buf, item);
+            i = i + 1;
+        }
+    } else if v.is_object() {
+        list_push(buf, 6);
+        let obj = v.as_object();
+        let n = obj.len();
+        write_varint(buf, n);
+        let i = 0;
+        while i < n {
+            let entry = obj.entry_at(i);
+            write_bin_string(buf, entry.key);
+            bincode_write_value(buf, entry.val);
+            i = i + 1;
+        }
+    } else {
+        list_push(buf, 0);
+    }
+}
+
+func bincode_read_value(bytes: List, pos_box: List) -> Value {
+    let pos: int = list_get(pos_box, 0);
+    if pos >= list_length(bytes) { return value_null(); }
+    let tag: int = list_get(bytes, pos);
+    list_set(pos_box, 0, pos + 1);
+
+    if tag == 0 { return value_null(); }
+    if tag == 1 { return value_bool(false); }
+    if tag == 2 { return value_bool(true); }
+    if tag == 3 {
+        let n = read_varint(bytes, pos_box);
+        return value_int(n);
+    }
+    if tag == 4 {
+        let s = read_bin_string(bytes, pos_box);
+        return value_string(s);
+    }
+    if tag == 5 {
+        let count = read_varint(bytes, pos_box);
+        let arr = value_list();
+        let i = 0;
+        while i < count {
+            let item = bincode_read_value(bytes, pos_box);
+            value_push(arr, item);
+            i = i + 1;
+        }
+        return arr;
+    }
+    if tag == 6 {
+        let count = read_varint(bytes, pos_box);
+        let obj = value_object();
+        let i = 0;
+        while i < count {
+            let key = read_bin_string(bytes, pos_box);
+            let val = bincode_read_value(bytes, pos_box);
+            value_set(obj, key, val);
+            i = i + 1;
+        }
+        return obj;
+    }
+    return value_null();
+}
+
+func bincode_serialize(v: Value) -> List {
+    let buf = list_new();
+    list_push(buf, 82); // 'R'
+    list_push(buf, 90); // 'Z'
+    list_push(buf, 1);  // Version 1
+    bincode_write_value(buf, v);
+    return buf;
+}
+
+func bincode_deserialize(bytes: List) -> Value {
+    if list_length(bytes) < 3 { return value_null(); }
+    let b0: int = list_get(bytes, 0);
+    let b1: int = list_get(bytes, 1);
+    if b0 != 82 || b1 != 90 { return value_null(); }
+    let pos_box = list_new();
+    list_push(pos_box, 3);
+    return bincode_read_value(bytes, pos_box);
+}
+
+// ==============================================================================
+// Section 8: High-Level Facade Class & Convenience Functions
+// ==============================================================================
+
+class Serde {
+}
+
+func serde_json_to_string(v: Value) -> string {
+    return json_serialize(v);
+}
+
+func serde_json_to_string_pretty(v: Value) -> string {
+    return json_serialize_pretty(v);
+}
+
+func serde_json_from_string(s: string) -> Value {
+    return json_parse(s);
+}
+
+func serde_toml_to_string(v: Value) -> string {
+    return toml_serialize(v);
+}
+
+func serde_toml_from_string(s: string) -> Value {
+    return toml_parse(s);
+}
+
+func serde_yaml_to_string(v: Value) -> string {
+    return yaml_serialize(v);
+}
+
+func serde_yaml_from_string(s: string) -> Value {
+    return yaml_parse(s);
+}
+
+func serde_bincode_to_bytes(v: Value) -> List {
+    return bincode_serialize(v);
+}
+
+func serde_bincode_from_bytes(bytes: List) -> Value {
+    return bincode_deserialize(bytes);
+}

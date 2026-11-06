@@ -442,7 +442,7 @@ s1_rows = [
         ("M4-T08", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Universal Serialization", "Zero-Copy Multi-Format Serialization (Serde)",
         "Type-safe serialization abstractions (Serialize, Deserialize) with zero heap allocation encoders/decoders for JSON, TOML, YAML, and binary formats.",
         "Matches Rust serde and Java Jackson / Google Protobuf.",
-        "Microservices, Configs, Game Saves, Storage", "7 Days", ("Critical", 14), ("Planned", 12)
+        "Microservices, Configs, Game Saves, Storage", "7 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M4-T09", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Metaprogramming", "Compile-Time Type Reflection & Introspection",

@@ -123,6 +123,9 @@ const TIME_DISPLAY_NAME: &str = "time (built-in)";
 const REGEX_SOURCE: &str = include_str!("../../stdlib/src/regex.roze");
 const REGEX_DISPLAY_NAME: &str = "regex (built-in)";
 
+const SERDE_SOURCE: &str = include_str!("../../stdlib/src/serde.roze");
+const SERDE_DISPLAY_NAME: &str = "serde (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -306,6 +309,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "regex" || path == "std::regex" || path == "roze::regex" || path == "text::regex" || path == "re" {
         return Ok((REGEX_SOURCE.to_string(), REGEX_DISPLAY_NAME.to_string()));
+    }
+    if path == "serde" || path == "std::serde" || path == "roze::serde" || path == "serialization" || path == "json" || path == "toml" || path == "yaml" {
+        return Ok((SERDE_SOURCE.to_string(), SERDE_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

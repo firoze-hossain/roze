@@ -1,0 +1,213 @@
+// compiler/tests/fixtures/std_serde.roze
+//
+// Verification of Roze Universal Serialization Engine (M4-T08)
+
+import "serde";
+
+class ServiceConfig {
+    name: string,
+    port: int,
+    tls_enabled: bool,
+}
+
+impl Serialize for ServiceConfig {
+    func serialize() -> string {
+        let obj = value_object();
+        value_set(obj, "name", value_string(this.name));
+        value_set(obj, "port", value_int(this.port));
+        value_set(obj, "tls_enabled", value_bool(this.tls_enabled));
+        return json_serialize(obj);
+    }
+}
+
+func serialize_typed<T: Serialize>(item: T) -> string {
+    return item.serialize();
+}
+
+func main() {
+    println("=== M4-T08 Universal Serialization (Serde) Engine Suite ===");
+
+    // Suite 1: Type-safe Serialize trait abstraction
+    let cfg = new ServiceConfig("auth-service", 9443, true);
+    let cfg_json = serialize_typed(cfg);
+    let cfg_val = json_parse(cfg_json);
+    if (cfg_val.get_string("name") != "auth-service") {
+        println("FAIL: cfg_val.name mismatch");
+        return;
+    }
+    if (cfg_val.get_int("port") != 9443) {
+        println("FAIL: cfg_val.port mismatch");
+        return;
+    }
+    if (!cfg_val.get_bool("tls_enabled")) {
+        println("FAIL: cfg_val.tls_enabled mismatch");
+        return;
+    }
+    println("SUITE 1 PASS: Type-safe Serialize trait abstraction");
+
+    // Suite 2: JSON Parsing and Minified / Pretty Serialization
+    let json_text = "{\"app\": \"roze-gateway\", \"workers\": 16, \"active\": true, \"null_field\": null, \"tags\": [\"core\", \"fast\", \"api\"]}";
+    let parsed_json = json_parse(json_text);
+    if (parsed_json.get_string("app") != "roze-gateway") {
+        println("FAIL: json app mismatch");
+        return;
+    }
+    if (parsed_json.get_int("workers") != 16) {
+        println("FAIL: json workers mismatch");
+        return;
+    }
+    if (!parsed_json.get_bool("active")) {
+        println("FAIL: json active mismatch");
+        return;
+    }
+    if (!parsed_json.get("null_field").is_null()) {
+        println("FAIL: json null_field mismatch");
+        return;
+    }
+    let tags = parsed_json.get("tags");
+    if (tags.len() != 3) {
+        println("FAIL: tags.len() != 3");
+        return;
+    }
+    if (tags.at(0).as_string() != "core" || tags.at(1).as_string() != "fast" || tags.at(2).as_string() != "api") {
+        println("FAIL: tags content mismatch");
+        return;
+    }
+
+    let min_json = json_serialize(parsed_json);
+    let pretty_json = json_serialize_pretty(parsed_json);
+    if (string_length(pretty_json) <= string_length(min_json)) {
+        println("FAIL: pretty_json should have formatting indentation");
+        return;
+    }
+    let json_roundtrip = json_parse(min_json);
+    if (json_roundtrip.get_string("app") != "roze-gateway" || json_roundtrip.get_int("workers") != 16) {
+        println("FAIL: JSON roundtrip mismatch");
+        return;
+    }
+    println("SUITE 2 PASS: JSON parsing, minified & pretty serialization");
+
+    // Suite 3: TOML Configuration Engine
+    let toml_src = "# System Configuration\ntitle = \"Roze Engine\"\nversion = 2\nproduction = true\n\n[database]\nhost = \"db.internal\"\nport = 5432\n\n[cache]\nenabled = true\nmax_memory = 4096\n";
+    let toml_val = toml_parse(toml_src);
+    if (toml_val.get_string("title") != "Roze Engine") {
+        println("FAIL: toml title mismatch");
+        return;
+    }
+    if (toml_val.get_int("version") != 2) {
+        println("FAIL: toml version mismatch");
+        return;
+    }
+    if (!toml_val.get_bool("production")) {
+        println("FAIL: toml production mismatch");
+        return;
+    }
+    let db = toml_val.get("database");
+    if (db.get_string("host") != "db.internal" || db.get_int("port") != 5432) {
+        println("FAIL: toml database section mismatch");
+        return;
+    }
+    let cache = toml_val.get("cache");
+    if (!cache.get_bool("enabled") || cache.get_int("max_memory") != 4096) {
+        println("FAIL: toml cache section mismatch");
+        return;
+    }
+    let toml_out = toml_serialize(toml_val);
+    let toml_rt = toml_parse(toml_out);
+    if (toml_rt.get_int("version") != 2 || toml_rt.get("database").get_int("port") != 5432) {
+        println("FAIL: toml roundtrip mismatch");
+        return;
+    }
+    println("SUITE 3 PASS: TOML configuration parsing and roundtrip");
+
+    // Suite 4: YAML Microservice & Cloud Configuration Engine
+    let yaml_src = "service: \"micro-auth\"\nenv: \"prod\"\nreplicas: 5\nendpoints:\n  - \"/login\"\n  - \"/verify\"\n  - \"/token\"\nsettings:\n  session_timeout: 3600\n  secure: true\n";
+    let yaml_val = yaml_parse(yaml_src);
+    if (yaml_val.get_string("service") != "micro-auth") {
+        println("FAIL: yaml service mismatch");
+        return;
+    }
+    if (yaml_val.get_int("replicas") != 5) {
+        println("FAIL: yaml replicas mismatch");
+        return;
+    }
+    let eps = yaml_val.get("endpoints");
+    if (eps.len() != 3) {
+        println("FAIL: yaml endpoints len != 3");
+        return;
+    }
+    if (eps.at(0).as_string() != "/login" || eps.at(1).as_string() != "/verify" || eps.at(2).as_string() != "/token") {
+        println("FAIL: yaml endpoints content mismatch");
+        return;
+    }
+    let st = yaml_val.get("settings");
+    if (st.get_int("session_timeout") != 3600 || !st.get_bool("secure")) {
+        println("FAIL: yaml settings mismatch");
+        return;
+    }
+    let yaml_out = yaml_serialize(yaml_val);
+    if (string_length(yaml_out) < 20) {
+        println("FAIL: yaml_out too short");
+        return;
+    }
+    println("SUITE 4 PASS: YAML configuration parsing and serialization");
+
+    // Suite 5: Compact Binary (Bincode / Protobuf-style) Engine
+    let bin_state = value_object();
+    value_set(bin_state, "player_id", value_string("hero_42"));
+    value_set(bin_state, "level", value_int(85));
+    value_set(bin_state, "score", value_int(1250000));
+    value_set(bin_state, "is_alive", value_bool(true));
+
+    let inventory = value_list();
+    value_push(inventory, value_string("Sword of Roze"));
+    value_push(inventory, value_string("Health Potion"));
+    value_push(inventory, value_string("Shield"));
+    value_set(bin_state, "inventory", inventory);
+
+    let bin_bytes = bincode_serialize(bin_state);
+    let bin_size = list_length(bin_bytes);
+    if (bin_size < 15) {
+        println("FAIL: bin_size too small: " + to_string(bin_size));
+        return;
+    }
+    let decoded_state = bincode_deserialize(bin_bytes);
+    if (decoded_state.get_string("player_id") != "hero_42") {
+        println("FAIL: bincode player_id mismatch");
+        return;
+    }
+    if (decoded_state.get_int("level") != 85) {
+        println("FAIL: bincode level mismatch");
+        return;
+    }
+    if (decoded_state.get_int("score") != 1250000) {
+        println("FAIL: bincode score mismatch");
+        return;
+    }
+    if (!decoded_state.get_bool("is_alive")) {
+        println("FAIL: bincode is_alive mismatch");
+        return;
+    }
+    let dec_inv = decoded_state.get("inventory");
+    if (dec_inv.len() != 3 || dec_inv.at(0).as_string() != "Sword of Roze") {
+        println("FAIL: bincode inventory mismatch");
+        return;
+    }
+    println("SUITE 5 PASS: Compact binary (Bincode) serialization and roundtrip");
+
+    // Suite 6: Cross-Format Transcoding (JSON -> Value -> TOML -> Value -> YAML -> Value -> Binary)
+    let original_json = "{\"cluster\": \"us-east-1\", \"nodes\": 12, \"ready\": true}";
+    let v_from_json = serde_json_from_string(original_json);
+    let toml_transcoded = serde_toml_to_string(v_from_json);
+    let v_from_toml = serde_toml_from_string(toml_transcoded);
+    let bin_transcoded = serde_bincode_to_bytes(v_from_toml);
+    let v_from_bin = serde_bincode_from_bytes(bin_transcoded);
+
+    if (v_from_bin.get_string("cluster") != "us-east-1" || v_from_bin.get_int("nodes") != 12 || !v_from_bin.get_bool("ready")) {
+        println("FAIL: Cross-format transcoding mismatch");
+        return;
+    }
+    println("SUITE 6 PASS: Universal cross-format transcoding across all formats");
+
+    println("SUCCESS: ALL UNIVERSAL SERIALIZATION (SERDE) SUITES PASSED");
+}

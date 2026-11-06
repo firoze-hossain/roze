@@ -1748,6 +1748,16 @@ void __roze_time_sleep_nanos(long ns) { (void)ns; }
 void __roze_time_sleep_micros(long us) { (void)us; }
 void __roze_time_sleep_millis(long ms) { (void)ms; }
 
+long __roze_regex_compile_handle(const char *pattern) { (void)pattern; return -1; }
+long __roze_regex_is_match_handle(long handle, const char *text) { (void)handle; (void)text; return 0; }
+void *__roze_regex_find_handle(long handle, const char *text) { (void)handle; (void)text; return 0; }
+void *__roze_regex_find_all_handle(long handle, const char *text) { (void)handle; (void)text; return 0; }
+void *__roze_regex_captures_handle(long handle, const char *text) { (void)handle; (void)text; return 0; }
+const char *__roze_regex_replace_handle(long handle, const char *text, const char *rep) { (void)handle; (void)rep; return text ? text : ""; }
+const char *__roze_regex_replace_all_handle(long handle, const char *text, const char *rep) { (void)handle; (void)rep; return text ? text : ""; }
+void *__roze_regex_split_handle(long handle, const char *text) { (void)handle; (void)text; return 0; }
+void __roze_regex_free_handle(long handle) { (void)handle; }
+
 // 6. Bootstrap entry point called by entry64
 __attribute__((weak))
 void __roze_main(void);
@@ -5837,6 +5847,57 @@ fn declare_time_runtime(module: &mut ObjectModule) -> Result<TimeRuntime> {
     })
 }
 
+#[derive(Clone, Copy)]
+pub struct RegexRuntime {
+    pub regex_compile_handle: FuncId,
+    pub regex_is_match_handle: FuncId,
+    pub regex_find_handle: FuncId,
+    pub regex_find_all_handle: FuncId,
+    pub regex_captures_handle: FuncId,
+    pub regex_replace_handle: FuncId,
+    pub regex_replace_all_handle: FuncId,
+    pub regex_split_handle: FuncId,
+    pub regex_free_handle: FuncId,
+}
+
+fn declare_regex_runtime(module: &mut ObjectModule) -> Result<RegexRuntime> {
+    macro_rules! decl {
+        ($name:expr, $sig:expr) => {
+            module.declare_function($name, Linkage::Import, &$sig).map_err(|e| anyhow!(e.to_string()))?
+        };
+    }
+
+    let mut sig_str_to_i64 = module.make_signature();
+    sig_str_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_str_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_str_to_i64 = module.make_signature();
+    sig_i64_str_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_str_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_str_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_str_str_to_str = module.make_signature();
+    sig_i64_str_str_to_str.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_str_str_to_str.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_str_str_to_str.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_str_str_to_str.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_to_void = module.make_signature();
+    sig_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    Ok(RegexRuntime {
+        regex_compile_handle: decl!("__roze_regex_compile_handle", sig_str_to_i64),
+        regex_is_match_handle: decl!("__roze_regex_is_match_handle", sig_i64_str_to_i64),
+        regex_find_handle: decl!("__roze_regex_find_handle", sig_i64_str_to_i64),
+        regex_find_all_handle: decl!("__roze_regex_find_all_handle", sig_i64_str_to_i64),
+        regex_captures_handle: decl!("__roze_regex_captures_handle", sig_i64_str_to_i64),
+        regex_replace_handle: decl!("__roze_regex_replace_handle", sig_i64_str_str_to_str),
+        regex_replace_all_handle: decl!("__roze_regex_replace_all_handle", sig_i64_str_str_to_str),
+        regex_split_handle: decl!("__roze_regex_split_handle", sig_i64_str_to_i64),
+        regex_free_handle: decl!("__roze_regex_free_handle", sig_i64_to_void),
+    })
+}
+
 /// A native class instance is a pointer to a heap block:
 ///
 ///   [0..8)          i64  refcount
@@ -6188,6 +6249,7 @@ struct NativeGenerator<'a> {
     fs: FsRuntime,
     proc: ProcRuntime,
     time: TimeRuntime,
+    regex: RegexRuntime,
     classes: HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -6282,6 +6344,7 @@ impl<'a> NativeGenerator<'a> {
         let fs = declare_fs_runtime(module)?;
         let proc = declare_proc_runtime(module)?;
         let time = declare_time_runtime(module)?;
+        let regex = declare_regex_runtime(module)?;
 
         let mut retain_ctx = module.make_context();
         let class_retain_id = build_class_retain(module, &mut retain_ctx)?;
@@ -6321,6 +6384,7 @@ impl<'a> NativeGenerator<'a> {
             fs,
             proc,
             time,
+            regex,
             classes: HashMap::new(),
             class_retain_id,
             trait_release_id,
@@ -6705,6 +6769,7 @@ impl<'a> NativeGenerator<'a> {
                     fs: &self.fs,
                     proc: &self.proc,
                     time: &self.time,
+                    regex: &self.regex,
                     classes: &self.classes,
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
@@ -6832,6 +6897,7 @@ impl<'a> NativeGenerator<'a> {
                                 fs: &self.fs,
                                 proc: &self.proc,
                                 time: &self.time,
+                                regex: &self.regex,
                                 classes: &self.classes,
                                 class_retain_id: self.class_retain_id,
                                 literal_counter: &mut self.literal_counter,
@@ -6947,6 +7013,7 @@ impl<'a> NativeGenerator<'a> {
                         fs: &self.fs,
                         proc: &self.proc,
                         time: &self.time,
+                        regex: &self.regex,
                         classes: &self.classes,
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
@@ -7105,6 +7172,7 @@ struct FunctionCompiler<'a, 'b> {
     fs: &'a FsRuntime,
     proc: &'a ProcRuntime,
     time: &'a TimeRuntime,
+    regex: &'a RegexRuntime,
     classes: &'a HashMap<String, ClassInfo>,
     class_retain_id: FuncId,
     trait_release_id: FuncId,
@@ -13368,6 +13436,95 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let func_ref = self.module.declare_func_in_func(self.time.time_sleep_millis, self.builder.func);
                 self.builder.ins().call(func_ref, &[ms]);
                 self.release_if_fresh(&arguments[0], ms)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "regex_compile_handle" if arguments.len() == 1 => {
+                let pat = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.regex.regex_compile_handle, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[pat]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], pat)?;
+                return Ok(res);
+            }
+            "regex_is_match_handle" if arguments.len() == 2 => {
+                let handle = self.compile_expression(&arguments[0])?;
+                let text = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.regex.regex_is_match_handle, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[handle, text]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], handle)?;
+                self.release_if_fresh(&arguments[1], text)?;
+                return Ok(res);
+            }
+            "regex_find_handle" if arguments.len() == 2 => {
+                let handle = self.compile_expression(&arguments[0])?;
+                let text = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.regex.regex_find_handle, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[handle, text]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], handle)?;
+                self.release_if_fresh(&arguments[1], text)?;
+                return Ok(res);
+            }
+            "regex_find_all_handle" if arguments.len() == 2 => {
+                let handle = self.compile_expression(&arguments[0])?;
+                let text = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.regex.regex_find_all_handle, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[handle, text]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], handle)?;
+                self.release_if_fresh(&arguments[1], text)?;
+                return Ok(res);
+            }
+            "regex_captures_handle" if arguments.len() == 2 => {
+                let handle = self.compile_expression(&arguments[0])?;
+                let text = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.regex.regex_captures_handle, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[handle, text]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], handle)?;
+                self.release_if_fresh(&arguments[1], text)?;
+                return Ok(res);
+            }
+            "regex_replace_handle" if arguments.len() == 3 => {
+                let handle = self.compile_expression(&arguments[0])?;
+                let text = self.compile_expression(&arguments[1])?;
+                let rep = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.regex.regex_replace_handle, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[handle, text, rep]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], handle)?;
+                self.release_if_fresh(&arguments[1], text)?;
+                self.release_if_fresh(&arguments[2], rep)?;
+                return Ok(res);
+            }
+            "regex_replace_all_handle" if arguments.len() == 3 => {
+                let handle = self.compile_expression(&arguments[0])?;
+                let text = self.compile_expression(&arguments[1])?;
+                let rep = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.regex.regex_replace_all_handle, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[handle, text, rep]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], handle)?;
+                self.release_if_fresh(&arguments[1], text)?;
+                self.release_if_fresh(&arguments[2], rep)?;
+                return Ok(res);
+            }
+            "regex_split_handle" if arguments.len() == 2 => {
+                let handle = self.compile_expression(&arguments[0])?;
+                let text = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.regex.regex_split_handle, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[handle, text]);
+                let res = self.builder.inst_results(call)[0];
+                self.release_if_fresh(&arguments[0], handle)?;
+                self.release_if_fresh(&arguments[1], text)?;
+                return Ok(res);
+            }
+            "regex_free_handle" if arguments.len() == 1 => {
+                let handle = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.regex.regex_free_handle, self.builder.func);
+                self.builder.ins().call(func_ref, &[handle]);
+                self.release_if_fresh(&arguments[0], handle)?;
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
             _ => {}

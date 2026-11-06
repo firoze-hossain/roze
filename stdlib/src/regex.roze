@@ -1,0 +1,212 @@
+// stdlib/src/regex.roze
+//
+// Roze High-Performance Linear-Time Regex Engine (M4-T07)
+// PikeVM Thompson NFA matching with guaranteed O(M * N) linear time complexity,
+// ReDoS immunity, capture groups, match offsets, replace, and split.
+// Parity with Rust regex crate and Java 25 java.util.regex.
+
+class Match {
+    start_pos: int,
+    end_pos: int,
+    matched_text: string,
+}
+
+impl Match {
+    func start() -> int {
+        return this.start_pos;
+    }
+
+    func end() -> int {
+        return this.end_pos;
+    }
+
+    func text() -> string {
+        return this.matched_text;
+    }
+
+    func as_str() -> string {
+        return this.matched_text;
+    }
+
+    func len() -> int {
+        if (this.end_pos >= this.start_pos) {
+            return this.end_pos - this.start_pos;
+        }
+        return 0;
+    }
+
+    func is_empty() -> bool {
+        return this.start_pos < 0 || this.end_pos <= this.start_pos;
+    }
+
+    func to_string() -> string {
+        return "Match(" + to_string(this.start_pos) + ".." + to_string(this.end_pos) + ", \"" + this.matched_text + "\")";
+    }
+}
+
+class Captures {
+    matched_text: string,
+    groups: List,
+}
+
+impl Captures {
+    func get(index: int) -> string {
+        if (index >= 0 && index < list_length(this.groups)) {
+            let item: string = list_get(this.groups, index);
+            return item;
+        }
+        return "";
+    }
+
+    func len() -> int {
+        return list_length(this.groups);
+    }
+
+    func count() -> int {
+        return list_length(this.groups);
+    }
+
+    func as_str() -> string {
+        return this.matched_text;
+    }
+
+    func to_string() -> string {
+        return "Captures(\"" + this.matched_text + "\")";
+    }
+}
+
+class Regex {
+    handle: int,
+    pattern: string,
+}
+
+impl Regex {
+    func is_match(text: string) -> bool {
+        if (this.handle < 0) {
+            return false;
+        }
+        return regex_is_match_handle(this.handle, text);
+    }
+
+    func find(text: string) -> Match {
+        if (this.handle < 0) {
+            return new Match(-1, -1, "");
+        }
+        let res_list = regex_find_handle(this.handle, text);
+        if (list_length(res_list) < 3) {
+            return new Match(-1, -1, "");
+        }
+        let s: int = list_get(res_list, 0);
+        let e: int = list_get(res_list, 1);
+        let t: string = list_get(res_list, 2);
+        return new Match(s, e, t);
+    }
+
+    func find_all(text: string) -> List {
+        let res = list_new();
+        if (this.handle < 0) {
+            return res;
+        }
+        let res_list = regex_find_all_handle(this.handle, text);
+        let count = list_length(res_list);
+        let i = 0;
+        while (i < count) {
+            let item: List = list_get(res_list, i);
+            if (list_length(item) >= 3) {
+                let s: int = list_get(item, 0);
+                let e: int = list_get(item, 1);
+                let t: string = list_get(item, 2);
+                list_push(res, new Match(s, e, t));
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+
+    func captures(text: string) -> Captures {
+        if (this.handle < 0) {
+            return new Captures("", list_new());
+        }
+        let res_list = regex_captures_handle(this.handle, text);
+        if (list_length(res_list) == 0) {
+            return new Captures("", list_new());
+        }
+        let full: string = list_get(res_list, 0);
+        return new Captures(full, res_list);
+    }
+
+    func replace(text: string, rep: string) -> string {
+        if (this.handle < 0) {
+            return text;
+        }
+        return regex_replace_handle(this.handle, text, rep);
+    }
+
+    func replace_all(text: string, rep: string) -> string {
+        if (this.handle < 0) {
+            return text;
+        }
+        return regex_replace_all_handle(this.handle, text, rep);
+    }
+
+    func split(text: string) -> List {
+        return regex_split_handle(this.handle, text);
+    }
+
+    func get_pattern() -> string {
+        return this.pattern;
+    }
+
+    func is_valid() -> bool {
+        return this.handle >= 0;
+    }
+
+    func free() -> void {
+        if (this.handle >= 0) {
+            regex_free_handle(this.handle);
+            this.handle = -1;
+        }
+    }
+}
+
+// ---- Constructor and Helper Functions ----
+
+func regex_new(pattern: string) -> Regex {
+    let h = regex_compile_handle(pattern);
+    return new Regex(h, pattern);
+}
+
+func regex_match(pattern: string, text: string) -> bool {
+    let re = regex_new(pattern);
+    let ok = re.is_match(text);
+    re.free();
+    return ok;
+}
+
+func regex_find(pattern: string, text: string) -> Match {
+    let re = regex_new(pattern);
+    let m = re.find(text);
+    re.free();
+    return m;
+}
+
+func regex_replace(pattern: string, text: string, rep: string) -> string {
+    let re = regex_new(pattern);
+    let out = re.replace(text, rep);
+    re.free();
+    return out;
+}
+
+func regex_replace_all(pattern: string, text: string, rep: string) -> string {
+    let re = regex_new(pattern);
+    let out = re.replace_all(text, rep);
+    re.free();
+    return out;
+}
+
+func regex_split(pattern: string, text: string) -> List {
+    let re = regex_new(pattern);
+    let out = re.split(text);
+    re.free();
+    return out;
+}

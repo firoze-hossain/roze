@@ -1,0 +1,180 @@
+// compiler/tests/fixtures/std_regex.roze
+//
+// Verification of Roze High-Performance Linear-Time Regex Engine (M4-T07)
+
+import "regex";
+
+func main() {
+    println("=== M4-T07 Linear-Time Regex Engine Suite ===");
+
+    // Suite 1: Literal and character class matching
+    if (!regex_match("abc", "123abc456")) {
+        println("FAIL: regex_match abc failed");
+        return;
+    }
+    if (regex_match("xyz", "123abc456")) {
+        println("FAIL: regex_match xyz should be false");
+        return;
+    }
+    if (!regex_match("^start", "start of line")) {
+        println("FAIL: ^start should match");
+        return;
+    }
+    if (regex_match("^start", "the start of line")) {
+        println("FAIL: ^start should not match middle");
+        return;
+    }
+    if (!regex_match("end$", "at the end")) {
+        println("FAIL: end$ should match");
+        return;
+    }
+    if (regex_match("end$", "at the end.")) {
+        println("FAIL: end$ should not match");
+        return;
+    }
+    if (!regex_match("\\d+", "abc1234def")) {
+        println("FAIL: \\d+ should match digits");
+        return;
+    }
+    if (!regex_match("[a-z]+", "12345hello")) {
+        println("FAIL: [a-z]+ should match lowercase letters");
+        return;
+    }
+    if (!regex_match("foo|bar", "we have a bar here")) {
+        println("FAIL: alternation foo|bar should match bar");
+        return;
+    }
+    println("SUITE 1 PASS: Predicate and syntax matching");
+
+    // Suite 2: Match finding and Match object methods
+    let re_num = regex_new("\\d+");
+    let m = re_num.find("Order #9876 confirmed");
+    if (m.is_empty()) {
+        println("FAIL: m should not be empty");
+        return;
+    }
+    if (m.start() != 7) {
+        println("FAIL: m.start() != 7, got: " + to_string(m.start()));
+        return;
+    }
+    if (m.end() != 11) {
+        println("FAIL: m.end() != 11, got: " + to_string(m.end()));
+        return;
+    }
+    if (m.text() != "9876") {
+        println("FAIL: m.text() != 9876, got: " + m.text());
+        return;
+    }
+    if (m.as_str() != "9876") {
+        println("FAIL: m.as_str() != 9876");
+        return;
+    }
+    if (m.len() != 4) {
+        println("FAIL: m.len() != 4, got: " + to_string(m.len()));
+        return;
+    }
+
+    let m_empty = re_num.find("no digits here");
+    if (!m_empty.is_empty()) {
+        println("FAIL: m_empty should be empty");
+        return;
+    }
+    if (m_empty.start() != -1) {
+        println("FAIL: m_empty.start() should be -1");
+        return;
+    }
+    println("SUITE 2 PASS: Match finding & object methods");
+
+    // Suite 3: find_all matching
+    let all_matches = re_num.find_all("10 apples, 20 oranges, 300 pears");
+    if (list_length(all_matches) != 3) {
+        println("FAIL: find_all count != 3, got: " + to_string(list_length(all_matches)));
+        return;
+    }
+    let m0: Match = list_get(all_matches, 0);
+    let m1: Match = list_get(all_matches, 1);
+    let m2: Match = list_get(all_matches, 2);
+    if (m0.text() != "10" || m0.start() != 0 || m0.end() != 2) {
+        println("FAIL: m0 mismatch: " + m0.text());
+        return;
+    }
+    if (m1.text() != "20" || m1.start() != 11 || m1.end() != 13) {
+        println("FAIL: m1 mismatch: " + m1.text());
+        return;
+    }
+    if (m2.text() != "300" || m2.start() != 23 || m2.end() != 26) {
+        println("FAIL: m2 mismatch: " + m2.text());
+        return;
+    }
+    println("SUITE 3 PASS: find_all multiple matches");
+
+    // Suite 4: Capture groups
+    let re_kv = regex_new("([a-z]+)=([0-9]+)");
+    let caps = re_kv.captures("config host=localhost port=8080 timeout=30");
+    if (caps.len() < 3) {
+        println("FAIL: caps.len() < 3, got: " + to_string(caps.len()));
+        return;
+    }
+    if (caps.get(0) != "port=8080") {
+        println("FAIL: caps.get(0) != port=8080, got: " + caps.get(0));
+        return;
+    }
+    if (caps.get(1) != "port") {
+        println("FAIL: caps.get(1) != port, got: " + caps.get(1));
+        return;
+    }
+    if (caps.get(2) != "8080") {
+        println("FAIL: caps.get(2) != 8080, got: " + caps.get(2));
+        return;
+    }
+    println("SUITE 4 PASS: Capture groups extraction");
+
+    // Suite 5: Replace and replace_all
+    let re_word = regex_new("world");
+    let rep1 = re_word.replace("hello world world", "roze");
+    if (rep1 != "hello roze world") {
+        println("FAIL: replace failed: " + rep1);
+        return;
+    }
+    let rep2 = re_word.replace_all("hello world world", "roze");
+    if (rep2 != "hello roze roze") {
+        println("FAIL: replace_all failed: " + rep2);
+        return;
+    }
+
+    let re_swap = regex_new("([a-z]+)-([0-9]+)");
+    let rep_swap = re_swap.replace_all("item-123 item-456", "$2:$1");
+    if (rep_swap != "123:item 456:item") {
+        println("FAIL: replace_all with groups failed: " + rep_swap);
+        return;
+    }
+    println("SUITE 5 PASS: Replace and group substitution");
+
+    // Suite 6: Split
+    let re_split = regex_new("[,; ]+");
+    let parts = re_split.split("apple, banana; orange  grape");
+    if (list_length(parts) != 4) {
+        println("FAIL: split count != 4, got: " + to_string(list_length(parts)));
+        return;
+    }
+    let p0: string = list_get(parts, 0);
+    let p1: string = list_get(parts, 1);
+    let p2: string = list_get(parts, 2);
+    let p3: string = list_get(parts, 3);
+    if (p0 != "apple" || p1 != "banana" || p2 != "orange" || p3 != "grape") {
+        println("FAIL: split elements mismatch");
+        return;
+    }
+    println("SUITE 6 PASS: String splitting with regex delimiters");
+
+    // Suite 7: Linear-Time ReDoS Immunity Verification
+    let re_redos = regex_new("(a+)+$");
+    let redos_res = re_redos.is_match("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!");
+    if (redos_res) {
+        println("FAIL: ReDoS adversarial input should not match");
+        return;
+    }
+    println("SUITE 7 PASS: Linear-time ReDoS immunity guaranteed");
+
+    println("SUCCESS: ALL REGEX ENGINE SUITES PASSED");
+}

@@ -5808,6 +5808,122 @@ const TIME_HELPER_METHODS: &str = r#"
     }
 "#;
 
+const REGEX_HELPER_METHODS: &str = r#"
+    // ---- Linear-Time Regex Engine Helpers (M4-T07) ----
+    private static final java.util.Map<Integer, java.util.regex.Pattern> __ROZE_REGEX_MAP = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.atomic.AtomicInteger __ROZE_REGEX_HANDLE_GEN = new java.util.concurrent.atomic.AtomicInteger(1);
+
+    public static int regex_compile_handle(String pattern) {
+        if (pattern == null) return -1;
+        try {
+            java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern);
+            int h = __ROZE_REGEX_HANDLE_GEN.getAndIncrement();
+            __ROZE_REGEX_MAP.put(h, p);
+            return h;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    public static boolean regex_is_match_handle(int handle, String text) {
+        if (text == null) return false;
+        java.util.regex.Pattern p = __ROZE_REGEX_MAP.get(handle);
+        if (p == null) return false;
+        return p.matcher(text).find();
+    }
+
+    public static java.util.List regex_find_handle(int handle, String text) {
+        java.util.List res = new java.util.ArrayList();
+        if (text == null) return res;
+        java.util.regex.Pattern p = __ROZE_REGEX_MAP.get(handle);
+        if (p == null) return res;
+        java.util.regex.Matcher m = p.matcher(text);
+        if (m.find()) {
+            res.add(m.start());
+            res.add(m.end());
+            res.add(m.group());
+        }
+        return res;
+    }
+
+    public static java.util.List regex_find_all_handle(int handle, String text) {
+        java.util.List res = new java.util.ArrayList();
+        if (text == null) return res;
+        java.util.regex.Pattern p = __ROZE_REGEX_MAP.get(handle);
+        if (p == null) return res;
+        java.util.regex.Matcher m = p.matcher(text);
+        while (m.find()) {
+            java.util.List item = new java.util.ArrayList();
+            item.add(m.start());
+            item.add(m.end());
+            item.add(m.group());
+            res.add(item);
+        }
+        return res;
+    }
+
+    public static java.util.List regex_captures_handle(int handle, String text) {
+        java.util.List res = new java.util.ArrayList();
+        if (text == null) return res;
+        java.util.regex.Pattern p = __ROZE_REGEX_MAP.get(handle);
+        if (p == null) return res;
+        java.util.regex.Matcher m = p.matcher(text);
+        if (m.find()) {
+            int gc = m.groupCount();
+            for (int i = 0; i <= gc; i++) {
+                String g = m.group(i);
+                res.add(g != null ? g : "");
+            }
+        }
+        return res;
+    }
+
+    public static String regex_replace_handle(int handle, String text, String rep) {
+        if (text == null) return "";
+        if (rep == null) rep = "";
+        java.util.regex.Pattern p = __ROZE_REGEX_MAP.get(handle);
+        if (p == null) return text;
+        java.util.regex.Matcher m = p.matcher(text);
+        try {
+            return m.replaceFirst(rep);
+        } catch (Exception e) {
+            return m.replaceFirst(java.util.regex.Matcher.quoteReplacement(rep));
+        }
+    }
+
+    public static String regex_replace_all_handle(int handle, String text, String rep) {
+        if (text == null) return "";
+        if (rep == null) rep = "";
+        java.util.regex.Pattern p = __ROZE_REGEX_MAP.get(handle);
+        if (p == null) return text;
+        java.util.regex.Matcher m = p.matcher(text);
+        try {
+            return m.replaceAll(rep);
+        } catch (Exception e) {
+            return m.replaceAll(java.util.regex.Matcher.quoteReplacement(rep));
+        }
+    }
+
+    public static java.util.List regex_split_handle(int handle, String text) {
+        java.util.List res = new java.util.ArrayList();
+        if (text == null) return res;
+        java.util.regex.Pattern p = __ROZE_REGEX_MAP.get(handle);
+        if (p == null) {
+            res.add(text);
+            return res;
+        }
+        String[] parts = p.split(text);
+        for (String part : parts) {
+            res.add(part);
+        }
+        return res;
+    }
+
+    public static void regex_free_handle(int handle) {
+        __ROZE_REGEX_MAP.remove(handle);
+    }
+"#;
+
 
 
 /// Returns the Java return type for a built-in Core (string/math)
@@ -6229,6 +6345,13 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "time_monotonic_nanos" | "time_monotonic_micros" | "time_monotonic_millis"
         | "time_realtime_secs" | "time_realtime_millis" | "time_realtime_nanos" => Some("long"),
         "time_sleep_nanos" | "time_sleep_micros" | "time_sleep_millis" => Some("void"),
+
+        // Linear-Time Regex Engine (M4-T07)
+        "regex_compile_handle" => Some("int"),
+        "regex_is_match_handle" => Some("boolean"),
+        "regex_find_handle" | "regex_find_all_handle" | "regex_captures_handle" | "regex_split_handle" => Some("java.util.List"),
+        "regex_replace_handle" | "regex_replace_all_handle" => Some("String"),
+        "regex_free_handle" => Some("void"),
 
         _ => None,
     }
@@ -6676,6 +6799,7 @@ impl JavaSourceGenerator {
         source.push_str(FS_HELPER_METHODS);
         source.push_str(PROCESS_HELPER_METHODS);
         source.push_str(TIME_HELPER_METHODS);
+        source.push_str(REGEX_HELPER_METHODS);
         source.push_str("}\n");
 
         source.push_str(OPTION_RESULT_HELPER_CLASSES);

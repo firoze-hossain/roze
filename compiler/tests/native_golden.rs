@@ -4620,6 +4620,26 @@ fn native_standard_time_and_reactor_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: High-Precision Time Engine 100% OPERATIONAL"));
 }
 
+#[test]
+fn native_standard_regex_engine_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_regex.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_regex.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_regex_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== M4-T07 Linear-Time Regex Engine Suite ==="));
+    assert!(stdout.contains("SUITE 1 PASS: Predicate and syntax matching"));
+    assert!(stdout.contains("SUITE 2 PASS: Match finding & object methods"));
+    assert!(stdout.contains("SUITE 3 PASS: find_all multiple matches"));
+    assert!(stdout.contains("SUITE 4 PASS: Capture groups extraction"));
+    assert!(stdout.contains("SUITE 5 PASS: Replace and group substitution"));
+    assert!(stdout.contains("SUITE 6 PASS: String splitting with regex delimiters"));
+    assert!(stdout.contains("SUITE 7 PASS: Linear-time ReDoS immunity guaranteed"));
+    assert!(stdout.contains("SUCCESS: ALL REGEX ENGINE SUITES PASSED"));
+}
+
 
 
 

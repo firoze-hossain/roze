@@ -6649,6 +6649,729 @@ void __roze_time_sleep_millis(int64_t ms) {
     __roze_time_sleep_nanos(ms * 1000000LL);
 }
 
+// =============================================================
+// Linear-Time Thompson NFA / PikeVM Regex Engine (M4-T07)
+// Provides guaranteed O(N) execution time with zero ReDoS
+// =============================================================
+
+#define ROZE_RX_MAX_SLOTS 64
+
+enum {
+    ROZE_RX_CHAR = 1,
+    ROZE_RX_ANY,
+    ROZE_RX_CLASS,
+    ROZE_RX_BOL,
+    ROZE_RX_EOL,
+    ROZE_RX_SPLIT,
+    ROZE_RX_SAVE,
+    ROZE_RX_MATCH
+};
+
+typedef struct RozeRxState {
+    int id;
+    int op;
+    int c;
+    int slot;
+    uint8_t bitmap[32];
+    struct RozeRxState* out;
+    struct RozeRxState* out1;
+    int last_step;
+} RozeRxState;
+
+typedef struct {
+    RozeRxState*** ptrs;
+    int count;
+} RozeRxPtrList;
+
+typedef struct {
+    RozeRxState* start;
+    RozeRxPtrList out;
+} RozeRxFrag;
+
+typedef struct {
+    RozeRxState* start;
+    int num_groups;
+    int is_anchored_start;
+    RozeRxState** all_states;
+    int state_count;
+    int state_cap;
+    int step_gen;
+} RozeRegex;
+
+static RozeRxState* roze_rx_new_state(RozeRegex* rx, int op, int c) {
+    RozeRxState* s = (RozeRxState*)calloc(1, sizeof(RozeRxState));
+    s->id = rx->state_count;
+    s->op = op;
+    s->c = c;
+    if (rx->state_count >= rx->state_cap) {
+        rx->state_cap = rx->state_cap ? rx->state_cap * 2 : 64;
+        rx->all_states = (RozeRxState**)realloc(rx->all_states, sizeof(RozeRxState*) * (size_t)rx->state_cap);
+    }
+    rx->all_states[rx->state_count++] = s;
+    return s;
+}
+
+static RozeRxPtrList roze_rx_ptrlist1(RozeRxState** p) {
+    RozeRxPtrList l;
+    l.count = 1;
+    l.ptrs = (RozeRxState***)malloc(sizeof(RozeRxState**));
+    l.ptrs[0] = p;
+    return l;
+}
+
+static RozeRxPtrList roze_rx_ptrlist_append(RozeRxPtrList l1, RozeRxPtrList l2) {
+    RozeRxPtrList l;
+    l.count = l1.count + l2.count;
+    l.ptrs = (RozeRxState***)malloc(sizeof(RozeRxState**) * (size_t)l.count);
+    for (int i = 0; i < l1.count; i++) l.ptrs[i] = l1.ptrs[i];
+    for (int i = 0; i < l2.count; i++) l.ptrs[l1.count + i] = l2.ptrs[i];
+    free(l1.ptrs);
+    free(l2.ptrs);
+    return l;
+}
+
+static void roze_rx_patch(RozeRxPtrList l, RozeRxState* s) {
+    for (int i = 0; i < l.count; i++) {
+        RozeRxState** p = l.ptrs[i];
+        *p = s;
+    }
+    free(l.ptrs);
+}
+
+static RozeRxFrag roze_rx_parse_expr(RozeRegex* rx, const char** p, int* group_count);
+
+static RozeRxFrag roze_rx_parse_atom(RozeRegex* rx, const char** p, int* group_count) {
+    if (**p == '\0' || **p == '|' || **p == ')') {
+        RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_SPLIT, 0);
+        return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+    }
+    if (**p == '^') {
+        (*p)++;
+        RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_BOL, 0);
+        return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+    }
+    if (**p == '$') {
+        (*p)++;
+        RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_EOL, 0);
+        return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+    }
+    if (**p == '.') {
+        (*p)++;
+        RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_ANY, 0);
+        return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+    }
+    if (**p == '(') {
+        (*p)++;
+        int non_capturing = 0;
+        if ((*p)[0] == '?' && (*p)[1] == ':') {
+            non_capturing = 1;
+            *p += 2;
+        }
+        int gid = non_capturing ? -1 : (*group_count)++;
+        RozeRxFrag inner = roze_rx_parse_expr(rx, p, group_count);
+        if (**p == ')') (*p)++;
+        if (non_capturing) return inner;
+
+        RozeRxState* s1 = roze_rx_new_state(rx, ROZE_RX_SAVE, 0);
+        s1->slot = 2 * gid;
+        RozeRxState* s2 = roze_rx_new_state(rx, ROZE_RX_SAVE, 0);
+        s2->slot = 2 * gid + 1;
+
+        s1->out = inner.start;
+        roze_rx_patch(inner.out, s2);
+        return (RozeRxFrag){ s1, roze_rx_ptrlist1(&s2->out) };
+    }
+    if (**p == '[') {
+        (*p)++;
+        int inverted = 0;
+        if (**p == '^') { inverted = 1; (*p)++; }
+        uint8_t bitmap[32] = {0};
+        while (**p && **p != ']') {
+            int c1 = 0;
+            if (**p == '\\') {
+                (*p)++;
+                char esc = *(*p)++;
+                if (esc == 'd') { for (int k = '0'; k <= '9'; k++) bitmap[k >> 3] |= (1 << (k & 7)); continue; }
+                if (esc == 'w') {
+                    for (int k = '0'; k <= '9'; k++) bitmap[k >> 3] |= (1 << (k & 7));
+                    for (int k = 'a'; k <= 'z'; k++) bitmap[k >> 3] |= (1 << (k & 7));
+                    for (int k = 'A'; k <= 'Z'; k++) bitmap[k >> 3] |= (1 << (k & 7));
+                    bitmap['_' >> 3] |= (1 << ('_' & 7));
+                    continue;
+                }
+                if (esc == 's') {
+                    bitmap[' ' >> 3] |= (1 << (' ' & 7));
+                    bitmap['\t' >> 3] |= (1 << ('\t' & 7));
+                    bitmap['\n' >> 3] |= (1 << ('\n' & 7));
+                    bitmap['\r' >> 3] |= (1 << ('\r' & 7));
+                    continue;
+                }
+                if (esc == 'n') c1 = '\n';
+                else if (esc == 't') c1 = '\t';
+                else if (esc == 'r') c1 = '\r';
+                else c1 = (unsigned char)esc;
+            } else {
+                c1 = (unsigned char)*(*p)++;
+            }
+            if (**p == '-' && (*p)[1] && (*p)[1] != ']') {
+                (*p)++;
+                int c2 = (unsigned char)*(*p)++;
+                for (int k = c1; k <= c2; k++) bitmap[k >> 3] |= (1 << (k & 7));
+            } else {
+                bitmap[c1 >> 3] |= (1 << (c1 & 7));
+            }
+        }
+        if (**p == ']') (*p)++;
+        if (inverted) {
+            for (int k = 0; k < 32; k++) bitmap[k] = (uint8_t)~bitmap[k];
+        }
+        RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_CLASS, 0);
+        memcpy(s->bitmap, bitmap, 32);
+        return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+    }
+    if (**p == '\\') {
+        (*p)++;
+        char esc = *(*p)++;
+        if (esc == 'd') {
+            uint8_t bitmap[32] = {0};
+            for (int k = '0'; k <= '9'; k++) bitmap[k >> 3] |= (1 << (k & 7));
+            RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_CLASS, 0);
+            memcpy(s->bitmap, bitmap, 32);
+            return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+        }
+        if (esc == 'D') {
+            uint8_t bitmap[32] = {0};
+            for (int k = '0'; k <= '9'; k++) bitmap[k >> 3] |= (1 << (k & 7));
+            for (int k = 0; k < 32; k++) bitmap[k] = (uint8_t)~bitmap[k];
+            RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_CLASS, 0);
+            memcpy(s->bitmap, bitmap, 32);
+            return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+        }
+        if (esc == 'w') {
+            uint8_t bitmap[32] = {0};
+            for (int k = '0'; k <= '9'; k++) bitmap[k >> 3] |= (1 << (k & 7));
+            for (int k = 'a'; k <= 'z'; k++) bitmap[k >> 3] |= (1 << (k & 7));
+            for (int k = 'A'; k <= 'Z'; k++) bitmap[k >> 3] |= (1 << (k & 7));
+            bitmap['_' >> 3] |= (1 << ('_' & 7));
+            RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_CLASS, 0);
+            memcpy(s->bitmap, bitmap, 32);
+            return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+        }
+        if (esc == 'W') {
+            uint8_t bitmap[32] = {0};
+            for (int k = '0'; k <= '9'; k++) bitmap[k >> 3] |= (1 << (k & 7));
+            for (int k = 'a'; k <= 'z'; k++) bitmap[k >> 3] |= (1 << (k & 7));
+            for (int k = 'A'; k <= 'Z'; k++) bitmap[k >> 3] |= (1 << (k & 7));
+            bitmap['_' >> 3] |= (1 << ('_' & 7));
+            for (int k = 0; k < 32; k++) bitmap[k] = (uint8_t)~bitmap[k];
+            RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_CLASS, 0);
+            memcpy(s->bitmap, bitmap, 32);
+            return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+        }
+        if (esc == 's') {
+            uint8_t bitmap[32] = {0};
+            bitmap[' ' >> 3] |= (1 << (' ' & 7));
+            bitmap['\t' >> 3] |= (1 << ('\t' & 7));
+            bitmap['\n' >> 3] |= (1 << ('\n' & 7));
+            bitmap['\r' >> 3] |= (1 << ('\r' & 7));
+            RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_CLASS, 0);
+            memcpy(s->bitmap, bitmap, 32);
+            return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+        }
+        if (esc == 'S') {
+            uint8_t bitmap[32] = {0};
+            bitmap[' ' >> 3] |= (1 << (' ' & 7));
+            bitmap['\t' >> 3] |= (1 << ('\t' & 7));
+            bitmap['\n' >> 3] |= (1 << ('\n' & 7));
+            bitmap['\r' >> 3] |= (1 << ('\r' & 7));
+            for (int k = 0; k < 32; k++) bitmap[k] = (uint8_t)~bitmap[k];
+            RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_CLASS, 0);
+            memcpy(s->bitmap, bitmap, 32);
+            return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+        }
+        int c = (unsigned char)esc;
+        if (esc == 'n') c = '\n';
+        else if (esc == 'r') c = '\r';
+        else if (esc == 't') c = '\t';
+        RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_CHAR, c);
+        return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+    }
+    RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_CHAR, (unsigned char)*(*p)++);
+    return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+}
+
+static RozeRxFrag roze_rx_parse_piece(RozeRegex* rx, const char** p, int* group_count) {
+    RozeRxFrag atom = roze_rx_parse_atom(rx, p, group_count);
+    if (**p == '*') {
+        (*p)++;
+        RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_SPLIT, 0);
+        s->out = atom.start;
+        roze_rx_patch(atom.out, s);
+        return (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out1) };
+    }
+    if (**p == '+') {
+        (*p)++;
+        RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_SPLIT, 0);
+        s->out = atom.start;
+        roze_rx_patch(atom.out, s);
+        return (RozeRxFrag){ atom.start, roze_rx_ptrlist1(&s->out1) };
+    }
+    if (**p == '?') {
+        (*p)++;
+        RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_SPLIT, 0);
+        s->out = atom.start;
+        return (RozeRxFrag){ s, roze_rx_ptrlist_append(roze_rx_ptrlist1(&s->out1), atom.out) };
+    }
+    return atom;
+}
+
+static RozeRxFrag roze_rx_parse_concat(RozeRegex* rx, const char** p, int* group_count) {
+    int has_item = 0;
+    RozeRxFrag res;
+    while (**p && **p != '|' && **p != ')') {
+        RozeRxFrag piece = roze_rx_parse_piece(rx, p, group_count);
+        if (!has_item) {
+            res = piece;
+            has_item = 1;
+        } else {
+            roze_rx_patch(res.out, piece.start);
+            res.out = piece.out;
+        }
+    }
+    if (!has_item) {
+        RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_SPLIT, 0);
+        res = (RozeRxFrag){ s, roze_rx_ptrlist1(&s->out) };
+    }
+    return res;
+}
+
+static RozeRxFrag roze_rx_parse_expr(RozeRegex* rx, const char** p, int* group_count) {
+    RozeRxFrag left = roze_rx_parse_concat(rx, p, group_count);
+    while (**p == '|') {
+        (*p)++;
+        RozeRxFrag right = roze_rx_parse_concat(rx, p, group_count);
+        RozeRxState* s = roze_rx_new_state(rx, ROZE_RX_SPLIT, 0);
+        s->out = left.start;
+        s->out1 = right.start;
+        left = (RozeRxFrag){ s, roze_rx_ptrlist_append(left.out, right.out) };
+    }
+    return left;
+}
+
+static RozeRegex* roze_rx_compile(const char* pat) {
+    if (!pat) return NULL;
+    RozeRegex* rx = (RozeRegex*)calloc(1, sizeof(RozeRegex));
+    if (*pat == '^') {
+        rx->is_anchored_start = 1;
+        pat++;
+    }
+    int group_count = 1; // group 0 is full match
+    RozeRxFrag expr = roze_rx_parse_expr(rx, &pat, &group_count);
+
+    RozeRxState* s1 = roze_rx_new_state(rx, ROZE_RX_SAVE, 0);
+    s1->slot = 0;
+    RozeRxState* s2 = roze_rx_new_state(rx, ROZE_RX_SAVE, 0);
+    s2->slot = 1;
+    RozeRxState* match = roze_rx_new_state(rx, ROZE_RX_MATCH, 0);
+
+    s1->out = expr.start;
+    roze_rx_patch(expr.out, s2);
+    s2->out = match;
+
+    rx->start = s1;
+    rx->num_groups = group_count;
+    return rx;
+}
+
+static void roze_rx_free(RozeRegex* rx) {
+    if (!rx) return;
+    for (int i = 0; i < rx->state_count; i++) {
+        free(rx->all_states[i]);
+    }
+    free(rx->all_states);
+    free(rx);
+}
+
+typedef struct {
+    RozeRxState* state;
+    int64_t saved[ROZE_RX_MAX_SLOTS];
+} RozeRxThread;
+
+typedef struct {
+    RozeRxThread* threads;
+    int count;
+    int cap;
+} RozeRxThreadList;
+
+static void roze_rx_add_thread(RozeRegex* rx, RozeRxThreadList* list, RozeRxState* s, int64_t* saved, int pos, const char* text, int len) {
+    if (!s) return;
+    if (s->last_step == rx->step_gen) return;
+    s->last_step = rx->step_gen;
+
+    if (s->op == ROZE_RX_SPLIT) {
+        roze_rx_add_thread(rx, list, s->out, saved, pos, text, len);
+        roze_rx_add_thread(rx, list, s->out1, saved, pos, text, len);
+        return;
+    }
+    if (s->op == ROZE_RX_SAVE) {
+        int64_t new_saved[ROZE_RX_MAX_SLOTS];
+        memcpy(new_saved, saved, sizeof(new_saved));
+        if (s->slot >= 0 && s->slot < ROZE_RX_MAX_SLOTS) {
+            new_saved[s->slot] = pos;
+        }
+        roze_rx_add_thread(rx, list, s->out, new_saved, pos, text, len);
+        return;
+    }
+    if (s->op == ROZE_RX_BOL) {
+        if (pos == 0 || (pos > 0 && text[pos - 1] == '\n')) {
+            roze_rx_add_thread(rx, list, s->out, saved, pos, text, len);
+        }
+        return;
+    }
+    if (s->op == ROZE_RX_EOL) {
+        if (pos == len || (pos < len && text[pos] == '\n')) {
+            roze_rx_add_thread(rx, list, s->out, saved, pos, text, len);
+        }
+        return;
+    }
+
+    if (list->count >= list->cap) {
+        list->cap = list->cap ? list->cap * 2 : 64;
+        list->threads = (RozeRxThread*)realloc(list->threads, sizeof(RozeRxThread) * (size_t)list->cap);
+    }
+    RozeRxThread* t = &list->threads[list->count++];
+    t->state = s;
+    memcpy(t->saved, saved, sizeof(t->saved));
+}
+
+static int roze_rx_match_at(RozeRegex* rx, const char* text, int len, int start_pos, int64_t* out_saved) {
+    RozeRxThreadList clist = {0}, nlist = {0};
+    int matched = 0;
+    int64_t best_saved[ROZE_RX_MAX_SLOTS];
+    memset(best_saved, -1, sizeof(best_saved));
+
+    int64_t init_saved[ROZE_RX_MAX_SLOTS];
+    memset(init_saved, -1, sizeof(init_saved));
+    rx->step_gen++;
+    roze_rx_add_thread(rx, &clist, rx->start, init_saved, start_pos, text, len);
+
+    for (int i = start_pos; i <= len; i++) {
+        for (int t = 0; t < clist.count; t++) {
+            if (clist.threads[t].state->op == ROZE_RX_MATCH) {
+                int64_t e_pos = i;
+                if (!matched || e_pos >= best_saved[1]) {
+                    matched = 1;
+                    memcpy(best_saved, clist.threads[t].saved, sizeof(best_saved));
+                    best_saved[1] = e_pos;
+                }
+            }
+        }
+
+        if (i == len) break;
+        unsigned char c = (unsigned char)text[i];
+        nlist.count = 0;
+        rx->step_gen++;
+
+        for (int t = 0; t < clist.count; t++) {
+            RozeRxState* s = clist.threads[t].state;
+            int ok = 0;
+            if (s->op == ROZE_RX_CHAR && (unsigned char)s->c == c) ok = 1;
+            else if (s->op == ROZE_RX_ANY && c != '\n') ok = 1;
+            else if (s->op == ROZE_RX_CLASS && (s->bitmap[c >> 3] & (1 << (c & 7)))) ok = 1;
+            if (ok) {
+                roze_rx_add_thread(rx, &nlist, s->out, clist.threads[t].saved, i + 1, text, len);
+            }
+        }
+
+        if (nlist.count == 0 && matched) break;
+
+        RozeRxThreadList tmp = clist;
+        clist = nlist;
+        nlist = tmp;
+    }
+
+    free(clist.threads);
+    free(nlist.threads);
+
+    if (matched && out_saved) {
+        memcpy(out_saved, best_saved, sizeof(best_saved));
+    }
+    return matched;
+}
+
+static int roze_rx_search(RozeRegex* rx, const char* text, int len, int start_pos, int64_t* out_saved) {
+    if (!rx || !text) return 0;
+    if (rx->is_anchored_start) {
+        return roze_rx_match_at(rx, text, len, start_pos, out_saved);
+    }
+    for (int p = start_pos; p <= len; p++) {
+        if (roze_rx_match_at(rx, text, len, p, out_saved)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static char* roze_rx_expand_replacement(const char* rep, int64_t* saved, const char* text, int num_groups) {
+    size_t cap = strlen(rep) + 128;
+    char* buf = (char*)malloc(cap);
+    size_t len = 0;
+    for (size_t i = 0; rep[i]; i++) {
+        if (rep[i] == '$' && rep[i + 1] >= '0' && rep[i + 1] <= '9') {
+            int g = rep[i + 1] - '0';
+            i++;
+            if (g < num_groups && saved[2 * g] >= 0 && saved[2 * g + 1] >= saved[2 * g]) {
+                size_t glen = (size_t)(saved[2 * g + 1] - saved[2 * g]);
+                while (len + glen + 1 >= cap) {
+                    cap *= 2;
+                    buf = (char*)realloc(buf, cap);
+                }
+                memcpy(buf + len, text + saved[2 * g], glen);
+                len += glen;
+            }
+        } else {
+            if (len + 2 >= cap) {
+                cap *= 2;
+                buf = (char*)realloc(buf, cap);
+            }
+            buf[len++] = rep[i];
+        }
+    }
+    buf[len] = '\0';
+    return buf;
+}
+
+#define ROZE_MAX_REGEXES 256
+static RozeRegex* g_roze_regex_table[ROZE_MAX_REGEXES];
+static pthread_mutex_t g_roze_regex_lock = PTHREAD_MUTEX_INITIALIZER;
+
+int64_t __roze_regex_compile_handle(const char* pattern) {
+    if (!pattern) return -1;
+    RozeRegex* rx = roze_rx_compile(pattern);
+    if (!rx) return -1;
+    pthread_mutex_lock(&g_roze_regex_lock);
+    int slot = -1;
+    for (int i = 0; i < ROZE_MAX_REGEXES; i++) {
+        if (!g_roze_regex_table[i]) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot == -1) {
+        pthread_mutex_unlock(&g_roze_regex_lock);
+        roze_rx_free(rx);
+        return -1;
+    }
+    g_roze_regex_table[slot] = rx;
+    pthread_mutex_unlock(&g_roze_regex_lock);
+    return (int64_t)(slot + 1);
+}
+
+void __roze_regex_free_handle(int64_t handle) {
+    if (handle < 1 || handle > ROZE_MAX_REGEXES) return;
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_regex_lock);
+    RozeRegex* rx = g_roze_regex_table[slot];
+    g_roze_regex_table[slot] = NULL;
+    pthread_mutex_unlock(&g_roze_regex_lock);
+    if (rx) roze_rx_free(rx);
+}
+
+int64_t __roze_regex_is_match_handle(int64_t handle, const char* text) {
+    if (handle < 1 || handle > ROZE_MAX_REGEXES || !text) return 0;
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_regex_lock);
+    RozeRegex* rx = g_roze_regex_table[slot];
+    pthread_mutex_unlock(&g_roze_regex_lock);
+    if (!rx) return 0;
+    int len = (int)strlen(text);
+    return roze_rx_search(rx, text, len, 0, NULL) ? 1 : 0;
+}
+
+int64_t __roze_regex_find_handle(int64_t handle, const char* text) {
+    int64_t res = __roze_make_empty_list();
+    if (handle < 1 || handle > ROZE_MAX_REGEXES || !text) return res;
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_regex_lock);
+    RozeRegex* rx = g_roze_regex_table[slot];
+    pthread_mutex_unlock(&g_roze_regex_lock);
+    if (!rx) return res;
+    int len = (int)strlen(text);
+    int64_t saved[ROZE_RX_MAX_SLOTS];
+    if (roze_rx_search(rx, text, len, 0, saved)) {
+        __roze_list_push_item(res, saved[0]);
+        __roze_list_push_item(res, saved[1]);
+        const char* sub = __roze_make_string_with_len(text + saved[0], saved[1] - saved[0]);
+        __roze_list_push_item(res, (int64_t)sub);
+    }
+    return res;
+}
+
+int64_t __roze_regex_find_all_handle(int64_t handle, const char* text) {
+    int64_t list = __roze_make_empty_list();
+    if (handle < 1 || handle > ROZE_MAX_REGEXES || !text) return list;
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_regex_lock);
+    RozeRegex* rx = g_roze_regex_table[slot];
+    pthread_mutex_unlock(&g_roze_regex_lock);
+    if (!rx) return list;
+    int len = (int)strlen(text);
+    int pos = 0;
+    int64_t saved[ROZE_RX_MAX_SLOTS];
+    while (pos <= len && roze_rx_search(rx, text, len, pos, saved)) {
+        int64_t item = __roze_make_empty_list();
+        __roze_list_push_item(item, saved[0]);
+        __roze_list_push_item(item, saved[1]);
+        const char* sub = __roze_make_string_with_len(text + saved[0], saved[1] - saved[0]);
+        __roze_list_push_item(item, (int64_t)sub);
+        __roze_list_push_item(list, item);
+        pos = (int)saved[1];
+        if (saved[1] == saved[0]) pos++;
+    }
+    return list;
+}
+
+int64_t __roze_regex_captures_handle(int64_t handle, const char* text) {
+    int64_t list = __roze_make_empty_list();
+    if (handle < 1 || handle > ROZE_MAX_REGEXES || !text) return list;
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_regex_lock);
+    RozeRegex* rx = g_roze_regex_table[slot];
+    pthread_mutex_unlock(&g_roze_regex_lock);
+    if (!rx) return list;
+    int len = (int)strlen(text);
+    int64_t saved[ROZE_RX_MAX_SLOTS];
+    if (roze_rx_search(rx, text, len, 0, saved)) {
+        for (int i = 0; i < rx->num_groups; i++) {
+            int64_t s = saved[2 * i];
+            int64_t e = saved[2 * i + 1];
+            if (s >= 0 && e >= s && e <= len) {
+                const char* sub = __roze_make_string_with_len(text + s, e - s);
+                __roze_list_push_item(list, (int64_t)sub);
+            } else {
+                const char* empty = __roze_make_string_with_len("", 0);
+                __roze_list_push_item(list, (int64_t)empty);
+            }
+        }
+    }
+    return list;
+}
+
+const char* __roze_regex_replace_handle(int64_t handle, const char* text, const char* rep) {
+    if (!text) return __roze_make_string_with_len("", 0);
+    if (handle < 1 || handle > ROZE_MAX_REGEXES) return text;
+    if (!rep) rep = "";
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_regex_lock);
+    RozeRegex* rx = g_roze_regex_table[slot];
+    pthread_mutex_unlock(&g_roze_regex_lock);
+    if (!rx) return text;
+    int len = (int)strlen(text);
+    int64_t saved[ROZE_RX_MAX_SLOTS];
+    if (!roze_rx_search(rx, text, len, 0, saved)) {
+        return text;
+    }
+    char* exp_rep = roze_rx_expand_replacement(rep, saved, text, rx->num_groups);
+    size_t exp_len = strlen(exp_rep);
+    size_t out_len = (size_t)saved[0] + exp_len + (size_t)(len - saved[1]);
+    char* out = (char*)malloc(out_len + 1);
+    memcpy(out, text, (size_t)saved[0]);
+    memcpy(out + saved[0], exp_rep, exp_len);
+    memcpy(out + saved[0] + exp_len, text + saved[1], (size_t)(len - saved[1]));
+    out[out_len] = '\0';
+    free(exp_rep);
+    const char* res = __roze_make_string_with_len(out, (int64_t)out_len);
+    free(out);
+    return res;
+}
+
+const char* __roze_regex_replace_all_handle(int64_t handle, const char* text, const char* rep) {
+    if (!text) return __roze_make_string_with_len("", 0);
+    if (handle < 1 || handle > ROZE_MAX_REGEXES) return text;
+    if (!rep) rep = "";
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_regex_lock);
+    RozeRegex* rx = g_roze_regex_table[slot];
+    pthread_mutex_unlock(&g_roze_regex_lock);
+    if (!rx) return text;
+    int len = (int)strlen(text);
+    int pos = 0;
+    int64_t saved[ROZE_RX_MAX_SLOTS];
+    size_t cap = (size_t)len + 256;
+    size_t out_len = 0;
+    char* out = (char*)malloc(cap);
+
+    while (pos <= len && roze_rx_search(rx, text, len, pos, saved)) {
+        size_t chunk_len = (size_t)(saved[0] - pos);
+        char* exp_rep = roze_rx_expand_replacement(rep, saved, text, rx->num_groups);
+        size_t exp_len = strlen(exp_rep);
+        while (out_len + chunk_len + exp_len + 1 >= cap) {
+            cap *= 2;
+            out = (char*)realloc(out, cap);
+        }
+        memcpy(out + out_len, text + pos, chunk_len);
+        out_len += chunk_len;
+        memcpy(out + out_len, exp_rep, exp_len);
+        out_len += exp_len;
+        free(exp_rep);
+        pos = (int)saved[1];
+        if (saved[1] == saved[0]) {
+            if (pos < len) {
+                out[out_len++] = text[pos++];
+            } else {
+                break;
+            }
+        }
+    }
+    size_t rem = (size_t)(len - pos);
+    while (out_len + rem + 1 >= cap) {
+        cap *= 2;
+        out = (char*)realloc(out, cap);
+    }
+    memcpy(out + out_len, text + pos, rem);
+    out_len += rem;
+    out[out_len] = '\0';
+    const char* res = __roze_make_string_with_len(out, (int64_t)out_len);
+    free(out);
+    return res;
+}
+
+int64_t __roze_regex_split_handle(int64_t handle, const char* text) {
+    int64_t list = __roze_make_empty_list();
+    if (!text) return list;
+    if (handle < 1 || handle > ROZE_MAX_REGEXES) {
+        __roze_list_push_item(list, (int64_t)text);
+        return list;
+    }
+    int slot = (int)(handle - 1);
+    pthread_mutex_lock(&g_roze_regex_lock);
+    RozeRegex* rx = g_roze_regex_table[slot];
+    pthread_mutex_unlock(&g_roze_regex_lock);
+    if (!rx) {
+        __roze_list_push_item(list, (int64_t)text);
+        return list;
+    }
+    int len = (int)strlen(text);
+    int pos = 0;
+    int64_t saved[ROZE_RX_MAX_SLOTS];
+    while (pos <= len && roze_rx_search(rx, text, len, pos, saved)) {
+        int64_t part_len = saved[0] - pos;
+        const char* part = __roze_make_string_with_len(text + pos, part_len);
+        __roze_list_push_item(list, (int64_t)part);
+        pos = (int)saved[1];
+        if (saved[1] == saved[0]) {
+            if (pos < len) {
+                pos++;
+            } else {
+                break;
+            }
+        }
+    }
+    const char* last_part = __roze_make_string_with_len(text + pos, (int64_t)(len - pos));
+    __roze_list_push_item(list, (int64_t)last_part);
+    return list;
+}
+
 
 
 

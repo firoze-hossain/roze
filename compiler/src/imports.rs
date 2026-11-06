@@ -120,6 +120,9 @@ const ENV_DISPLAY_NAME: &str = "env (built-in)";
 const TIME_SOURCE: &str = include_str!("../../stdlib/src/time.roze");
 const TIME_DISPLAY_NAME: &str = "time (built-in)";
 
+const REGEX_SOURCE: &str = include_str!("../../stdlib/src/regex.roze");
+const REGEX_DISPLAY_NAME: &str = "regex (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -300,6 +303,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "time" || path == "std::time" || path == "roze::time" || path == "clock" || path == "instant" || path == "duration" {
         return Ok((TIME_SOURCE.to_string(), TIME_DISPLAY_NAME.to_string()));
+    }
+    if path == "regex" || path == "std::regex" || path == "roze::regex" || path == "text::regex" || path == "re" {
+        return Ok((REGEX_SOURCE.to_string(), REGEX_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

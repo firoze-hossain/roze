@@ -1536,6 +1536,17 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("time_sleep_nanos", vec![Type::I64], Type::Void),
         ("time_sleep_micros", vec![Type::I64], Type::Void),
         ("time_sleep_millis", vec![Type::I64], Type::Void),
+
+        // ---- Linear-Time Regex Engine (M4-T07) ----
+        ("regex_compile_handle", vec![Type::String], Type::Int),
+        ("regex_is_match_handle", vec![Type::Int, Type::String], Type::Bool),
+        ("regex_find_handle", vec![Type::Int, Type::String], Type::List),
+        ("regex_find_all_handle", vec![Type::Int, Type::String], Type::List),
+        ("regex_captures_handle", vec![Type::Int, Type::String], Type::List),
+        ("regex_replace_handle", vec![Type::Int, Type::String, Type::String], Type::String),
+        ("regex_replace_all_handle", vec![Type::Int, Type::String, Type::String], Type::String),
+        ("regex_split_handle", vec![Type::Int, Type::String], Type::List),
+        ("regex_free_handle", vec![Type::Int], Type::Void),
     ]
 }
 

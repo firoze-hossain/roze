@@ -1965,6 +1965,21 @@ fn standard_time_and_reactor_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: High-Precision Time Engine 100% OPERATIONAL"));
 }
 
+#[test]
+fn standard_regex_engine_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_regex.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== M4-T07 Linear-Time Regex Engine Suite ==="));
+    assert!(stdout.contains("SUITE 1 PASS: Predicate and syntax matching"));
+    assert!(stdout.contains("SUITE 2 PASS: Match finding & object methods"));
+    assert!(stdout.contains("SUITE 3 PASS: find_all multiple matches"));
+    assert!(stdout.contains("SUITE 4 PASS: Capture groups extraction"));
+    assert!(stdout.contains("SUITE 5 PASS: Replace and group substitution"));
+    assert!(stdout.contains("SUITE 6 PASS: String splitting with regex delimiters"));
+    assert!(stdout.contains("SUITE 7 PASS: Linear-time ReDoS immunity guaranteed"));
+    assert!(stdout.contains("SUCCESS: ALL REGEX ENGINE SUITES PASSED"));
+}
+
 
 
 

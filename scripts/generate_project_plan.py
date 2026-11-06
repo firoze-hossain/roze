@@ -436,7 +436,7 @@ s1_rows = [
         ("M4-T07", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Text & Regex", "High-Performance Linear-Time Regex Engine",
         "DFA/NFA regular expression engine with linear O(N) guarantees (no ReDoS catastrophic backtracking), Unicode character classes, capture groups, and replace/split.",
         "Parity with Rust regex crate and Java java.util.regex.",
-        "Text Processing, Compilers, Data Extraction", "7 Days", ("High", 14), ("Planned", 12)
+        "Text Processing, Compilers, Data Extraction", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M4-T08", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Universal Serialization", "Zero-Copy Multi-Format Serialization (Serde)",

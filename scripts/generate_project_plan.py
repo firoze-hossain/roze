@@ -448,7 +448,7 @@ s1_rows = [
         ("M4-T09", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Metaprogramming", "Compile-Time Type Reflection & Introspection",
         "Type inspection metadata: struct field enumeration, type_name<T>(), type_id<T>(), annotation inspection, and compile-time code generation hooks.",
         "Matches Java reflection and Rust proc_macro derive capabilities in pure Roze.",
-        "Framework Authors, Serialization, IoC Engines", "7 Days", ("High", 14), ("Planned", 12)
+        "Framework Authors, Serialization, IoC Engines", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M4-T10", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "FFI Ecosystem Bridges", "Raylib, SQLite & POSIX Libc Native Bridges",

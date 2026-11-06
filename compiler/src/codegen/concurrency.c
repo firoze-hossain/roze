@@ -2156,6 +2156,25 @@ __attribute__((weak)) int64_t field_offset(const char *class_name, const char *f
     return 0;
 }
 
+__attribute__((weak)) const char* type_name(const char *name) { return name ? name : ""; }
+__attribute__((weak)) int64_t type_id(const char *name) {
+    if (!name) return 0;
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    const unsigned char *p = (const unsigned char *)name;
+    while (*p) {
+        hash ^= (uint64_t)(*p);
+        hash *= 0x100000001b3ULL;
+        p++;
+    }
+    return (int64_t)(hash & 0x7fffffffULL);
+}
+__attribute__((weak)) int64_t field_count(const char *name) { (void)name; return 0; }
+__attribute__((weak)) const char* field_name(const char *name, int64_t idx) { (void)name; (void)idx; return ""; }
+__attribute__((weak)) const char* field_type(const char *name, int64_t idx) { (void)name; (void)idx; return ""; }
+__attribute__((weak)) int64_t has_field(const char *name, const char *fname) { (void)name; (void)fname; return 0; }
+__attribute__((weak)) int64_t has_annotation(const char *name, const char *aname) { (void)name; (void)aname; return 0; }
+__attribute__((weak)) const char* annotation_value(const char *name, const char *aname) { (void)name; (void)aname; return ""; }
+
 // RozeBoot Enterprise Framework Stubs for Hosted Native Target
 __attribute__((weak)) void* db_pool_create(const char* url, int64_t max_conns) { (void)url; (void)max_conns; return NULL; }
 __attribute__((weak)) void* db_pool_get(void* pool) { (void)pool; return NULL; }

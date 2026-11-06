@@ -1547,6 +1547,16 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("regex_replace_all_handle", vec![Type::Int, Type::String, Type::String], Type::String),
         ("regex_split_handle", vec![Type::Int, Type::String], Type::List),
         ("regex_free_handle", vec![Type::Int], Type::Void),
+
+        // ---- Metaprogramming & Type Reflection (M4-T09) ----
+        ("type_name", vec![Type::Unknown], Type::String),
+        ("type_id", vec![Type::Unknown], Type::Int),
+        ("field_count", vec![Type::Unknown], Type::Int),
+        ("field_name", vec![Type::Unknown, Type::Int], Type::String),
+        ("field_type", vec![Type::Unknown, Type::Int], Type::String),
+        ("has_field", vec![Type::Unknown, Type::String], Type::Bool),
+        ("has_annotation", vec![Type::Unknown, Type::String], Type::Bool),
+        ("annotation_value", vec![Type::Unknown, Type::String], Type::String),
     ]
 }
 
@@ -1979,7 +1989,18 @@ pub struct TypeChecker {
     pub in_isr: bool,
     pub closure_counter: usize,
     pub ast_functions: HashMap<String, Statement>,
+    pub class_annotations: HashMap<String, Vec<crate::parser::ast::Annotation>>,
+    pub function_annotations: HashMap<String, Vec<crate::parser::ast::Annotation>>,
     pub errors: Vec<String>,
+}
+
+pub fn hash_type_id(name: &str) -> i64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in name.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    (hash & 0x7fffffff) as i64
 }
 
 /// The result type of a numeric binary operator given its operand
@@ -2046,8 +2067,100 @@ impl TypeChecker {
             in_isr: false,
             closure_counter: 0,
             ast_functions: HashMap::new(),
+            class_annotations: HashMap::new(),
+            function_annotations: HashMap::new(),
             errors: Vec::new(),
         }
+    }
+
+    pub fn get_type_name_ref(&self, name: &str) -> String {
+        let trimmed = name.trim();
+        if self.classes.contains_key(trimmed) {
+            trimmed.to_string()
+        } else if self.enums.contains_key(trimmed) {
+            trimmed.to_string()
+        } else if self.traits.contains_key(trimmed) {
+            trimmed.to_string()
+        } else {
+            Type::from_name(trimmed).to_string()
+        }
+    }
+
+    pub fn get_type_id_ref(&self, name: &str) -> i64 {
+        let canonical = self.get_type_name_ref(name);
+        hash_type_id(&canonical)
+    }
+
+    pub fn get_field_count(&self, ty_name: &str) -> usize {
+        if let Some(fields) = self.classes.get(ty_name) {
+            fields.len()
+        } else if let Some(gen) = self.generic_classes.get(ty_name) {
+            gen.fields.len()
+        } else {
+            0
+        }
+    }
+
+    pub fn get_field_name(&self, ty_name: &str, index: usize) -> Option<String> {
+        if let Some(fields) = self.classes.get(ty_name) {
+            fields.get(index).map(|(fname, _)| fname.clone())
+        } else if let Some(gen) = self.generic_classes.get(ty_name) {
+            gen.fields.get(index).map(|f| f.name.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn get_field_type(&self, ty_name: &str, index: usize) -> Option<String> {
+        if let Some(fields) = self.classes.get(ty_name) {
+            fields.get(index).map(|(_, fty)| fty.to_string())
+        } else if let Some(gen) = self.generic_classes.get(ty_name) {
+            gen.fields.get(index).and_then(|f| f.type_name.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn has_field(&self, ty_name: &str, field_name: &str) -> bool {
+        if let Some(fields) = self.classes.get(ty_name) {
+            fields.iter().any(|(fname, _)| fname == field_name)
+        } else if let Some(gen) = self.generic_classes.get(ty_name) {
+            gen.fields.iter().any(|f| f.name == field_name)
+        } else {
+            false
+        }
+    }
+
+    pub fn has_annotation(&self, target_name: &str, anno_name: &str) -> bool {
+        if let Some(annos) = self.class_annotations.get(target_name) {
+            if annos.iter().any(|a| a.name == anno_name) {
+                return true;
+            }
+        }
+        if let Some(annos) = self.function_annotations.get(target_name) {
+            if annos.iter().any(|a| a.name == anno_name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn annotation_value(&self, target_name: &str, anno_name: &str) -> Option<String> {
+        let annos = self.class_annotations.get(target_name)
+            .or_else(|| self.function_annotations.get(target_name));
+        if let Some(annos) = annos {
+            for a in annos {
+                if a.name == anno_name {
+                    if let Some(first_arg) = a.args.first() {
+                        let clean = first_arg.trim().trim_matches('"').to_string();
+                        return Some(clean);
+                    } else {
+                        return Some(String::new());
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub fn compute_type_type_layout(&self, ty: &Type) -> Result<(usize, usize)> {
@@ -2832,8 +2945,12 @@ impl TypeChecker {
         }
 
         for raw_stmt in &program_statements {
+            let annos = collect_annotations(raw_stmt);
             let stmt = unwrap_annotated_stmt(raw_stmt);
             if let Statement::EnumDecl { name, type_params, variants, location } = stmt {
+                if !annos.is_empty() {
+                    self.class_annotations.insert(name.clone(), annos.iter().map(|&a| a.clone()).collect());
+                }
                 if !type_params.is_empty() {
                     self.generic_enums.insert(name.clone(), GenericEnumDef {
                         name: name.clone(),
@@ -2896,6 +3013,9 @@ impl TypeChecker {
                     }
                 }
                 self.class_repr.insert(name.clone(), repr);
+                if !annos.is_empty() {
+                    self.class_annotations.insert(name.clone(), annos.iter().map(|&a| a.clone()).collect());
+                }
 
                 if !type_params.is_empty() {
                     self.generic_classes.insert(name.clone(), GenericClassDef {
@@ -2949,6 +3069,18 @@ impl TypeChecker {
                 for (assoc_name, target_ty_str) in associated_types {
                     let resolved_ty = self.resolve_type_name(target_ty_str);
                     self.impl_associated_types.insert((class_name.clone(), assoc_name.clone()), resolved_ty);
+                }
+
+                for m_stmt in methods {
+                    let m_annos = collect_annotations(m_stmt);
+                    let unwrapped_m = unwrap_annotated_stmt(m_stmt);
+                    if let Statement::Function { name, .. } = unwrapped_m {
+                        if !m_annos.is_empty() {
+                            let key = format!("{}::{}", class_name, name);
+                            self.function_annotations.insert(key, m_annos.iter().map(|&a| a.clone()).collect());
+                            self.function_annotations.insert(name.clone(), m_annos.iter().map(|&a| a.clone()).collect());
+                        }
+                    }
                 }
 
                 if let Some(t_name) = trait_name {
@@ -3008,8 +3140,12 @@ impl TypeChecker {
         }
 
         for raw_stmt in &program_statements {
+            let annos = collect_annotations(raw_stmt);
             let stmt = unwrap_annotated_stmt(raw_stmt);
             if let Statement::Function { name, type_params, params, return_type, body, location, is_async } = stmt {
+                if !annos.is_empty() {
+                    self.function_annotations.insert(name.clone(), annos.iter().map(|&a| a.clone()).collect());
+                }
                 self.ast_functions.insert(name.clone(), stmt.clone());
                 if !type_params.is_empty() {
                     self.generic_functions.insert(name.clone(), GenericFuncDef {
@@ -4150,6 +4286,156 @@ impl TypeChecker {
                         }
                     }
 
+                    if name == "type_name" && typed_arguments.len() == 1 {
+                        if let TypedExpressionKind::String(ref ty_name) = typed_arguments[0].kind {
+                            let canonical = self.get_type_name_ref(ty_name);
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::String(canonical),
+                                type_: Type::String,
+                                location: location.clone(),
+                            });
+                        } else if typed_arguments[0].type_ != Type::Unknown {
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::String(typed_arguments[0].type_.to_string()),
+                                type_: Type::String,
+                                location: location.clone(),
+                            });
+                        }
+                    }
+                    if name == "type_id" && typed_arguments.len() == 1 {
+                        if let TypedExpressionKind::String(ref ty_name) = typed_arguments[0].kind {
+                            let tid = self.get_type_id_ref(ty_name);
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::Number(tid.to_string()),
+                                type_: Type::Int,
+                                location: location.clone(),
+                            });
+                        } else if typed_arguments[0].type_ != Type::Unknown {
+                            let tid = hash_type_id(&typed_arguments[0].type_.to_string());
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::Number(tid.to_string()),
+                                type_: Type::Int,
+                                location: location.clone(),
+                            });
+                        }
+                    }
+                    if name == "field_count" && typed_arguments.len() == 1 {
+                        if let TypedExpressionKind::String(ref ty_name) = typed_arguments[0].kind {
+                            let count = self.get_field_count(ty_name);
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::Number(count.to_string()),
+                                type_: Type::Int,
+                                location: location.clone(),
+                            });
+                        } else if let Type::Class(ref cname) = typed_arguments[0].type_ {
+                            let count = self.get_field_count(cname);
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::Number(count.to_string()),
+                                type_: Type::Int,
+                                location: location.clone(),
+                            });
+                        }
+                    }
+                    if name == "field_name" && typed_arguments.len() == 2 {
+                        let ty_name_opt = match &typed_arguments[0].kind {
+                            TypedExpressionKind::String(ref s) => Some(s.clone()),
+                            _ => match &typed_arguments[0].type_ {
+                                Type::Class(ref c) => Some(c.clone()),
+                                _ => None,
+                            },
+                        };
+                        if let (Some(ty_name), TypedExpressionKind::Number(ref num_str)) =
+                            (ty_name_opt, &typed_arguments[1].kind)
+                        {
+                            if let Ok(idx) = num_str.parse::<usize>() {
+                                let fname = self.get_field_name(&ty_name, idx).unwrap_or_default();
+                                return Ok(TypedExpression {
+                                    kind: TypedExpressionKind::String(fname),
+                                    type_: Type::String,
+                                    location: location.clone(),
+                                });
+                            }
+                        }
+                    }
+                    if name == "field_type" && typed_arguments.len() == 2 {
+                        let ty_name_opt = match &typed_arguments[0].kind {
+                            TypedExpressionKind::String(ref s) => Some(s.clone()),
+                            _ => match &typed_arguments[0].type_ {
+                                Type::Class(ref c) => Some(c.clone()),
+                                _ => None,
+                            },
+                        };
+                        if let (Some(ty_name), TypedExpressionKind::Number(ref num_str)) =
+                            (ty_name_opt, &typed_arguments[1].kind)
+                        {
+                            if let Ok(idx) = num_str.parse::<usize>() {
+                                let ftype = self.get_field_type(&ty_name, idx).unwrap_or_default();
+                                return Ok(TypedExpression {
+                                    kind: TypedExpressionKind::String(ftype),
+                                    type_: Type::String,
+                                    location: location.clone(),
+                                });
+                            }
+                        }
+                    }
+                    if name == "has_field" && typed_arguments.len() == 2 {
+                        let ty_name_opt = match &typed_arguments[0].kind {
+                            TypedExpressionKind::String(ref s) => Some(s.clone()),
+                            _ => match &typed_arguments[0].type_ {
+                                Type::Class(ref c) => Some(c.clone()),
+                                _ => None,
+                            },
+                        };
+                        if let (Some(ty_name), TypedExpressionKind::String(ref fname)) =
+                            (ty_name_opt, &typed_arguments[1].kind)
+                        {
+                            let has = self.has_field(&ty_name, fname);
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::Boolean(has),
+                                type_: Type::Bool,
+                                location: location.clone(),
+                            });
+                        }
+                    }
+                    if name == "has_annotation" && typed_arguments.len() == 2 {
+                        let ty_name_opt = match &typed_arguments[0].kind {
+                            TypedExpressionKind::String(ref s) => Some(s.clone()),
+                            _ => match &typed_arguments[0].type_ {
+                                Type::Class(ref c) => Some(c.clone()),
+                                _ => None,
+                            },
+                        };
+                        if let (Some(ty_name), TypedExpressionKind::String(ref aname)) =
+                            (ty_name_opt, &typed_arguments[1].kind)
+                        {
+                            let has = self.has_annotation(&ty_name, aname);
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::Boolean(has),
+                                type_: Type::Bool,
+                                location: location.clone(),
+                            });
+                        }
+                    }
+                    if name == "annotation_value" && typed_arguments.len() == 2 {
+                        let ty_name_opt = match &typed_arguments[0].kind {
+                            TypedExpressionKind::String(ref s) => Some(s.clone()),
+                            _ => match &typed_arguments[0].type_ {
+                                Type::Class(ref c) => Some(c.clone()),
+                                _ => None,
+                            },
+                        };
+                        if let (Some(ty_name), TypedExpressionKind::String(ref aname)) =
+                            (ty_name_opt, &typed_arguments[1].kind)
+                        {
+                            let val = self.annotation_value(&ty_name, aname).unwrap_or_default();
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::String(val),
+                                type_: Type::String,
+                                location: location.clone(),
+                            });
+                        }
+                    }
+
                     if self.no_heap && matches!(name.as_str(), "alloc" | "alloc_zeroed" | "realloc" | "new_box" | "new_arc" | "new_rc" | "rc_new") {
                         return Err(RozeError::type_error(
                             format!("Dynamic heap allocation ('{}') is disabled in zero-heap bare-metal mode", name),
@@ -4903,6 +5189,204 @@ impl TypeChecker {
                     } else {
                         return Err(RozeError::type_error("offset_of field argument must be a string literal", location.line, location.column).into());
                     }
+                }
+
+                if function == "type_name" {
+                    if type_args.is_empty() {
+                        return Err(RozeError::type_error("type_name::<T>() requires 1 type argument", location.line, location.column).into());
+                    }
+                    let tname = self.get_type_name_ref(&type_args[0]);
+                    return Ok(TypedExpression {
+                        kind: TypedExpressionKind::String(tname),
+                        type_: Type::String,
+                        location: location.clone(),
+                    });
+                }
+                if function == "type_id" {
+                    if type_args.is_empty() {
+                        return Err(RozeError::type_error("type_id::<T>() requires 1 type argument", location.line, location.column).into());
+                    }
+                    let tid = self.get_type_id_ref(&type_args[0]);
+                    return Ok(TypedExpression {
+                        kind: TypedExpressionKind::Number(tid.to_string()),
+                        type_: Type::Int,
+                        location: location.clone(),
+                    });
+                }
+                if function == "field_count" {
+                    if type_args.is_empty() {
+                        return Err(RozeError::type_error("field_count::<T>() requires 1 type argument", location.line, location.column).into());
+                    }
+                    let count = self.get_field_count(&type_args[0]);
+                    return Ok(TypedExpression {
+                        kind: TypedExpressionKind::Number(count.to_string()),
+                        type_: Type::Int,
+                        location: location.clone(),
+                    });
+                }
+                if function == "field_name" {
+                    if type_args.is_empty() {
+                        return Err(RozeError::type_error("field_name::<T>(index) requires 1 type argument", location.line, location.column).into());
+                    }
+                    if arguments.is_empty() {
+                        return Err(RozeError::type_error("field_name::<T>(index) requires index argument", location.line, location.column).into());
+                    }
+                    let idx_expr = self.check_expression(&arguments[0])?;
+                    if let TypedExpressionKind::Number(ref num_str) = idx_expr.kind {
+                        if let Ok(idx) = num_str.parse::<usize>() {
+                            let fname = self.get_field_name(&type_args[0], idx).unwrap_or_default();
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::String(fname),
+                                type_: Type::String,
+                                location: location.clone(),
+                            });
+                        }
+                    }
+                    return Ok(TypedExpression {
+                        kind: TypedExpressionKind::Call {
+                            function: "field_name".to_string(),
+                            arguments: vec![
+                                TypedExpression {
+                                    kind: TypedExpressionKind::String(type_args[0].clone()),
+                                    type_: Type::String,
+                                    location: location.clone(),
+                                },
+                                idx_expr,
+                            ],
+                        },
+                        type_: Type::String,
+                        location: location.clone(),
+                    });
+                }
+                if function == "field_type" {
+                    if type_args.is_empty() {
+                        return Err(RozeError::type_error("field_type::<T>(index) requires 1 type argument", location.line, location.column).into());
+                    }
+                    if arguments.is_empty() {
+                        return Err(RozeError::type_error("field_type::<T>(index) requires index argument", location.line, location.column).into());
+                    }
+                    let idx_expr = self.check_expression(&arguments[0])?;
+                    if let TypedExpressionKind::Number(ref num_str) = idx_expr.kind {
+                        if let Ok(idx) = num_str.parse::<usize>() {
+                            let ftype = self.get_field_type(&type_args[0], idx).unwrap_or_default();
+                            return Ok(TypedExpression {
+                                kind: TypedExpressionKind::String(ftype),
+                                type_: Type::String,
+                                location: location.clone(),
+                            });
+                        }
+                    }
+                    return Ok(TypedExpression {
+                        kind: TypedExpressionKind::Call {
+                            function: "field_type".to_string(),
+                            arguments: vec![
+                                TypedExpression {
+                                    kind: TypedExpressionKind::String(type_args[0].clone()),
+                                    type_: Type::String,
+                                    location: location.clone(),
+                                },
+                                idx_expr,
+                            ],
+                        },
+                        type_: Type::String,
+                        location: location.clone(),
+                    });
+                }
+                if function == "has_field" {
+                    if type_args.is_empty() {
+                        return Err(RozeError::type_error("has_field::<T>(name) requires 1 type argument", location.line, location.column).into());
+                    }
+                    if arguments.is_empty() {
+                        return Err(RozeError::type_error("has_field::<T>(name) requires field name argument", location.line, location.column).into());
+                    }
+                    let f_expr = self.check_expression(&arguments[0])?;
+                    if let TypedExpressionKind::String(ref fname) = f_expr.kind {
+                        let has = self.has_field(&type_args[0], fname);
+                        return Ok(TypedExpression {
+                            kind: TypedExpressionKind::Boolean(has),
+                            type_: Type::Bool,
+                            location: location.clone(),
+                        });
+                    }
+                    return Ok(TypedExpression {
+                        kind: TypedExpressionKind::Call {
+                            function: "has_field".to_string(),
+                            arguments: vec![
+                                TypedExpression {
+                                    kind: TypedExpressionKind::String(type_args[0].clone()),
+                                    type_: Type::String,
+                                    location: location.clone(),
+                                },
+                                f_expr,
+                            ],
+                        },
+                        type_: Type::Bool,
+                        location: location.clone(),
+                    });
+                }
+                if function == "has_annotation" {
+                    if type_args.is_empty() {
+                        return Err(RozeError::type_error("has_annotation::<T>(name) requires 1 type argument", location.line, location.column).into());
+                    }
+                    if arguments.is_empty() {
+                        return Err(RozeError::type_error("has_annotation::<T>(name) requires annotation name argument", location.line, location.column).into());
+                    }
+                    let a_expr = self.check_expression(&arguments[0])?;
+                    if let TypedExpressionKind::String(ref aname) = a_expr.kind {
+                        let has = self.has_annotation(&type_args[0], aname);
+                        return Ok(TypedExpression {
+                            kind: TypedExpressionKind::Boolean(has),
+                            type_: Type::Bool,
+                            location: location.clone(),
+                        });
+                    }
+                    return Ok(TypedExpression {
+                        kind: TypedExpressionKind::Call {
+                            function: "has_annotation".to_string(),
+                            arguments: vec![
+                                TypedExpression {
+                                    kind: TypedExpressionKind::String(type_args[0].clone()),
+                                    type_: Type::String,
+                                    location: location.clone(),
+                                },
+                                a_expr,
+                            ],
+                        },
+                        type_: Type::Bool,
+                        location: location.clone(),
+                    });
+                }
+                if function == "annotation_value" {
+                    if type_args.is_empty() {
+                        return Err(RozeError::type_error("annotation_value::<T>(name) requires 1 type argument", location.line, location.column).into());
+                    }
+                    if arguments.is_empty() {
+                        return Err(RozeError::type_error("annotation_value::<T>(name) requires annotation name argument", location.line, location.column).into());
+                    }
+                    let a_expr = self.check_expression(&arguments[0])?;
+                    if let TypedExpressionKind::String(ref aname) = a_expr.kind {
+                        let val = self.annotation_value(&type_args[0], aname).unwrap_or_default();
+                        return Ok(TypedExpression {
+                            kind: TypedExpressionKind::String(val),
+                            type_: Type::String,
+                            location: location.clone(),
+                        });
+                    }
+                    return Ok(TypedExpression {
+                        kind: TypedExpressionKind::Call {
+                            function: "annotation_value".to_string(),
+                            arguments: vec![
+                                TypedExpression {
+                                    kind: TypedExpressionKind::String(type_args[0].clone()),
+                                    type_: Type::String,
+                                    location: location.clone(),
+                                },
+                                a_expr,
+                            ],
+                        },
+                        type_: Type::String,
+                        location: location.clone(),
+                    });
                 }
 
                 if let Some(_template) = self.generic_functions.get(function).cloned() {

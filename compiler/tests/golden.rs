@@ -1994,6 +1994,23 @@ fn standard_serde_engine_suite() {
     assert!(stdout.contains("SUCCESS: ALL UNIVERSAL SERIALIZATION (SERDE) SUITES PASSED"));
 }
 
+#[test]
+fn standard_reflect_engine_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_reflect.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("type_name<Point> = Point"));
+    assert!(stdout.contains("type_name<User> = User"));
+    assert!(stdout.contains("tid_int is positive: true"));
+    assert!(stdout.contains("tid_pt is positive: true"));
+    assert!(stdout.contains("Point field count = 2"));
+    assert!(stdout.contains("Point.field(0) = x:int"));
+    assert!(stdout.contains("User.field(1) = username:string"));
+    assert!(stdout.contains("Point repr val = C"));
+    assert!(stdout.contains("User Service val = user_service"));
+    assert!(stdout.contains("SCHEMA: Point(x, y) with 2 fields"));
+    assert!(stdout.contains("ALL REFLECTION TESTS PASSED!"));
+}
+
 
 
 

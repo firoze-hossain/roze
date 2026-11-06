@@ -2784,6 +2784,95 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
         return 0;
     }
 
+    public static String __roze_type_name(Object obj) {
+        if (obj == null) return "null";
+        if (obj instanceof String) return (String) obj;
+        if (obj instanceof Long || obj instanceof Integer) return "int";
+        if (obj instanceof Double || obj instanceof Float) return "float";
+        if (obj instanceof Boolean) return "bool";
+        return obj.getClass().getSimpleName();
+    }
+    public static long __roze_type_id(Object obj) {
+        String name = __roze_type_name(obj);
+        long hash = 0xcbf29ce484222325L;
+        byte[] bytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        for (byte b : bytes) {
+            hash ^= ((long) b) & 0xffL;
+            hash *= 0x100000001b3L;
+        }
+        return hash & 0x7fffffffL;
+    }
+    public static int __roze_field_count(Object target) {
+        if (target == null) return 0;
+        Class<?> cls = null;
+        if (target instanceof Class) {
+            cls = (Class<?>) target;
+        } else if (target instanceof String) {
+            try { cls = Class.forName((String) target); } catch (Exception ignored) {}
+        } else {
+            cls = target.getClass();
+        }
+        if (cls == null) return 0;
+        return cls.getDeclaredFields().length;
+    }
+    public static String __roze_field_name(Object target, long idx) {
+        if (target == null) return "";
+        Class<?> cls = null;
+        if (target instanceof Class) {
+            cls = (Class<?>) target;
+        } else if (target instanceof String) {
+            try { cls = Class.forName((String) target); } catch (Exception ignored) {}
+        } else {
+            cls = target.getClass();
+        }
+        if (cls == null) return "";
+        java.lang.reflect.Field[] fields = cls.getDeclaredFields();
+        if (idx < 0 || idx >= fields.length) return "";
+        return fields[(int) idx].getName();
+    }
+    public static String __roze_field_type(Object target, long idx) {
+        if (target == null) return "";
+        Class<?> cls = null;
+        if (target instanceof Class) {
+            cls = (Class<?>) target;
+        } else if (target instanceof String) {
+            try { cls = Class.forName((String) target); } catch (Exception ignored) {}
+        } else {
+            cls = target.getClass();
+        }
+        if (cls == null) return "";
+        java.lang.reflect.Field[] fields = cls.getDeclaredFields();
+        if (idx < 0 || idx >= fields.length) return "";
+        Class<?> fty = fields[(int) idx].getType();
+        if (fty == long.class || fty == int.class || fty == Long.class || fty == Integer.class) return "int";
+        if (fty == double.class || fty == float.class || fty == Double.class || fty == Float.class) return "float";
+        if (fty == boolean.class || fty == Boolean.class) return "bool";
+        if (fty == String.class) return "string";
+        return fty.getSimpleName();
+    }
+    public static boolean __roze_has_field(Object target, String name) {
+        if (target == null || name == null) return false;
+        Class<?> cls = null;
+        if (target instanceof Class) {
+            cls = (Class<?>) target;
+        } else if (target instanceof String) {
+            try { cls = Class.forName((String) target); } catch (Exception ignored) {}
+        } else {
+            cls = target.getClass();
+        }
+        if (cls == null) return false;
+        for (java.lang.reflect.Field f : cls.getDeclaredFields()) {
+            if (f.getName().equals(name)) return true;
+        }
+        return false;
+    }
+    public static boolean __roze_has_annotation(Object target, String anno) {
+        return false;
+    }
+    public static String __roze_annotation_value(Object target, String anno) {
+        return "";
+    }
+
     private static void __roze_vga_clear() {
         System.out.print("\033[H\033[2J");
     }
@@ -6130,6 +6219,11 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "cancel_token_new" => Some("RozeCancellationToken"),
         "cancel_token_cancel" => Some("void"),
         "cancel_token_is_cancelled" => Some("boolean"),
+
+        // Metaprogramming & Type Reflection (M4-T09)
+        "type_name" | "field_name" | "field_type" | "annotation_value" => Some("String"),
+        "type_id" | "field_count" => Some("int"),
+        "has_field" | "has_annotation" => Some("boolean"),
 
         // Unsafe Raw Pointers & Direct Memory (MED-05 & M4-T02)
         "alloc" | "alloc_zeroed" | "realloc" | "ptr_null" | "ptr_null_mut" | "ptr_sub" | "int_to_ptr" | "c_str_to_ptr" => Some("long"),
@@ -10525,6 +10619,56 @@ impl JavaSourceGenerator {
             }
             "field_offset" if arguments.len() == 2 => {
                 source.push_str("__roze_field_offset(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "type_name" if arguments.len() == 1 => {
+                source.push_str("__roze_type_name(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "type_id" if arguments.len() == 1 => {
+                source.push_str("__roze_type_id(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "field_count" if arguments.len() == 1 => {
+                source.push_str("__roze_field_count(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "field_name" if arguments.len() == 2 => {
+                source.push_str("__roze_field_name(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "field_type" if arguments.len() == 2 => {
+                source.push_str("__roze_field_type(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "has_field" if arguments.len() == 2 => {
+                source.push_str("__roze_has_field(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "has_annotation" if arguments.len() == 2 => {
+                source.push_str("__roze_has_annotation(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "annotation_value" if arguments.len() == 2 => {
+                source.push_str("__roze_annotation_value(");
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str(", ");
                 self.generate_expression(source, &arguments[1])?;

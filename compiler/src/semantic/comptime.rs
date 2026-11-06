@@ -357,6 +357,102 @@ impl<'a> ComptimeEvaluator<'a> {
                             Err(RozeError::type_error("offset_of field argument must be a string", location.line, location.column).into())
                         }
                     }
+                    "type_name" => {
+                        if type_args.is_empty() {
+                            return Err(RozeError::type_error("type_name requires a type argument", location.line, location.column).into());
+                        }
+                        let tname = self.type_checker.get_type_name_ref(&type_args[0]);
+                        Ok(ComptimeValue::String(tname))
+                    }
+                    "type_id" => {
+                        if type_args.is_empty() {
+                            return Err(RozeError::type_error("type_id requires a type argument", location.line, location.column).into());
+                        }
+                        let tid = self.type_checker.get_type_id_ref(&type_args[0]);
+                        Ok(ComptimeValue::Int(tid))
+                    }
+                    "field_count" => {
+                        if type_args.is_empty() {
+                            return Err(RozeError::type_error("field_count requires a type argument", location.line, location.column).into());
+                        }
+                        let count = self.type_checker.get_field_count(&type_args[0]);
+                        Ok(ComptimeValue::Int(count as i64))
+                    }
+                    "field_name" => {
+                        if type_args.is_empty() {
+                            return Err(RozeError::type_error("field_name requires a type argument", location.line, location.column).into());
+                        }
+                        if arguments.is_empty() {
+                            return Err(RozeError::type_error("field_name requires an index argument", location.line, location.column).into());
+                        }
+                        let idx_val = self.eval_expr(&arguments[0])?;
+                        if let ComptimeValue::Int(idx) = idx_val {
+                            let fname = self.type_checker.get_field_name(&type_args[0], idx as usize).unwrap_or_default();
+                            Ok(ComptimeValue::String(fname))
+                        } else {
+                            Err(RozeError::type_error("field_name index argument must be an integer", location.line, location.column).into())
+                        }
+                    }
+                    "field_type" => {
+                        if type_args.is_empty() {
+                            return Err(RozeError::type_error("field_type requires a type argument", location.line, location.column).into());
+                        }
+                        if arguments.is_empty() {
+                            return Err(RozeError::type_error("field_type requires an index argument", location.line, location.column).into());
+                        }
+                        let idx_val = self.eval_expr(&arguments[0])?;
+                        if let ComptimeValue::Int(idx) = idx_val {
+                            let ftype = self.type_checker.get_field_type(&type_args[0], idx as usize).unwrap_or_default();
+                            Ok(ComptimeValue::String(ftype))
+                        } else {
+                            Err(RozeError::type_error("field_type index argument must be an integer", location.line, location.column).into())
+                        }
+                    }
+                    "has_field" => {
+                        if type_args.is_empty() {
+                            return Err(RozeError::type_error("has_field requires a type argument", location.line, location.column).into());
+                        }
+                        if arguments.is_empty() {
+                            return Err(RozeError::type_error("has_field requires a field name argument", location.line, location.column).into());
+                        }
+                        let f_val = self.eval_expr(&arguments[0])?;
+                        if let ComptimeValue::String(fname) = f_val {
+                            let has = self.type_checker.has_field(&type_args[0], &fname);
+                            Ok(ComptimeValue::Bool(has))
+                        } else {
+                            Err(RozeError::type_error("has_field field argument must be a string", location.line, location.column).into())
+                        }
+                    }
+                    "has_annotation" => {
+                        if type_args.is_empty() {
+                            return Err(RozeError::type_error("has_annotation requires a type argument", location.line, location.column).into());
+                        }
+                        if arguments.is_empty() {
+                            return Err(RozeError::type_error("has_annotation requires an annotation name argument", location.line, location.column).into());
+                        }
+                        let a_val = self.eval_expr(&arguments[0])?;
+                        if let ComptimeValue::String(aname) = a_val {
+                            let has = self.type_checker.has_annotation(&type_args[0], &aname);
+                            Ok(ComptimeValue::Bool(has))
+                        } else {
+                            Err(RozeError::type_error("has_annotation argument must be a string", location.line, location.column).into())
+                        }
+                    }
+                    "annotation_value" => {
+                        if type_args.is_empty() {
+                            return Err(RozeError::type_error("annotation_value requires a type argument", location.line, location.column).into());
+                        }
+                        if arguments.is_empty() {
+                            return Err(RozeError::type_error("annotation_value requires an annotation name argument", location.line, location.column).into());
+                        }
+                        let a_val = self.eval_expr(&arguments[0])?;
+                        if let ComptimeValue::String(aname) = a_val {
+                            let val = self.type_checker.annotation_value(&type_args[0], &aname).unwrap_or_default();
+                            Ok(ComptimeValue::String(val))
+                        } else {
+                            Err(RozeError::type_error("annotation_value argument must be a string", location.line, location.column).into())
+                        }
+                    }
                     _ => {
                         self.eval_call(function, arguments, location)
                     }
@@ -592,6 +688,13 @@ impl<'a> ComptimeEvaluator<'a> {
                     return Err(RozeError::type_error("map_length expects a map", location.line, location.column).into());
                 }
             }
+            "to_string" => {
+                if arguments.is_empty() {
+                    return Err(RozeError::type_error("to_string expects 1 argument", location.line, location.column).into());
+                }
+                let val = self.eval_expr(&arguments[0])?;
+                return Ok(ComptimeValue::String(val.display()));
+            }
             "abs" => {
                 if arguments.is_empty() { return Ok(ComptimeValue::Int(0)); }
                 let v = self.eval_expr(&arguments[0])?;
@@ -681,6 +784,127 @@ impl<'a> ComptimeEvaluator<'a> {
                 } else {
                     return Err(RozeError::type_error("offset_of expects (string, string)", location.line, location.column).into());
                 }
+            }
+            "type_name" => {
+                if arguments.is_empty() { return Err(RozeError::type_error("type_name expects 1 argument", location.line, location.column).into()); }
+                let arg = self.eval_expr(&arguments[0])?;
+                let tname = match arg {
+                    ComptimeValue::String(s) => self.type_checker.get_type_name_ref(&s),
+                    ComptimeValue::ClassInstance { class_name, .. } => class_name,
+                    ComptimeValue::Int(_) => "int".to_string(),
+                    ComptimeValue::Float(_) => "float".to_string(),
+                    ComptimeValue::Bool(_) => "bool".to_string(),
+                    ComptimeValue::List(_) => "list".to_string(),
+                    ComptimeValue::Map(_) => "map".to_string(),
+                    ComptimeValue::EnumVariant { enum_name, .. } => enum_name.unwrap_or_else(|| "enum".to_string()),
+                    _ => "unknown".to_string(),
+                };
+                return Ok(ComptimeValue::String(tname));
+            }
+            "type_id" => {
+                if arguments.is_empty() { return Err(RozeError::type_error("type_id expects 1 argument", location.line, location.column).into()); }
+                let arg = self.eval_expr(&arguments[0])?;
+                let tid = match arg {
+                    ComptimeValue::String(s) => self.type_checker.get_type_id_ref(&s),
+                    ComptimeValue::ClassInstance { class_name, .. } => self.type_checker.get_type_id_ref(&class_name),
+                    ComptimeValue::Int(_) => self.type_checker.get_type_id_ref("int"),
+                    ComptimeValue::Float(_) => self.type_checker.get_type_id_ref("float"),
+                    ComptimeValue::Bool(_) => self.type_checker.get_type_id_ref("bool"),
+                    ComptimeValue::List(_) => self.type_checker.get_type_id_ref("list"),
+                    ComptimeValue::Map(_) => self.type_checker.get_type_id_ref("map"),
+                    _ => 0,
+                };
+                return Ok(ComptimeValue::Int(tid));
+            }
+            "field_count" => {
+                if arguments.is_empty() { return Err(RozeError::type_error("field_count expects 1 argument", location.line, location.column).into()); }
+                let arg = self.eval_expr(&arguments[0])?;
+                let count = match arg {
+                    ComptimeValue::String(s) => self.type_checker.get_field_count(&s),
+                    ComptimeValue::ClassInstance { class_name, .. } => self.type_checker.get_field_count(&class_name),
+                    _ => 0,
+                };
+                return Ok(ComptimeValue::Int(count as i64));
+            }
+            "field_name" => {
+                if arguments.len() < 2 { return Err(RozeError::type_error("field_name expects 2 arguments", location.line, location.column).into()); }
+                let arg0 = self.eval_expr(&arguments[0])?;
+                let arg1 = self.eval_expr(&arguments[1])?;
+                let ty_name = match arg0 {
+                    ComptimeValue::String(s) => s,
+                    ComptimeValue::ClassInstance { class_name, .. } => class_name,
+                    _ => return Ok(ComptimeValue::String(String::new())),
+                };
+                let idx = match arg1 {
+                    ComptimeValue::Int(i) => i as usize,
+                    _ => return Err(RozeError::type_error("field_name index must be an integer", location.line, location.column).into()),
+                };
+                let fname = self.type_checker.get_field_name(&ty_name, idx).unwrap_or_default();
+                return Ok(ComptimeValue::String(fname));
+            }
+            "field_type" => {
+                if arguments.len() < 2 { return Err(RozeError::type_error("field_type expects 2 arguments", location.line, location.column).into()); }
+                let arg0 = self.eval_expr(&arguments[0])?;
+                let arg1 = self.eval_expr(&arguments[1])?;
+                let ty_name = match arg0 {
+                    ComptimeValue::String(s) => s,
+                    ComptimeValue::ClassInstance { class_name, .. } => class_name,
+                    _ => return Ok(ComptimeValue::String(String::new())),
+                };
+                let idx = match arg1 {
+                    ComptimeValue::Int(i) => i as usize,
+                    _ => return Err(RozeError::type_error("field_type index must be an integer", location.line, location.column).into()),
+                };
+                let ftype = self.type_checker.get_field_type(&ty_name, idx).unwrap_or_default();
+                return Ok(ComptimeValue::String(ftype));
+            }
+            "has_field" => {
+                if arguments.len() < 2 { return Err(RozeError::type_error("has_field expects 2 arguments", location.line, location.column).into()); }
+                let arg0 = self.eval_expr(&arguments[0])?;
+                let arg1 = self.eval_expr(&arguments[1])?;
+                let ty_name = match arg0 {
+                    ComptimeValue::String(s) => s,
+                    ComptimeValue::ClassInstance { class_name, .. } => class_name,
+                    _ => return Ok(ComptimeValue::Bool(false)),
+                };
+                let fname = match arg1 {
+                    ComptimeValue::String(s) => s,
+                    _ => return Err(RozeError::type_error("has_field field name must be a string", location.line, location.column).into()),
+                };
+                let has = self.type_checker.has_field(&ty_name, &fname);
+                return Ok(ComptimeValue::Bool(has));
+            }
+            "has_annotation" => {
+                if arguments.len() < 2 { return Err(RozeError::type_error("has_annotation expects 2 arguments", location.line, location.column).into()); }
+                let arg0 = self.eval_expr(&arguments[0])?;
+                let arg1 = self.eval_expr(&arguments[1])?;
+                let target = match arg0 {
+                    ComptimeValue::String(s) => s,
+                    ComptimeValue::ClassInstance { class_name, .. } => class_name,
+                    _ => return Ok(ComptimeValue::Bool(false)),
+                };
+                let aname = match arg1 {
+                    ComptimeValue::String(s) => s,
+                    _ => return Err(RozeError::type_error("has_annotation annotation name must be a string", location.line, location.column).into()),
+                };
+                let has = self.type_checker.has_annotation(&target, &aname);
+                return Ok(ComptimeValue::Bool(has));
+            }
+            "annotation_value" => {
+                if arguments.len() < 2 { return Err(RozeError::type_error("annotation_value expects 2 arguments", location.line, location.column).into()); }
+                let arg0 = self.eval_expr(&arguments[0])?;
+                let arg1 = self.eval_expr(&arguments[1])?;
+                let target = match arg0 {
+                    ComptimeValue::String(s) => s,
+                    ComptimeValue::ClassInstance { class_name, .. } => class_name,
+                    _ => return Ok(ComptimeValue::String(String::new())),
+                };
+                let aname = match arg1 {
+                    ComptimeValue::String(s) => s,
+                    _ => return Err(RozeError::type_error("annotation_value annotation name must be a string", location.line, location.column).into()),
+                };
+                let val = self.type_checker.annotation_value(&target, &aname).unwrap_or_default();
+                return Ok(ComptimeValue::String(val));
             }
             _ => {}
         }

@@ -1,0 +1,51 @@
+// stdlib/src/reflect.roze
+//
+// Roze Compile-Time & Runtime Type Reflection Engine (M4-T09)
+// Full architectural parity with Rust std::any::TypeId / proc_macro derive reflection
+// and Java 25 java.lang.Class / java.lang.reflect.
+
+class FieldInfo {
+    name: string,
+    type_name: string,
+    offset: int,
+    size: int,
+}
+
+impl FieldInfo {
+    func get_name() -> string { return this.name; }
+    func get_type() -> string { return this.type_name; }
+    func get_offset() -> int { return this.offset; }
+    func get_size() -> int { return this.size; }
+    func to_string() -> string {
+        return this.name + ": " + this.type_name + " (offset " + to_string(this.offset) + ")";
+    }
+}
+
+class TypeInfo {
+    name: string,
+    id: int,
+    size: int,
+    align: int,
+    field_count: int,
+    is_class: bool,
+}
+
+impl TypeInfo {
+    func get_name() -> string { return this.name; }
+    func get_id() -> int { return this.id; }
+    func get_size() -> int { return this.size; }
+    func get_align() -> int { return this.align; }
+    func get_field_count() -> int { return this.field_count; }
+    func is_class_type() -> bool { return this.is_class; }
+    func to_string() -> string {
+        return "TypeInfo(" + this.name + ", id=" + to_string(this.id) + ", size=" + to_string(this.size) + ", fields=" + to_string(this.field_count) + ")";
+    }
+}
+
+func field_info_new(name: string, type_name: string, offset: int, size: int) -> FieldInfo {
+    return new FieldInfo(name, type_name, offset, size);
+}
+
+func type_info_new(name: string, id: int, size: int, align: int, field_count: int, is_class: bool) -> TypeInfo {
+    return new TypeInfo(name, id, size, align, field_count, is_class);
+}

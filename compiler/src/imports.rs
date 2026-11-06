@@ -126,6 +126,9 @@ const REGEX_DISPLAY_NAME: &str = "regex (built-in)";
 const SERDE_SOURCE: &str = include_str!("../../stdlib/src/serde.roze");
 const SERDE_DISPLAY_NAME: &str = "serde (built-in)";
 
+const REFLECT_SOURCE: &str = include_str!("../../stdlib/src/reflect.roze");
+const REFLECT_DISPLAY_NAME: &str = "reflect (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -312,6 +315,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "serde" || path == "std::serde" || path == "roze::serde" || path == "serialization" || path == "json" || path == "toml" || path == "yaml" {
         return Ok((SERDE_SOURCE.to_string(), SERDE_DISPLAY_NAME.to_string()));
+    }
+    if path == "reflect" || path == "std::reflect" || path == "roze::reflect" || path == "introspection" {
+        return Ok((REFLECT_SOURCE.to_string(), REFLECT_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

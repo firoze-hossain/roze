@@ -1,0 +1,97 @@
+// compiler/tests/fixtures/std_reflect.roze
+//
+// Test suite for Roze Compile-Time & Runtime Type Reflection Engine (M4-T09)
+
+import "reflect";
+
+#[repr(C)]
+class Point {
+    x: int,
+    y: int,
+}
+
+@Entity
+@Service("user_service")
+class User {
+    id: int,
+    username: string,
+    active: bool,
+}
+
+func main() {
+    println("--- Test 1: Type Name and Type ID ---");
+    let tn_int = type_name<int>();
+    let tn_str = type_name<string>();
+    let tn_pt = type_name<Point>();
+    let tn_usr = type_name<User>();
+    println("type_name<int> = " + tn_int);
+    println("type_name<string> = " + tn_str);
+    println("type_name<Point> = " + tn_pt);
+    println("type_name<User> = " + tn_usr);
+
+    let tid_int = type_id<int>();
+    let tid_pt = type_id<Point>();
+    let tid_usr = type_id<User>();
+    if (tid_int > 0) {
+        println("tid_int is positive: true");
+    }
+    if (tid_pt > 0) {
+        println("tid_pt is positive: true");
+    }
+    if (tid_pt != tid_usr) {
+        println("type IDs are unique: true");
+    }
+
+    println("--- Test 2: Field Enumeration ---");
+    let pt_fields = field_count<Point>();
+    println("Point field count = " + to_string(pt_fields));
+    println("Point.field(0) = " + field_name<Point>(0) + ":" + field_type<Point>(0));
+    println("Point.field(1) = " + field_name<Point>(1) + ":" + field_type<Point>(1));
+    println("Point has_field(x) = " + to_string(has_field<Point>("x")));
+    println("Point has_field(z) = " + to_string(has_field<Point>("z")));
+
+    let usr_fields = field_count<User>();
+    println("User field count = " + to_string(usr_fields));
+    println("User.field(0) = " + field_name<User>(0) + ":" + field_type<User>(0));
+    println("User.field(1) = " + field_name<User>(1) + ":" + field_type<User>(1));
+    println("User.field(2) = " + field_name<User>(2) + ":" + field_type<User>(2));
+    println("User has_field(username) = " + to_string(has_field<User>("username")));
+
+    println("--- Test 3: Annotation Inspection ---");
+    let pt_repr = has_annotation<Point>("repr");
+    let pt_repr_val = annotation_value<Point>("repr");
+    println("Point has repr = " + to_string(pt_repr));
+    println("Point repr val = " + pt_repr_val);
+
+    let usr_svc = has_annotation<User>("Service");
+    let usr_svc_val = annotation_value<User>("Service");
+    println("User has Service = " + to_string(usr_svc));
+    println("User Service val = " + usr_svc_val);
+
+    let usr_entity = has_annotation<User>("Entity");
+    println("User has Entity = " + to_string(usr_entity));
+
+    println("--- Test 4: Comptime Metaprogramming ---");
+    let schema = comptime {
+        let fcount = field_count<Point>();
+        let f0 = field_name<Point>(0);
+        let f1 = field_name<Point>(1);
+        "SCHEMA: Point(" + f0 + ", " + f1 + ") with " + to_string(fcount) + " fields"
+    };
+    println(schema);
+
+    println("--- Test 5: std::reflect Structures ---");
+    let fi = field_info_new("x", "int", 0, 8);
+    println("FieldInfo: " + fi.to_string());
+    println("FieldInfo name = " + fi.get_name());
+    println("FieldInfo type = " + fi.get_type());
+    println("FieldInfo offset = " + to_string(fi.get_offset()));
+
+    let ti = type_info_new("Point", tid_pt, 16, 8, 2, true);
+    println("TypeInfo: " + ti.to_string());
+    println("TypeInfo name = " + ti.get_name());
+    println("TypeInfo fields = " + to_string(ti.get_field_count()));
+    println("TypeInfo is_class = " + to_string(ti.is_class_type()));
+
+    println("ALL REFLECTION TESTS PASSED!");
+}

@@ -10337,6 +10337,100 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let call = self.builder.ins().call(func_ref, &[c_val, f_val]);
                 return Ok(self.builder.inst_results(call)[0]);
             }
+            "type_name" if arguments.len() == 1 => {
+                let s_val = self.compile_expression(&arguments[0])?;
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.returns.push(AbiParam::new(VALUE_TYPE));
+                let func_id = self.module.declare_function("type_name", Linkage::Import, &sig).map_err(|e| anyhow!(e.to_string()))?;
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s_val]);
+                let res = self.builder.inst_results(call)[0];
+                return Ok(res);
+            }
+            "type_id" if arguments.len() == 1 => {
+                let s_val = self.compile_expression(&arguments[0])?;
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.returns.push(AbiParam::new(VALUE_TYPE));
+                let func_id = self.module.declare_function("type_id", Linkage::Import, &sig).map_err(|e| anyhow!(e.to_string()))?;
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s_val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "field_count" if arguments.len() == 1 => {
+                let s_val = self.compile_expression(&arguments[0])?;
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.returns.push(AbiParam::new(VALUE_TYPE));
+                let func_id = self.module.declare_function("field_count", Linkage::Import, &sig).map_err(|e| anyhow!(e.to_string()))?;
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s_val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "field_name" if arguments.len() == 2 => {
+                let s_val = self.compile_expression(&arguments[0])?;
+                let i_val = self.compile_expression(&arguments[1])?;
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.returns.push(AbiParam::new(VALUE_TYPE));
+                let func_id = self.module.declare_function("field_name", Linkage::Import, &sig).map_err(|e| anyhow!(e.to_string()))?;
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s_val, i_val]);
+                let res = self.builder.inst_results(call)[0];
+                return Ok(res);
+            }
+            "field_type" if arguments.len() == 2 => {
+                let s_val = self.compile_expression(&arguments[0])?;
+                let i_val = self.compile_expression(&arguments[1])?;
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.returns.push(AbiParam::new(VALUE_TYPE));
+                let func_id = self.module.declare_function("field_type", Linkage::Import, &sig).map_err(|e| anyhow!(e.to_string()))?;
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s_val, i_val]);
+                let res = self.builder.inst_results(call)[0];
+                return Ok(res);
+            }
+            "has_field" if arguments.len() == 2 => {
+                let s_val = self.compile_expression(&arguments[0])?;
+                let f_val = self.compile_expression(&arguments[1])?;
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.returns.push(AbiParam::new(VALUE_TYPE));
+                let func_id = self.module.declare_function("has_field", Linkage::Import, &sig).map_err(|e| anyhow!(e.to_string()))?;
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s_val, f_val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "has_annotation" if arguments.len() == 2 => {
+                let s_val = self.compile_expression(&arguments[0])?;
+                let a_val = self.compile_expression(&arguments[1])?;
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.returns.push(AbiParam::new(VALUE_TYPE));
+                let func_id = self.module.declare_function("has_annotation", Linkage::Import, &sig).map_err(|e| anyhow!(e.to_string()))?;
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s_val, a_val]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "annotation_value" if arguments.len() == 2 => {
+                let s_val = self.compile_expression(&arguments[0])?;
+                let a_val = self.compile_expression(&arguments[1])?;
+                let mut sig = self.module.make_signature();
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.params.push(AbiParam::new(VALUE_TYPE));
+                sig.returns.push(AbiParam::new(VALUE_TYPE));
+                let func_id = self.module.declare_function("annotation_value", Linkage::Import, &sig).map_err(|e| anyhow!(e.to_string()))?;
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s_val, a_val]);
+                let res = self.builder.inst_results(call)[0];
+                return Ok(res);
+            }
             "vga_clear" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.vga.clear_id, self.builder.func);
                 self.builder.ins().call(func_ref, &[]);

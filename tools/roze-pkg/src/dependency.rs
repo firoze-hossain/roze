@@ -2,9 +2,9 @@
 //
 // Roze dependency management, resolution, and installation.
 // Integrates registry fetching, git cloning, deterministic lockfiles,
-// and local package caching.
+// cryptographic SHA-256 checksum verification, and local package caching.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use anyhow::{anyhow, Result};
@@ -13,7 +13,10 @@ use colored::*;
 use crate::cache::PackageCache;
 use crate::crypto::sha256_dir;
 use crate::git::{GitDependency, GitFetcher};
-use crate::lockfile::{LockFile, LEGACY_LOCKFILE_NAME, LOCKFILE_NAME};
+use crate::lockfile::{
+    normalize_checksum, LockFile, LockedPackage, PackageVerification,
+    LEGACY_LOCKFILE_NAME, LOCKFILE_NAME,
+};
 use crate::project::{DependencyValue, ProjectConfig, LEGACY_MANIFEST_NAME, MANIFEST_NAME};
 use crate::registry::RegistryClient;
 use crate::resolver::{DependencyResolver, DependencySpec};
@@ -222,7 +225,7 @@ impl DependencyManager {
 
         self.save_manifest()?;
 
-        // Also clean up from libs/ and roze.lock
+        // Also clean up from libs/ and bsr.lock
         let lib_dir = self.libs_dir().join(&package);
         if lib_dir.exists() {
             let _ = fs::remove_dir_all(&lib_dir);
@@ -268,24 +271,53 @@ impl DependencyManager {
         Ok(map)
     }
 
-    /// Resolves dependencies and generates/updates `roze.lock`.
+    /// Resolves dependencies and generates/updates `bsr.lock`.
     pub fn resolve_and_lock(&mut self, force_update: bool) -> Result<LockFile> {
+        let empty_set = HashSet::new();
+        self.resolve_and_lock_with_targets(force_update, &empty_set)
+    }
+
+    /// Resolves dependencies with optional selective package unlocking.
+    pub fn resolve_and_lock_with_targets(
+        &mut self,
+        force_update_all: bool,
+        update_targets: &HashSet<String>,
+    ) -> Result<LockFile> {
         let specs = self.to_resolver_specs()?;
         let lock_path = self.lockfile_path();
 
-        let existing_lock = if !force_update && lock_path.exists() {
+        let existing_lock = if !force_update_all && lock_path.exists() {
             LockFile::load(&lock_path).ok()
         } else {
             None
         };
 
-        let mut lockfile = self.resolver.resolve(&specs, existing_lock.as_ref(), force_update)?;
+        let mut lockfile = self.resolver.resolve_with_options(
+            &specs,
+            existing_lock.as_ref(),
+            force_update_all,
+            update_targets,
+        )?;
+
+        // Include root package in lockfile if manifest exists
+        if let Ok(config) = ProjectConfig::load(&self.manifest_path()) {
+            let mut direct_dep_strings: Vec<String> = self.dependencies.keys().cloned().collect();
+            direct_dep_strings.sort();
+            let root_pkg = LockedPackage::new_root(&config.name, &config.version, direct_dep_strings);
+            lockfile.add_or_update(root_pkg);
+        }
+
         lockfile.save(&lock_path)?;
         Ok(lockfile)
     }
 
-    /// Installs all dependencies recorded in `roze.lock` (resolving first if lockfile is missing).
+    /// Installs all dependencies recorded in lockfile.
     pub fn install_all(&mut self) -> Result<()> {
+        self.install_all_with_opts(false, false)
+    }
+
+    /// Installs all dependencies with optional `--locked` and `--frozen` enforcement.
+    pub fn install_all_with_opts(&mut self, locked: bool, frozen: bool) -> Result<()> {
         println!("📦 {}", "Installing dependencies...".bright_magenta());
 
         if self.dependencies.is_empty() {
@@ -294,19 +326,66 @@ impl DependencyManager {
         }
 
         let lock_path = self.lockfile_path();
+        let manifest_path = self.manifest_path();
+        let manifest_config = if manifest_path.exists() {
+            Some(ProjectConfig::load(&manifest_path)?)
+        } else {
+            None
+        };
+
+        if locked || frozen {
+            if !lock_path.exists() {
+                return Err(anyhow!(
+                    "The lock file {} needs to be updated but --{} was passed to prevent this",
+                    lock_path.display(),
+                    if frozen { "frozen" } else { "locked" }
+                ));
+            }
+            let current_lock = LockFile::load(&lock_path)?;
+            if let Some(ref m_cfg) = manifest_config {
+                if !current_lock.is_up_to_date(m_cfg)? {
+                    return Err(anyhow!(
+                        "The lock file {} needs to be updated but --{} was passed to prevent this",
+                        lock_path.display(),
+                        if frozen { "frozen" } else { "locked" }
+                    ));
+                }
+            }
+        }
+
         let mut lockfile = if lock_path.exists() {
             match LockFile::load(&lock_path) {
                 Ok(l) => {
-                    // Check that all manifest dependencies are present in lockfile
-                    let all_present = self.dependencies.keys().all(|k| l.find_package(k).is_some());
-                    if all_present {
+                    let is_sync = if let Some(ref m_cfg) = manifest_config {
+                        l.is_up_to_date(m_cfg).unwrap_or(false)
+                    } else {
+                        self.dependencies.keys().all(|k| l.find_package(k).is_some())
+                    };
+
+                    if is_sync {
                         l
                     } else {
+                        if locked || frozen {
+                            return Err(anyhow!(
+                                "The lock file {} needs to be updated but --{} was passed to prevent this",
+                                lock_path.display(),
+                                if frozen { "frozen" } else { "locked" }
+                            ));
+                        }
                         println!("  Manifest changed; updating lockfile...");
                         self.resolve_and_lock(false)?
                     }
                 }
-                Err(_) => self.resolve_and_lock(false)?,
+                Err(_) => {
+                    if locked || frozen {
+                        return Err(anyhow!(
+                            "The lock file {} is invalid but --{} was passed",
+                            lock_path.display(),
+                            if frozen { "frozen" } else { "locked" }
+                        ));
+                    }
+                    self.resolve_and_lock(false)?
+                }
             }
         } else {
             self.resolve_and_lock(false)?
@@ -316,25 +395,57 @@ impl DependencyManager {
 
         let mut updated = false;
         for pkg in &mut lockfile.packages {
-            let dest_dir = self.libs_dir().join(&pkg.name);
-            println!("  Installing {} v{} ({})", pkg.name.bold(), pkg.version.bright_cyan(), pkg.source);
+            if pkg.is_root() {
+                continue;
+            }
 
-            let checksum = if pkg.source.starts_with("git+") {
-                let git_url = pkg.source.trim_start_matches("git+").split('#').next().unwrap_or(&pkg.source);
-                let rev = pkg.source.split('#').nth(1);
+            let dest_dir = self.libs_dir().join(&pkg.name);
+            let src_display = pkg.source_str();
+
+            // Check if already installed
+            if dest_dir.exists() {
+                if let Ok(actual) = sha256_dir(&dest_dir) {
+                    if let Some(ref expected) = pkg.checksum {
+                        if normalize_checksum(&actual) == normalize_checksum(expected) {
+                            // Already installed and checksum is 100% valid
+                            continue;
+                        } else {
+                            // Tampering detected!
+                            return Err(anyhow!(
+                                "Supply-chain security violation: Checksum mismatch for installed package '{}' v{}!\n  Expected SHA-256: {}\n  Computed SHA-256: {}\n  The package contents may have been corrupted or tampered with.",
+                                pkg.name, pkg.version, expected, actual
+                            ));
+                        }
+                    }
+                }
+            }
+
+            println!("  Installing {} v{} ({})", pkg.name.bold(), pkg.version.bright_cyan(), src_display);
+
+            // Frozen mode check: offline only
+            if frozen && !self.cache.has_package(&pkg.name, &pkg.version) && !pkg.is_path() {
+                return Err(anyhow!(
+                    "--frozen specified but package '{}' v{} is not in local cache; network access is disabled",
+                    pkg.name, pkg.version
+                ));
+            }
+
+            let checksum = if pkg.is_git() {
+                let git_url = pkg.git_repo_url().unwrap_or(src_display);
+                let rev = pkg.git_commit_hash().map(|s| s.to_string());
 
                 let dep = GitDependency {
                     url: git_url.to_string(),
                     tag: None,
                     branch: None,
-                    rev: rev.map(|r| r.to_string()),
+                    rev,
                 };
 
                 let fetched = self.git_fetcher.fetch(&dep)?;
                 self.git_fetcher.install_to_project(&fetched, &dest_dir)?;
                 sha256_dir(&dest_dir)?
-            } else if pkg.source.starts_with("path+") {
-                let path_str = pkg.source.trim_start_matches("path+");
+            } else if pkg.is_path() {
+                let path_str = src_display.trim_start_matches("path+");
                 let src_path = PathBuf::from(path_str);
                 if !src_path.exists() {
                     return Err(anyhow!("Path dependency not found: {}", src_path.display()));
@@ -360,9 +471,8 @@ impl DependencyManager {
             } else {
                 // Registry source
                 let ver = Version::parse(&pkg.version)?;
-                let chk = self.registry.fetch_package(&pkg.name, &ver, &dest_dir)?;
+                let _chk = self.registry.fetch_package(&pkg.name, &ver, &dest_dir)?;
 
-                // If no lib.roze exists, generate standard export stub
                 if !dest_dir.join("lib.roze").exists() {
                     let stub = format!(
                         r#"// Library: {}
@@ -373,15 +483,23 @@ func {}_version() -> string {{
     return "{}";
 }}
 "#,
-                        pkg.name, pkg.version, pkg.source, pkg.name.replace("::", "_").replace('-', "_"), pkg.version
+                        pkg.name, pkg.version, src_display, pkg.name.replace("::", "_").replace('-', "_"), pkg.version
                     );
                     fs::write(dest_dir.join("lib.roze"), stub)?;
                 }
 
-                chk
+                sha256_dir(&dest_dir)?
             };
 
-            if pkg.checksum.as_deref() != Some(&checksum) {
+            // Cryptographic checksum verification against lockfile pin
+            if let Some(ref expected) = pkg.checksum {
+                if normalize_checksum(&checksum) != normalize_checksum(expected) {
+                    return Err(anyhow!(
+                        "Supply-chain security violation: Checksum mismatch for package '{}' v{}!\n  Expected SHA-256: {}\n  Computed SHA-256: {}\n  The package contents may have been corrupted or tampered with.",
+                        pkg.name, pkg.version, expected, checksum
+                    ));
+                }
+            } else {
                 pkg.checksum = Some(checksum);
                 updated = true;
             }
@@ -391,15 +509,48 @@ func {}_version() -> string {{
             lockfile.save(&lock_path)?;
         }
 
-        println!("✅ {}", "All dependencies installed successfully!".bright_green());
+        println!("✅ {}", "All dependencies installed and cryptographically verified!".bright_green());
         Ok(())
     }
 
     /// Updates dependencies to their latest compatible versions.
-    pub fn update(&mut self) -> Result<()> {
-        println!("🔄 {}", "Updating dependencies to latest compatible versions...".yellow());
-        self.resolve_and_lock(true)?;
+    /// If `package` is specified, updates only that package; otherwise updates all.
+    pub fn update(&mut self, package: Option<&str>) -> Result<()> {
+        if let Some(pkg) = package {
+            println!("🔄 Updating package '{}' to latest compatible version...", pkg.bold());
+            let mut to_update = HashSet::new();
+            to_update.insert(pkg.to_string());
+            self.resolve_and_lock_with_targets(false, &to_update)?;
+        } else {
+            println!("🔄 {}", "Updating all dependencies to latest compatible versions...".yellow());
+            self.resolve_and_lock(true)?;
+        }
         self.install_all()
+    }
+
+    /// Verifies that all dependencies in `libs/` match their cryptographic SHA-256 checksums.
+    pub fn verify_installed(&self) -> Result<Vec<PackageVerification>> {
+        let lock_path = self.lockfile_path();
+        if !lock_path.exists() {
+            return Err(anyhow!("Lockfile not found at {}", lock_path.display()));
+        }
+        let lock = LockFile::load(&lock_path)?;
+        lock.verify_checksums(&self.libs_dir())
+    }
+
+    /// Checks if lockfile exists and is strictly up to date with manifest.
+    pub fn check_lockfile_up_to_date(&self) -> Result<bool> {
+        let lock_path = self.lockfile_path();
+        if !lock_path.exists() {
+            return Ok(false);
+        }
+        let lock = LockFile::load(&lock_path)?;
+        let manifest_path = self.manifest_path();
+        if !manifest_path.exists() {
+            return Ok(true);
+        }
+        let config = ProjectConfig::load(&manifest_path)?;
+        lock.is_up_to_date(&config)
     }
 }
 
@@ -517,5 +668,130 @@ main = "src/main.roze"
         assert!(web.checksum.is_some());
 
         assert!(dir.join("libs").join("std::web").join("lib.roze").exists());
+    }
+
+    #[test]
+    fn test_tamper_detection_in_install_fails_with_security_error() {
+        let (dir, _holder) = temp_project("tamper_test");
+        fs::write(
+            dir.join("bsr.mfz"),
+            r#"name = "tamper_app"
+version = "0.1.0"
+main = "src/main.roze"
+
+[dependencies]
+"std::json" = "^0.2.0"
+"#,
+        ).unwrap();
+
+        let mut mgr = DependencyManager::new(dir.clone());
+        mgr.install_all().unwrap();
+
+        let lock = LockFile::load(&dir.join("bsr.lock")).unwrap();
+        let orig_checksum = lock.find_package("std::json").unwrap().checksum.clone().unwrap();
+
+        // Tamper with installed files
+        let installed_lib = dir.join("libs").join("std::json").join("lib.roze");
+        fs::write(&installed_lib, "// malicious backdoor inserted!").unwrap();
+
+        // Re-running install must detect checksum tampering!
+        let mut mgr2 = DependencyManager::new(dir.clone());
+        let res = mgr2.install_all();
+        assert!(res.is_err(), "Must reject tampered package");
+        let err_msg = res.unwrap_err().to_string();
+        assert!(err_msg.contains("Supply-chain security violation"));
+        assert!(err_msg.contains(&orig_checksum));
+    }
+
+    #[test]
+    fn test_install_locked_mode_enforcement() {
+        let (dir, _holder) = temp_project("locked_enforcement");
+        fs::write(
+            dir.join("bsr.mfz"),
+            r#"name = "locked_app"
+version = "0.1.0"
+main = "src/main.roze"
+
+[dependencies]
+"std::json" = "^0.2.0"
+"#,
+        ).unwrap();
+
+        // 1. Without lockfile, --locked must fail
+        let mut mgr = DependencyManager::new(dir.clone());
+        let res = mgr.install_all_with_opts(true, false);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("--locked was passed to prevent this"));
+
+        // 2. Generate lockfile
+        mgr.resolve_and_lock(false).unwrap();
+
+        // Now --locked should succeed
+        let res_ok = mgr.install_all_with_opts(true, false);
+        assert!(res_ok.is_ok());
+
+        // 3. Alter manifest with new dependency
+        fs::write(
+            dir.join("bsr.mfz"),
+            r#"name = "locked_app"
+version = "0.1.0"
+main = "src/main.roze"
+
+[dependencies]
+"std::json" = "^0.2.0"
+"test_kit" = "^0.1.0"
+"#,
+        ).unwrap();
+
+        let mut mgr2 = DependencyManager::new(dir.clone());
+        let res_outdated = mgr2.install_all_with_opts(true, false);
+        assert!(res_outdated.is_err());
+        assert!(res_outdated.unwrap_err().to_string().contains("--locked was passed to prevent this"));
+    }
+
+    #[test]
+    fn test_selective_package_update() {
+        let (dir, _holder) = temp_project("selective_update");
+        fs::write(
+            dir.join("bsr.mfz"),
+            r#"name = "update_app"
+version = "0.1.0"
+main = "src/main.roze"
+
+[dependencies]
+"std::json" = "^0.1.0"
+"test_kit" = "^0.1.0"
+"#,
+        ).unwrap();
+
+        let mut mgr = DependencyManager::new(dir.clone());
+        mgr.install_all().unwrap();
+
+        let init_lock = LockFile::load(&dir.join("bsr.lock")).unwrap();
+        assert_eq!(init_lock.find_package("std::json").unwrap().version, "0.1.0");
+        assert_eq!(init_lock.find_package("test_kit").unwrap().version, "0.1.0");
+
+        // Now widen std::json to * and update ONLY std::json
+        fs::write(
+            dir.join("bsr.mfz"),
+            r#"name = "update_app"
+version = "0.1.0"
+main = "src/main.roze"
+
+[dependencies]
+"std::json" = "*"
+"test_kit" = "^0.1.0"
+"#,
+        ).unwrap();
+
+        let mut mgr2 = DependencyManager::new(dir.clone());
+        mgr2.update(Some("std::json")).unwrap();
+
+        let updated_lock = LockFile::load(&dir.join("bsr.lock")).unwrap();
+        let json = updated_lock.find_package("std::json").unwrap();
+        assert_eq!(json.version, "1.0.0", "std::json should be updated to latest");
+
+        let test_kit = updated_lock.find_package("test_kit").unwrap();
+        assert_eq!(test_kit.version, "0.1.0", "test_kit should remain at 0.1.0");
     }
 }

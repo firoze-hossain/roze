@@ -258,3 +258,96 @@ opt_level = 3
     assert!(check_stdout.contains("valid"));
 }
 
+#[test]
+fn test_cli_bsr_lock_and_verify_workflow() {
+    let temp = tempdir().unwrap();
+    let project_dir = temp.path().join("lock_pkg");
+
+    // 1. Create a new package
+    let status = Command::new(bsr_bin())
+        .arg("new")
+        .arg(&project_dir)
+        .arg("--bin")
+        .status()
+        .expect("failed to execute bsr new");
+    assert!(status.success());
+
+    // 2. Add dependencies under existing [dependencies] in bsr.mfz
+    let mfz_path = project_dir.join("bsr.mfz");
+    let mut content = fs::read_to_string(&mfz_path).unwrap();
+    content.push_str("\"std::json\" = \"^0.2.0\"\n");
+    fs::write(&mfz_path, content).unwrap();
+
+    // 3. Run bsr lock
+    let output = Command::new(bsr_bin())
+        .arg("lock")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to execute bsr lock");
+    assert!(output.status.success());
+    assert!(project_dir.join("bsr.lock").exists());
+
+    let lock_content = fs::read_to_string(project_dir.join("bsr.lock")).unwrap();
+    assert!(lock_content.contains("name = \"std::json\""));
+    assert!(lock_content.contains("version = \"0.2.0\""));
+
+    // 4. bsr lock --check should succeed
+    let check_out = Command::new(bsr_bin())
+        .arg("lock")
+        .arg("--check")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to execute bsr lock --check");
+    assert!(check_out.status.success());
+    let stdout = String::from_utf8_lossy(&check_out.stdout);
+    assert!(stdout.contains("strictly up to date"));
+
+    // 5. bsr install --locked should succeed
+    let install_out = Command::new(bsr_bin())
+        .arg("install")
+        .arg("--locked")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to execute bsr install --locked");
+    assert!(install_out.status.success());
+    assert!(project_dir.join("libs/std::json/lib.roze").exists());
+
+    // 6. bsr lock --verify should succeed
+    let verify_out = Command::new(bsr_bin())
+        .arg("lock")
+        .arg("--verify")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to execute bsr lock --verify");
+    assert!(verify_out.status.success());
+    let v_stdout = String::from_utf8_lossy(&verify_out.stdout);
+    assert!(v_stdout.contains("cryptographic integrity"));
+
+    // 7. Tamper with installed library: bsr lock --verify must fail!
+    fs::write(project_dir.join("libs/std::json/lib.roze"), "// tampered malicious code").unwrap();
+    let tamper_verify = Command::new(bsr_bin())
+        .arg("lock")
+        .arg("--verify")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to execute bsr lock --verify");
+    assert!(!tamper_verify.status.success(), "Tampered package must fail lock verification");
+    let err_str = String::from_utf8_lossy(&tamper_verify.stderr);
+    let out_str = String::from_utf8_lossy(&tamper_verify.stdout);
+    assert!(err_str.contains("Supply-chain security violation") || out_str.contains("CHECKSUM MISMATCH"));
+
+    // 8. Manifest desync: add new dependency, bsr lock --check must fail
+    let mut content2 = fs::read_to_string(&mfz_path).unwrap();
+    content2.push_str("\"test_kit\" = \"^0.1.0\"\n");
+    fs::write(&mfz_path, content2).unwrap();
+
+    let check_fail = Command::new(bsr_bin())
+        .arg("lock")
+        .arg("--check")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to execute bsr lock --check");
+    assert!(!check_fail.status.success(), "Outdated lockfile must fail check");
+}
+
+

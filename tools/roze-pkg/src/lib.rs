@@ -13,13 +13,14 @@ pub mod template;
 
 use clap::{Parser, Subcommand};
 use colored::*;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
 use anyhow::{anyhow, Result};
 
 use cache::PackageCache;
 use dependency::DependencyManager;
-use lockfile::LockFile;
+use lockfile::ChecksumStatus;
 use project::{DependencyValue, DetailedDependency, ProjectConfig};
 
 #[derive(Parser)]
@@ -88,6 +89,12 @@ enum Commands {
         /// Build in release mode
         #[arg(short, long)]
         release: bool,
+        /// Require bsr.lock to be strictly up-to-date
+        #[arg(long)]
+        locked: bool,
+        /// Require bsr.lock to be up-to-date and forbid network access
+        #[arg(long)]
+        frozen: bool,
     },
     /// Run the current project
     Run {
@@ -121,20 +128,29 @@ enum Commands {
     },
     /// Install dependencies recorded in manifest and lockfile
     Install {
-        /// Require lockfile to be strictly up-to-date
+        /// Require lockfile to be strictly up-to-date and forbid network access
         #[arg(long)]
         frozen: bool,
+        /// Require lockfile to be strictly up-to-date
+        #[arg(long)]
+        locked: bool,
     },
     /// Update dependencies to their latest compatible versions
     Update {
         /// Optional specific package to update
         package: Option<String>,
     },
-    /// Generate or inspect bsr.lock
+    /// Generate, inspect, or cryptographically verify bsr.lock
     Lock {
-        /// Check whether bsr.lock is strictly up to date
+        /// Check whether bsr.lock is strictly up to date with the manifest
         #[arg(long)]
         check: bool,
+        /// Cryptographically verify SHA-256 checksums of installed packages in libs/
+        #[arg(long)]
+        verify: bool,
+        /// Selectively update a specific package in bsr.lock
+        #[arg(long)]
+        package: Option<String>,
     },
     /// Manage global package cache
     Cache {
@@ -198,15 +214,15 @@ pub fn run_cli() {
             edition,
             author,
         } => cmd_init(path, bin, lib, name, vcs, edition, author),
-        Commands::Build { release } => cmd_build(release),
+        Commands::Build { release, locked, frozen } => cmd_build(release, locked, frozen),
         Commands::Run { args } => cmd_run(args),
         Commands::Add { name, version, git, tag, branch, path } => {
             cmd_add(&name, version, git, tag, branch, path)
         }
         Commands::Remove { name } => cmd_remove(&name),
-        Commands::Install { frozen } => cmd_install(frozen),
+        Commands::Install { frozen, locked } => cmd_install(frozen, locked),
         Commands::Update { package } => cmd_update(package.as_deref()),
-        Commands::Lock { check } => cmd_lock(check),
+        Commands::Lock { check, verify, package } => cmd_lock(check, verify, package.as_deref()),
         Commands::Cache { action } => cmd_cache(action),
         Commands::Search { query } => cmd_search(&query),
         Commands::Publish { registry, dry_run } => cmd_publish(registry.as_deref(), dry_run),
@@ -291,7 +307,28 @@ fn cmd_init(
     generator::generate_init(&opts)
 }
 
-fn cmd_build(_release: bool) -> Result<()> {
+fn cmd_build(_release: bool, locked: bool, frozen: bool) -> Result<()> {
+    if locked || frozen {
+        let project_dir = std::env::current_dir()?;
+        let dep_manager = DependencyManager::new(project_dir);
+        let lock_path = dep_manager.lockfile_path();
+        let lock_filename = lock_path.file_name().and_then(|s| s.to_str()).unwrap_or("bsr.lock");
+        if !lock_path.exists() {
+            return Err(anyhow!(
+                "the lock file {} needs to be updated but --{} was passed to prevent this",
+                lock_filename,
+                if frozen { "frozen" } else { "locked" }
+            ));
+        }
+        if !dep_manager.check_lockfile_up_to_date()? {
+            return Err(anyhow!(
+                "the lock file {} needs to be updated but --{} was passed to prevent this",
+                lock_filename,
+                if frozen { "frozen" } else { "locked" }
+            ));
+        }
+    }
+
     println!("🔨 {}", "Building project...".green());
 
     let config = load_project_config()?;
@@ -377,49 +414,92 @@ fn cmd_remove(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_install(frozen: bool) -> Result<()> {
+fn cmd_install(frozen: bool, locked: bool) -> Result<()> {
     let project_dir = std::env::current_dir()?;
     let mut dep_manager = DependencyManager::new(project_dir);
-
-    if frozen {
-        let lock_path = dep_manager.lockfile_path();
-        if !lock_path.exists() {
-            return Err(anyhow!("--frozen specified but {} does not exist", lock_path.display()));
-        }
-    }
-
-    dep_manager.install_all()?;
-    Ok(())
+    dep_manager.install_all_with_opts(locked, frozen)
 }
 
-fn cmd_update(_package: Option<&str>) -> Result<()> {
+fn cmd_update(package: Option<&str>) -> Result<()> {
     let project_dir = std::env::current_dir()?;
     let mut dep_manager = DependencyManager::new(project_dir);
-    dep_manager.update()
+    dep_manager.update(package)
 }
 
-fn cmd_lock(check: bool) -> Result<()> {
+fn cmd_lock(check: bool, verify: bool, package: Option<&str>) -> Result<()> {
     let project_dir = std::env::current_dir()?;
     let mut dep_manager = DependencyManager::new(project_dir);
     let lock_path = dep_manager.lockfile_path();
     let lock_filename = lock_path.file_name().and_then(|s| s.to_str()).unwrap_or("bsr.lock");
 
-    if check {
-        if !lock_path.exists() {
-            return Err(anyhow!("{} does not exist", lock_filename));
+    if verify {
+        println!("🔍 {}", "Verifying cryptographic checksums of installed packages...".cyan());
+        let reports = dep_manager.verify_installed()?;
+        if reports.is_empty() {
+            println!("  No dependencies to verify");
+            return Ok(());
         }
-        let lock = LockFile::load(&lock_path)?;
-        for dep_name in dep_manager.dependencies.keys() {
-            if lock.find_package(dep_name).is_none() {
-                return Err(anyhow!("{} is out of date: missing '{}'", lock_filename, dep_name));
+
+        let mut any_mismatch = false;
+        let mut any_missing = false;
+
+        for r in reports {
+            match r.status {
+                ChecksumStatus::Valid => {
+                    println!("  {} {} v{} (checksum verified)", "✓".green(), r.name.bold(), r.version.cyan());
+                }
+                ChecksumStatus::Mismatch { expected, actual } => {
+                    any_mismatch = true;
+                    println!("  {} {} v{} CHECKSUM MISMATCH!", "✗".red().bold(), r.name.bold(), r.version);
+                    println!("    Expected: {}", expected.yellow());
+                    println!("    Actual:   {}", actual.red());
+                }
+                ChecksumStatus::Missing => {
+                    any_missing = true;
+                    println!("  {} {} v{} is MISSING from libs/", "✗".red().bold(), r.name.bold(), r.version);
+                }
+                ChecksumStatus::Unpinned { computed } => {
+                    let preview = if computed.len() >= 12 { &computed[..12] } else { &computed };
+                    println!("  {} {} v{} has no pinned checksum in lockfile (computed: {})", "!".yellow(), r.name, r.version, preview);
+                }
             }
         }
-        println!("✅ {}", format!("{} is up to date", lock_filename).bright_green());
-    } else {
-        println!("🔒 {}", format!("Generating {}...", lock_filename).bright_cyan());
-        dep_manager.resolve_and_lock(false)?;
-        println!("✅ {}", format!("{} updated successfully", lock_filename).bright_green());
+
+        if any_mismatch {
+            return Err(anyhow!("Supply-chain security violation: one or more package checksums do not match {}!", lock_filename));
+        }
+        if any_missing {
+            return Err(anyhow!("One or more locked packages are missing from libs/: run 'bsr install'"));
+        }
+
+        println!("✅ {}", "All package checksums verified with 100% cryptographic integrity!".bright_green());
+        return Ok(());
     }
+
+    if check {
+        if !lock_path.exists() {
+            return Err(anyhow!("{} does not exist: run 'bsr lock' to create it", lock_filename));
+        }
+        let is_up_to_date = dep_manager.check_lockfile_up_to_date()?;
+        if !is_up_to_date {
+            return Err(anyhow!("{} is out of date: run 'bsr lock' or 'bsr install' to update it", lock_filename));
+        }
+        println!("✅ {}", format!("{} is strictly up to date with manifest", lock_filename).bright_green());
+        return Ok(());
+    }
+
+    if let Some(pkg) = package {
+        println!("🔒 Updating package '{}' in {}...", pkg.bold(), lock_filename);
+        let mut to_update = HashSet::new();
+        to_update.insert(pkg.to_string());
+        dep_manager.resolve_and_lock_with_targets(false, &to_update)?;
+        println!("✅ {} updated successfully in {}", pkg.green(), lock_filename);
+        return Ok(());
+    }
+
+    println!("🔒 {}", format!("Generating {}...", lock_filename).bright_cyan());
+    dep_manager.resolve_and_lock(false)?;
+    println!("✅ {}", format!("{} generated successfully with cryptographic checksums", lock_filename).bright_green());
     Ok(())
 }
 

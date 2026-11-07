@@ -480,7 +480,7 @@ s1_rows = [
         ("M5-T03", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Deterministic Lockfile", "Deterministic Lockfile Engine ('bsr.lock')",
         "Cryptographic dependency pinning: exact versions, git commit hashes, SHA-256 package checksums. Guarantees 100% reproducible builds across machines.",
         "Parity with Cargo.lock and yarn.lock.",
-        "Supply Chain Security, Enterprise Builds", "6 Days", ("High", 14), ("Planned", 12)
+        "Supply Chain Security, Enterprise Builds", "6 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M5-T04", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Dependency Resolver", "SemVer Engine & SAT Dependency Solver",

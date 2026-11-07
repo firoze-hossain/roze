@@ -77,6 +77,21 @@ impl DependencyResolver {
         existing_lock: Option<&LockFile>,
         force_update: bool,
     ) -> Result<LockFile> {
+        let empty_set = HashSet::new();
+        self.resolve_with_options(direct_deps, existing_lock, force_update, &empty_set)
+    }
+
+    /// Resolves dependencies with optional selective package updating.
+    /// If `update_packages` is non-empty, only those specific packages (and their sub-dependencies)
+    /// are unlocked; all other dependencies strictly preserve their pinned versions, git commit hashes,
+    /// and cryptographic checksums.
+    pub fn resolve_with_options(
+        &self,
+        direct_deps: &HashMap<String, DependencySpec>,
+        existing_lock: Option<&LockFile>,
+        force_update_all: bool,
+        update_packages: &HashSet<String>,
+    ) -> Result<LockFile> {
         let mut resolved_packages: HashMap<String, LockedPackage> = HashMap::new();
         let mut resolution_queue: VecDeque<(String, DependencySpec)> = VecDeque::new();
         let mut visited: HashSet<String> = HashSet::new();
@@ -96,15 +111,15 @@ impl DependencyResolver {
 
             active_stack.push(pkg_name.clone());
 
+            let should_update = force_update_all || update_packages.contains(&pkg_name);
+            let locked_candidate = if !should_update {
+                existing_lock.and_then(|lock| lock.find_package(&pkg_name))
+            } else {
+                None
+            };
+
             match spec {
                 DependencySpec::Registry(ref req) => {
-                    // Check if existing lockfile satisfies requirement
-                    let locked_candidate = if !force_update {
-                        existing_lock.and_then(|lock| lock.find_package(&pkg_name))
-                    } else {
-                        None
-                    };
-
                     let locked_version = locked_candidate.and_then(|lp| Version::parse(&lp.version).ok());
 
                     let (version, sub_deps) = if let Some(lv) = locked_version.filter(|v| req.matches(v)) {
@@ -140,25 +155,46 @@ impl DependencyResolver {
 
                     dep_strings.sort();
 
+                    // Preserve existing checksum if unchanged
+                    let checksum = if let Some(lc) = locked_candidate {
+                        if lc.version == version.to_string() {
+                            lc.checksum.clone()
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
                     let locked = LockedPackage {
                         name: pkg_name.clone(),
                         version: version.to_string(),
-                        source: format!("registry+{}", self.registry.registry_url),
-                        checksum: None, // Filled during install/fetch
+                        source: Some(format!("registry+{}", self.registry.registry_url)),
+                        checksum,
                         dependencies: dep_strings,
                     };
 
                     resolved_packages.insert(pkg_name.clone(), locked);
                 }
                 DependencySpec::Git(ref git_dep) => {
-                    let fetched = self.git_fetcher.fetch(git_dep)?;
-                    let source = format!("git+{}#{}", git_dep.url, fetched.commit_hash);
+                    let (commit_hash, version, checksum) = if let Some(lc) = locked_candidate {
+                        if let Some(hash) = lc.git_commit_hash() {
+                            (hash.to_string(), lc.version.clone(), lc.checksum.clone())
+                        } else {
+                            let fetched = self.git_fetcher.fetch(git_dep)?;
+                            (fetched.commit_hash, fetched.version, None)
+                        }
+                    } else {
+                        let fetched = self.git_fetcher.fetch(git_dep)?;
+                        (fetched.commit_hash, fetched.version, None)
+                    };
 
+                    let source = format!("git+{}#{}", git_dep.url, commit_hash);
                     let locked = LockedPackage {
                         name: pkg_name.clone(),
-                        version: fetched.version,
-                        source,
-                        checksum: None,
+                        version,
+                        source: Some(source),
+                        checksum,
                         dependencies: Vec::new(),
                     };
 
@@ -166,11 +202,13 @@ impl DependencyResolver {
                 }
                 DependencySpec::Path(ref path) => {
                     let source = format!("path+{}", path.display());
+                    let checksum = locked_candidate.and_then(|lc| lc.checksum.clone());
+
                     let locked = LockedPackage {
                         name: pkg_name.clone(),
                         version: "0.1.0".to_string(),
-                        source,
-                        checksum: None,
+                        source: Some(source),
+                        checksum,
                         dependencies: Vec::new(),
                     };
 
@@ -222,19 +260,47 @@ mod tests {
         existing_lock.add_or_update(LockedPackage {
             name: "std::json".to_string(),
             version: "0.1.0".to_string(),
-            source: "registry+https://registry.roze.dev".to_string(),
-            checksum: None,
+            source: Some("registry+https://registry.roze.dev".to_string()),
+            checksum: Some("pinned_checksum_12345".to_string()),
             dependencies: Vec::new(),
         });
 
-        // With force_update=false, keeps 0.1.0
+        // With force_update=false, keeps 0.1.0 AND preserves pinned checksum!
         let locked = resolver.resolve(&direct, Some(&existing_lock), false).unwrap();
         let json = locked.find_package("std::json").unwrap();
         assert_eq!(json.version, "0.1.0");
+        assert_eq!(json.checksum, Some("pinned_checksum_12345".to_string()));
 
         // With force_update=true, upgrades to 1.0.0 (highest available for *)
         let updated = resolver.resolve(&direct, Some(&existing_lock), true).unwrap();
         let json_updated = updated.find_package("std::json").unwrap();
         assert_eq!(json_updated.version, "1.0.0");
+    }
+
+    #[test]
+    fn test_resolve_selective_update() {
+        let resolver = DependencyResolver::new();
+        let mut direct = HashMap::new();
+        direct.insert("std::json".to_string(), DependencySpec::Registry(VersionReq::parse("*").unwrap()));
+        direct.insert("test_kit".to_string(), DependencySpec::Registry(VersionReq::parse("*").unwrap()));
+
+        let mut existing_lock = LockFile::new();
+        existing_lock.add_or_update(LockedPackage::new_registry("std::json", "0.1.0", "https://reg", Some("json_hash".to_string()), vec![]));
+        existing_lock.add_or_update(LockedPackage::new_registry("test_kit", "0.1.0", "https://reg", Some("test_hash".to_string()), vec![]));
+
+        // Update ONLY std::json, keeping test_kit pinned at 0.1.0
+        let mut to_update = HashSet::new();
+        to_update.insert("std::json".to_string());
+
+        let res = resolver.resolve_with_options(&direct, Some(&existing_lock), false, &to_update).unwrap();
+
+        // std::json upgraded to 1.0.0
+        let json = res.find_package("std::json").unwrap();
+        assert_eq!(json.version, "1.0.0");
+
+        // test_kit stays pinned at 0.1.0 with its checksum intact
+        let test_kit = res.find_package("test_kit").unwrap();
+        assert_eq!(test_kit.version, "0.1.0");
+        assert_eq!(test_kit.checksum, Some("test_hash".to_string()));
     }
 }

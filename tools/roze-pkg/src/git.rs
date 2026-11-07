@@ -87,22 +87,16 @@ impl GitFetcher {
         // Get exact commit hash
         let commit_hash = Self::get_commit_hash(&target_dir)?;
 
-        // Inspect roze.toml inside the repo if present
-        let manifest_path = target_dir.join("roze.toml");
-        let (name, version) = if manifest_path.exists() {
-            let content = fs::read_to_string(&manifest_path)?;
-            let doc: toml::Value = toml::from_str(&content)?;
-            let n = doc.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed").to_string();
-            let v = doc.get("version").and_then(|v| v.as_str()).unwrap_or("0.1.0").to_string();
-            (n, v)
+        // Inspect manifest inside the repo if present (bsr.mfz or roze.toml)
+        let (name, version) = if let Some(mpath) = crate::project::ProjectConfig::find_manifest(&target_dir) {
+            if let Ok(config) = crate::project::ProjectConfig::load(&mpath) {
+                (config.name, config.version)
+            } else {
+                let repo_name = Self::extract_repo_name(&dep.url);
+                (repo_name, "0.1.0".to_string())
+            }
         } else {
-            let repo_name = dep.url
-                .trim_end_matches('/')
-                .trim_end_matches(".git")
-                .rsplit('/')
-                .next()
-                .unwrap_or("pkg")
-                .to_string();
+            let repo_name = Self::extract_repo_name(&dep.url);
             let v = dep.tag.as_deref().unwrap_or("0.1.0").trim_start_matches('v').to_string();
             (repo_name, v)
         };
@@ -113,6 +107,15 @@ impl GitFetcher {
             commit_hash,
             checkout_dir: target_dir,
         })
+    }
+
+    pub fn extract_repo_name(url: &str) -> String {
+        url.trim_end_matches('/')
+            .trim_end_matches(".git")
+            .rsplit('/')
+            .next()
+            .unwrap_or("pkg")
+            .to_string()
     }
 
     fn run_git_checkout(repo_dir: &Path, target: &str) -> Result<()> {

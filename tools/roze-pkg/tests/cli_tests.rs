@@ -350,4 +350,127 @@ fn test_cli_bsr_lock_and_verify_workflow() {
     assert!(!check_fail.status.success(), "Outdated lockfile must fail check");
 }
 
+#[test]
+fn test_cli_bsr_vendor_and_offline_build() {
+    let temp = tempdir().unwrap();
+    let project_dir = temp.path().join("vendor_cli_app");
+
+    // 1. Create project
+    let status = Command::new(bsr_bin())
+        .arg("new")
+        .arg(&project_dir)
+        .arg("--bin")
+        .status()
+        .expect("failed to execute bsr new");
+    assert!(status.success());
+
+    // 2. Add dependency to bsr.mfz
+    let mfz_path = project_dir.join("bsr.mfz");
+    let mut content = fs::read_to_string(&mfz_path).unwrap();
+    content.push_str("\"std::json\" = \"^0.2.0\"\n");
+    fs::write(&mfz_path, content).unwrap();
+
+    // 3. bsr install
+    let install_status = Command::new(bsr_bin())
+        .arg("install")
+        .current_dir(&project_dir)
+        .status()
+        .expect("failed to execute bsr install");
+    assert!(install_status.success());
+
+    // 4. bsr vendor
+    let vendor_status = Command::new(bsr_bin())
+        .arg("vendor")
+        .current_dir(&project_dir)
+        .status()
+        .expect("failed to execute bsr vendor");
+    assert!(vendor_status.success());
+
+    let vendor_dir = project_dir.join("vendor");
+    assert!(vendor_dir.exists());
+    assert!(vendor_dir.join("bsr-vendor.mfz").exists());
+    assert!(vendor_dir.join(".bsr-checksum").exists());
+    assert!(vendor_dir.join("std_json").exists());
+    assert!(vendor_dir.join("std_json/.bsr-checksum.json").exists());
+
+    // 5. bsr vendor --verify
+    let verify_out = Command::new(bsr_bin())
+        .arg("vendor")
+        .arg("--verify")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to execute bsr vendor --verify");
+    assert!(verify_out.status.success());
+    let stdout = String::from_utf8_lossy(&verify_out.stdout);
+    assert!(stdout.contains("cryptographically verified"));
+
+    // 6. Tamper with vendored file and verify detection
+    fs::write(vendor_dir.join("std_json/lib.roze"), "// TAMPERED VENDOR CODE").unwrap();
+    let tamper_out = Command::new(bsr_bin())
+        .arg("vendor")
+        .arg("--verify")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to execute bsr vendor --verify");
+    assert!(!tamper_out.status.success());
+
+    // 7. Re-vendor cleanly
+    let revendor_status = Command::new(bsr_bin())
+        .arg("vendor")
+        .current_dir(&project_dir)
+        .status()
+        .expect("failed to execute bsr vendor");
+    assert!(revendor_status.success());
+
+    // 8. Wipe libs/ and install with --offline
+    let _ = fs::remove_dir_all(project_dir.join("libs"));
+    assert!(!project_dir.join("libs").exists());
+
+    let offline_install = Command::new(bsr_bin())
+        .arg("install")
+        .arg("--offline")
+        .current_dir(&project_dir)
+        .status()
+        .expect("failed to execute bsr install --offline");
+    assert!(offline_install.success());
+    assert!(project_dir.join("libs/std::json/lib.roze").exists());
+}
+
+#[test]
+fn test_cli_bsr_cache_management() {
+    let temp_cache = tempdir().unwrap();
+    let cache_dir = temp_cache.path().join("cache");
+
+    // 1. bsr cache list on empty cache
+    let list_out = Command::new(bsr_bin())
+        .env("BSR_CACHE_DIR", &cache_dir)
+        .arg("cache")
+        .arg("list")
+        .output()
+        .expect("failed to execute bsr cache list");
+    assert!(list_out.status.success());
+    let stdout = String::from_utf8_lossy(&list_out.stdout);
+    assert!(stdout.contains("empty") || stdout.contains("cache"));
+
+    // 2. bsr cache verify
+    let verify_out = Command::new(bsr_bin())
+        .env("BSR_CACHE_DIR", &cache_dir)
+        .arg("cache")
+        .arg("verify")
+        .output()
+        .expect("failed to execute bsr cache verify");
+    assert!(verify_out.status.success());
+
+    // 3. bsr cache clean
+    let clean_out = Command::new(bsr_bin())
+        .env("BSR_CACHE_DIR", &cache_dir)
+        .arg("cache")
+        .arg("clean")
+        .output()
+        .expect("failed to execute bsr cache clean");
+    assert!(clean_out.status.success());
+    let clean_stdout = String::from_utf8_lossy(&clean_out.stdout);
+    assert!(clean_stdout.contains("Cleaned global package cache"));
+}
+
 

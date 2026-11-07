@@ -492,7 +492,7 @@ s1_rows = [
         ("M5-T05", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Cache & Offline Mode", "Package Cache & 'bsr vendor' Offline Mode",
         "Global immutable package cache (~/.bsr/cache/), hash validation, and 'bsr vendor' for 100% offline air-gapped enterprise builds.",
         "Parity with 'cargo vendor' and 'go mod vendor'.",
-        "Enterprise Security, Air-Gapped Environments", "6 Days", ("High", 14), ("Planned", 12)
+        "Enterprise Security, Air-Gapped Environments", "6 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M5-T06", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Registry Protocol", "Decentralized Git & HTTPS Package Registry",

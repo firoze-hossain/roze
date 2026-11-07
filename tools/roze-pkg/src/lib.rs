@@ -11,6 +11,7 @@ pub mod resolver;
 pub mod semver;
 pub mod solver;
 pub mod template;
+pub mod vendor;
 
 use clap::{Parser, Subcommand};
 use colored::*;
@@ -96,6 +97,9 @@ enum Commands {
         /// Require bsr.lock to be up-to-date and forbid network access
         #[arg(long)]
         frozen: bool,
+        /// Build in 100% offline air-gapped mode using local cache or vendor/
+        #[arg(long)]
+        offline: bool,
     },
     /// Run the current project
     Run {
@@ -135,6 +139,9 @@ enum Commands {
         /// Require lockfile to be strictly up-to-date
         #[arg(long)]
         locked: bool,
+        /// Install in 100% offline air-gapped mode using local cache or vendor/
+        #[arg(long)]
+        offline: bool,
     },
     /// Update dependencies to their latest compatible versions
     Update {
@@ -153,7 +160,22 @@ enum Commands {
         #[arg(long)]
         package: Option<String>,
     },
-    /// Manage global package cache
+    /// Vendor all dependencies into a local directory for offline air-gapped enterprise builds
+    Vendor {
+        /// Directory to vendor packages into [default: vendor]
+        #[arg(default_value = "vendor")]
+        path: PathBuf,
+        /// Always include version numbers in directory names (e.g. vendor/foo-1.0.0)
+        #[arg(long)]
+        versioned_dirs: bool,
+        /// Don't delete existing files in vendor directory before vendoring
+        #[arg(long)]
+        no_delete: bool,
+        /// Cryptographically verify SHA-256 integrity of vendored packages
+        #[arg(long)]
+        verify: bool,
+    },
+    /// Manage global package cache (~/.bsr/cache/)
     Cache {
         #[command(subcommand)]
         action: CacheCommands,
@@ -190,6 +212,8 @@ enum CacheCommands {
     List,
     /// Clear all downloaded packages and checkouts
     Clean,
+    /// Cryptographically verify SHA-256 integrity of all cached packages
+    Verify,
 }
 
 pub fn run_cli() {
@@ -215,15 +239,18 @@ pub fn run_cli() {
             edition,
             author,
         } => cmd_init(path, bin, lib, name, vcs, edition, author),
-        Commands::Build { release, locked, frozen } => cmd_build(release, locked, frozen),
+        Commands::Build { release, locked, frozen, offline } => cmd_build(release, locked, frozen, offline),
         Commands::Run { args } => cmd_run(args),
         Commands::Add { name, version, git, tag, branch, path } => {
             cmd_add(&name, version, git, tag, branch, path)
         }
         Commands::Remove { name } => cmd_remove(&name),
-        Commands::Install { frozen, locked } => cmd_install(frozen, locked),
+        Commands::Install { frozen, locked, offline } => cmd_install(frozen, locked, offline),
         Commands::Update { package } => cmd_update(package.as_deref()),
         Commands::Lock { check, verify, package } => cmd_lock(check, verify, package.as_deref()),
+        Commands::Vendor { path, versioned_dirs, no_delete, verify } => {
+            cmd_vendor(path, versioned_dirs, no_delete, verify)
+        }
         Commands::Cache { action } => cmd_cache(action),
         Commands::Search { query } => cmd_search(&query),
         Commands::Publish { registry, dry_run } => cmd_publish(registry.as_deref(), dry_run),
@@ -308,26 +335,32 @@ fn cmd_init(
     generator::generate_init(&opts)
 }
 
-fn cmd_build(_release: bool, locked: bool, frozen: bool) -> Result<()> {
-    if locked || frozen {
-        let project_dir = std::env::current_dir()?;
-        let dep_manager = DependencyManager::new(project_dir);
-        let lock_path = dep_manager.lockfile_path();
-        let lock_filename = lock_path.file_name().and_then(|s| s.to_str()).unwrap_or("bsr.lock");
+fn cmd_build(_release: bool, locked: bool, frozen: bool, offline: bool) -> Result<()> {
+    let project_dir = std::env::current_dir()?;
+    let mut dep_manager = DependencyManager::new(project_dir);
+    let lock_path = dep_manager.lockfile_path();
+    let lock_filename = lock_path.file_name().and_then(|s| s.to_str()).unwrap_or("bsr.lock");
+
+    if locked || frozen || offline {
         if !lock_path.exists() {
             return Err(anyhow!(
                 "the lock file {} needs to be updated but --{} was passed to prevent this",
                 lock_filename,
-                if frozen { "frozen" } else { "locked" }
+                if offline { "offline" } else if frozen { "frozen" } else { "locked" }
             ));
         }
         if !dep_manager.check_lockfile_up_to_date()? {
             return Err(anyhow!(
                 "the lock file {} needs to be updated but --{} was passed to prevent this",
                 lock_filename,
-                if frozen { "frozen" } else { "locked" }
+                if offline { "offline" } else if frozen { "frozen" } else { "locked" }
             ));
         }
+    }
+
+    // Auto-install dependencies if missing from libs/ or if in offline mode
+    if dep_manager.has_missing_libs()? || offline {
+        dep_manager.install_all_with_options(locked, frozen, offline)?;
     }
 
     println!("🔨 {}", "Building project...".green());
@@ -415,10 +448,86 @@ fn cmd_remove(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_install(frozen: bool, locked: bool) -> Result<()> {
+fn cmd_install(frozen: bool, locked: bool, offline: bool) -> Result<()> {
     let project_dir = std::env::current_dir()?;
     let mut dep_manager = DependencyManager::new(project_dir);
-    dep_manager.install_all_with_opts(locked, frozen)
+    dep_manager.install_all_with_options(locked, frozen, offline)
+}
+
+fn cmd_vendor(path: PathBuf, versioned_dirs: bool, no_delete: bool, verify: bool) -> Result<()> {
+    let project_dir = std::env::current_dir()?;
+
+    if verify {
+        println!("🔍 {}", format!("Verifying cryptographic checksums of vendored packages in {}...", path.display()).cyan());
+        let results = vendor::VendorManager::verify_vendor(&project_dir, &path)?;
+        if results.is_empty() {
+            println!("  No vendored packages found to verify in {}", path.display());
+            return Ok(());
+        }
+
+        let mut any_mismatch = false;
+        let mut any_missing = false;
+
+        for r in results {
+            match r.status {
+                vendor::VendorStatus::Ok => {
+                    println!("  {} {} v{} (checksums verified)", "✓".green(), r.name.bold(), r.version.cyan());
+                }
+                vendor::VendorStatus::ChecksumMismatch { expected, actual } => {
+                    any_mismatch = true;
+                    println!("  {} {} v{} CHECKSUM MISMATCH!", "✗".red().bold(), r.name.bold(), r.version);
+                    println!("    Expected: {}", expected.yellow());
+                    println!("    Actual:   {}", actual.red());
+                }
+                vendor::VendorStatus::FileTampered { file, expected, actual } => {
+                    any_mismatch = true;
+                    println!("  {} {} v{} file '{}' TAMPERED!", "✗".red().bold(), r.name.bold(), r.version, file);
+                    println!("    Expected: {}", expected.yellow());
+                    println!("    Actual:   {}", actual.red());
+                }
+                vendor::VendorStatus::FileMissing { file } => {
+                    any_missing = true;
+                    println!("  {} {} v{} file '{}' is MISSING!", "✗".red().bold(), r.name.bold(), r.version, file);
+                }
+                vendor::VendorStatus::MissingChecksumFile => {
+                    any_missing = true;
+                    println!("  {} {} v{} missing .bsr-checksum.json!", "✗".red().bold(), r.name.bold(), r.version);
+                }
+                vendor::VendorStatus::MissingDirectory => {
+                    any_missing = true;
+                    println!("  {} {} v{} directory is MISSING!", "✗".red().bold(), r.name.bold(), r.version);
+                }
+            }
+        }
+
+        if any_mismatch {
+            return Err(anyhow!("Supply-chain security violation: one or more vendored package checksums do not match!"));
+        }
+        if any_missing {
+            return Err(anyhow!("One or more vendored packages or files are missing: run 'bsr vendor' to re-vendor"));
+        }
+
+        println!("✅ {}", "All vendored packages cryptographically verified with 100% integrity!".bright_green());
+        return Ok(());
+    }
+
+    println!("📦 {}", format!("Vendoring dependencies into {}...", path.display()).bright_magenta());
+    let opts = vendor::VendorOptions {
+        output_dir: path.clone(),
+        versioned_dirs,
+        no_delete,
+    };
+    let summary = vendor::VendorManager::vendor_dependencies(&project_dir, &opts)?;
+    for pkg in &summary.packages {
+        let kb = pkg.total_bytes as f64 / 1024.0;
+        let preview = if pkg.checksum.len() >= 12 { &pkg.checksum[..12] } else { &pkg.checksum };
+        println!("  {} {} v{} ({:.1} KB, {} files) [{}]", "✓".green(), pkg.name.bold(), pkg.version.bright_cyan(), kb, pkg.file_count, preview);
+    }
+    let total_kb = summary.total_bytes as f64 / 1024.0;
+    println!("✅ {}", format!("Vendoring complete! {} packages vendored into {}/ ({:.1} KB)", summary.packages.len(), path.display(), total_kb).bright_green());
+    println!("💡 {}", "To build using vendored dependencies in offline air-gapped environments, run:".yellow());
+    println!("     bsr build --offline");
+    Ok(())
 }
 
 fn cmd_update(package: Option<&str>) -> Result<()> {
@@ -529,6 +638,39 @@ fn cmd_cache(action: CacheCommands) -> Result<()> {
             let freed = cache.clean_cache()?;
             let kb = freed as f64 / 1024.0;
             println!("🧹 {}", format!("Cleaned global package cache ({:.1} KB freed)", kb).bright_green());
+        }
+        CacheCommands::Verify => {
+            println!("🔍 {}", format!("Cryptographically verifying global package cache ({})...", cache.root_dir.display()).cyan());
+            let reports = cache.verify_all_packages()?;
+            if reports.is_empty() {
+                println!("  Global package cache is empty ({})", cache.root_dir.display());
+                return Ok(());
+            }
+
+            let mut any_corrupted = false;
+            for r in reports {
+                match r.status {
+                    cache::CacheStatus::Valid => {
+                        println!("  {} {} v{} (hash verified)", "✓".green(), r.name.bold(), r.version.cyan());
+                    }
+                    cache::CacheStatus::Corrupted { expected, actual } => {
+                        any_corrupted = true;
+                        println!("  {} {} v{} CORRUPTED CHECKSUM MISMATCH!", "✗".red().bold(), r.name.bold(), r.version);
+                        println!("    Expected: {}", expected.yellow());
+                        println!("    Actual:   {}", actual.red());
+                    }
+                    cache::CacheStatus::Unchecksummed { actual } => {
+                        let preview = if actual.len() >= 12 { &actual[..12] } else { &actual };
+                        println!("  {} {} v{} (unpinned, computed: {})", "!".yellow(), r.name.bold(), r.version, preview);
+                    }
+                }
+            }
+
+            if any_corrupted {
+                return Err(anyhow!("Supply-chain security violation: one or more packages in global cache are corrupted!"));
+            }
+
+            println!("✅ {}", "All cached packages cryptographically verified with 100% integrity!".bright_green());
         }
     }
     Ok(())

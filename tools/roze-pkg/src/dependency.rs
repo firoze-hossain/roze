@@ -318,6 +318,11 @@ impl DependencyManager {
 
     /// Installs all dependencies with optional `--locked` and `--frozen` enforcement.
     pub fn install_all_with_opts(&mut self, locked: bool, frozen: bool) -> Result<()> {
+        self.install_all_with_options(locked, frozen, false)
+    }
+
+    /// Installs all dependencies with `--locked`, `--frozen`, and `--offline` air-gapped mode support.
+    pub fn install_all_with_options(&mut self, locked: bool, frozen: bool, offline: bool) -> Result<()> {
         println!("📦 {}", "Installing dependencies...".bright_magenta());
 
         if self.dependencies.is_empty() {
@@ -333,12 +338,12 @@ impl DependencyManager {
             None
         };
 
-        if locked || frozen {
+        if locked || frozen || offline {
             if !lock_path.exists() {
                 return Err(anyhow!(
                     "The lock file {} needs to be updated but --{} was passed to prevent this",
                     lock_path.display(),
-                    if frozen { "frozen" } else { "locked" }
+                    if offline { "offline" } else if frozen { "frozen" } else { "locked" }
                 ));
             }
             let current_lock = LockFile::load(&lock_path)?;
@@ -347,7 +352,7 @@ impl DependencyManager {
                     return Err(anyhow!(
                         "The lock file {} needs to be updated but --{} was passed to prevent this",
                         lock_path.display(),
-                        if frozen { "frozen" } else { "locked" }
+                        if offline { "offline" } else if frozen { "frozen" } else { "locked" }
                     ));
                 }
             }
@@ -365,11 +370,11 @@ impl DependencyManager {
                     if is_sync {
                         l
                     } else {
-                        if locked || frozen {
+                        if locked || frozen || offline {
                             return Err(anyhow!(
                                 "The lock file {} needs to be updated but --{} was passed to prevent this",
                                 lock_path.display(),
-                                if frozen { "frozen" } else { "locked" }
+                                if offline { "offline" } else if frozen { "frozen" } else { "locked" }
                             ));
                         }
                         println!("  Manifest changed; updating lockfile...");
@@ -377,11 +382,11 @@ impl DependencyManager {
                     }
                 }
                 Err(_) => {
-                    if locked || frozen {
+                    if locked || frozen || offline {
                         return Err(anyhow!(
                             "The lock file {} is invalid but --{} was passed",
                             lock_path.display(),
-                            if frozen { "frozen" } else { "locked" }
+                            if offline { "offline" } else if frozen { "frozen" } else { "locked" }
                         ));
                     }
                     self.resolve_and_lock(false)?
@@ -394,6 +399,8 @@ impl DependencyManager {
         fs::create_dir_all(self.libs_dir())?;
 
         let mut updated = false;
+        let vendor_dir = self.project_dir.join("vendor");
+
         for pkg in &mut lockfile.packages {
             if pkg.is_root() {
                 continue;
@@ -420,17 +427,64 @@ impl DependencyManager {
                 }
             }
 
-            println!("  Installing {} v{} ({})", pkg.name.bold(), pkg.version.bright_cyan(), src_display);
+            // 1. Air-Gapped Strategy: First check local project vendor/ directory
+            let vendored_source = if vendor_dir.exists() {
+                crate::vendor::VendorManager::find_vendored_package(&vendor_dir, &pkg.name, &pkg.version)
+            } else {
+                None
+            };
 
-            // Frozen mode check: offline only
-            if frozen && !self.cache.has_package(&pkg.name, &pkg.version) && !pkg.is_path() {
+            let checksum = if let Some(ref v_path) = vendored_source {
+                println!("  Installing {} v{} (from vendored sources {})", pkg.name.bold(), pkg.version.bright_cyan(), v_path.display());
+                let actual_vendor_chk = sha256_dir(v_path)?;
+
+                if let Some(ref expected) = pkg.checksum {
+                    if normalize_checksum(&actual_vendor_chk) != normalize_checksum(expected) {
+                        return Err(anyhow!(
+                            "Supply-chain security violation: Checksum mismatch for vendored package '{}' v{} in {}!\n  Expected SHA-256: {}\n  Computed SHA-256: {}\n  The vendored package appears to have been tampered with or corrupted.",
+                            pkg.name, pkg.version, v_path.display(), expected, actual_vendor_chk
+                        ));
+                    }
+                }
+
+                if dest_dir.exists() {
+                    let _ = fs::remove_dir_all(&dest_dir);
+                }
+                fs::create_dir_all(&dest_dir)?;
+
+                // Copy vendored files
+                for entry in walkdir::WalkDir::new(v_path) {
+                    let entry = entry?;
+                    let f_name = entry.file_name().to_string_lossy();
+                    if f_name == ".checksum" || f_name == ".bsr-checksum.json" || f_name == ".git" {
+                        continue;
+                    }
+                    let rel = entry.path().strip_prefix(v_path)?;
+                    let target = dest_dir.join(rel);
+                    if entry.file_type().is_dir() {
+                        fs::create_dir_all(&target)?;
+                    } else if entry.file_type().is_file() {
+                        if let Some(p) = target.parent() {
+                            fs::create_dir_all(p)?;
+                        }
+                        fs::copy(entry.path(), &target)?;
+                    }
+                }
+                sha256_dir(&dest_dir)?
+            } else if self.cache.has_package(&pkg.name, &pkg.version) {
+                // 2. Second strategy: Install from global immutable cache with hash validation
+                println!("  Installing {} v{} (from global cache)", pkg.name.bold(), pkg.version.bright_cyan());
+                self.cache.install_from_cache(&pkg.name, &pkg.version, &dest_dir)?;
+                sha256_dir(&dest_dir)?
+            } else if offline || frozen {
+                // Offline / frozen mode enforcement: fail immediately without network access
                 return Err(anyhow!(
-                    "--frozen specified but package '{}' v{} is not in local cache; network access is disabled",
-                    pkg.name, pkg.version
+                    "Offline air-gapped mode error: Package '{}' v{} is not available in vendor/ or global cache ({}), and network access is disabled (--{}).",
+                    pkg.name, pkg.version, self.cache.root_dir.display(), if offline { "offline" } else { "frozen" }
                 ));
-            }
-
-            let checksum = if pkg.is_git() {
+            } else if pkg.is_git() {
+                // 3. Fallback: Network fetch
+                println!("  Installing {} v{} ({})", pkg.name.bold(), pkg.version.bright_cyan(), src_display);
                 let git_url = pkg.git_repo_url().unwrap_or(src_display);
                 let rev = pkg.git_commit_hash().map(|s| s.to_string());
 
@@ -443,8 +497,11 @@ impl DependencyManager {
 
                 let fetched = self.git_fetcher.fetch(&dep)?;
                 self.git_fetcher.install_to_project(&fetched, &dest_dir)?;
-                sha256_dir(&dest_dir)?
+                let chk = sha256_dir(&dest_dir)?;
+                let _ = self.cache.store_package(&pkg.name, &pkg.version, &dest_dir);
+                chk
             } else if pkg.is_path() {
+                println!("  Installing {} v{} ({})", pkg.name.bold(), pkg.version.bright_cyan(), src_display);
                 let path_str = src_display.trim_start_matches("path+");
                 let src_path = PathBuf::from(path_str);
                 if !src_path.exists() {
@@ -470,6 +527,7 @@ impl DependencyManager {
                 sha256_dir(&dest_dir)?
             } else {
                 // Registry source
+                println!("  Installing {} v{} ({})", pkg.name.bold(), pkg.version.bright_cyan(), src_display);
                 let ver = Version::parse(&pkg.version)?;
                 let _chk = self.registry.fetch_package(&pkg.name, &ver, &dest_dir)?;
 
@@ -488,7 +546,10 @@ func {}_version() -> string {{
                     fs::write(dest_dir.join("lib.roze"), stub)?;
                 }
 
-                sha256_dir(&dest_dir)?
+                let chk = sha256_dir(&dest_dir)?;
+                // Automatically cache in global cache
+                let _ = self.cache.store_package(&pkg.name, &pkg.version, &dest_dir);
+                chk
             };
 
             // Cryptographic checksum verification against lockfile pin
@@ -511,6 +572,30 @@ func {}_version() -> string {{
 
         println!("✅ {}", "All dependencies installed and cryptographically verified!".bright_green());
         Ok(())
+    }
+
+    /// Vendors all dependencies into the local project vendor directory.
+    pub fn vendor(&self, opts: &crate::vendor::VendorOptions) -> Result<crate::vendor::VendorSummary> {
+        crate::vendor::VendorManager::vendor_dependencies(&self.project_dir, opts)
+    }
+
+    /// Checks if any required library is missing from `libs/`.
+    pub fn has_missing_libs(&self) -> Result<bool> {
+        let lock_path = self.lockfile_path();
+        if !lock_path.exists() {
+            return Ok(true);
+        }
+        let lockfile = LockFile::load(&lock_path)?;
+        for pkg in &lockfile.packages {
+            if pkg.is_root() {
+                continue;
+            }
+            let dir = self.libs_dir().join(&pkg.name);
+            if !dir.exists() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Updates dependencies to their latest compatible versions.
@@ -793,5 +878,76 @@ main = "src/main.roze"
 
         let test_kit = updated_lock.find_package("test_kit").unwrap();
         assert_eq!(test_kit.version, "0.1.0", "test_kit should remain at 0.1.0");
+    }
+
+    #[test]
+    fn test_vendor_and_offline_install() {
+        let (dir, _holder) = temp_project("vendor_offline_test");
+        fs::write(
+            dir.join("bsr.mfz"),
+            r#"name = "vendor_app"
+version = "0.1.0"
+main = "src/main.roze"
+
+[dependencies]
+"std::json" = "^0.2.0"
+"#,
+        ).unwrap();
+
+        let mut mgr = DependencyManager::new(dir.clone());
+        mgr.install_all().unwrap();
+
+        // 1. Vendor the dependencies
+        let opts = crate::vendor::VendorOptions::default();
+        let summary = mgr.vendor(&opts).unwrap();
+        assert_eq!(summary.packages.len(), 1);
+        assert_eq!(summary.packages[0].name, "std::json");
+        assert!(dir.join("vendor/std_json/lib.roze").exists());
+        assert!(dir.join("vendor/bsr-vendor.mfz").exists());
+
+        // 2. Wipe libs/
+        let _ = fs::remove_dir_all(dir.join("libs"));
+        assert!(!dir.join("libs").exists());
+
+        // 3. Install in offline mode (must succeed from vendor/)
+        let mut mgr2 = DependencyManager::new(dir.clone());
+        let res = mgr2.install_all_with_options(false, false, true);
+        assert!(res.is_ok(), "Offline install from vendor/ must succeed");
+        assert!(dir.join("libs/std::json/lib.roze").exists());
+
+        // Checksum in libs must match
+        let verif = mgr2.verify_installed().unwrap();
+        assert_eq!(verif.len(), 1);
+        assert!(verif[0].is_valid());
+    }
+
+    #[test]
+    fn test_offline_mode_missing_fails() {
+        let (dir, _holder) = temp_project("offline_missing_test");
+        fs::write(
+            dir.join("bsr.mfz"),
+            r#"name = "offline_missing_app"
+version = "0.1.0"
+main = "src/main.roze"
+
+[dependencies]
+"std::json" = "^0.2.0"
+"#,
+        ).unwrap();
+
+        // Generate lockfile without installing
+        let mut mgr = DependencyManager::new(dir.clone());
+        mgr.resolve_and_lock(false).unwrap();
+
+        // Create isolated manager with empty custom cache
+        let temp_empty_cache = tempfile::tempdir().unwrap();
+        let isolated_cache = PackageCache::with_root(temp_empty_cache.path().to_path_buf());
+        let mut isolated_mgr = DependencyManager::with_cache(dir.clone(), isolated_cache);
+
+        // Attempt offline install without vendor/ or cache
+        let res = isolated_mgr.install_all_with_options(false, false, true);
+        assert!(res.is_err(), "Must fail offline when package is missing");
+        let err_msg = res.unwrap_err().to_string();
+        assert!(err_msg.contains("Offline air-gapped mode error"));
     }
 }

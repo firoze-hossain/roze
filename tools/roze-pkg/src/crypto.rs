@@ -203,7 +203,7 @@ pub fn sha256_dir(dir: &Path) -> Result<String> {
         let entry = entry?;
         if entry.file_type().is_file() {
             let file_name = entry.file_name().to_string_lossy();
-            if file_name == ".checksum" {
+            if file_name == ".checksum" || file_name == ".bsr-checksum" || file_name == ".bsr-checksum.json" {
                 continue;
             }
             let rel = entry.path().strip_prefix(dir)?;

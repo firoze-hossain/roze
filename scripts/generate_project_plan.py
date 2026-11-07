@@ -468,7 +468,7 @@ s1_rows = [
         ("M5-T01", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Package Manager CLI", "Basir ('bsr') CLI Architecture & Project Generator",
         "Standalone 'bsr' executable: bsr init, bsr new <name> [--bin | --lib], project scaffolding (src/main.roze, src/lib.roze, tests/, benches/).",
         "Parity with 'cargo new' and 'go mod init'.",
-        "Developer Experience, Package Ecosystem", "7 Days", ("Critical", 14), ("Planned", 12)
+        "Developer Experience, Package Ecosystem", "7 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M5-T02", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Proprietary Manifest", "Proprietary 'bsr.mfz' (Mohammad Firoze) Manifest",

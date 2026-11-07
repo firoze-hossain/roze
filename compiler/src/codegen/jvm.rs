@@ -2545,19 +2545,19 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
 
     private static final byte[] __ROZE_SIMULATED_RAM = new byte[64 * 1024 * 1024]; // 64MB Simulated RAM
     private static int __roze_simulated_heap_offset = 16 * 1024 * 1024; // 16MB heap start
+    private static final java.util.Map<Long, Long> __ROZE_NATIVE_BRIDGES = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static long __roze_alloc(long size) {
-        if (__ROZE_UNSAFE != null && __ROZE_ALLOC != null) {
-            try {
-                return (Long) __ROZE_ALLOC.invoke(__ROZE_UNSAFE, size);
-            } catch (Exception e) {}
-        }
         int aligned = (__roze_simulated_heap_offset + 7) & ~7;
         if (aligned + size <= __ROZE_SIMULATED_RAM.length) {
             __roze_simulated_heap_offset = (int)(aligned + size);
             return (long) aligned;
         }
-        throw new RuntimeException("alloc failed");
+        try {
+            return (Long) __ROZE_ALLOC.invoke(__ROZE_UNSAFE, size);
+        } catch (Exception e) {
+            throw new RuntimeException("alloc failed: " + e.getMessage());
+        }
     }
 
     private static long __roze_alloc_zeroed(long size) {
@@ -2684,6 +2684,12 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     private static void __roze_ptr_write_f32_at(long ptr, long offset, double val) { __roze_ptr_write_u32_at(ptr, offset, (long)Float.floatToRawIntBits((float)val)); }
 
     private static long __roze_ptr_read_i64_raw(long ptr) {
+        if (__ROZE_NATIVE_BRIDGES.containsKey(ptr)) {
+            long nativePtr = __ROZE_NATIVE_BRIDGES.get(ptr);
+            try {
+                return (Long) __ROZE_GET_LONG.invoke(__ROZE_UNSAFE, nativePtr);
+            } catch (Exception ignored) {}
+        }
         if (ptr >= 0 && ptr + 8 <= __ROZE_SIMULATED_RAM.length) {
             int idx = (int) ptr;
             long val = 0;
@@ -5311,6 +5317,19 @@ const FFI_HELPER_METHODS: &str = r#"
     public static Object __roze_segment_of_address(long addr) {
         if (addr == 0L) return __SEG_NULL;
         try {
+            if (addr >= 0 && addr < __ROZE_SIMULATED_RAM.length) {
+                long nativeAddr = __ROZE_NATIVE_BRIDGES.computeIfAbsent(addr, k -> {
+                    try {
+                        if (__ROZE_UNSAFE != null && __ROZE_ALLOC != null) {
+                            return (Long) __ROZE_ALLOC.invoke(__ROZE_UNSAFE, 64L);
+                        }
+                    } catch (Exception ignored) {}
+                    return k;
+                });
+                if (__M_SEG_OF_ADDRESS != null) {
+                    return __M_SEG_OF_ADDRESS.invoke(null, nativeAddr);
+                }
+            }
             if (__M_SEG_OF_ADDRESS != null) {
                 return __M_SEG_OF_ADDRESS.invoke(null, addr);
             }

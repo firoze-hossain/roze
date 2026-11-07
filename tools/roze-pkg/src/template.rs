@@ -47,10 +47,61 @@ func main() {
                     content: r#"# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
 name = "{{project_name}}"
 version = "0.1.0"
+edition = "2026"
 description = "A Roze project"
 authors = ["{{author}}"]
 main = "src/main.roze"
 "#.to_string(),
+                },
+                TemplateFile {
+                    path: "tests/integration_test.roze".to_string(),
+                    content: r#"// tests/integration_test.roze - Integration tests for {{project_name}}
+
+func assert_eq_int(actual: int, expected: int, msg: string) {
+    if actual != expected {
+        println("❌ Assertion failed: " + msg);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func test_basic_arithmetic() {
+    let result = 1 + 1;
+    assert_eq_int(result, 2, "1 + 1 == 2");
+}
+
+func main() {
+    println("🧪 Running integration tests for {{project_name}}...");
+    test_basic_arithmetic();
+    println("All integration tests passed!");
+}
+"#.to_string(),
+                },
+                TemplateFile {
+                    path: "benches/bench_main.roze".to_string(),
+                    content: r#"// benches/bench_main.roze - Benchmark harness for {{project_name}}
+
+func run_benchmark() {
+    println("⏱️  Running benchmarks for {{project_name}}...");
+    let sum = 0;
+    let i = 0;
+    while i < 100000 {
+        sum = sum + i;
+        i = i + 1;
+    }
+    if sum > 0 {
+        println("✅ Benchmark iterations complete.");
+    }
+}
+
+func main() {
+    run_benchmark();
+}
+"#.to_string(),
+                },
+                TemplateFile {
+                    path: ".gitignore".to_string(),
+                    content: "# Basir / Roze build artifacts\n/target/\n/bin/\n*.class\n*.o\n*.log\n__roze_*\n".to_string(),
                 },
                 TemplateFile {
                     path: "README.md".to_string(),
@@ -161,10 +212,61 @@ func add(a: int, b: int) -> int {
                     content: r#"# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
 name = "{{project_name}}"
 version = "0.1.0"
+edition = "2026"
 description = "A Roze library"
 authors = ["{{author}}"]
 main = "src/lib.roze"
 "#.to_string(),
+                },
+                TemplateFile {
+                    path: "tests/integration_test.roze".to_string(),
+                    content: r#"// tests/integration_test.roze - Integration tests for {{project_name}}
+
+func assert_eq_int(actual: int, expected: int, msg: string) {
+    if actual != expected {
+        println("❌ Assertion failed: " + msg);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func test_basic_arithmetic() {
+    let result = 1 + 1;
+    assert_eq_int(result, 2, "1 + 1 == 2");
+}
+
+func main() {
+    println("🧪 Running integration tests for {{project_name}}...");
+    test_basic_arithmetic();
+    println("All integration tests passed!");
+}
+"#.to_string(),
+                },
+                TemplateFile {
+                    path: "benches/bench_main.roze".to_string(),
+                    content: r#"// benches/bench_main.roze - Benchmark harness for {{project_name}}
+
+func run_benchmark() {
+    println("⏱️  Running benchmarks for {{project_name}}...");
+    let sum = 0;
+    let i = 0;
+    while i < 100000 {
+        sum = sum + i;
+        i = i + 1;
+    }
+    if sum > 0 {
+        println("✅ Benchmark iterations complete.");
+    }
+}
+
+func main() {
+    run_benchmark();
+}
+"#.to_string(),
+                },
+                TemplateFile {
+                    path: ".gitignore".to_string(),
+                    content: "# Basir / Roze build artifacts\n/target/\n/bin/\n*.class\n*.o\n*.log\n__roze_*\n".to_string(),
                 },
                 TemplateFile {
                     path: "README.md".to_string(),

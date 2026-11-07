@@ -36,6 +36,10 @@ pub struct ProjectConfig {
     pub authors: Vec<String>,
     pub main: String,
     #[serde(default)]
+    pub edition: Option<String>,
+    #[serde(default)]
+    pub license: Option<String>,
+    #[serde(default)]
     pub dependencies: HashMap<String, DependencyValue>,
     #[serde(default)]
     pub dev_dependencies: HashMap<String, DependencyValue>,
@@ -49,8 +53,10 @@ impl Default for ProjectConfig {
             name: "my_project".to_string(),
             version: "0.1.0".to_string(),
             description: Some("A Roze project".to_string()),
-            authors: vec!["Your Name".to_string()],
+            authors: vec!["Mohammad Firoze".to_string()],
             main: "src/main.roze".to_string(),
+            edition: Some("2026".to_string()),
+            license: Some("MIT".to_string()),
             dependencies: HashMap::new(),
             dev_dependencies: HashMap::new(),
             target: Some("jvm".to_string()),

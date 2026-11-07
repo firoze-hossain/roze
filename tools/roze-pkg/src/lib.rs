@@ -2,6 +2,7 @@
 pub mod cache;
 pub mod crypto;
 pub mod dependency;
+pub mod generator;
 pub mod git;
 pub mod lockfile;
 pub mod project;
@@ -20,7 +21,6 @@ use cache::PackageCache;
 use dependency::DependencyManager;
 use lockfile::LockFile;
 use project::{DependencyValue, DetailedDependency, ProjectConfig};
-use template::Template;
 
 #[derive(Parser)]
 #[command(name = "bsr")]
@@ -33,19 +33,55 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create a new Roze project
+    /// Create a new Roze project in a new directory
     New {
-        /// Project name
-        name: String,
-        /// Template to use (default, web, library)
-        #[arg(short, long, default_value = "default")]
-        template: String,
+        /// Path to create the project in
+        path: PathBuf,
+        /// Use a binary (application) template [default]
+        #[arg(long, conflicts_with = "lib")]
+        bin: bool,
+        /// Use a library template
+        #[arg(long, conflicts_with = "bin")]
+        lib: bool,
+        /// Set the resulting package name, defaults to the directory name
+        #[arg(long)]
+        name: Option<String>,
+        /// Initialize a new VCS repository [possible values: git, none]
+        #[arg(long)]
+        vcs: Option<String>,
+        /// Edition to set in manifest (e.g. 2026)
+        #[arg(long, default_value = "2026")]
+        edition: String,
         /// Author name
         #[arg(short, long, default_value = "Mohammad Firoze")]
         author: String,
-        /// Path to create project in
+        /// Template to use (default, web, library)
         #[arg(short, long)]
-        path: Option<PathBuf>,
+        template: Option<String>,
+    },
+    /// Initialize a new Roze project in an existing directory
+    Init {
+        /// Directory to initialize [default: current directory]
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Use a binary (application) template
+        #[arg(long, conflicts_with = "lib")]
+        bin: bool,
+        /// Use a library template
+        #[arg(long, conflicts_with = "bin")]
+        lib: bool,
+        /// Set the resulting package name, defaults to the directory name
+        #[arg(long)]
+        name: Option<String>,
+        /// Initialize a new VCS repository [possible values: git, none]
+        #[arg(long)]
+        vcs: Option<String>,
+        /// Edition to set in manifest (e.g. 2026)
+        #[arg(long, default_value = "2026")]
+        edition: String,
+        /// Author name
+        #[arg(short, long, default_value = "Mohammad Firoze")]
+        author: String,
     },
     /// Build the current project
     Build {
@@ -121,6 +157,8 @@ enum Commands {
     },
     /// Run tests
     Test,
+    /// Run benchmarks
+    Bench,
 }
 
 #[derive(Subcommand)]
@@ -135,7 +173,25 @@ pub fn run_cli() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::New { name, template, author, path } => cmd_new(&name, &template, &author, path),
+        Commands::New {
+            path,
+            bin,
+            lib,
+            name,
+            vcs,
+            edition,
+            author,
+            template,
+        } => cmd_new(path, bin, lib, name, vcs, edition, author, template),
+        Commands::Init {
+            path,
+            bin,
+            lib,
+            name,
+            vcs,
+            edition,
+            author,
+        } => cmd_init(path, bin, lib, name, vcs, edition, author),
         Commands::Build { release } => cmd_build(release),
         Commands::Run { args } => cmd_run(args),
         Commands::Add { name, version, git, tag, branch, path } => {
@@ -149,6 +205,7 @@ pub fn run_cli() {
         Commands::Search { query } => cmd_search(&query),
         Commands::Publish { registry, dry_run } => cmd_publish(registry.as_deref(), dry_run),
         Commands::Test => cmd_test(),
+        Commands::Bench => cmd_bench(),
     };
 
     if let Err(e) = result {
@@ -157,33 +214,74 @@ pub fn run_cli() {
     }
 }
 
-fn cmd_new(name: &str, template_name: &str, author: &str, path: Option<PathBuf>) -> Result<()> {
-    println!("🌹 {}", "Creating new Roze project".bright_magenta());
-    println!("  Project: {}", name);
-    println!("  Template: {}", template_name);
-    println!("  Author: {}", author);
-
-    let project_path = path.unwrap_or_else(|| PathBuf::from(name));
-
-    if project_path.exists() {
-        return Err(anyhow!("Project directory already exists: {}", project_path.display()));
-    }
-
-    let template = match template_name {
-        "web" => Template::get_web(),
-        "library" => Template::get_library(),
-        _ => Template::get_default(),
+fn cmd_new(
+    path: PathBuf,
+    bin: bool,
+    lib: bool,
+    name: Option<String>,
+    vcs: Option<String>,
+    edition: String,
+    author: String,
+    template: Option<String>,
+) -> Result<()> {
+    let target = if lib {
+        Some(generator::TargetKind::Lib)
+    } else if bin {
+        Some(generator::TargetKind::Bin)
+    } else {
+        None
     };
 
-    template.apply(name, author, &project_path)?;
+    let vcs_kind = match vcs.as_deref() {
+        Some(s) => Some(generator::VcsKind::parse(s)?),
+        None => None,
+    };
 
-    println!("✅ Project created at: {}", project_path.display());
-    println!("\nNext steps:");
-    println!("  cd {}", name);
-    println!("  bsr install  # Install dependencies");
-    println!("  bsr run      # Run the project");
+    let opts = generator::NewOptions {
+        path,
+        name,
+        target,
+        vcs: vcs_kind,
+        edition,
+        author,
+        template,
+    };
 
-    Ok(())
+    generator::generate_new(&opts)
+}
+
+fn cmd_init(
+    path: PathBuf,
+    bin: bool,
+    lib: bool,
+    name: Option<String>,
+    vcs: Option<String>,
+    edition: String,
+    author: String,
+) -> Result<()> {
+    let target = if lib {
+        Some(generator::TargetKind::Lib)
+    } else if bin {
+        Some(generator::TargetKind::Bin)
+    } else {
+        None
+    };
+
+    let vcs_kind = match vcs.as_deref() {
+        Some(s) => Some(generator::VcsKind::parse(s)?),
+        None => None,
+    };
+
+    let opts = generator::InitOptions {
+        path,
+        name,
+        target,
+        vcs: vcs_kind,
+        edition,
+        author,
+    };
+
+    generator::generate_init(&opts)
 }
 
 fn cmd_build(_release: bool) -> Result<()> {
@@ -350,21 +448,85 @@ fn cmd_cache(action: CacheCommands) -> Result<()> {
 fn cmd_test() -> Result<()> {
     println!("🧪 {}", "Running tests...".yellow());
 
-    let config = load_project_config()?;
-    let main_file = config.main;
+    let compiler_path = find_compiler()?;
+    let cur = std::env::current_dir()?;
+    let tests_dir = cur.join("tests");
+    let mut ran_any = false;
+
+    if tests_dir.is_dir() {
+        let mut entries: Vec<_> = std::fs::read_dir(&tests_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("roze"))
+            .collect();
+        entries.sort_by_key(|e| e.path());
+
+        for entry in entries {
+            let path = entry.path();
+            ran_any = true;
+            println!("  Running test fixture: {}", path.file_name().unwrap().to_string_lossy().cyan());
+            let status = Command::new(&compiler_path)
+                .arg("run")
+                .arg(&path)
+                .status()?;
+            if !status.success() {
+                return Err(anyhow!("Test failed: {}", path.display()));
+            }
+        }
+    }
+
+    if !ran_any {
+        let config = load_project_config()?;
+        let main_file = config.main;
+
+        let status = Command::new(&compiler_path)
+            .arg("run")
+            .arg(&main_file)
+            .status()?;
+
+        if !status.success() {
+            return Err(anyhow!("Tests failed"));
+        }
+    }
+
+    println!("✅ {}", "All tests passed!".bright_green());
+    Ok(())
+}
+
+fn cmd_bench() -> Result<()> {
+    println!("⏱️  {}", "Running benchmarks...".yellow());
 
     let compiler_path = find_compiler()?;
-    let status = Command::new(compiler_path)
-        .arg("run")
-        .arg(&main_file)
-        .status()?;
+    let cur = std::env::current_dir()?;
+    let benches_dir = cur.join("benches");
+    let mut ran_any = false;
 
-    if status.success() {
-        println!("✅ {}", "All tests passed!".bright_green());
-        Ok(())
-    } else {
-        Err(anyhow!("Tests failed"))
+    if benches_dir.is_dir() {
+        let mut entries: Vec<_> = std::fs::read_dir(&benches_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("roze"))
+            .collect();
+        entries.sort_by_key(|e| e.path());
+
+        for entry in entries {
+            let path = entry.path();
+            ran_any = true;
+            println!("  Running benchmark: {}", path.file_name().unwrap().to_string_lossy().cyan());
+            let status = Command::new(&compiler_path)
+                .arg("run")
+                .arg(&path)
+                .status()?;
+            if !status.success() {
+                return Err(anyhow!("Benchmark failed: {}", path.display()));
+            }
+        }
     }
+
+    if !ran_any {
+        println!("  No benchmarks found in benches/ directory.");
+    } else {
+        println!("✅ {}", "All benchmarks completed!".bright_green());
+    }
+    Ok(())
 }
 
 fn load_project_config() -> Result<ProjectConfig> {

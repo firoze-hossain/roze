@@ -161,6 +161,7 @@ impl DependencyResolver {
                         version,
                         source: Some(source),
                         checksum: locked_candidate.and_then(|lc| lc.checksum.clone()),
+                        signature: locked_candidate.and_then(|lc| lc.signature.clone()),
                         dependencies: git_dep_strings,
                     };
                     resolved_packages.insert(name.clone(), locked);
@@ -198,6 +199,7 @@ impl DependencyResolver {
                         version: "0.1.0".to_string(),
                         source: Some(source),
                         checksum: locked_candidate.and_then(|lc| lc.checksum.clone()),
+                        signature: locked_candidate.and_then(|lc| lc.signature.clone()),
                         dependencies: path_dep_strings,
                     };
                     resolved_packages.insert(name.clone(), locked);
@@ -257,6 +259,7 @@ impl DependencyResolver {
                     version: ver.to_string(),
                     source: Some(format!("registry+{}", self.registry.registry_url)),
                     checksum,
+                    signature: locked_candidate.and_then(|lc| lc.signature.clone()),
                     dependencies: dep_strings,
                 };
 
@@ -306,6 +309,7 @@ mod tests {
             version: "0.1.0".to_string(),
             source: Some("registry+https://registry.roze.dev".to_string()),
             checksum: Some("pinned_checksum_12345".to_string()),
+            signature: None,
             dependencies: Vec::new(),
         });
 

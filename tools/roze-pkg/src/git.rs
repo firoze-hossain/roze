@@ -78,7 +78,14 @@ impl GitFetcher {
             if let Some(ref rev) = dep.rev {
                 Self::run_git_checkout(&target_dir, rev)?;
             } else if let Some(ref tag) = dep.tag {
-                Self::run_git_checkout(&target_dir, &format!("tags/{}", tag))?;
+                let tag_ref = if tag.starts_with("refs/") || tag.starts_with("tags/") {
+                    tag.to_string()
+                } else {
+                    format!("tags/{}", tag)
+                };
+                if Self::run_git_checkout(&target_dir, &tag_ref).is_err() {
+                    Self::run_git_checkout(&target_dir, tag)?;
+                }
             } else if let Some(ref branch) = dep.branch {
                 Self::run_git_checkout(&target_dir, branch)?;
             }

@@ -86,6 +86,8 @@ pub struct LockedPackage {
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checksum: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<String>,
 }
@@ -103,6 +105,7 @@ impl LockedPackage {
             version: version.to_string(),
             source: Some(format!("registry+{}", registry_url)),
             checksum,
+            signature: None,
             dependencies,
         }
     }
@@ -119,6 +122,7 @@ impl LockedPackage {
             version: version.to_string(),
             source: Some(format!("git+{}#{}", url, commit_hash)),
             checksum,
+            signature: None,
             dependencies: Vec::new(),
         }
     }
@@ -134,6 +138,7 @@ impl LockedPackage {
             version: version.to_string(),
             source: Some(format!("path+{}", path)),
             checksum,
+            signature: None,
             dependencies: Vec::new(),
         }
     }
@@ -144,8 +149,14 @@ impl LockedPackage {
             version: version.to_string(),
             source: None,
             checksum: None,
+            signature: None,
             dependencies,
         }
+    }
+
+    pub fn with_signature(mut self, signature: Option<String>) -> Self {
+        self.signature = signature;
+        self
     }
 
     pub fn source_str(&self) -> &str {
@@ -486,6 +497,7 @@ mod tests {
             version: "1.0.0".to_string(),
             source: Some("registry+https://registry.roze.dev".to_string()),
             checksum: Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string()),
+            signature: Some("ab12cd34ef".to_string()),
             dependencies: vec!["std::json 0.2.0".to_string()],
         });
 
@@ -494,6 +506,7 @@ mod tests {
             version: "0.2.0".to_string(),
             source: Some("registry+https://registry.roze.dev".to_string()),
             checksum: Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".to_string()),
+            signature: None,
             dependencies: Vec::new(),
         });
 

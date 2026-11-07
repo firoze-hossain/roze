@@ -15,7 +15,7 @@ pub mod vendor;
 
 use clap::{Parser, Subcommand};
 use colored::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
 use anyhow::{anyhow, Result};
@@ -190,10 +190,15 @@ enum Commands {
         /// Registry URL (defaults to official registry)
         #[arg(long)]
         registry: Option<String>,
+        /// Hex-encoded Ed25519 32-byte secret key seed for signing
+        #[arg(long)]
+        key: Option<String>,
         /// Dry run: package and verify without uploading
         #[arg(long)]
         dry_run: bool,
     },
+    /// Generate a new Ed25519 signing keypair for package releases
+    Keygen,
     /// Run tests
     Test,
     /// Run benchmarks
@@ -253,7 +258,8 @@ pub fn run_cli() {
         }
         Commands::Cache { action } => cmd_cache(action),
         Commands::Search { query } => cmd_search(&query),
-        Commands::Publish { registry, dry_run } => cmd_publish(registry.as_deref(), dry_run),
+        Commands::Publish { registry, key, dry_run } => cmd_publish(registry.as_deref(), key.as_deref(), dry_run),
+        Commands::Keygen => cmd_keygen(),
         Commands::Test => cmd_test(),
         Commands::Bench => cmd_bench(),
         Commands::Manifest { check } => cmd_manifest(check),
@@ -776,33 +782,61 @@ fn find_compiler() -> Result<PathBuf> {
 fn cmd_search(query: &str) -> Result<()> {
     println!("🔍 Searching Roze Package Registry for '{}'...", query.cyan());
     let client = registry::RegistryClient::new();
-    let query_lower = query.to_lowercase();
-    let mut found = 0;
+    let results = client.search_packages(query);
 
-    for (name, meta) in client.catalog() {
-        if name.to_lowercase().contains(&query_lower) || meta.description.to_lowercase().contains(&query_lower) {
-            found += 1;
-            let latest = meta.versions.last().map(|v| v.version.to_string()).unwrap_or_else(|| "0.1.0".to_string());
-            println!("  📦 {} ({})", name.bright_green().bold(), latest.bright_yellow());
-            println!("     {}", meta.description.dimmed());
-        }
-    }
-
-    if found == 0 {
+    if results.is_empty() {
         println!("  No packages found matching query '{}'.", query);
     } else {
-        println!("\nFound {} package(s).", found);
+        println!("\nFound {} package(s):", results.len());
+        for pkg in results {
+            println!("  📦 {} ({}) - {} downloads", pkg.name.bright_green().bold(), pkg.version.bright_yellow(), pkg.downloads);
+            println!("     {}", pkg.description.dimmed());
+            if let Some(ref repo) = pkg.repository {
+                println!("     repo: {}", repo.cyan());
+            }
+        }
     }
     Ok(())
 }
 
-fn cmd_publish(registry_url: Option<&str>, dry_run: bool) -> Result<()> {
+fn cmd_keygen() -> Result<()> {
+    let kp = crypto::ed25519_generate_keypair();
+    println!("🌹 {}", "Ed25519 Digital Signing Keypair Generated".bright_magenta().bold());
+    println!("  Public Key:  {}", kp.public_key_hex().bright_green().bold());
+    println!("  Secret Seed: {}", kp.seed_hex().bright_yellow());
+    println!("\n  {}", "Keep your secret seed secure and private.".dimmed());
+    println!("  {}", "To sign a package release, pass: --key <seed_hex> to 'bsr publish'.".dimmed());
+    Ok(())
+}
+
+fn cmd_publish(registry_url: Option<&str>, key_hex: Option<&str>, dry_run: bool) -> Result<()> {
     let config = load_project_config()?;
     let current_dir = std::env::current_dir()?;
 
     println!("📦 Packaging {} v{}...", config.name.bright_green(), config.version.bright_yellow());
     let checksum = crypto::sha256_dir(&current_dir)?;
     println!("  SHA256: {}", checksum.dimmed());
+
+    // Ed25519 cryptographic signing
+    let (signature_opt, pubkey_opt) = if let Some(hex_str) = key_hex {
+        let bytes = crypto::hex_to_bytes(hex_str)?;
+        if bytes.len() != 32 {
+            return Err(anyhow!("Ed25519 secret key must be 32 bytes (64 hex characters), got {} bytes", bytes.len()));
+        }
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&bytes);
+        let envelope = registry::SignedPackageEnvelope::new(&config.name, &config.version, &checksum, &seed);
+        if !envelope.verify()? {
+            return Err(anyhow!("Internal Ed25519 self-verification failed"));
+        }
+        println!("  Ed25519 Signature:  {}", envelope.signature.cyan());
+        println!("  Ed25519 Public Key: {}", envelope.public_key.green());
+        println!("  Cryptographic Envelope: {}", "VERIFIED (RFC 8032)".bright_green().bold());
+        (Some(envelope.signature), Some(envelope.public_key))
+    } else {
+        println!("  Signing: {}", "unsigned (pass --key to sign with Ed25519)".dimmed());
+        (None, None)
+    };
 
     let target_registry = registry_url.unwrap_or(registry::DEFAULT_REGISTRY_URL);
     println!("  Target Registry: {}", target_registry.cyan());
@@ -813,6 +847,19 @@ fn cmd_publish(registry_url: Option<&str>, dry_run: bool) -> Result<()> {
     }
 
     println!("🚀 Uploading package archive to {}...", target_registry);
+    let mut reg_client = registry::RegistryClient::new().with_url(target_registry);
+    let pub_req = registry::PublishRequest {
+        name: config.name.clone(),
+        version: config.version.clone(),
+        description: config.description.unwrap_or_else(|| format!("Package {}", config.name)),
+        authors: config.authors,
+        license: config.license,
+        checksum,
+        dependencies: HashMap::new(),
+        signature: signature_opt,
+        public_key: pubkey_opt,
+    };
+    reg_client.publish_package(&pub_req)?;
     println!("✅ {} Package {} v{} published successfully!", "Success:".bright_green().bold(), config.name, config.version);
     Ok(())
 }

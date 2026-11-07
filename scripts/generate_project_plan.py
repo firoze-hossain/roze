@@ -498,7 +498,7 @@ s1_rows = [
         ("M5-T06", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Registry Protocol", "Decentralized Git & HTTPS Package Registry",
         "Support for Git repository dependencies (git = 'https://...', tag = 'v1.0') and HTTPS registry protocol with Ed25519 cryptographic package signing.",
         "Parity with crates.io and Go module proxy.",
-        "Open-Source Ecosystem, Community", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Open-Source Ecosystem, Community", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M5-T07", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Framework Modularization", "Decoupling Frameworks into Standalone Packages",

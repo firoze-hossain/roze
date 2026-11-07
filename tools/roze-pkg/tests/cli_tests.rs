@@ -473,4 +473,139 @@ fn test_cli_bsr_cache_management() {
     assert!(clean_stdout.contains("Cleaned global package cache"));
 }
 
+#[test]
+fn test_cli_bsr_keygen() {
+    let output = Command::new(bsr_bin())
+        .arg("keygen")
+        .output()
+        .expect("failed to execute bsr keygen");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Ed25519 Digital Signing Keypair Generated"));
+    assert!(stdout.contains("Public Key:"));
+    assert!(stdout.contains("Secret Seed:"));
+}
+
+#[test]
+fn test_cli_bsr_search() {
+    let output = Command::new(bsr_bin())
+        .arg("search")
+        .arg("json")
+        .output()
+        .expect("failed to execute bsr search json");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("std::json"));
+    assert!(stdout.contains("JSON parsing"));
+}
+
+#[test]
+fn test_cli_bsr_publish_dry_run_with_ed25519() {
+    let temp = tempdir().unwrap();
+    let project_dir = temp.path().join("secure_crypto_pkg");
+
+    // 1. Create project
+    let status = Command::new(bsr_bin())
+        .arg("new")
+        .arg(&project_dir)
+        .arg("--lib")
+        .status()
+        .expect("failed to execute bsr new");
+    assert!(status.success());
+
+    // 2. Generate keypair
+    let keygen_out = Command::new(bsr_bin())
+        .arg("keygen")
+        .output()
+        .expect("failed to execute bsr keygen");
+    assert!(keygen_out.status.success());
+    let stdout = String::from_utf8_lossy(&keygen_out.stdout);
+
+    // Extract seed
+    let seed_line = stdout.lines().find(|l| l.contains("Secret Seed:")).unwrap();
+    let seed = seed_line.split("Secret Seed:").nth(1).unwrap().trim();
+
+    // 3. Dry-run publish with Ed25519 signature
+    let pub_out = Command::new(bsr_bin())
+        .arg("publish")
+        .arg("--dry-run")
+        .arg("--key")
+        .arg(seed)
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to execute bsr publish");
+
+    assert!(pub_out.status.success());
+    let pub_stdout = String::from_utf8_lossy(&pub_out.stdout);
+    assert!(pub_stdout.contains("Packaging secure_crypto_pkg"));
+    assert!(pub_stdout.contains("Ed25519 Signature:"));
+    assert!(pub_stdout.contains("VERIFIED (RFC 8032)"));
+    assert!(pub_stdout.contains("Package verified successfully (dry run)"));
+}
+
+#[test]
+fn test_cli_bsr_git_tag_dependency() {
+    // 1. Create local git repo with tag v1.0.0
+    let temp_git = tempdir().unwrap();
+    let git_repo = temp_git.path().join("remote_pkg");
+    fs::create_dir_all(&git_repo).unwrap();
+
+    let _ = Command::new("git").current_dir(&git_repo).args(["init"]).status();
+    let _ = Command::new("git").current_dir(&git_repo).args(["config", "user.email", "git@roze.dev"]).status();
+    let _ = Command::new("git").current_dir(&git_repo).args(["config", "user.name", "Git User"]).status();
+
+    fs::write(git_repo.join("bsr.mfz"), "[package]\nname = \"remote_pkg\"\nversion = \"1.0.0\"\nmain = \"src/lib.roze\"\n").unwrap();
+    fs::create_dir_all(git_repo.join("src")).unwrap();
+    fs::write(git_repo.join("src/lib.roze"), "func remote_answer() -> int { return 42; }\n").unwrap();
+
+    let _ = Command::new("git").current_dir(&git_repo).args(["add", "."]).status();
+    let _ = Command::new("git").current_dir(&git_repo).args(["commit", "-m", "Release v1.0.0"]).status();
+    let _ = Command::new("git").current_dir(&git_repo).args(["tag", "v1.0.0"]).status();
+
+    // 2. Create consumer project
+    let temp_proj = tempdir().unwrap();
+    let consumer_dir = temp_proj.path().join("consumer_app");
+    let status = Command::new(bsr_bin())
+        .arg("new")
+        .arg(&consumer_dir)
+        .arg("--bin")
+        .status()
+        .expect("failed to create consumer");
+    assert!(status.success());
+
+    // 3. Add git dependency with tag
+    let add_status = Command::new(bsr_bin())
+        .arg("add")
+        .arg("remote_pkg")
+        .arg("--git")
+        .arg(git_repo.display().to_string())
+        .arg("--tag")
+        .arg("v1.0.0")
+        .current_dir(&consumer_dir)
+        .status()
+        .expect("failed to add git dep");
+    assert!(add_status.success());
+
+    // 4. Install dependencies
+    let temp_cache = tempdir().unwrap();
+    let cache_dir = temp_cache.path().join("cache");
+    let install_status = Command::new(bsr_bin())
+        .env("BSR_CACHE_DIR", &cache_dir)
+        .arg("install")
+        .current_dir(&consumer_dir)
+        .status()
+        .expect("failed to install git dep");
+    assert!(install_status.success());
+
+    // 5. Verify lockfile and installed files
+    let lock_content = fs::read_to_string(consumer_dir.join("bsr.lock")).unwrap();
+    assert!(lock_content.contains("name = \"remote_pkg\""));
+    assert!(lock_content.contains("git+"));
+
+    assert!(consumer_dir.join("libs/remote_pkg/src/lib.roze").exists());
+}
+
+
 

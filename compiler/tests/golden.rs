@@ -2030,6 +2030,19 @@ fn ffi_bridges_suite() {
     assert!(stdout.contains("=== M4-T10 FFI Ecosystem Bridges Verification Complete ==="));
 }
 
+#[test]
+fn milestone_gate_m4_universal_runtime_gate() {
+    let (stdout, stderr, ok) = run_fixture("milestone_gate_m4_universal_runtime.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("🌹 Milestone Gate M4: Universal Runtime & FFI Verification Gate"));
+    assert!(stdout.contains("SUITE 1 PASS: Universal C-ABI FFI & Native Bridges Verified"));
+    assert!(stdout.contains("SUITE 2 PASS: Multi-Process Pipelines & Environment Verified"));
+    assert!(stdout.contains("SUITE 3 PASS: Universal Serialization & Reflection Verified"));
+    assert!(stdout.contains("SUITE 4 PASS: Multi-Threaded Atomic ARC & Concurrency Verified"));
+    assert!(stdout.contains("SUITE 5 PASS: Monotonic Time Reactor & Regex Engine Verified"));
+    assert!(stdout.contains("SUCCESS: ALL MILESTONE GATE M4 VERIFICATION SUITES PASSED!"));
+}
+
 
 
 

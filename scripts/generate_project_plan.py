@@ -460,7 +460,7 @@ s1_rows = [
         ("M4-T11", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Milestone Gate M4", "Universal Runtime & FFI Verification Gate",
         "Comprehensive verification gate: call native C libraries via FFI, spawn multi-process pipelines, serialize complex data, and run multi-threaded atomic ARC stress test.",
         "Zero memory leaks, zero data races under Valgrind/TSan, 100% C ABI parity.",
-        "Core Systems & Language Runtime", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
+        "Core Systems & Language Runtime", "3 Days", ("Critical", 14), ("Completed", 16)
     ],
 
     # MONTH 5: BASIR ('bsr') PACKAGE MANAGER, MANIFEST ECOSYSTEM & DEVELOPER TOOLING

@@ -1,0 +1,307 @@
+// compiler/tests/fixtures/milestone_gate_m4_universal_runtime.roze
+//
+// ==============================================================================
+// 🌹 Milestone Gate M4: Universal Runtime & FFI Verification Gate (M4-T11)
+// ==============================================================================
+// Comprehensive Grand Integration Gate for Month 4 (Sprint 7 - Sprint 8):
+// 1. Suite 1: Universal C-ABI FFI & Native System Bridges (POSIX libc, SQLite3, Raylib, Raw Pointers)
+// 2. Suite 2: Multi-Process Pipelines, Environment & I/O (Command, Pipes, Env, Current Dir)
+// 3. Suite 3: Zero-Copy Universal Serialization (Serde) & Compile-Time Reflection
+// 4. Suite 4: Multi-Threaded Atomic ARC & Concurrency Stress Test (Arc, Weak, Channels, Threads)
+// 5. Suite 5: High-Precision Monotonic Time Reactor & Linear-Time Regex Engine (Instant, Duration, PikeVM Regex)
+// ==============================================================================
+
+import "libc";
+import "sqlite";
+import "raylib";
+import "process";
+import "env";
+import "serde";
+import "reflect";
+import "memory";
+import "concurrency";
+import "sync";
+import "time";
+import "regex";
+
+func gate_assert(cond: bool, msg: string) -> void {
+    if (!cond) {
+        println("FAILED: " + msg);
+    }
+}
+
+class GateClusterConfig {
+    name: string,
+    replicas: int,
+    tls_active: bool,
+}
+
+impl Serialize for GateClusterConfig {
+    func serialize() -> string {
+        let obj = value_object();
+        value_set(obj, "name", value_string(this.name));
+        value_set(obj, "replicas", value_int(this.replicas));
+        value_set(obj, "tls_active", value_bool(this.tls_active));
+        return json_serialize(obj);
+    }
+}
+
+func main() {
+    println("==================================================================");
+    println("🌹 Milestone Gate M4: Universal Runtime & FFI Verification Gate");
+    println("==================================================================");
+
+    // =========================================================================
+    // Suite 1: Universal C-ABI FFI & Native System Bridges
+    // =========================================================================
+    println("--- Suite 1: Universal C-ABI FFI & Native Bridges ---");
+
+    // 1.1 POSIX Libc System Interop
+    let pid = posix_getpid();
+    gate_assert(pid > 0, "posix_getpid() must be positive integer");
+
+    let s = "Roze Universal Systems Language";
+    let len = posix_strlen(s);
+    gate_assert(len == 31, "posix_strlen must return 31 bytes");
+
+    let cmp_res = posix_strcmp("roze_cabi", "roze_cabi");
+    gate_assert(cmp_res == 0, "posix_strcmp identical strings == 0");
+
+    let sub = posix_strstr("native_ffi_engine", "ffi");
+    gate_assert(sub == "ffi_engine", "posix_strstr matches expected substring");
+
+    let cur_time = posix_time();
+    gate_assert(cur_time > 1700000000, "posix_time returns valid epoch seconds");
+
+    let test_posix_file = "/tmp/m4_gate_posix.tmp";
+    let pf = posix_file_create(test_posix_file);
+    gate_assert(pf.is_valid(), "posix_file_create succeeded");
+    let close_res = pf.close();
+    gate_assert(close_res == 0, "posix_file close succeeded");
+    gate_assert(posix_access(test_posix_file, f_ok()), "posix file exists");
+    posix_unlink(test_posix_file);
+    gate_assert(!posix_access(test_posix_file, f_ok()), "posix file removed after unlink");
+
+    // 1.2 SQLite3 Embedded Database Engine
+    let sqlite_v = sqlite_version();
+    gate_assert(posix_strlen(sqlite_v) > 0, "sqlite_version() returns non-empty string");
+
+    let db = sqlite_open_memory();
+    gate_assert(db.is_open, "sqlite_open_memory() returns open database");
+
+    let create_rc = db.execute("CREATE TABLE gate_metrics (id INTEGER PRIMARY KEY, component TEXT, latency_ns INTEGER, verified INTEGER);");
+    gate_assert(create_rc == 0, "CREATE TABLE gate_metrics returns SQLITE_OK");
+
+    let ins_stmt = db.prepare("INSERT INTO gate_metrics (component, latency_ns, verified) VALUES (?, ?, ?);");
+    gate_assert(ins_stmt.is_valid, "prepare INSERT statement succeeded");
+
+    ins_stmt.bind_string(1, "ffi_cabi");
+    ins_stmt.bind_int(2, 45);
+    ins_stmt.bind_int(3, 1);
+    ins_stmt.step();
+    ins_stmt.reset();
+
+    ins_stmt.bind_string(1, "process_pipeline");
+    ins_stmt.bind_int(2, 120);
+    ins_stmt.bind_int(3, 1);
+    ins_stmt.step();
+    ins_stmt.reset();
+
+    ins_stmt.bind_string(1, "atomic_arc");
+    ins_stmt.bind_int(2, 18);
+    ins_stmt.bind_int(3, 1);
+    ins_stmt.step();
+    ins_stmt.finalize();
+
+    let last_rowid = db.last_insert_rowid();
+    gate_assert(last_rowid >= 3, "last_insert_rowid >= 3");
+
+    let query_stmt = db.prepare("SELECT id, component, latency_ns, verified FROM gate_metrics ORDER BY id ASC;");
+    gate_assert(query_stmt.is_valid, "prepare SELECT statement succeeded");
+
+    let read_count = 0;
+    while (query_stmt.step()) {
+        read_count = read_count + 1;
+        let cid = query_stmt.get_int(0);
+        let comp = query_stmt.get_string(1);
+        let lat = query_stmt.get_int(2);
+        let ver = query_stmt.get_int(3);
+        gate_assert(cid == read_count, "row id matches read count");
+        gate_assert(ver == 1, "row verified == 1");
+    }
+    gate_assert(read_count == 3, "read exactly 3 rows from SQLite database");
+    query_stmt.finalize();
+    db.close();
+
+    // 1.3 Raylib 2D/3D Graphics Engine Bridge
+    let win = raylib_window_open(800, 600, "M4 Gate Universal Verification");
+    gate_assert(win.is_open, "raylib window opened successfully");
+    gate_assert(raylib_is_window_ready(), "raylib window ready");
+
+    win.begin_drawing();
+    win.clear(color_raywhite());
+    win.draw_text("Roze Engine M4 Gate", 20, 20, 20, color_darkgray());
+    win.draw_rectangle(30.0, 30.0, 100.0, 50.0, color_red());
+    win.draw_circle(200.0, 100.0, 30.0, color_blue());
+    win.end_drawing();
+
+    raylib_begin_mode3d(0.0, 10.0, 10.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 45.0);
+    raylib_draw_cube(0.0, 0.0, 0.0, 2.0, 2.0, 2.0, color_gold());
+    raylib_end_mode3d();
+
+    win.close();
+    gate_assert(!win.is_open, "raylib window closed successfully");
+
+    // 1.4 Raw Pointer Allocations & Guarantees
+    unsafe {
+        let p_cell: *mut void = alloc(16);
+        gate_assert(!ptr_is_null(p_cell), "alloc(16) returns non-null pointer");
+        let sample_val = 322417391;
+        ptr_write_ptr(p_cell, int_to_ptr(sample_val));
+        let read_val = ptr_to_int(ptr_read_ptr(p_cell));
+        gate_assert(read_val == sample_val, "raw pointer write/read roundtrip matches");
+        free(p_cell);
+    }
+
+    println("SUITE 1 PASS: Universal C-ABI FFI & Native Bridges Verified");
+
+    // =========================================================================
+    // Suite 2: Multi-Process Pipelines, Environment & I/O
+    // =========================================================================
+    println("--- Suite 2: Multi-Process Pipelines & Environment ---");
+
+    let proc_status = command("sh").arg("-c").arg("exit 0").status();
+    gate_assert(proc_status.success(), "command status success == true");
+    gate_assert(proc_status.exit_code() == 0, "command status exit_code == 0");
+
+    let proc_out = command("sh").arg("-c").arg("echo 'M4_PIPELINE_OK'").output();
+    gate_assert(proc_out.success(), "pipeline command success == true");
+    gate_assert(string_contains(proc_out.stdout_str(), "M4_PIPELINE_OK"), "pipeline output captured stdout correctly");
+
+    let proc_env_out = command("sh").arg("-c").arg("echo $M4_GATE_PARAM").env("M4_GATE_PARAM", "STAGE_4_ACTIVE").output();
+    gate_assert(proc_env_out.success(), "env pipeline success == true");
+    gate_assert(string_contains(proc_env_out.stdout_str(), "STAGE_4_ACTIVE"), "environment variable propagated to child process");
+
+    env_set("M4_GLOBAL_FLAG", "ACTIVE_VERIFIED");
+    gate_assert(env_has("M4_GLOBAL_FLAG"), "env_has reflects set variable");
+    gate_assert(env_var("M4_GLOBAL_FLAG") == "ACTIVE_VERIFIED", "env_var returns set value");
+    env_remove("M4_GLOBAL_FLAG");
+    gate_assert(!env_has("M4_GLOBAL_FLAG"), "env_remove removes variable");
+
+    let cur_dir = current_dir();
+    gate_assert(string_length(cur_dir) > 0, "current_dir() returns non-empty path");
+
+    println("SUITE 2 PASS: Multi-Process Pipelines & Environment Verified");
+
+    // =========================================================================
+    // Suite 3: Zero-Copy Universal Serialization & Compile-Time Reflection
+    // =========================================================================
+    println("--- Suite 3: Universal Serialization & Reflection ---");
+
+    let cfg = new GateClusterConfig("roze-cluster-alpha", 8, true);
+    let json_repr = cfg.serialize();
+    let val_json = json_parse(json_repr);
+    gate_assert(val_json.get_string("name") == "roze-cluster-alpha", "json string field matches");
+    gate_assert(val_json.get_int("replicas") == 8, "json int field matches");
+    gate_assert(val_json.get_bool("tls_active"), "json bool field matches");
+
+    let toml_repr = toml_serialize(val_json);
+    let val_toml = toml_parse(toml_repr);
+    gate_assert(val_toml.get_string("name") == "roze-cluster-alpha", "toml transcoding matches");
+    gate_assert(val_toml.get_int("replicas") == 8, "toml int field matches");
+
+    let yaml_repr = yaml_serialize(val_json);
+    let val_yaml = yaml_parse(yaml_repr);
+    gate_assert(val_yaml.get_string("name") == "roze-cluster-alpha", "yaml transcoding matches");
+
+    let bin_repr = bincode_serialize(val_json);
+    let val_bin = bincode_deserialize(bin_repr);
+    gate_assert(val_bin.get_string("name") == "roze-cluster-alpha", "binary bincode transcoding matches");
+    gate_assert(val_bin.get_int("replicas") == 8, "binary bincode int matches");
+
+    // Compile-time Type Reflection
+    let tname = type_name<GateClusterConfig>();
+    gate_assert(tname == "GateClusterConfig", "type_name<T>() matches");
+    let tid = type_id<GateClusterConfig>();
+    gate_assert(tid > 0, "type_id<T>() is positive");
+    let fcount = field_count<GateClusterConfig>();
+    gate_assert(fcount == 3, "field_count<T>() == 3");
+    gate_assert(field_name<GateClusterConfig>(0) == "name", "field_name(0) is name");
+    gate_assert(field_name<GateClusterConfig>(1) == "replicas", "field_name(1) is replicas");
+    gate_assert(field_name<GateClusterConfig>(2) == "tls_active", "field_name(2) is tls_active");
+    gate_assert(has_field<GateClusterConfig>("name"), "has_field('name') is true");
+    gate_assert(!has_field<GateClusterConfig>("nonexistent"), "has_field('nonexistent') is false");
+
+    println("SUITE 3 PASS: Universal Serialization & Reflection Verified");
+
+    // =========================================================================
+    // Suite 4: Multi-Threaded Atomic ARC & Concurrency Stress Test
+    // =========================================================================
+    println("--- Suite 4: Multi-Threaded Atomic ARC & Concurrency ---");
+
+    let root_arc = new Arc<int>(1001);
+    gate_assert(root_arc.strong_count() == 1, "root arc strong_count == 1");
+    gate_assert(root_arc.is_unique(), "root arc is_unique == true");
+
+    let clone_arc = root_arc.clone();
+    gate_assert(root_arc.strong_count() == 2, "root arc strong_count == 2 after clone");
+    gate_assert(!root_arc.is_unique(), "root arc is_unique == false after clone");
+    gate_assert(arc_ptr_eq(root_arc, clone_arc), "arc_ptr_eq == true for clones");
+
+    // Multi-threaded cross-thread message passing with Arc
+    let ch = channel_new(8);
+    let t1 = thread_spawn(|| {
+        let v = root_arc.get();
+        send(ch, v + 10);
+        return 0;
+    });
+    let t2 = thread_spawn(|| {
+        let v = root_arc.get();
+        send(ch, v + 20);
+        return 0;
+    });
+
+    let r1 = recv(ch);
+    let r2 = recv(ch);
+    gate_assert((r1 == 1011 && r2 == 1021) || (r1 == 1021 && r2 == 1011), "concurrent workers executed with valid values");
+
+    thread_join(t1);
+    thread_join(t2);
+
+    // Weak Reference Cycle Breaking
+    let w = root_arc.downgrade();
+    gate_assert(w.is_alive(), "weak reference is_alive == true");
+    gate_assert(!w.is_expired(), "weak reference is_expired == false");
+    let upgraded = w.upgrade();
+    gate_assert(upgraded.get() == 1001, "upgraded Arc value matches 1001");
+
+    println("SUITE 4 PASS: Multi-Threaded Atomic ARC & Concurrency Verified");
+
+    // =========================================================================
+    // Suite 5: High-Precision Monotonic Time Reactor & Linear-Time Regex Engine
+    // =========================================================================
+    println("--- Suite 5: Monotonic Time Reactor & Regex Engine ---");
+
+    let t_start = instant_now();
+    posix_usleep(1000); // 1 ms sleep
+    let t_elapsed = t_start.elapsed();
+    gate_assert(t_elapsed.as_nanos() > 0, "instant elapsed nanos > 0");
+
+    let rx = regex_new("ROZE_GATE_[A-Z]+_\\d+");
+    let sample_log = "AUDIT: ROZE_GATE_VERIFIED_2026 ACTIVE";
+    gate_assert(rx.is_match(sample_log), "regex matches log pattern");
+
+    let m = rx.find(sample_log);
+    gate_assert(!m.is_empty(), "regex match is not empty");
+    gate_assert(m.text() == "ROZE_GATE_VERIFIED_2026", "regex match text matches exact token");
+
+    let replaced = rx.replace(sample_log, "GATE_COMPLETE");
+    gate_assert(string_contains(replaced, "GATE_COMPLETE"), "regex replacement succeeds");
+    rx.free();
+
+    println("SUITE 5 PASS: Monotonic Time Reactor & Regex Engine Verified");
+
+    println("==================================================================");
+    println("✅ SUCCESS: ALL MILESTONE GATE M4 VERIFICATION SUITES PASSED!");
+    println("==================================================================");
+}

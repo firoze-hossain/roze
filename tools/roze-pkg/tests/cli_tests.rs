@@ -201,3 +201,60 @@ fn test_cli_bsr_new_vcs_none() {
     assert!(status.success());
     assert!(!project_dir.join(".git").exists());
 }
+
+#[test]
+fn test_cli_bsr_manifest_display_and_check() {
+    let temp = tempdir().unwrap();
+    let project_dir = temp.path().join("manifest_pkg");
+
+    // Create a new package
+    let status = Command::new(bsr_bin())
+        .arg("new")
+        .arg(&project_dir)
+        .arg("--bin")
+        .status()
+        .expect("failed to execute bsr new");
+    assert!(status.success());
+
+    // Append some features and target configs to bsr.mfz
+    let mfz_extra = r#"
+[features]
+default = ["logging"]
+logging = []
+
+[target.native]
+flags = ["-O3"]
+opt_level = 3
+"#;
+    let mfz_path = project_dir.join("bsr.mfz");
+    let mut content = fs::read_to_string(&mfz_path).unwrap();
+    content.push_str(mfz_extra);
+    fs::write(&mfz_path, content).unwrap();
+
+    // Run bsr manifest (display mode)
+    let output = Command::new(bsr_bin())
+        .arg("manifest")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to execute bsr manifest");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Basir Project Manifest"));
+    assert!(stdout.contains("manifest_pkg"));
+    assert!(stdout.contains("Feature Flags:"));
+    assert!(stdout.contains("Target Configurations:"));
+
+    // Run bsr manifest --check
+    let check_output = Command::new(bsr_bin())
+        .arg("manifest")
+        .arg("--check")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to execute bsr manifest --check");
+
+    assert!(check_output.status.success());
+    let check_stdout = String::from_utf8_lossy(&check_output.stdout);
+    assert!(check_stdout.contains("valid"));
+}
+

@@ -159,6 +159,12 @@ enum Commands {
     Test,
     /// Run benchmarks
     Bench,
+    /// Inspect or validate the project manifest (bsr.mfz)
+    Manifest {
+        /// Validate manifest syntax and dependencies without modifying
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -206,6 +212,7 @@ pub fn run_cli() {
         Commands::Publish { registry, dry_run } => cmd_publish(registry.as_deref(), dry_run),
         Commands::Test => cmd_test(),
         Commands::Bench => cmd_bench(),
+        Commands::Manifest { check } => cmd_manifest(check),
     };
 
     if let Err(e) = result {
@@ -344,6 +351,7 @@ fn cmd_add(
             tag,
             branch,
             rev: None,
+            ..Default::default()
         })
     } else {
         let v = version.unwrap_or_else(|| "^0.1.0".to_string());
@@ -583,5 +591,74 @@ fn cmd_publish(registry_url: Option<&str>, dry_run: bool) -> Result<()> {
 
     println!("🚀 Uploading package archive to {}...", target_registry);
     println!("✅ {} Package {} v{} published successfully!", "Success:".bright_green().bold(), config.name, config.version);
+    Ok(())
+}
+
+fn cmd_manifest(check: bool) -> Result<()> {
+    let config = load_project_config()?;
+    config.validate()?;
+
+    if check {
+        println!("✅ {}", "Manifest syntax, dependencies, and feature flags are valid!".bright_green());
+        return Ok(());
+    }
+
+    println!("🌹 {}", "Basir Project Manifest (bsr.mfz)".bright_magenta().bold());
+    println!("  Package:     {} v{}", config.name.bright_green().bold(), config.version.bright_yellow());
+    if let Some(ref ed) = config.edition {
+        println!("  Edition:     {}", ed.cyan());
+    }
+    if !config.authors.is_empty() {
+        println!("  Authors:     {}", config.authors.join(", "));
+    }
+    if let Some(ref lic) = config.license {
+        println!("  License:     {}", lic);
+    }
+    if let Some(ref desc) = config.description {
+        println!("  Description: {}", desc);
+    }
+    println!("  Main:        {}", config.main);
+    if let Some(ref tgt) = config.target {
+        println!("  Target:      {}", tgt);
+    }
+
+    if !config.features.is_empty() {
+        println!("\n  {}", "Feature Flags:".bright_cyan().bold());
+        for (feat, deps) in &config.features {
+            if deps.is_empty() {
+                println!("    • {}", feat.bold());
+            } else {
+                println!("    • {}: [{}]", feat.bold(), deps.join(", ").dimmed());
+            }
+        }
+    }
+
+    if !config.dependencies.is_empty() {
+        println!("\n  {} ({})", "Dependencies:".bright_cyan().bold(), config.dependencies.len());
+        for (name, dep) in &config.dependencies {
+            let opt_badge = if dep.is_optional() { " (optional)".dimmed().to_string() } else { "".to_string() };
+            match dep {
+                DependencyValue::Simple(ver) => {
+                    println!("    • {} {}{}", name.green(), ver.yellow(), opt_badge);
+                }
+                DependencyValue::Detailed(d) => {
+                    let mut details = Vec::new();
+                    if let Some(ref v) = d.version { details.push(format!("v{}", v)); }
+                    if let Some(ref p) = d.path { details.push(format!("path: {}", p)); }
+                    if let Some(ref g) = d.git { details.push(format!("git: {}", g)); }
+                    if !d.features.is_empty() { details.push(format!("features: {:?}", d.features)); }
+                    println!("    • {} [{}{}]", name.green(), details.join(", "), opt_badge);
+                }
+            }
+        }
+    }
+
+    if !config.targets.is_empty() {
+        println!("\n  {}", "Target Configurations:".bright_cyan().bold());
+        for (tname, tcfg) in &config.targets {
+            println!("    • [target.{}]: {} deps, {} flags", tname.yellow(), tcfg.dependencies.len(), tcfg.flags.len());
+        }
+    }
+
     Ok(())
 }

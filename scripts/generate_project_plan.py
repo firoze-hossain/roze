@@ -474,7 +474,7 @@ s1_rows = [
         ("M5-T02", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Proprietary Manifest", "Proprietary 'bsr.mfz' (Mohammad Firoze) Manifest",
         "Full parser and serializer for 'bsr.mfz' manifest: package metadata (name, version, authors, license, edition), dependencies, target configurations, and feature flags.",
         "Roze's distinct proprietary manifest format preserving full backwards compatibility.",
-        "Package Management, Build System", "7 Days", ("Critical", 14), ("Planned", 12)
+        "Package Management, Build System", "7 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M5-T03", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Deterministic Lockfile", "Deterministic Lockfile Engine ('bsr.lock')",

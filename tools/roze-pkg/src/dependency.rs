@@ -157,6 +157,19 @@ impl DependencyManager {
                         if let Some(ref r) = d.rev {
                             table.insert("rev".to_string(), toml::Value::String(r.clone()));
                         }
+                        if let Some(opt) = d.optional {
+                            table.insert("optional".to_string(), toml::Value::Boolean(opt));
+                        }
+                        if !d.features.is_empty() {
+                            let arr = d.features.iter().map(|f| toml::Value::String(f.clone())).collect();
+                            table.insert("features".to_string(), toml::Value::Array(arr));
+                        }
+                        if let Some(df) = d.default_features {
+                            table.insert("default_features".to_string(), toml::Value::Boolean(df));
+                        }
+                        if let Some(ref pkg) = d.package {
+                            table.insert("package".to_string(), toml::Value::String(pkg.clone()));
+                        }
                         toml::Value::Table(table)
                     }
                 };

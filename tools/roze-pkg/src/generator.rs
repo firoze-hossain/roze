@@ -36,48 +36,7 @@ impl VcsKind {
     }
 }
 
-pub const RESERVED_KEYWORDS: &[&str] = &[
-    "as", "assert", "async", "await", "break", "case", "catch", "class", "const",
-    "continue", "crate", "default", "defer", "dyn", "else", "enum", "export",
-    "extern", "false", "final", "fn", "for", "from", "func", "if", "impl", "import",
-    "in", "interface", "let", "loop", "match", "mod", "mut", "null", "package",
-    "pub", "return", "self", "static", "struct", "super", "switch", "trait",
-    "true", "try", "type", "typeof", "use", "var", "while", "yield",
-];
-
-pub fn validate_package_name(name: &str) -> Result<()> {
-    if name.is_empty() {
-        return Err(anyhow!("Package name cannot be empty"));
-    }
-
-    let mut chars = name.chars();
-    let first = chars.next().unwrap();
-    if !first.is_ascii_alphabetic() && first != '_' {
-        return Err(anyhow!(
-            "Invalid package name '{}': must start with an ASCII letter or underscore",
-            name
-        ));
-    }
-
-    for c in chars {
-        if !c.is_ascii_alphanumeric() && c != '_' && c != '-' {
-            return Err(anyhow!(
-                "Invalid character '{}' in package name '{}': names may only contain ASCII alphanumerics, hyphens, and underscores",
-                c,
-                name
-            ));
-        }
-    }
-
-    if RESERVED_KEYWORDS.contains(&name.to_lowercase().as_str()) {
-        return Err(anyhow!(
-            "The name '{}' cannot be used as a package name, it is a Roze keyword",
-            name
-        ));
-    }
-
-    Ok(())
-}
+pub use crate::project::{validate_package_name, RESERVED_KEYWORDS};
 
 pub fn infer_package_name(path: &Path, explicit_name: Option<&str>) -> Result<String> {
     if let Some(name) = explicit_name {
@@ -316,7 +275,8 @@ pub fn setup_manifest(
     };
 
     let content = format!(
-        r#"{MANIFEST_HEADER}name = "{name}"
+        r#"{MANIFEST_HEADER}[package]
+name = "{name}"
 version = "0.1.0"
 edition = "{edition}"
 authors = ["{author}"]

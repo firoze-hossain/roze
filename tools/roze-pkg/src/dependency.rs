@@ -34,28 +34,9 @@ pub struct DependencyManager {
 
 impl DependencyManager {
     pub fn new(project_dir: PathBuf) -> Self {
-        let cache = PackageCache::new();
-        let registry = RegistryClient::with_cache(PackageCache::new());
-        let git_fetcher = GitFetcher::with_cache(PackageCache::new());
-        let resolver = DependencyResolver::with_clients(
-            RegistryClient::with_cache(PackageCache::new()),
-            GitFetcher::with_cache(PackageCache::new()),
-        );
-
-        let mut manager = Self {
-            project_dir,
-            dependencies: HashMap::new(),
-            cache,
-            registry,
-            git_fetcher,
-            resolver,
-        };
-
-        let _ = manager.load_manifest();
-        manager
+        Self::with_cache(project_dir, PackageCache::new())
     }
 
-    #[allow(dead_code)]
     pub fn with_cache(project_dir: PathBuf, cache: PackageCache) -> Self {
         let registry = RegistryClient::with_cache(PackageCache::with_root(cache.root_dir.clone()));
         let git_fetcher = GitFetcher::with_cache(PackageCache::with_root(cache.root_dir.clone()));
@@ -228,6 +209,7 @@ impl DependencyManager {
         // Also clean up from libs/ and bsr.lock
         let lib_dir = self.libs_dir().join(&package);
         if lib_dir.exists() {
+            let _ = crate::cache::make_dir_writable(&lib_dir);
             let _ = fs::remove_dir_all(&lib_dir);
         }
 
@@ -448,6 +430,7 @@ impl DependencyManager {
                 }
 
                 if dest_dir.exists() {
+                    let _ = crate::cache::make_dir_writable(&dest_dir);
                     let _ = fs::remove_dir_all(&dest_dir);
                 }
                 fs::create_dir_all(&dest_dir)?;
@@ -508,6 +491,7 @@ impl DependencyManager {
                     return Err(anyhow!("Path dependency not found: {}", src_path.display()));
                 }
                 if dest_dir.exists() {
+                    let _ = crate::cache::make_dir_writable(&dest_dir);
                     let _ = fs::remove_dir_all(&dest_dir);
                 }
                 fs::create_dir_all(&dest_dir)?;
@@ -552,6 +536,8 @@ func {}_version() -> string {{
                 chk
             };
 
+            let _ = crate::cache::make_dir_writable(&dest_dir);
+
             // Cryptographic checksum verification against lockfile pin
             if let Some(ref expected) = pkg.checksum {
                 if normalize_checksum(&checksum) != normalize_checksum(expected) {
@@ -576,7 +562,7 @@ func {}_version() -> string {{
 
     /// Vendors all dependencies into the local project vendor directory.
     pub fn vendor(&self, opts: &crate::vendor::VendorOptions) -> Result<crate::vendor::VendorSummary> {
-        crate::vendor::VendorManager::vendor_dependencies(&self.project_dir, opts)
+        crate::vendor::VendorManager::vendor_dependencies_with_cache(&self.project_dir, opts, Some(&self.cache))
     }
 
     /// Checks if any required library is missing from `libs/`.
@@ -643,22 +629,25 @@ func {}_version() -> string {{
 mod tests {
     use super::*;
 
-    fn temp_project(name: &str) -> (PathBuf, tempfile::TempDir) {
+    fn temp_project(name: &str) -> (PathBuf, PackageCache, tempfile::TempDir) {
         let temp_dir = tempfile::tempdir().unwrap();
         let dir = temp_dir.path().join(format!("roze_pkg_dep_test_{}", name));
         fs::create_dir_all(&dir).unwrap();
-        (dir, temp_dir)
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).unwrap();
+        let cache = PackageCache::with_root(cache_dir);
+        (dir, cache, temp_dir)
     }
 
     #[test]
     fn a_second_add_does_not_wipe_out_the_first_dependency() {
-        let (dir, _holder) = temp_project("second_add_preserves_first");
+        let (dir, cache, _holder) = temp_project("second_add_preserves_first");
         fs::write(dir.join("roze.toml"), "name = \"t\"\nversion = \"0.1.0\"\nmain = \"src/main.roze\"\n").unwrap();
 
-        let mut mgr = DependencyManager::new(dir.clone());
+        let mut mgr = DependencyManager::with_cache(dir.clone(), cache.clone());
         mgr.add_dependency("foo", "1.0.0").unwrap();
 
-        let mut mgr2 = DependencyManager::new(dir.clone());
+        let mut mgr2 = DependencyManager::with_cache(dir.clone(), cache);
         mgr2.add_dependency("bar", "2.0.0").unwrap();
 
         let content = fs::read_to_string(dir.join("roze.toml")).unwrap();
@@ -668,13 +657,13 @@ mod tests {
 
     #[test]
     fn remove_finds_a_dependency_added_in_a_previous_invocation() {
-        let (dir, _holder) = temp_project("remove_finds_existing");
+        let (dir, cache, _holder) = temp_project("remove_finds_existing");
         fs::write(dir.join("roze.toml"), "name = \"t\"\nversion = \"0.1.0\"\nmain = \"src/main.roze\"\n").unwrap();
 
-        let mut mgr = DependencyManager::new(dir.clone());
+        let mut mgr = DependencyManager::with_cache(dir.clone(), cache.clone());
         mgr.add_dependency("some_lib", "1.2.3").unwrap();
 
-        let mut mgr2 = DependencyManager::new(dir.clone());
+        let mut mgr2 = DependencyManager::with_cache(dir.clone(), cache);
         let result = mgr2.remove_dependency("some_lib");
         assert!(result.is_ok(), "expected remove to find the existing dependency, got: {:?}", result);
 
@@ -684,14 +673,14 @@ mod tests {
 
     #[test]
     fn new_project_with_no_manifest_starts_empty_without_erroring() {
-        let (dir, _holder) = temp_project("no_manifest_yet");
-        let mgr = DependencyManager::new(dir);
+        let (dir, cache, _holder) = temp_project("no_manifest_yet");
+        let mgr = DependencyManager::with_cache(dir, cache);
         assert!(mgr.dependencies.is_empty());
     }
 
     #[test]
     fn full_install_generates_deterministic_lockfile() {
-        let (dir, _holder) = temp_project("install_generates_lock");
+        let (dir, cache, _holder) = temp_project("install_generates_lock");
         fs::write(
             dir.join("roze.toml"),
             r#"name = "demo"
@@ -703,7 +692,7 @@ main = "src/main.roze"
 "#,
         ).unwrap();
 
-        let mut mgr = DependencyManager::new(dir.clone());
+        let mut mgr = DependencyManager::with_cache(dir.clone(), cache);
         mgr.install_all().unwrap();
 
         let lock_file = dir.join("roze.lock");
@@ -725,7 +714,7 @@ main = "src/main.roze"
 
     #[test]
     fn full_install_with_bsr_manifest_and_lock() {
-        let (dir, _holder) = temp_project("install_bsr_mfz");
+        let (dir, cache, _holder) = temp_project("install_bsr_mfz");
         fs::write(
             dir.join("bsr.mfz"),
             r#"# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
@@ -738,7 +727,7 @@ main = "src/main.roze"
 "#,
         ).unwrap();
 
-        let mut mgr = DependencyManager::new(dir.clone());
+        let mut mgr = DependencyManager::with_cache(dir.clone(), cache);
         assert_eq!(mgr.manifest_path(), dir.join("bsr.mfz"));
         assert_eq!(mgr.lockfile_path(), dir.join("bsr.lock"));
 
@@ -757,7 +746,7 @@ main = "src/main.roze"
 
     #[test]
     fn test_tamper_detection_in_install_fails_with_security_error() {
-        let (dir, _holder) = temp_project("tamper_test");
+        let (dir, cache, _holder) = temp_project("tamper_test");
         fs::write(
             dir.join("bsr.mfz"),
             r#"name = "tamper_app"
@@ -769,7 +758,7 @@ main = "src/main.roze"
 "#,
         ).unwrap();
 
-        let mut mgr = DependencyManager::new(dir.clone());
+        let mut mgr = DependencyManager::with_cache(dir.clone(), cache.clone());
         mgr.install_all().unwrap();
 
         let lock = LockFile::load(&dir.join("bsr.lock")).unwrap();
@@ -777,10 +766,11 @@ main = "src/main.roze"
 
         // Tamper with installed files
         let installed_lib = dir.join("libs").join("std::json").join("lib.roze");
+        let _ = crate::cache::make_dir_writable(&dir.join("libs"));
         fs::write(&installed_lib, "// malicious backdoor inserted!").unwrap();
 
         // Re-running install must detect checksum tampering!
-        let mut mgr2 = DependencyManager::new(dir.clone());
+        let mut mgr2 = DependencyManager::with_cache(dir.clone(), cache);
         let res = mgr2.install_all();
         assert!(res.is_err(), "Must reject tampered package");
         let err_msg = res.unwrap_err().to_string();
@@ -790,7 +780,7 @@ main = "src/main.roze"
 
     #[test]
     fn test_install_locked_mode_enforcement() {
-        let (dir, _holder) = temp_project("locked_enforcement");
+        let (dir, cache, _holder) = temp_project("locked_enforcement");
         fs::write(
             dir.join("bsr.mfz"),
             r#"name = "locked_app"
@@ -803,7 +793,7 @@ main = "src/main.roze"
         ).unwrap();
 
         // 1. Without lockfile, --locked must fail
-        let mut mgr = DependencyManager::new(dir.clone());
+        let mut mgr = DependencyManager::with_cache(dir.clone(), cache.clone());
         let res = mgr.install_all_with_opts(true, false);
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("--locked was passed to prevent this"));
@@ -828,7 +818,7 @@ main = "src/main.roze"
 "#,
         ).unwrap();
 
-        let mut mgr2 = DependencyManager::new(dir.clone());
+        let mut mgr2 = DependencyManager::with_cache(dir.clone(), cache);
         let res_outdated = mgr2.install_all_with_opts(true, false);
         assert!(res_outdated.is_err());
         assert!(res_outdated.unwrap_err().to_string().contains("--locked was passed to prevent this"));
@@ -836,7 +826,7 @@ main = "src/main.roze"
 
     #[test]
     fn test_selective_package_update() {
-        let (dir, _holder) = temp_project("selective_update");
+        let (dir, cache, _holder) = temp_project("selective_update");
         fs::write(
             dir.join("bsr.mfz"),
             r#"name = "update_app"
@@ -849,7 +839,7 @@ main = "src/main.roze"
 "#,
         ).unwrap();
 
-        let mut mgr = DependencyManager::new(dir.clone());
+        let mut mgr = DependencyManager::with_cache(dir.clone(), cache.clone());
         mgr.install_all().unwrap();
 
         let init_lock = LockFile::load(&dir.join("bsr.lock")).unwrap();
@@ -869,7 +859,7 @@ main = "src/main.roze"
 "#,
         ).unwrap();
 
-        let mut mgr2 = DependencyManager::new(dir.clone());
+        let mut mgr2 = DependencyManager::with_cache(dir.clone(), cache);
         mgr2.update(Some("std::json")).unwrap();
 
         let updated_lock = LockFile::load(&dir.join("bsr.lock")).unwrap();
@@ -882,7 +872,7 @@ main = "src/main.roze"
 
     #[test]
     fn test_vendor_and_offline_install() {
-        let (dir, _holder) = temp_project("vendor_offline_test");
+        let (dir, cache, _holder) = temp_project("vendor_offline_test");
         fs::write(
             dir.join("bsr.mfz"),
             r#"name = "vendor_app"
@@ -894,7 +884,7 @@ main = "src/main.roze"
 "#,
         ).unwrap();
 
-        let mut mgr = DependencyManager::new(dir.clone());
+        let mut mgr = DependencyManager::with_cache(dir.clone(), cache.clone());
         mgr.install_all().unwrap();
 
         // 1. Vendor the dependencies
@@ -906,11 +896,12 @@ main = "src/main.roze"
         assert!(dir.join("vendor/bsr-vendor.mfz").exists());
 
         // 2. Wipe libs/
+        let _ = crate::cache::make_dir_writable(&dir.join("libs"));
         let _ = fs::remove_dir_all(dir.join("libs"));
         assert!(!dir.join("libs").exists());
 
         // 3. Install in offline mode (must succeed from vendor/)
-        let mut mgr2 = DependencyManager::new(dir.clone());
+        let mut mgr2 = DependencyManager::with_cache(dir.clone(), cache);
         let res = mgr2.install_all_with_options(false, false, true);
         assert!(res.is_ok(), "Offline install from vendor/ must succeed");
         assert!(dir.join("libs/std::json/lib.roze").exists());
@@ -923,7 +914,7 @@ main = "src/main.roze"
 
     #[test]
     fn test_offline_mode_missing_fails() {
-        let (dir, _holder) = temp_project("offline_missing_test");
+        let (dir, cache, _holder) = temp_project("offline_missing_test");
         fs::write(
             dir.join("bsr.mfz"),
             r#"name = "offline_missing_app"
@@ -936,7 +927,7 @@ main = "src/main.roze"
         ).unwrap();
 
         // Generate lockfile without installing
-        let mut mgr = DependencyManager::new(dir.clone());
+        let mut mgr = DependencyManager::with_cache(dir.clone(), cache);
         mgr.resolve_and_lock(false).unwrap();
 
         // Create isolated manager with empty custom cache

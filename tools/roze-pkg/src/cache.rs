@@ -34,6 +34,7 @@ pub struct CacheVerificationReport {
     pub status: CacheStatus,
 }
 
+#[derive(Clone, Debug)]
 pub struct PackageCache {
     pub root_dir: PathBuf,
 }
@@ -107,6 +108,21 @@ impl PackageCache {
     /// Enforces immutability and returns the SHA-256 tree hash of the stored package.
     pub fn store_package(&self, name: &str, version: &str, source_dir: &Path) -> Result<String> {
         let target_dir = self.package_dir(name, version);
+
+        // Idempotent: If valid package already cached, return immediately
+        if self.has_package(name, version) {
+            let checksum_file = target_dir.join(".checksum");
+            if checksum_file.exists() {
+                if let Ok(expected) = fs::read_to_string(&checksum_file) {
+                    if let Ok(actual) = sha256_dir(&target_dir) {
+                        if normalize_checksum(&actual) == normalize_checksum(expected.trim()) {
+                            return Ok(actual);
+                        }
+                    }
+                }
+            }
+        }
+
         if target_dir.exists() {
             make_dir_writable(&target_dir)?;
             fs::remove_dir_all(&target_dir)?;
@@ -293,10 +309,11 @@ pub fn set_dir_immutable(dir: &Path) -> Result<()> {
     for entry in walkdir::WalkDir::new(dir) {
         let entry = entry?;
         if entry.file_type().is_file() {
-            let metadata = entry.metadata()?;
-            let mut perms = metadata.permissions();
-            perms.set_readonly(true);
-            let _ = fs::set_permissions(entry.path(), perms);
+            if let Ok(metadata) = entry.metadata() {
+                let mut perms = metadata.permissions();
+                perms.set_readonly(true);
+                let _ = fs::set_permissions(entry.path(), perms);
+            }
         }
     }
     Ok(())
@@ -309,11 +326,12 @@ pub fn make_dir_writable(dir: &Path) -> Result<()> {
     }
     for entry in walkdir::WalkDir::new(dir) {
         let entry = entry?;
-        let metadata = entry.metadata()?;
-        let mut perms = metadata.permissions();
-        #[allow(clippy::permissions_set_readonly_false)]
-        perms.set_readonly(false);
-        let _ = fs::set_permissions(entry.path(), perms);
+        if let Ok(metadata) = entry.metadata() {
+            let mut perms = metadata.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(false);
+            let _ = fs::set_permissions(entry.path(), perms);
+        }
     }
     Ok(())
 }
@@ -331,8 +349,15 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
                 fs::create_dir_all(parent)?;
             }
             fs::copy(entry.path(), &target)?;
+            if let Ok(metadata) = fs::metadata(&target) {
+                let mut perms = metadata.permissions();
+                #[allow(clippy::permissions_set_readonly_false)]
+                perms.set_readonly(false);
+                let _ = fs::set_permissions(&target, perms);
+            }
         }
     }
+    let _ = make_dir_writable(dst);
     Ok(())
 }
 

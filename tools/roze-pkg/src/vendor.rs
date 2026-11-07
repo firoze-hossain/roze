@@ -100,6 +100,14 @@ impl VendorManager {
         project_dir: &Path,
         opts: &VendorOptions,
     ) -> Result<VendorSummary> {
+        Self::vendor_dependencies_with_cache(project_dir, opts, None)
+    }
+
+    pub fn vendor_dependencies_with_cache(
+        project_dir: &Path,
+        opts: &VendorOptions,
+        custom_cache: Option<&PackageCache>,
+    ) -> Result<VendorSummary> {
         let manifest_path = ProjectConfig::find_manifest(project_dir)
             .ok_or_else(|| anyhow!("No Roze manifest (bsr.mfz) found in {}", project_dir.display()))?;
         let _config = ProjectConfig::load(&manifest_path)?;
@@ -110,7 +118,10 @@ impl VendorManager {
             project_dir.join(crate::lockfile::LEGACY_LOCKFILE_NAME)
         } else {
             // Need to resolve and lock first
-            let mut dep_manager = crate::dependency::DependencyManager::new(project_dir.to_path_buf());
+            let mut dep_manager = match custom_cache {
+                Some(c) => crate::dependency::DependencyManager::with_cache(project_dir.to_path_buf(), c.clone()),
+                None => crate::dependency::DependencyManager::new(project_dir.to_path_buf()),
+            };
             dep_manager.resolve_and_lock(false)?;
             dep_manager.lockfile_path()
         };
@@ -128,7 +139,10 @@ impl VendorManager {
         }
         fs::create_dir_all(&vendor_dir)?;
 
-        let cache = PackageCache::new();
+        let cache = match custom_cache {
+            Some(c) => PackageCache::with_root(c.root_dir.clone()),
+            None => PackageCache::new(),
+        };
         let registry = RegistryClient::with_cache(PackageCache::with_root(cache.root_dir.clone()));
         let git_fetcher = GitFetcher::with_cache(PackageCache::with_root(cache.root_dir.clone()));
 
@@ -301,6 +315,9 @@ impl VendorManager {
             flat_checksums.push_str(&format!("{}  {}@{}\n", vp.checksum, vp.name, vp.version));
         }
         fs::write(vendor_dir.join(".bsr-checksum"), flat_checksums)?;
+
+        // Ensure all vendored files are writable so projects can build and edit them
+        crate::cache::make_dir_writable(&vendor_dir)?;
 
         Ok(VendorSummary {
             vendor_dir,
@@ -500,8 +517,15 @@ fn copy_dir_clean(src: &Path, dst: &Path) -> Result<()> {
                 fs::create_dir_all(parent)?;
             }
             fs::copy(entry.path(), &target)?;
+            if let Ok(metadata) = fs::metadata(&target) {
+                let mut perms = metadata.permissions();
+                #[allow(clippy::permissions_set_readonly_false)]
+                perms.set_readonly(false);
+                let _ = fs::set_permissions(&target, perms);
+            }
         }
     }
+    let _ = crate::cache::make_dir_writable(dst);
     Ok(())
 }
 
@@ -535,7 +559,8 @@ main = "src/main.roze"
             no_delete: false,
         };
 
-        let summary = VendorManager::vendor_dependencies(&project_dir, &opts).unwrap();
+        let cache = PackageCache::with_root(temp.path().join("cache"));
+        let summary = VendorManager::vendor_dependencies_with_cache(&project_dir, &opts, Some(&cache)).unwrap();
         assert_eq!(summary.packages.len(), 1);
         assert_eq!(summary.packages[0].name, "std::json");
         assert_eq!(summary.packages[0].version, "1.0.0");
@@ -580,10 +605,12 @@ main = "src/main.roze"
         fs::write(project_dir.join("src/main.roze"), "func main() {}\n").unwrap();
 
         let opts = VendorOptions::default();
-        VendorManager::vendor_dependencies(&project_dir, &opts).unwrap();
+        let cache = PackageCache::with_root(temp.path().join("cache"));
+        VendorManager::vendor_dependencies_with_cache(&project_dir, &opts, Some(&cache)).unwrap();
 
         // Tamper with a file inside vendor/std_json
         let file_to_tamper = project_dir.join("vendor/std_json/lib.roze");
+        let _ = crate::cache::make_dir_writable(&project_dir.join("vendor"));
         fs::write(&file_to_tamper, "// MALICIOUS TAMPERED CODE").unwrap();
 
         let verifications = VendorManager::verify_vendor(&project_dir, Path::new("vendor")).unwrap();
@@ -621,7 +648,8 @@ main = "src/main.roze"
             no_delete: false,
         };
 
-        let summary = VendorManager::vendor_dependencies(&project_dir, &opts).unwrap();
+        let cache = PackageCache::with_root(temp.path().join("cache"));
+        let summary = VendorManager::vendor_dependencies_with_cache(&project_dir, &opts, Some(&cache)).unwrap();
         assert_eq!(summary.packages.len(), 1);
         assert_eq!(summary.packages[0].directory, "std_json-1.0.0");
 

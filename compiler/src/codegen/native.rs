@@ -10010,11 +10010,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let byte_val = self.builder.ins().load(types::I8, MemFlags::trusted(), ptr_val, 0);
                 return Ok(self.builder.ins().uextend(VALUE_TYPE, byte_val));
             }
-            "ptr_read" | "ptr_read_i64" if arguments.len() == 1 => {
+            "ptr_read" | "ptr_read_i64" | "ptr_read_ptr" if arguments.len() == 1 => {
                 let ptr_val = self.compile_expression(&arguments[0])?;
                 return Ok(self.builder.ins().load(types::I64, MemFlags::trusted(), ptr_val, 0));
             }
-            "ptr_read_at" if arguments.len() == 2 => {
+            "ptr_read_at" | "ptr_read_ptr_at" if arguments.len() == 2 => {
                 let ptr_val = self.compile_expression(&arguments[0])?;
                 let offset_val = self.compile_expression(&arguments[1])?;
                 let addr = self.builder.ins().iadd(ptr_val, offset_val);
@@ -10048,10 +10048,18 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().store(MemFlags::trusted(), byte_val, ptr_val, 0);
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
-            "ptr_write" | "ptr_write_i64" if arguments.len() == 2 => {
+            "ptr_write" | "ptr_write_i64" | "ptr_write_ptr" if arguments.len() == 2 => {
                 let ptr_val = self.compile_expression(&arguments[0])?;
                 let val = self.compile_expression(&arguments[1])?;
                 self.builder.ins().store(MemFlags::trusted(), val, ptr_val, 0);
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "ptr_write_at" | "ptr_write_ptr_at" if arguments.len() == 3 => {
+                let ptr_val = self.compile_expression(&arguments[0])?;
+                let offset_val = self.compile_expression(&arguments[1])?;
+                let val = self.compile_expression(&arguments[2])?;
+                let addr = self.builder.ins().iadd(ptr_val, offset_val);
+                self.builder.ins().store(MemFlags::trusted(), val, addr, 0);
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
             "ptr_write_at" if arguments.len() == 3 => {

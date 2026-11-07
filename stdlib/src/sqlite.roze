@@ -1,0 +1,291 @@
+// stdlib/src/sqlite.roze
+//
+// Roze SQLite3 Embedded Database Native Bridge (M4-T10)
+// Pure Roze native bindings to the standard SQLite3 embedded SQL database engine.
+// Features:
+// - Direct C-ABI Foreign Function Declarations (sqlite3_open, sqlite3_exec, sqlite3_step...)
+// - Parameter binding (int, float, string, null)
+// - Prepared statements with forward-only cursor iteration
+// - Schema queries, transactions, and row-by-row data extraction
+// - In-memory and file-based database handles
+
+import "ptr";
+
+// ------------------------------------------------------------------------------
+// 1. SQLite3 Status, Type & Flag Constants
+// ------------------------------------------------------------------------------
+
+func sqlite_ok() -> int { return 0; }
+func sqlite_error() -> int { return 1; }
+func sqlite_internal() -> int { return 2; }
+func sqlite_perm() -> int { return 3; }
+func sqlite_abort() -> int { return 4; }
+func sqlite_busy() -> int { return 5; }
+func sqlite_locked() -> int { return 6; }
+func sqlite_nomem() -> int { return 7; }
+func sqlite_readonly() -> int { return 8; }
+func sqlite_interrupt() -> int { return 9; }
+func sqlite_ioerr() -> int { return 10; }
+func sqlite_corrupt() -> int { return 11; }
+func sqlite_notfound() -> int { return 12; }
+func sqlite_full() -> int { return 13; }
+func sqlite_cantopen() -> int { return 14; }
+func sqlite_row() -> int { return 100; }
+func sqlite_done() -> int { return 101; }
+
+func sqlite_type_integer() -> int { return 1; }
+func sqlite_type_float() -> int { return 2; }
+func sqlite_type_text() -> int { return 3; }
+func sqlite_type_blob() -> int { return 4; }
+func sqlite_type_null() -> int { return 5; }
+
+func sqlite_open_flag_readonly() -> int { return 1; }
+func sqlite_open_flag_readwrite() -> int { return 2; }
+func sqlite_open_flag_create() -> int { return 4; }
+func sqlite_open_flag_memory() -> int { return 128; }
+
+// ------------------------------------------------------------------------------
+// 2. Direct C-ABI Foreign Function Declarations
+// ------------------------------------------------------------------------------
+
+extern "C" func sqlite3_open(filename: string, ppDb: *mut void) -> int;
+extern "C" func sqlite3_close(db: *mut void) -> int;
+extern "C" func sqlite3_close_v2(db: *mut void) -> int;
+extern "C" func sqlite3_errmsg(db: *mut void) -> string;
+extern "C" func sqlite3_errcode(db: *mut void) -> int;
+extern "C" func sqlite3_exec(db: *mut void, sql: string, callback: *mut void, arg: *mut void, errmsg: *mut void) -> int;
+extern "C" func sqlite3_prepare_v2(db: *mut void, sql: string, nByte: int, ppStmt: *mut void, pzTail: *mut void) -> int;
+extern "C" func sqlite3_step(stmt: *mut void) -> int;
+extern "C" func sqlite3_finalize(stmt: *mut void) -> int;
+extern "C" func sqlite3_reset(stmt: *mut void) -> int;
+extern "C" func sqlite3_clear_bindings(stmt: *mut void) -> int;
+
+extern "C" func sqlite3_column_count(stmt: *mut void) -> int;
+extern "C" func sqlite3_column_name(stmt: *mut void, col: int) -> string;
+extern "C" func sqlite3_column_type(stmt: *mut void, col: int) -> int;
+extern "C" func sqlite3_column_int(stmt: *mut void, col: int) -> int;
+extern "C" func sqlite3_column_int64(stmt: *mut void, col: int) -> int;
+extern "C" func sqlite3_column_double(stmt: *mut void, col: int) -> float;
+extern "C" func sqlite3_column_text(stmt: *mut void, col: int) -> string;
+extern "C" func sqlite3_column_bytes(stmt: *mut void, col: int) -> int;
+
+extern "C" func sqlite3_bind_int(stmt: *mut void, col: int, val: int) -> int;
+extern "C" func sqlite3_bind_double(stmt: *mut void, col: int, val: float) -> int;
+extern "C" func sqlite3_bind_text(stmt: *mut void, col: int, val: string, len: int, destructor: *mut void) -> int;
+extern "C" func sqlite3_bind_null(stmt: *mut void, col: int) -> int;
+
+extern "C" func sqlite3_last_insert_rowid(db: *mut void) -> int;
+extern "C" func sqlite3_changes(db: *mut void) -> int;
+extern "C" func sqlite3_total_changes(db: *mut void) -> int;
+extern "C" func sqlite3_libversion() -> string;
+extern "C" func sqlite3_libversion_number() -> int;
+
+// ------------------------------------------------------------------------------
+// 3. Low-Level Pointer Allocation Helpers
+// ------------------------------------------------------------------------------
+
+func sqlite_raw_open(path: string) -> *mut void {
+    unsafe {
+        let pp: *mut void = alloc(8);
+        let rc = sqlite3_open(path, pp);
+        if (rc != 0) {
+            free(pp);
+            return ptr_null();
+        }
+        let db: *mut void = ptr_read_ptr(pp);
+        free(pp);
+        return db;
+    }
+}
+
+func sqlite_raw_prepare(db: *mut void, sql: string) -> *mut void {
+    unsafe {
+        let pp: *mut void = alloc(8);
+        let rc = sqlite3_prepare_v2(db, sql, -1, pp, ptr_null());
+        if (rc != 0) {
+            free(pp);
+            return ptr_null();
+        }
+        let stmt: *mut void = ptr_read_ptr(pp);
+        free(pp);
+        return stmt;
+    }
+}
+
+// ------------------------------------------------------------------------------
+// 4. Object-Oriented SQLite Wrapper Classes
+// ------------------------------------------------------------------------------
+
+class SqliteStmt {
+    stmt_ptr: *mut void,
+    sql: string,
+    is_valid: bool,
+}
+
+impl SqliteStmt {
+    func step() -> bool {
+        if (!this.is_valid) {
+            return false;
+        }
+        let rc = sqlite3_step(this.stmt_ptr);
+        return rc == 100; // SQLITE_ROW
+    }
+
+    func column_count() -> int {
+        if (!this.is_valid) {
+            return 0;
+        }
+        return sqlite3_column_count(this.stmt_ptr);
+    }
+
+    func column_name(col: int) -> string {
+        if (!this.is_valid) {
+            return "";
+        }
+        return sqlite3_column_name(this.stmt_ptr, col);
+    }
+
+    func column_type(col: int) -> int {
+        if (!this.is_valid) {
+            return 5; // SQLITE_NULL
+        }
+        return sqlite3_column_type(this.stmt_ptr, col);
+    }
+
+    func get_int(col: int) -> int {
+        if (!this.is_valid) {
+            return 0;
+        }
+        return sqlite3_column_int(this.stmt_ptr, col);
+    }
+
+    func get_float(col: int) -> float {
+        if (!this.is_valid) {
+            return 0.0;
+        }
+        return sqlite3_column_double(this.stmt_ptr, col);
+    }
+
+    func get_string(col: int) -> string {
+        if (!this.is_valid) {
+            return "";
+        }
+        return sqlite3_column_text(this.stmt_ptr, col);
+    }
+
+    func bind_int(col: int, val: int) -> int {
+        if (!this.is_valid) {
+            return -1;
+        }
+        return sqlite3_bind_int(this.stmt_ptr, col, val);
+    }
+
+    func bind_float(col: int, val: float) -> int {
+        if (!this.is_valid) {
+            return -1;
+        }
+        return sqlite3_bind_double(this.stmt_ptr, col, val);
+    }
+
+    func bind_string(col: int, val: string) -> int {
+        if (!this.is_valid) {
+            return -1;
+        }
+        return sqlite3_bind_text(this.stmt_ptr, col, val, -1, ptr_null());
+    }
+
+    func bind_null(col: int) -> int {
+        if (!this.is_valid) {
+            return -1;
+        }
+        return sqlite3_bind_null(this.stmt_ptr, col);
+    }
+
+    func reset() -> int {
+        if (!this.is_valid) {
+            return -1;
+        }
+        return sqlite3_reset(this.stmt_ptr);
+    }
+
+    func finalize() -> int {
+        if (!this.is_valid) {
+            return 0;
+        }
+        let res = sqlite3_finalize(this.stmt_ptr);
+        this.is_valid = false;
+        return res;
+    }
+}
+
+class SqliteDatabase {
+    db_ptr: *mut void,
+    path: string,
+    is_open: bool,
+}
+
+impl SqliteDatabase {
+    func execute(sql: string) -> int {
+        if (!this.is_open) {
+            return -1;
+        }
+        return sqlite3_exec(this.db_ptr, sql, ptr_null(), ptr_null(), ptr_null());
+    }
+
+    func prepare(sql: string) -> SqliteStmt {
+        if (!this.is_open) {
+            return new SqliteStmt(ptr_null(), sql, false);
+        }
+        let stmt_raw = sqlite_raw_prepare(this.db_ptr, sql);
+        let ok = !ptr_is_null(stmt_raw);
+        return new SqliteStmt(stmt_raw, sql, ok);
+    }
+
+    func last_insert_rowid() -> int {
+        if (!this.is_open) {
+            return 0;
+        }
+        return sqlite3_last_insert_rowid(this.db_ptr);
+    }
+
+    func changes() -> int {
+        if (!this.is_open) {
+            return 0;
+        }
+        return sqlite3_changes(this.db_ptr);
+    }
+
+    func error_message() -> string {
+        if (!this.is_open) {
+            return "database not open";
+        }
+        return sqlite3_errmsg(this.db_ptr);
+    }
+
+    func close() -> int {
+        if (!this.is_open) {
+            return 0;
+        }
+        let res = sqlite3_close(this.db_ptr);
+        this.is_open = false;
+        return res;
+    }
+}
+
+// ------------------------------------------------------------------------------
+// 5. Factory Helpers
+// ------------------------------------------------------------------------------
+
+func sqlite_open(path: string) -> SqliteDatabase {
+    let db_handle = sqlite_raw_open(path);
+    let ok = !ptr_is_null(db_handle);
+    return new SqliteDatabase(db_handle, path, ok);
+}
+
+func sqlite_open_memory() -> SqliteDatabase {
+    return sqlite_open(":memory:");
+}
+
+func sqlite_version() -> string {
+    return sqlite3_libversion();
+}

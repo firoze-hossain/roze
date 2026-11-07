@@ -2011,6 +2011,25 @@ fn standard_reflect_engine_suite() {
     assert!(stdout.contains("ALL REFLECTION TESTS PASSED!"));
 }
 
+#[test]
+fn ffi_bridges_suite() {
+    let (stdout, stderr, ok) = run_fixture("ffi_bridges.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== M4-T10 FFI Ecosystem Bridges Test Suite ==="));
+    assert!(stdout.contains("--- Suite 1: POSIX Libc Native Bridge ---"));
+    assert!(stdout.contains("strlen: 33"));
+    assert!(stdout.contains("strstr: roze programming"));
+    assert!(stdout.contains("--- Suite 2: SQLite3 Embedded Database Bridge ---"));
+    assert!(stdout.contains("sqlite version: 3."));
+    assert!(stdout.contains("last insert rowid: 2"));
+    assert!(stdout.contains("column count: 3"));
+    assert!(stdout.contains("Hero #1: Firoze"));
+    assert!(stdout.contains("Hero #2: Roze"));
+    assert!(stdout.contains("--- Suite 3: Raylib 2D/3D Game Engine Bridge ---"));
+    assert!(stdout.contains("Raylib Target FPS: 60"));
+    assert!(stdout.contains("=== M4-T10 FFI Ecosystem Bridges Verification Complete ==="));
+}
+
 
 
 

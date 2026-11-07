@@ -129,6 +129,12 @@ const SERDE_DISPLAY_NAME: &str = "serde (built-in)";
 const REFLECT_SOURCE: &str = include_str!("../../stdlib/src/reflect.roze");
 const REFLECT_DISPLAY_NAME: &str = "reflect (built-in)";
 
+const LIBC_SOURCE: &str = include_str!("../../stdlib/src/libc.roze");
+const LIBC_DISPLAY_NAME: &str = "libc (built-in)";
+
+const SQLITE_SOURCE: &str = include_str!("../../stdlib/src/sqlite.roze");
+const SQLITE_DISPLAY_NAME: &str = "sqlite (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -245,7 +251,7 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "rozeboot" || path == "rozeboot2" || path == "roze::boot" || path == "ioc" || path == "annotations" {
         return Ok((ROZEBOOT_SOURCE.to_string(), ROZEBOOT_DISPLAY_NAME.to_string()));
     }
-    if path == "raylib" {
+    if path == "raylib" || path == "std::raylib" || path == "roze::raylib" || path == "game::raylib" {
         return Ok((RAYLIB_SOURCE.to_string(), RAYLIB_DISPLAY_NAME.to_string()));
     }
     if path == "ai" {
@@ -318,6 +324,12 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "reflect" || path == "std::reflect" || path == "roze::reflect" || path == "introspection" {
         return Ok((REFLECT_SOURCE.to_string(), REFLECT_DISPLAY_NAME.to_string()));
+    }
+    if path == "sqlite" || path == "sqlite3" || path == "std::sqlite" || path == "roze::sqlite" || path == "db::sqlite" {
+        return Ok((SQLITE_SOURCE.to_string(), SQLITE_DISPLAY_NAME.to_string()));
+    }
+    if path == "libc" || path == "posix" || path == "std::libc" || path == "std::posix" || path == "roze::libc" {
+        return Ok((LIBC_SOURCE.to_string(), LIBC_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

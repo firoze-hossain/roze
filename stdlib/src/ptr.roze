@@ -102,6 +102,18 @@ func read_i64_at(p: *raw u8, off: int) -> int {
     }
 }
 
+func read_ptr(p: *raw u8) -> *raw u8 {
+    unsafe {
+        return ptr_read_ptr(p);
+    }
+}
+
+func read_ptr_at(p: *raw u8, off: int) -> *raw u8 {
+    unsafe {
+        return ptr_read_ptr_at(p, off);
+    }
+}
+
 func read_f32(p: *raw u8) -> float {
     unsafe {
         return ptr_read_f32(p);

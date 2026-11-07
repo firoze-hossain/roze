@@ -990,6 +990,10 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("ptr_read", vec![Type::RawPointer(Box::new(Type::Int))], Type::Int),
         ("ptr_read_i64", vec![Type::RawPointer(Box::new(Type::Int))], Type::Int),
         ("ptr_read_at", vec![Type::RawPointer(Box::new(Type::Int)), Type::Int], Type::Int),
+        ("ptr_read_ptr", vec![Type::RawPointer(Box::new(Type::U8))], Type::RawPointer(Box::new(Type::U8))),
+        ("ptr_read_ptr_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::RawPointer(Box::new(Type::U8))),
+        ("ptr_write_ptr", vec![Type::RawPointer(Box::new(Type::U8)), Type::RawPointer(Box::new(Type::U8))], Type::Void),
+        ("ptr_write_ptr_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int, Type::RawPointer(Box::new(Type::U8))], Type::Void),
         ("ptr_read_u8_at", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Int),
         ("ptr_write_u8", vec![Type::RawPointer(Box::new(Type::U8)), Type::Int], Type::Void),
         ("ptr_write", vec![Type::RawPointer(Box::new(Type::Int)), Type::Int], Type::Void),
@@ -3882,6 +3886,7 @@ impl TypeChecker {
         matches!(name,
             "alloc" | "alloc_zeroed" | "realloc" | "free" |
             "ptr_read_u8" | "ptr_read" | "ptr_read_i64" | "ptr_read_at" | "ptr_read_u8_at" |
+            "ptr_read_ptr" | "ptr_read_ptr_at" | "ptr_write_ptr" | "ptr_write_ptr_at" |
             "ptr_read_u16" | "ptr_read_u16_at" | "ptr_read_u32" | "ptr_read_u32_at" |
             "ptr_read_f32" | "ptr_read_f32_at" | "ptr_read_f64" | "ptr_read_f64_at" |
             "ptr_write_u8" | "ptr_write" | "ptr_write_i64" | "ptr_write_at" | "ptr_write_u8_at" |

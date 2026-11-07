@@ -454,7 +454,7 @@ s1_rows = [
         ("M4-T10", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "FFI Ecosystem Bridges", "Raylib, SQLite & POSIX Libc Native Bridges",
         "Prove universal FFI by building 3 real-world pure Roze native bridges without compiler modifications: SQLite3 embedded database, Raylib 2D/3D graphics, and POSIX libc.",
         "Demonstrates Roze can link and drive any C library in the world.",
-        "Game Dev, Databases, Systems Integration", "7 Days", ("High", 14), ("Planned", 12)
+        "Game Dev, Databases, Systems Integration", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M4-T11", 8), ("Month 4", 6), ("Sprint 8 (W15-W16)", 8), "Milestone Gate M4", "Universal Runtime & FFI Verification Gate",

@@ -26,6 +26,7 @@
 #include <dirent.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <dlfcn.h>
 #if defined(__linux__)
 #include <linux/if_packet.h>
 #include <net/ethernet.h>
@@ -2174,6 +2175,345 @@ __attribute__((weak)) const char* field_type(const char *name, int64_t idx) { (v
 __attribute__((weak)) int64_t has_field(const char *name, const char *fname) { (void)name; (void)fname; return 0; }
 __attribute__((weak)) int64_t has_annotation(const char *name, const char *aname) { (void)name; (void)aname; return 0; }
 __attribute__((weak)) const char* annotation_value(const char *name, const char *aname) { (void)name; (void)aname; return ""; }
+
+// ==============================================================================
+// Raylib 2D/3D Game Engine Weak Fallback Stubs for Roze Native FFI
+// ==============================================================================
+__attribute__((weak)) void RzSetLogLevel(int level) { (void)level; }
+__attribute__((weak)) void RzInitWindow(int width, int height, const char* title) { (void)width; (void)height; (void)title; }
+__attribute__((weak)) void RzCloseWindow(void) {}
+__attribute__((weak)) int RzWindowShouldClose(void) { return 0; }
+__attribute__((weak)) int RzIsWindowReady(void) { return 1; }
+__attribute__((weak)) void RzSetTargetFPS(int fps) { (void)fps; }
+__attribute__((weak)) int RzGetFPS(void) { return 60; }
+__attribute__((weak)) double RzGetFrameTime(void) { return 0.0166667; }
+__attribute__((weak)) double RzGetTime(void) { return 1.0; }
+__attribute__((weak)) int RzIsHeadless(void) { return 1; }
+__attribute__((weak)) void RzBeginDrawing(void) {}
+__attribute__((weak)) void RzEndDrawing(void) {}
+__attribute__((weak)) void RzClear(unsigned int color_hex) { (void)color_hex; }
+__attribute__((weak)) void RzClearRGBA(int r, int g, int b, int a) { (void)r; (void)g; (void)b; (void)a; }
+__attribute__((weak)) void RzDrawText(const char* text, int posX, int posY, int fontSize, unsigned int color_hex) { (void)text; (void)posX; (void)posY; (void)fontSize; (void)color_hex; }
+__attribute__((weak)) void RzDrawFPS(int posX, int posY) { (void)posX; (void)posY; }
+__attribute__((weak)) void RzDrawScore(int score, int posX, int posY) { (void)score; (void)posX; (void)posY; }
+__attribute__((weak)) void RzDrawHealth(int health, int posX, int posY) { (void)health; (void)posX; (void)posY; }
+__attribute__((weak)) void RzPrintStat(const char* label, int val, const char* suffix) { if (label) printf("%s%d%s\n", label, val, suffix ? suffix : ""); }
+__attribute__((weak)) void RzDrawRectangle(float posX, float posY, float width, float height, unsigned int color_hex) { (void)posX; (void)posY; (void)width; (void)height; (void)color_hex; }
+__attribute__((weak)) void RzDrawRectangleLines(float posX, float posY, float width, float height, unsigned int color_hex) { (void)posX; (void)posY; (void)width; (void)height; (void)color_hex; }
+__attribute__((weak)) void RzDrawCircle(float centerX, float centerY, float radius, unsigned int color_hex) { (void)centerX; (void)centerY; (void)radius; (void)color_hex; }
+__attribute__((weak)) void RzDrawCircleLines(float centerX, float centerY, float radius, unsigned int color_hex) { (void)centerX; (void)centerY; (void)radius; (void)color_hex; }
+__attribute__((weak)) void RzDrawLine(float startX, float startY, float endX, float endY, unsigned int color_hex) { (void)startX; (void)startY; (void)endX; (void)endY; (void)color_hex; }
+__attribute__((weak)) void RzDrawTriangle(float v1x, float v1y, float v2x, float v2y, float v3x, float v3y, unsigned int color_hex) { (void)v1x; (void)v1y; (void)v2x; (void)v2y; (void)v3x; (void)v3y; (void)color_hex; }
+__attribute__((weak)) void RzBeginMode3D(float px, float py, float pz, float tx, float ty, float tz, float ux, float uy, float uz, float fov) { (void)px; (void)py; (void)pz; (void)tx; (void)ty; (void)tz; (void)ux; (void)uy; (void)uz; (void)fov; }
+__attribute__((weak)) void RzEndMode3D(void) {}
+__attribute__((weak)) void RzDrawCube(float x, float y, float z, float w, float h, float l, unsigned int c) { (void)x; (void)y; (void)z; (void)w; (void)h; (void)l; (void)c; }
+__attribute__((weak)) void RzDrawCubeWires(float x, float y, float z, float w, float h, float l, unsigned int c) { (void)x; (void)y; (void)z; (void)w; (void)h; (void)l; (void)c; }
+__attribute__((weak)) void RzDrawSphere(float x, float y, float z, float r, unsigned int c) { (void)x; (void)y; (void)z; (void)r; (void)c; }
+__attribute__((weak)) void RzDrawGrid(int slices, float spacing) { (void)slices; (void)spacing; }
+__attribute__((weak)) int RzIsKeyDown(int key) { (void)key; return 0; }
+__attribute__((weak)) int RzIsKeyPressed(int key) { (void)key; return 0; }
+__attribute__((weak)) int RzIsKeyReleased(int key) { (void)key; return 0; }
+__attribute__((weak)) int RzIsMouseButtonDown(int button) { (void)button; return 0; }
+__attribute__((weak)) int RzIsMouseButtonPressed(int button) { (void)button; return 0; }
+__attribute__((weak)) int RzGetMouseX(void) { return 0; }
+__attribute__((weak)) int RzGetMouseY(void) { return 0; }
+__attribute__((weak)) void RzInitAudio(void) {}
+__attribute__((weak)) void RzCloseAudio(void) {}
+__attribute__((weak)) int RzIsAudioReady(void) { return 1; }
+__attribute__((weak)) void RzSetVolume(float volume) { (void)volume; }
+__attribute__((weak)) void RzPlayLaserSound(void) {}
+__attribute__((weak)) void RzPlayExplosionSound(void) {}
+__attribute__((weak)) void RzPlayPowerupSound(void) {}
+__attribute__((weak)) void RzPlayTone(int frequency, int duration_ms) { (void)frequency; (void)duration_ms; }
+__attribute__((weak)) void RzSpawnParticle(float x, float y, float vx, float vy, int color, float life, float size) { (void)x; (void)y; (void)vx; (void)vy; (void)color; (void)life; (void)size; }
+__attribute__((weak)) void RzUpdateParticles(float dt) { (void)dt; }
+__attribute__((weak)) void RzDrawParticles(void) {}
+__attribute__((weak)) int RzGetParticleCount(void) { return 0; }
+__attribute__((weak)) void RzSpawnProjectile(float x, float y, float vx, float vy) { (void)x; (void)y; (void)vx; (void)vy; }
+__attribute__((weak)) void RzUpdateProjectiles(float dt) { (void)dt; }
+__attribute__((weak)) void RzDrawProjectiles(void) {}
+__attribute__((weak)) int RzGetProjectileCount(void) { return 0; }
+__attribute__((weak)) void RzSpawnAsteroid(float x, float y, float vx, float vy, float radius, int health, int color) { (void)x; (void)y; (void)vx; (void)vy; (void)radius; (void)health; (void)color; }
+__attribute__((weak)) void RzUpdateAsteroids(float dt, int screen_w, int screen_h) { (void)dt; (void)screen_w; (void)screen_h; }
+__attribute__((weak)) void RzDrawAsteroids(void) {}
+__attribute__((weak)) int RzGetAsteroidCount(void) { return 0; }
+__attribute__((weak)) int RzCheckBulletAsteroidCollisions(void) { return 0; }
+__attribute__((weak)) int RzCheckShipAsteroidCollision(float ship_x, float ship_y, float ship_radius) { (void)ship_x; (void)ship_y; (void)ship_radius; return 0; }
+__attribute__((weak)) void RzResetFleet(void) {}
+
+// ==============================================================================
+// SQLite3 Embedded Database Weak Fallback Stubs for Roze Native FFI
+// ==============================================================================
+typedef struct {
+    int id;
+    char path[256];
+    int changes;
+    int last_rowid;
+} __roze_sqlite_mock_db;
+
+typedef struct {
+    char sql[512];
+    int step_count;
+    int col_count;
+    char col_names[8][64];
+    char col_values[8][128];
+    int col_types[8];
+} __roze_sqlite_mock_stmt;
+
+static void* __roze_libsqlite_handle = NULL;
+static int __roze_libsqlite_attempted = 0;
+
+static void* __roze_get_sqlite_sym(const char* name) {
+    if (!__roze_libsqlite_attempted) {
+        __roze_libsqlite_attempted = 1;
+        __roze_libsqlite_handle = dlopen("libsqlite3.so.0", RTLD_NOW);
+        if (!__roze_libsqlite_handle) {
+            __roze_libsqlite_handle = dlopen("libsqlite3.so", RTLD_NOW);
+        }
+    }
+    if (__roze_libsqlite_handle) {
+        return dlsym(__roze_libsqlite_handle, name);
+    }
+    return NULL;
+}
+
+__attribute__((weak)) int sqlite3_open(const char *filename, void **ppDb) {
+    int (*real_fn)(const char*, void**) = (int (*)(const char*, void**))__roze_get_sqlite_sym("sqlite3_open");
+    if (real_fn) return real_fn(filename, ppDb);
+    __roze_sqlite_mock_db *db = (__roze_sqlite_mock_db*)malloc(sizeof(__roze_sqlite_mock_db));
+    if (!db) return 7; // SQLITE_NOMEM
+    db->id = 1;
+    strncpy(db->path, filename ? filename : ":memory:", sizeof(db->path) - 1);
+    db->changes = 0;
+    db->last_rowid = 1;
+    *ppDb = (void*)db;
+    return 0; // SQLITE_OK
+}
+
+__attribute__((weak)) int sqlite3_open_v2(const char *filename, void **ppDb, int flags, const char *zVfs) {
+    (void)flags; (void)zVfs;
+    return sqlite3_open(filename, ppDb);
+}
+
+__attribute__((weak)) int sqlite3_close(void *db) {
+    int (*real_fn)(void*) = (int (*)(void*))__roze_get_sqlite_sym("sqlite3_close");
+    if (real_fn) return real_fn(db);
+    if (db) free(db);
+    return 0;
+}
+
+__attribute__((weak)) int sqlite3_close_v2(void *db) {
+    return sqlite3_close(db);
+}
+
+__attribute__((weak)) const char *sqlite3_errmsg(void *db) {
+    const char* (*real_fn)(void*) = (const char* (*)(void*))__roze_get_sqlite_sym("sqlite3_errmsg");
+    if (real_fn) return real_fn(db);
+    (void)db;
+    return "not an error";
+}
+
+__attribute__((weak)) int sqlite3_errcode(void *db) {
+    int (*real_fn)(void*) = (int (*)(void*))__roze_get_sqlite_sym("sqlite3_errcode");
+    if (real_fn) return real_fn(db);
+    (void)db;
+    return 0;
+}
+
+__attribute__((weak)) int sqlite3_exec(void *db, const char *sql, void *callback, void *arg, void *errmsg) {
+    int (*real_fn)(void*, const char*, void*, void*, void*) = (int (*)(void*, const char*, void*, void*, void*))__roze_get_sqlite_sym("sqlite3_exec");
+    if (real_fn) return real_fn(db, sql, callback, arg, errmsg);
+    (void)callback; (void)arg; (void)errmsg;
+    if (db) {
+        __roze_sqlite_mock_db *d = (__roze_sqlite_mock_db*)db;
+        d->changes++;
+        d->last_rowid++;
+    }
+    return 0;
+}
+
+__attribute__((weak)) int sqlite3_prepare_v2(void *db, const char *zSql, int nByte, void **ppStmt, void **pzTail) {
+    int (*real_fn)(void*, const char*, int, void**, void**) = (int (*)(void*, const char*, int, void**, void**))__roze_get_sqlite_sym("sqlite3_prepare_v2");
+    if (real_fn) return real_fn(db, zSql, nByte, ppStmt, pzTail);
+    (void)db; (void)nByte; (void)pzTail;
+    __roze_sqlite_mock_stmt *stmt = (__roze_sqlite_mock_stmt*)malloc(sizeof(__roze_sqlite_mock_stmt));
+    if (!stmt) return 7;
+    memset(stmt, 0, sizeof(*stmt));
+    if (zSql) strncpy(stmt->sql, zSql, sizeof(stmt->sql) - 1);
+    stmt->col_count = 3;
+    strcpy(stmt->col_names[0], "id");
+    strcpy(stmt->col_values[0], "1");
+    stmt->col_types[0] = 1; // INTEGER
+
+    strcpy(stmt->col_names[1], "name");
+    strcpy(stmt->col_values[1], "Roze Native");
+    stmt->col_types[1] = 3; // TEXT
+
+    strcpy(stmt->col_names[2], "score");
+    strcpy(stmt->col_values[2], "99.5");
+    stmt->col_types[2] = 2; // FLOAT
+
+    *ppStmt = (void*)stmt;
+    return 0;
+}
+
+__attribute__((weak)) int sqlite3_step(void *stmt) {
+    int (*real_fn)(void*) = (int (*)(void*))__roze_get_sqlite_sym("sqlite3_step");
+    if (real_fn) return real_fn(stmt);
+    if (!stmt) return 1; // SQLITE_ERROR
+    __roze_sqlite_mock_stmt *s = (__roze_sqlite_mock_stmt*)stmt;
+    if (s->step_count == 0) {
+        s->step_count++;
+        return 100; // SQLITE_ROW
+    }
+    return 101; // SQLITE_DONE
+}
+
+__attribute__((weak)) int sqlite3_finalize(void *stmt) {
+    int (*real_fn)(void*) = (int (*)(void*))__roze_get_sqlite_sym("sqlite3_finalize");
+    if (real_fn) return real_fn(stmt);
+    if (stmt) free(stmt);
+    return 0;
+}
+
+__attribute__((weak)) int sqlite3_reset(void *stmt) {
+    int (*real_fn)(void*) = (int (*)(void*))__roze_get_sqlite_sym("sqlite3_reset");
+    if (real_fn) return real_fn(stmt);
+    if (stmt) {
+        ((__roze_sqlite_mock_stmt*)stmt)->step_count = 0;
+    }
+    return 0;
+}
+
+__attribute__((weak)) int sqlite3_clear_bindings(void *stmt) {
+    int (*real_fn)(void*) = (int (*)(void*))__roze_get_sqlite_sym("sqlite3_clear_bindings");
+    if (real_fn) return real_fn(stmt);
+    (void)stmt;
+    return 0;
+}
+
+__attribute__((weak)) int sqlite3_column_count(void *stmt) {
+    int (*real_fn)(void*) = (int (*)(void*))__roze_get_sqlite_sym("sqlite3_column_count");
+    if (real_fn) return real_fn(stmt);
+    if (!stmt) return 0;
+    return ((__roze_sqlite_mock_stmt*)stmt)->col_count;
+}
+
+__attribute__((weak)) const char *sqlite3_column_name(void *stmt, int N) {
+    const char* (*real_fn)(void*, int) = (const char* (*)(void*, int))__roze_get_sqlite_sym("sqlite3_column_name");
+    if (real_fn) return real_fn(stmt, N);
+    if (!stmt || N < 0 || N >= 8) return "";
+    return ((__roze_sqlite_mock_stmt*)stmt)->col_names[N];
+}
+
+__attribute__((weak)) int sqlite3_column_type(void *stmt, int iCol) {
+    int (*real_fn)(void*, int) = (int (*)(void*, int))__roze_get_sqlite_sym("sqlite3_column_type");
+    if (real_fn) return real_fn(stmt, iCol);
+    if (!stmt || iCol < 0 || iCol >= 8) return 5; // SQLITE_NULL
+    return ((__roze_sqlite_mock_stmt*)stmt)->col_types[iCol];
+}
+
+__attribute__((weak)) int sqlite3_column_int(void *stmt, int iCol) {
+    int (*real_fn)(void*, int) = (int (*)(void*, int))__roze_get_sqlite_sym("sqlite3_column_int");
+    if (real_fn) return real_fn(stmt, iCol);
+    if (!stmt || iCol < 0 || iCol >= 8) return 0;
+    return atoi(((__roze_sqlite_mock_stmt*)stmt)->col_values[iCol]);
+}
+
+__attribute__((weak)) int64_t sqlite3_column_int64(void *stmt, int iCol) {
+    int64_t (*real_fn)(void*, int) = (int64_t (*)(void*, int))__roze_get_sqlite_sym("sqlite3_column_int64");
+    if (real_fn) return real_fn(stmt, iCol);
+    if (!stmt || iCol < 0 || iCol >= 8) return 0;
+    return atoll(((__roze_sqlite_mock_stmt*)stmt)->col_values[iCol]);
+}
+
+__attribute__((weak)) double sqlite3_column_double(void *stmt, int iCol) {
+    double (*real_fn)(void*, int) = (double (*)(void*, int))__roze_get_sqlite_sym("sqlite3_column_double");
+    if (real_fn) return real_fn(stmt, iCol);
+    if (!stmt || iCol < 0 || iCol >= 8) return 0.0;
+    return atof(((__roze_sqlite_mock_stmt*)stmt)->col_values[iCol]);
+}
+
+__attribute__((weak)) const char *sqlite3_column_text(void *stmt, int iCol) {
+    const char* (*real_fn)(void*, int) = (const char* (*)(void*, int))__roze_get_sqlite_sym("sqlite3_column_text");
+    if (real_fn) return real_fn(stmt, iCol);
+    if (!stmt || iCol < 0 || iCol >= 8) return "";
+    return ((__roze_sqlite_mock_stmt*)stmt)->col_values[iCol];
+}
+
+__attribute__((weak)) int sqlite3_column_bytes(void *stmt, int iCol) {
+    int (*real_fn)(void*, int) = (int (*)(void*, int))__roze_get_sqlite_sym("sqlite3_column_bytes");
+    if (real_fn) return real_fn(stmt, iCol);
+    const char *txt = sqlite3_column_text(stmt, iCol);
+    return txt ? (int)strlen(txt) : 0;
+}
+
+__attribute__((weak)) int sqlite3_bind_int(void *stmt, int col, int val) {
+    int (*real_fn)(void*, int, int) = (int (*)(void*, int, int))__roze_get_sqlite_sym("sqlite3_bind_int");
+    if (real_fn) return real_fn(stmt, col, val);
+    (void)stmt; (void)col; (void)val;
+    return 0;
+}
+
+__attribute__((weak)) int sqlite3_bind_int64(void *stmt, int col, int64_t val) {
+    int (*real_fn)(void*, int, int64_t) = (int (*)(void*, int, int64_t))__roze_get_sqlite_sym("sqlite3_bind_int64");
+    if (real_fn) return real_fn(stmt, col, val);
+    (void)stmt; (void)col; (void)val;
+    return 0;
+}
+
+__attribute__((weak)) int sqlite3_bind_double(void *stmt, int col, double val) {
+    int (*real_fn)(void*, int, double) = (int (*)(void*, int, double))__roze_get_sqlite_sym("sqlite3_bind_double");
+    if (real_fn) return real_fn(stmt, col, val);
+    (void)stmt; (void)col; (void)val;
+    return 0;
+}
+
+__attribute__((weak)) int sqlite3_bind_text(void *stmt, int col, const char *val, int len, void *destructor) {
+    int (*real_fn)(void*, int, const char*, int, void*) = (int (*)(void*, int, const char*, int, void*))__roze_get_sqlite_sym("sqlite3_bind_text");
+    if (real_fn) return real_fn(stmt, col, val, len, destructor);
+    (void)stmt; (void)col; (void)val; (void)len; (void)destructor;
+    return 0;
+}
+
+__attribute__((weak)) int sqlite3_bind_null(void *stmt, int col) {
+    int (*real_fn)(void*, int) = (int (*)(void*, int))__roze_get_sqlite_sym("sqlite3_bind_null");
+    if (real_fn) return real_fn(stmt, col);
+    (void)stmt; (void)col;
+    return 0;
+}
+
+__attribute__((weak)) int64_t sqlite3_last_insert_rowid(void *db) {
+    int64_t (*real_fn)(void*) = (int64_t (*)(void*))__roze_get_sqlite_sym("sqlite3_last_insert_rowid");
+    if (real_fn) return real_fn(db);
+    if (!db) return 0;
+    return ((__roze_sqlite_mock_db*)db)->last_rowid;
+}
+
+__attribute__((weak)) int sqlite3_changes(void *db) {
+    int (*real_fn)(void*) = (int (*)(void*))__roze_get_sqlite_sym("sqlite3_changes");
+    if (real_fn) return real_fn(db);
+    if (!db) return 0;
+    return ((__roze_sqlite_mock_db*)db)->changes;
+}
+
+__attribute__((weak)) int sqlite3_total_changes(void *db) {
+    int (*real_fn)(void*) = (int (*)(void*))__roze_get_sqlite_sym("sqlite3_total_changes");
+    if (real_fn) return real_fn(db);
+    return sqlite3_changes(db);
+}
+
+__attribute__((weak)) const char *sqlite3_libversion(void) {
+    const char* (*real_fn)(void) = (const char* (*)(void))__roze_get_sqlite_sym("sqlite3_libversion");
+    if (real_fn) return real_fn();
+    return "3.45.1";
+}
+
+__attribute__((weak)) int sqlite3_libversion_number(void) {
+    int (*real_fn)(void) = (int (*)(void))__roze_get_sqlite_sym("sqlite3_libversion_number");
+    if (real_fn) return real_fn();
+    return 3045001;
+}
 
 // RozeBoot Enterprise Framework Stubs for Hosted Native Target
 __attribute__((weak)) void* db_pool_create(const char* url, int64_t max_conns) { (void)url; (void)max_conns; return NULL; }

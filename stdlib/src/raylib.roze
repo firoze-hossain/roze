@@ -230,3 +230,132 @@ class Asteroid {
 func asteroid_new(x: float, y: float, vx: float, vy: float, radius: float, health: int, color: int) -> Asteroid {
     return new Asteroid(x, y, vx, vy, radius, health, color, true);
 }
+
+// ------------------------------------------------------------------------------
+// 6. High-Level Raylib Window & Standard API Facade
+// ------------------------------------------------------------------------------
+
+func raylib_init_window(width: int, height: int, title: string) -> void {
+    RzInitWindow(width, height, title);
+}
+
+func raylib_close_window() -> void {
+    RzCloseWindow();
+}
+
+func raylib_is_window_ready() -> bool {
+    return RzIsWindowReady() != 0;
+}
+
+func raylib_window_should_close() -> bool {
+    return RzWindowShouldClose() != 0;
+}
+
+func raylib_set_target_fps(fps: int) -> void {
+    RzSetTargetFPS(fps);
+}
+
+func raylib_get_fps() -> int {
+    return RzGetFPS();
+}
+
+func raylib_get_frame_time() -> float {
+    return RzGetFrameTime();
+}
+
+func raylib_get_time() -> float {
+    return RzGetTime();
+}
+
+func raylib_begin_drawing() -> void {
+    RzBeginDrawing();
+}
+
+func raylib_end_drawing() -> void {
+    RzEndDrawing();
+}
+
+func raylib_clear_background(color: int) -> void {
+    RzClear(color);
+}
+
+func raylib_clear(color: int) -> void {
+    RzClear(color);
+}
+
+func raylib_begin_mode3d(px: float, py: float, pz: float, tx: float, ty: float, tz: float, ux: float, uy: float, uz: float, fov: float) -> void {
+    RzBeginMode3D(px, py, pz, tx, ty, tz, ux, uy, uz, fov);
+}
+
+func raylib_end_mode3d() -> void {
+    RzEndMode3D();
+}
+
+func raylib_draw_text(text: string, x: int, y: int, size: int, color: int) -> void {
+    RzDrawText(text, x, y, size, color);
+}
+
+func raylib_draw_rectangle(x: float, y: float, w: float, h: float, color: int) -> void {
+    RzDrawRectangle(x, y, w, h, color);
+}
+
+func raylib_draw_circle(cx: float, cy: float, r: float, color: int) -> void {
+    RzDrawCircle(cx, cy, r, color);
+}
+
+func raylib_draw_line(x1: float, y1: float, x2: float, y2: float, color: int) -> void {
+    RzDrawLine(x1, y1, x2, y2, color);
+}
+
+func raylib_draw_cube(x: float, y: float, z: float, w: float, h: float, l: float, color: int) -> void {
+    RzDrawCube(x, y, z, w, h, l, color);
+}
+
+class RaylibWindow {
+    width: int,
+    height: int,
+    title: string,
+    is_open: bool,
+}
+
+impl RaylibWindow {
+    func should_close() -> bool {
+        return RzWindowShouldClose() != 0;
+    }
+
+    func begin_drawing() -> void {
+        RzBeginDrawing();
+    }
+
+    func end_drawing() -> void {
+        RzEndDrawing();
+    }
+
+    func clear(color: int) -> void {
+        RzClear(color);
+    }
+
+    func draw_text(text: string, x: int, y: int, size: int, color: int) -> void {
+        RzDrawText(text, x, y, size, color);
+    }
+
+    func draw_rectangle(x: float, y: float, w: float, h: float, color: int) -> void {
+        RzDrawRectangle(x, y, w, h, color);
+    }
+
+    func draw_circle(cx: float, cy: float, r: float, color: int) -> void {
+        RzDrawCircle(cx, cy, r, color);
+    }
+
+    func close() -> void {
+        if (this.is_open) {
+            RzCloseWindow();
+            this.is_open = false;
+        }
+    }
+}
+
+func raylib_window_open(width: int, height: int, title: string) -> RaylibWindow {
+    RzInitWindow(width, height, title);
+    return new RaylibWindow(width, height, title, true);
+}

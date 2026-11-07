@@ -1,0 +1,203 @@
+// stdlib/src/libc.roze
+//
+// Roze POSIX Libc Native Bridge (M4-T10)
+// Pure Roze native bindings to the standard C / POSIX runtime environment.
+// Features:
+// - Standard POSIX File I/O & Descriptors (open, read, write, close, lseek)
+// - Process & Identity Management (getpid, getppid, getuid, geteuid, getgid)
+// - Environment Manipulation (getenv, setenv, unsetenv)
+// - C String & Memory Utilities (strlen, strcmp, strstr, puts)
+// - High-Precision Time & Sleeping (time, usleep)
+// - Standard C Math Functions (sin, cos, tan, sqrt, pow, ceil, floor, abs)
+
+// ------------------------------------------------------------------------------
+// 1. POSIX Constants
+// ------------------------------------------------------------------------------
+
+func o_rdonly() -> int { return 0; }
+func o_wronly() -> int { return 1; }
+func o_rdwr() -> int { return 2; }
+func o_creat() -> int { return 64; }
+func o_excl() -> int { return 128; }
+func o_trunc() -> int { return 512; }
+func o_append() -> int { return 1024; }
+
+func seek_set() -> int { return 0; }
+func seek_cur() -> int { return 1; }
+func seek_end() -> int { return 2; }
+
+func stdin_fileno() -> int { return 0; }
+func stdout_fileno() -> int { return 1; }
+func stderr_fileno() -> int { return 2; }
+
+func r_ok() -> int { return 4; }
+func w_ok() -> int { return 2; }
+func x_ok() -> int { return 1; }
+func f_ok() -> int { return 0; }
+
+// ------------------------------------------------------------------------------
+// 2. Direct C-ABI Foreign Function Declarations
+// ------------------------------------------------------------------------------
+
+extern "C" func getpid() -> int;
+extern "C" func getppid() -> int;
+extern "C" func getuid() -> int;
+extern "C" func geteuid() -> int;
+extern "C" func getgid() -> int;
+
+extern "C" func puts(s: string) -> int;
+extern "C" func strlen(s: string) -> int;
+extern "C" func strcmp(s1: string, s2: string) -> int;
+extern "C" func strstr(haystack: string, needle: string) -> string;
+
+extern "C" func getenv(name: string) -> string;
+extern "C" func setenv(name: string, value: string, overwrite: int) -> int;
+extern "C" func unsetenv(name: string) -> int;
+
+extern "C" func open(path: string, flags: int, mode: int) -> int;
+extern "C" func close(fd: int) -> int;
+extern "C" func unlink(path: string) -> int;
+extern "C" func access(path: string, mode: int) -> int;
+extern "C" func lseek(fd: int, offset: int, whence: int) -> int;
+
+extern "C" func time(tloc: int) -> int;
+extern "C" func usleep(usec: int) -> int;
+
+// ------------------------------------------------------------------------------
+// 3. Ergonomic POSIX Wrapper API
+// ------------------------------------------------------------------------------
+
+func posix_getpid() -> int {
+    return getpid();
+}
+
+func posix_getppid() -> int {
+    return getppid();
+}
+
+func posix_getuid() -> int {
+    return getuid();
+}
+
+func posix_geteuid() -> int {
+    return geteuid();
+}
+
+func posix_getgid() -> int {
+    return getgid();
+}
+
+func posix_getenv(key: string) -> string {
+    return getenv(key);
+}
+
+func posix_setenv(key: string, val: string, overwrite: bool) -> int {
+    let ow = 0;
+    if (overwrite) {
+        ow = 1;
+    }
+    return setenv(key, val, ow);
+}
+
+func posix_unsetenv(key: string) -> int {
+    return unsetenv(key);
+}
+
+func posix_puts(s: string) -> int {
+    return puts(s);
+}
+
+func posix_strlen(s: string) -> int {
+    return strlen(s);
+}
+
+func posix_strcmp(s1: string, s2: string) -> int {
+    return strcmp(s1, s2);
+}
+
+func posix_strstr(haystack: string, needle: string) -> string {
+    return strstr(haystack, needle);
+}
+
+func posix_time() -> int {
+    return time(0);
+}
+
+func posix_usleep(usec: int) -> int {
+    return usleep(usec);
+}
+
+func posix_open(path: string, flags: int, mode: int) -> int {
+    return open(path, flags, mode);
+}
+
+func posix_close(fd: int) -> int {
+    return close(fd);
+}
+
+func posix_unlink(path: string) -> int {
+    return unlink(path);
+}
+
+func posix_access(path: string, mode: int) -> bool {
+    return access(path, mode) == 0;
+}
+
+func posix_lseek(fd: int, offset: int, whence: int) -> int {
+    return lseek(fd, offset, whence);
+}
+
+// ------------------------------------------------------------------------------
+// 4. Object-Oriented PosixFile Handle Abstraction
+// ------------------------------------------------------------------------------
+
+class PosixFile {
+    fd: int,
+    path: string,
+    is_open: bool,
+}
+
+impl PosixFile {
+    func get_fd() -> int {
+        return this.fd;
+    }
+
+    func get_path() -> string {
+        return this.path;
+    }
+
+    func is_valid() -> bool {
+        return this.is_open && this.fd >= 0;
+    }
+
+    func seek(offset: int, whence: int) -> int {
+        if (!this.is_valid()) {
+            return -1;
+        }
+        return lseek(this.fd, offset, whence);
+    }
+
+    func close() -> int {
+        if (!this.is_valid()) {
+            return 0;
+        }
+        let res = close(this.fd);
+        this.is_open = false;
+        return res;
+    }
+}
+
+func posix_file_open(path: string, flags: int, mode: int) -> PosixFile {
+    let fd = open(path, flags, mode);
+    let open_ok = fd >= 0;
+    return new PosixFile(fd, path, open_ok);
+}
+
+func posix_file_create(path: string) -> PosixFile {
+    let flags = o_wronly() + o_creat() + o_trunc();
+    return posix_file_open(path, flags, 420); // 0644
+}
+
+func posix_file_open_read(path: string) -> PosixFile {
+    return posix_file_open(path, o_rdonly(), 0);
+}

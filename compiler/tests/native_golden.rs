@@ -4681,6 +4681,30 @@ fn native_standard_reflect_engine_suite() {
     assert!(stdout.contains("ALL REFLECTION TESTS PASSED!"));
 }
 
+#[test]
+fn native_ffi_bridges_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("ffi_bridges.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read ffi_bridges.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("ffi_bridges_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== M4-T10 FFI Ecosystem Bridges Test Suite ==="));
+    assert!(stdout.contains("--- Suite 1: POSIX Libc Native Bridge ---"));
+    assert!(stdout.contains("strlen: 33"));
+    assert!(stdout.contains("strstr: roze programming"));
+    assert!(stdout.contains("--- Suite 2: SQLite3 Embedded Database Bridge ---"));
+    assert!(stdout.contains("sqlite version: 3."));
+    assert!(stdout.contains("last insert rowid: 2"));
+    assert!(stdout.contains("column count: 3"));
+    assert!(stdout.contains("Hero #1: Firoze"));
+    assert!(stdout.contains("Hero #2: Roze"));
+    assert!(stdout.contains("--- Suite 3: Raylib 2D/3D Game Engine Bridge ---"));
+    assert!(stdout.contains("Raylib Target FPS: 60"));
+    assert!(stdout.contains("=== M4-T10 FFI Ecosystem Bridges Verification Complete ==="));
+}
+
 
 
 

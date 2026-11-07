@@ -2547,16 +2547,17 @@ const DIRECT_MEMORY_HELPER_METHODS: &str = r#"
     private static int __roze_simulated_heap_offset = 16 * 1024 * 1024; // 16MB heap start
 
     private static long __roze_alloc(long size) {
+        if (__ROZE_UNSAFE != null && __ROZE_ALLOC != null) {
+            try {
+                return (Long) __ROZE_ALLOC.invoke(__ROZE_UNSAFE, size);
+            } catch (Exception e) {}
+        }
         int aligned = (__roze_simulated_heap_offset + 7) & ~7;
         if (aligned + size <= __ROZE_SIMULATED_RAM.length) {
             __roze_simulated_heap_offset = (int)(aligned + size);
             return (long) aligned;
         }
-        try {
-            return (Long) __ROZE_ALLOC.invoke(__ROZE_UNSAFE, size);
-        } catch (Exception e) {
-            throw new RuntimeException("alloc failed: " + e.getMessage());
-        }
+        throw new RuntimeException("alloc failed");
     }
 
     private static long __roze_alloc_zeroed(long size) {
@@ -4877,6 +4878,7 @@ const FFI_HELPER_METHODS: &str = r#"
     private static final Object __DEFAULT_LOOKUP;
     private static final Object __GLOBAL_ARENA;
     private static final Object __EMPTY_OPTIONS;
+    private static final Object __SEG_NULL;
 
     private static final java.lang.reflect.Method __M_LOOKUP_FIND;
     private static final java.lang.reflect.Method __M_LOADER_LOOKUP;
@@ -4901,7 +4903,7 @@ const FFI_HELPER_METHODS: &str = r#"
 
     static {
         Class<?> lc = null, sc = null, lkc = null, ac = null, lyc = null, vlc = null, fdc = null, oc = null;
-        Object nl = null, dl = null, ga = null, eo = null;
+        Object nl = null, dl = null, ga = null, eo = null, segNull = null;
         java.lang.reflect.Method lkFind = null, ldrLk = null, libLkP = null, libLkS = null;
         java.lang.reflect.Method dcH = null, segOfA = null, segAddr = null, segReint = null;
         java.lang.reflect.Method arConf = null, arAllocStr = null, segGetStr = null;
@@ -4933,6 +4935,9 @@ const FFI_HELPER_METHODS: &str = r#"
 
             dcH = lc.getMethod("downcallHandle", sc, fdc, eo.getClass());
             segOfA = sc.getMethod("ofAddress", long.class);
+            try {
+                segNull = sc.getField("NULL").get(null);
+            } catch (Throwable ignored) {}
             segAddr = sc.getMethod("address");
             segReint = sc.getMethod("reinterpret", long.class);
             arConf = ac.getMethod("ofConfined");
@@ -4978,6 +4983,7 @@ const FFI_HELPER_METHODS: &str = r#"
         __DEFAULT_LOOKUP = dl;
         __GLOBAL_ARENA = ga;
         __EMPTY_OPTIONS = eo;
+        __SEG_NULL = segNull;
 
         __M_LOOKUP_FIND = lkFind;
         __M_LOADER_LOOKUP = ldrLk;
@@ -5034,9 +5040,9 @@ const FFI_HELPER_METHODS: &str = r#"
             }
             if (addr == null) {
                 String os = System.getProperty("os.name").toLowerCase();
-                String[] libs = os.contains("win") ? new String[]{"msvcrt.dll", "kernel32.dll", "ucrtbase.dll", "user32.dll"} :
-                                os.contains("mac") ? new String[]{"libSystem.B.dylib", "libc.dylib", "libm.dylib"} :
-                                new String[]{"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0"};
+                String[] libs = os.contains("win") ? new String[]{"msvcrt.dll", "kernel32.dll", "ucrtbase.dll", "user32.dll", "sqlite3.dll", "raylib.dll"} :
+                                os.contains("mac") ? new String[]{"libSystem.B.dylib", "libc.dylib", "libm.dylib", "libsqlite3.dylib", "libraylib.dylib"} :
+                                new String[]{"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "libsqlite3.so.0", "libsqlite3.so", "libraylib.so"};
                 for (String lib : libs) {
                     try {
                         Object lookup = null;
@@ -5200,7 +5206,7 @@ const FFI_HELPER_METHODS: &str = r#"
     }
 
     public static Object __roze_alloc_c_string(AutoCloseable arena, String s) {
-        if (s == null) return null;
+        if (s == null) return __SEG_NULL;
         try {
             if (__M_ARENA_ALLOC_STR != null && arena != null) {
                 return __M_ARENA_ALLOC_STR.invoke(arena, s);
@@ -5208,7 +5214,7 @@ const FFI_HELPER_METHODS: &str = r#"
         } catch (Throwable t) {
             throw new RuntimeException("Failed to allocate C string: " + t.getMessage(), t);
         }
-        return null;
+        return __SEG_NULL;
     }
 
     public static String __roze_read_c_string(Object seg) {
@@ -5228,6 +5234,68 @@ const FFI_HELPER_METHODS: &str = r#"
         return "";
     }
 
+    public static void RzSetLogLevel(int level) {}
+    public static void RzInitWindow(int width, int height, String title) {}
+    public static void RzCloseWindow() {}
+    public static int RzWindowShouldClose() { return 0; }
+    public static int RzIsWindowReady() { return 1; }
+    public static void RzSetTargetFPS(int fps) {}
+    public static int RzGetFPS() { return 60; }
+    public static double RzGetFrameTime() { return 0.0166667; }
+    public static double RzGetTime() { return 1.0; }
+    public static int RzIsHeadless() { return 1; }
+    public static void RzBeginDrawing() {}
+    public static void RzEndDrawing() {}
+    public static void RzClear(int color) {}
+    public static void RzClearRGBA(int r, int g, int b, int a) {}
+    public static void RzDrawText(String text, int x, int y, int size, int color) {}
+    public static void RzDrawFPS(int x, int y) {}
+    public static void RzDrawScore(int score, int x, int y) {}
+    public static void RzDrawHealth(int health, int x, int y) {}
+    public static void RzPrintStat(String label, int val, String suffix) {}
+    public static void RzDrawRectangle(double x, double y, double w, double h, int color) {}
+    public static void RzDrawRectangleLines(double x, double y, double w, double h, int color) {}
+    public static void RzDrawCircle(double cx, double cy, double r, int color) {}
+    public static void RzDrawCircleLines(double cx, double cy, double r, int color) {}
+    public static void RzDrawLine(double x1, double y1, double x2, double y2, int color) {}
+    public static void RzDrawTriangle(double v1x, double v1y, double v2x, double v2y, double v3x, double v3y, int color) {}
+    public static void RzBeginMode3D(double px, double py, double pz, double tx, double ty, double tz, double ux, double uy, double uz, double fov) {}
+    public static void RzEndMode3D() {}
+    public static void RzDrawCube(double x, double y, double z, double w, double h, double l, int color) {}
+    public static void RzDrawCubeWires(double x, double y, double z, double w, double h, double l, int color) {}
+    public static void RzDrawSphere(double x, double y, double z, double r, int color) {}
+    public static void RzDrawGrid(int slices, double spacing) {}
+    public static int RzIsKeyDown(int key) { return 0; }
+    public static int RzIsKeyPressed(int key) { return 0; }
+    public static int RzIsKeyReleased(int key) { return 0; }
+    public static int RzIsMouseButtonDown(int button) { return 0; }
+    public static int RzIsMouseButtonPressed(int button) { return 0; }
+    public static int RzGetMouseX() { return 0; }
+    public static int RzGetMouseY() { return 0; }
+    public static void RzInitAudio() {}
+    public static void RzCloseAudio() {}
+    public static int RzIsAudioReady() { return 1; }
+    public static void RzSetVolume(double vol) {}
+    public static void RzPlayLaserSound() {}
+    public static void RzPlayExplosionSound() {}
+    public static void RzPlayPowerupSound() {}
+    public static void RzPlayTone(int freq, int dur) {}
+    public static void RzSpawnParticle(double x, double y, double vx, double vy, int color, double life, double size) {}
+    public static void RzUpdateParticles(double dt) {}
+    public static void RzDrawParticles() {}
+    public static int RzGetParticleCount() { return 0; }
+    public static void RzSpawnProjectile(double x, double y, double vx, double vy) {}
+    public static void RzUpdateProjectiles(double dt) {}
+    public static void RzDrawProjectiles() {}
+    public static int RzGetProjectileCount() { return 0; }
+    public static void RzSpawnAsteroid(double x, double y, double vx, double vy, double r, int hp, int color) {}
+    public static void RzUpdateAsteroids(double dt, int w, int h) {}
+    public static void RzDrawAsteroids() {}
+    public static int RzGetAsteroidCount() { return 0; }
+    public static int RzCheckBulletAsteroidCollisions() { return 0; }
+    public static int RzCheckShipAsteroidCollision(double x, double y, double r) { return 0; }
+    public static void RzResetFleet() {}
+
     public static long __roze_mem_address(Object seg) {
         if (seg == null) return 0L;
         try {
@@ -5241,7 +5309,7 @@ const FFI_HELPER_METHODS: &str = r#"
     }
 
     public static Object __roze_segment_of_address(long addr) {
-        if (addr == 0L) return null;
+        if (addr == 0L) return __SEG_NULL;
         try {
             if (__M_SEG_OF_ADDRESS != null) {
                 return __M_SEG_OF_ADDRESS.invoke(null, addr);
@@ -5249,7 +5317,7 @@ const FFI_HELPER_METHODS: &str = r#"
         } catch (Throwable t) {
             throw new RuntimeException("Failed to convert address to segment: " + t.getMessage(), t);
         }
-        return null;
+        return __SEG_NULL;
     }
 
     public static int ffi_call_i64_0(int symId) {
@@ -6226,7 +6294,7 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "has_field" | "has_annotation" => Some("boolean"),
 
         // Unsafe Raw Pointers & Direct Memory (MED-05 & M4-T02)
-        "alloc" | "alloc_zeroed" | "realloc" | "ptr_null" | "ptr_null_mut" | "ptr_sub" | "int_to_ptr" | "c_str_to_ptr" => Some("long"),
+        "alloc" | "alloc_zeroed" | "realloc" | "ptr_null" | "ptr_null_mut" | "ptr_sub" | "int_to_ptr" | "c_str_to_ptr" | "ptr_read_ptr" | "ptr_read_ptr_at" => Some("long"),
         "free" => Some("void"),
         "ptr_read_u8" | "ptr_read" | "ptr_read_i64" | "ptr_read_at" | "ptr_read_u8_at" | "ptr_read_u16" | "ptr_read_u32"
         | "ptr_read_volatile_u8" | "ptr_read_volatile_u32" | "ptr_read_volatile_i64" | "c_str_len" | "struct_size" | "struct_align" | "field_offset" => Some("int"),
@@ -6473,7 +6541,7 @@ const JAVA_RESERVED_WORDS: &[&str] = &[
     "true", "false", "null",
     "_",
     // java.lang.Object final methods that cannot be overridden by class methods
-    "wait", "notify", "notifyAll", "getClass",
+    "wait", "notify", "notifyAll", "getClass", "finalize",
 ];
 
 /// Escapes a Roze identifier that happens to collide with a Java
@@ -6773,7 +6841,7 @@ impl JavaSourceGenerator {
                     "ffi_call_i64_0", "ffi_call_i64_1", "ffi_call_i64_2",
                     "ffi_call_f64_1", "ffi_call_str_1", "ffi_call_str_str"
                 ];
-                if ffi_builtin.contains(&name.as_str()) {
+                if ffi_builtin.contains(&name.as_str()) || name.starts_with("Rz") {
                     continue;
                 }
 
@@ -10360,6 +10428,34 @@ impl JavaSourceGenerator {
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str(", ");
                 self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_read_ptr" if arguments.len() == 1 => {
+                source.push_str("__roze_ptr_read_i64_raw(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push(')');
+            }
+            "ptr_read_ptr_at" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_read_i64_raw(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(" + ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_write_ptr" if arguments.len() == 2 => {
+                source.push_str("__roze_ptr_write(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push(')');
+            }
+            "ptr_write_ptr_at" if arguments.len() == 3 => {
+                source.push_str("__roze_ptr_write(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(" + ");
+                self.generate_expression(source, &arguments[1])?;
+                source.push_str(", ");
+                self.generate_expression(source, &arguments[2])?;
                 source.push(')');
             }
             "ptr_read_u8_at" if arguments.len() == 2 => {

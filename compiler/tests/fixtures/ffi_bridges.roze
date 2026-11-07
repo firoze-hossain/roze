@@ -1,0 +1,136 @@
+// compiler/tests/fixtures/ffi_bridges.roze
+//
+// Milestone Gate M4-T10: FFI Ecosystem Bridges
+// Proves universal C-ABI FFI by driving 3 real-world pure Roze native bridges:
+// 1. POSIX Libc (open/close/read/write/lseek, process IDs, C strings, time)
+// 2. SQLite3 Embedded Database Engine (in-memory db, tables, inserts, prepared statements)
+// 3. Raylib 2D/3D Graphics & Game Engine (windowing, shapes, 3D camera, text)
+
+import "libc";
+import "sqlite";
+import "raylib";
+
+func assert(cond: bool, msg: string) -> void {
+    if (!cond) {
+        println("FAILED: " + msg);
+    }
+}
+
+func main() {
+    println("=== M4-T10 FFI Ecosystem Bridges Test Suite ===");
+
+    // =========================================================================
+    // 1. POSIX Libc Native Bridge Tests
+    // =========================================================================
+    println("--- Suite 1: POSIX Libc Native Bridge ---");
+    let pid = posix_getpid();
+    println("PID: " + to_string(pid));
+    assert(pid > 0, "posix_getpid() must return positive integer");
+
+    let ppid = posix_getppid();
+    assert(ppid >= 0, "posix_getppid() must return non-negative integer");
+
+    let s = "Roze Language Universal C-ABI FFI";
+    let len = posix_strlen(s);
+    println("strlen: " + to_string(len));
+    assert(len == 33, "posix_strlen must return correct byte count");
+
+    let cmp_eq = posix_strcmp("roze", "roze");
+    assert(cmp_eq == 0, "posix_strcmp identical strings == 0");
+
+    let sub = posix_strstr("modern roze programming", "roze");
+    println("strstr: " + sub);
+    assert(sub == "roze programming", "posix_strstr matches substring");
+
+    let t = posix_time();
+    println("time: " + to_string(t));
+    assert(t > 1700000000, "posix_time() returns reasonable epoch timestamp");
+
+    // File descriptor operations
+    let test_file = "/tmp/roze_m4_t10_test.txt";
+    let f = posix_file_create(test_file);
+    assert(f.is_valid(), "posix_file_create succeeds");
+    let close_res = f.close();
+    assert(close_res == 0, "posix_file close succeeds");
+    assert(posix_access(test_file, f_ok()), "file exists after create");
+    let unl_res = posix_unlink(test_file);
+    assert(unl_res == 0, "posix_unlink succeeds");
+    assert(!posix_access(test_file, f_ok()), "file does not exist after unlink");
+
+    // =========================================================================
+    // 2. SQLite3 Embedded Database Engine Tests
+    // =========================================================================
+    println("--- Suite 2: SQLite3 Embedded Database Bridge ---");
+    let v = sqlite_version();
+    println("sqlite version: " + v);
+    assert(posix_strlen(v) > 0, "sqlite_version() returns valid version string");
+
+    let db = sqlite_open_memory();
+    assert(db.is_open, "sqlite_open_memory() opens in-memory database");
+
+    let rc_create = db.execute("CREATE TABLE heroes (id INTEGER PRIMARY KEY, name TEXT, power REAL);");
+    assert(rc_create == 0, "CREATE TABLE returns SQLITE_OK");
+
+    let rc_ins1 = db.execute("INSERT INTO heroes (name, power) VALUES ('Firoze', 99.5);");
+    assert(rc_ins1 == 0, "INSERT 1 returns SQLITE_OK");
+
+    let rc_ins2 = db.execute("INSERT INTO heroes (name, power) VALUES ('Roze', 100.0);");
+    assert(rc_ins2 == 0, "INSERT 2 returns SQLITE_OK");
+
+    let last_id = db.last_insert_rowid();
+    println("last insert rowid: " + to_string(last_id));
+    assert(last_id >= 2, "last_insert_rowid is >= 2");
+
+    let stmt = db.prepare("SELECT id, name, power FROM heroes ORDER BY id ASC;");
+    assert(stmt.is_valid, "prepare statement valid");
+
+    let col_count = stmt.column_count();
+    println("column count: " + to_string(col_count));
+    assert(col_count == 3, "column count == 3");
+    assert(stmt.column_name(0) == "id", "col 0 is id");
+    assert(stmt.column_name(1) == "name", "col 1 is name");
+    assert(stmt.column_name(2) == "power", "col 2 is power");
+
+    let rows_read = 0;
+    while (stmt.step()) {
+        rows_read = rows_read + 1;
+        let hid = stmt.get_int(0);
+        let hname = stmt.get_string(1);
+        let hpower = stmt.get_float(2);
+        assert(hpower > 80.0, "power is greater than 80.0");
+        println("Hero #" + to_string(hid) + ": " + hname);
+    }
+    assert(rows_read == 2, "read exactly 2 rows");
+    stmt.finalize();
+
+    let close_db = db.close();
+    assert(close_db == 0, "db.close() returns SQLITE_OK");
+
+    // =========================================================================
+    // 3. Raylib 2D/3D Graphics & Game Engine Tests
+    // =========================================================================
+    println("--- Suite 3: Raylib 2D/3D Game Engine Bridge ---");
+    let win = raylib_window_open(800, 600, "Roze FFI Raylib Test");
+    assert(win.is_open, "raylib window open");
+    assert(raylib_is_window_ready(), "raylib window ready");
+
+    let fps = raylib_get_fps();
+    println("Raylib Target FPS: " + to_string(fps));
+    assert(fps >= 0, "valid FPS reported");
+
+    win.begin_drawing();
+    win.clear(color_raywhite());
+    win.draw_text("Roze Raylib 2D/3D Engine", 20, 20, 24, color_darkgray());
+    win.draw_rectangle(50.0, 50.0, 120.0, 80.0, color_red());
+    win.draw_circle(240.0, 90.0, 40.0, color_blue());
+    win.end_drawing();
+
+    raylib_begin_mode3d(0.0, 10.0, 10.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 45.0);
+    raylib_draw_cube(0.0, 0.0, 0.0, 2.0, 2.0, 2.0, color_gold());
+    raylib_end_mode3d();
+
+    win.close();
+    assert(!win.is_open, "raylib window closed successfully");
+
+    println("=== M4-T10 FFI Ecosystem Bridges Verification Complete ===");
+}

@@ -173,6 +173,7 @@ fn compare_pre_release(a: &str, b: &str) -> Ordering {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Exact,      // =
+    NotEqual,   // !=
     Greater,    // >
     GreaterEq,  // >=
     Less,       // <
@@ -210,6 +211,9 @@ impl Comparator {
         } else if s.starts_with("<=") {
             s = &s[2..].trim_start();
             Op::LessEq
+        } else if s.starts_with("!=") {
+            s = &s[2..].trim_start();
+            Op::NotEqual
         } else if s.starts_with('>') {
             s = &s[1..].trim_start();
             Op::Greater
@@ -271,6 +275,13 @@ impl Comparator {
                 let mi = self.minor.map_or(true, |mi| ver.minor == mi);
                 let p = self.patch.map_or(true, |p| ver.patch == p);
                 m && mi && p && (self.pre.is_none() || ver.pre == self.pre)
+            }
+            Op::NotEqual => {
+                let m = ver.major == self.major;
+                let mi = self.minor.map_or(true, |mi| ver.minor == mi);
+                let p = self.patch.map_or(true, |p| ver.patch == p);
+                let is_exact = m && mi && p && (self.pre.is_none() || ver.pre == self.pre);
+                !is_exact
             }
             Op::Greater => {
                 let cmp_ver = Version {
@@ -422,6 +433,17 @@ impl VersionReq {
         self.comparators.iter().all(|cmp| cmp.matches(ver))
     }
 
+    /// Combines two version requirements into a conjunction that must satisfy both.
+    pub fn intersect(&self, other: &VersionReq) -> Self {
+        let mut comps = self.comparators.clone();
+        comps.extend(other.comparators.clone());
+        let raw = format!("{}, {}", self.raw, other.raw);
+        Self {
+            comparators: comps,
+            raw,
+        }
+    }
+
     #[allow(dead_code)]
     pub fn as_str(&self) -> &str {
         &self.raw
@@ -551,5 +573,22 @@ mod tests {
         let wildcard = VersionReq::parse("*").unwrap();
         assert!(wildcard.matches(&Version::parse("0.0.1").unwrap()));
         assert!(wildcard.matches(&Version::parse("99.0.0").unwrap()));
+    }
+
+    #[test]
+    fn test_not_equal_and_intersection() {
+        let req = VersionReq::parse(">= 1.0.0, < 2.0.0, != 1.5.0").unwrap();
+        assert!(req.matches(&Version::parse("1.0.0").unwrap()));
+        assert!(req.matches(&Version::parse("1.4.9").unwrap()));
+        assert!(!req.matches(&Version::parse("1.5.0").unwrap()), "!= 1.5.0 must reject 1.5.0");
+        assert!(req.matches(&Version::parse("1.5.1").unwrap()));
+
+        let req1 = VersionReq::parse("^1.0.0").unwrap();
+        let req2 = VersionReq::parse("!= 1.2.0").unwrap();
+        let intersection = req1.intersect(&req2);
+        assert!(intersection.matches(&Version::parse("1.1.0").unwrap()));
+        assert!(!intersection.matches(&Version::parse("1.2.0").unwrap()));
+        assert!(intersection.matches(&Version::parse("1.3.0").unwrap()));
+        assert!(!intersection.matches(&Version::parse("2.0.0").unwrap()));
     }
 }

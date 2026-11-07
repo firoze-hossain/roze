@@ -486,7 +486,7 @@ s1_rows = [
         ("M5-T04", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Dependency Resolver", "SemVer Engine & SAT Dependency Solver",
         "Semantic versioning specification (^1.2.3, ~1.2.0, >=1.0.0, *) with SAT-based graph solver detecting version conflicts and circular dependencies.",
         "Parity with Cargo resolver v2 and npm PubGrub solver.",
-        "Package Management, Architecture", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Package Management, Architecture", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M5-T05", 8), ("Month 5", 7), ("Sprint 9 (W17-W18)", 8), "Cache & Offline Mode", "Package Cache & 'bsr vendor' Offline Mode",

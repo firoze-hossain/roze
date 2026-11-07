@@ -9,6 +9,7 @@ pub mod project;
 pub mod registry;
 pub mod resolver;
 pub mod semver;
+pub mod solver;
 pub mod template;
 
 use clap::{Parser, Subcommand};

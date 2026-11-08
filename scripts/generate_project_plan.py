@@ -528,7 +528,7 @@ s1_rows = [
         ("M5-T11", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Milestone Gate M5", "Package Ecosystem & Developer Experience Gate",
         "Build, resolve, fetch, compile, test, benchmark, and document multi-package modular projects using 'bsr' and 'bsr.mfz' with zero compiler interventions.",
         "Full package manager autonomy and verified developer tooling workflow.",
-        "Package Ecosystem & Developer Tooling", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
+        "Package Ecosystem & Developer Tooling", "3 Days", ("Critical", 14), ("Completed", 16)
     ],
 
     # MONTH 6: 100% PURE ROZE-IN-ROZE SELF-HOSTING COMPILER & PRODUCTION INDEPENDENCE

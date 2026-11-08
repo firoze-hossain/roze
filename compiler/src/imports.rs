@@ -249,6 +249,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         let mut candidates = Vec::new();
 
         // 1. Direct relative check
+        candidates.push(base_dir.join("libs").join(subpath));
         candidates.push(base_dir.join("packages").join(subpath));
         candidates.push(base_dir.join(subpath));
 
@@ -259,6 +260,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
             if depth > 5 {
                 break;
             }
+            candidates.push(dir.join("libs").join(subpath));
             candidates.push(dir.join("packages").join(subpath));
             curr = dir.parent();
             depth += 1;
@@ -428,11 +430,13 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
             if depth > 5 {
                 break;
             }
+            list.push(dir.join("libs").join(path).join("src").join("lib.roze"));
             list.push(dir.join("libs").join(path).join("lib.roze"));
             list.push(dir.join("libs").join(format!("{}.roze", path)));
             list.push(dir.join("packages").join(path).join("src").join("lib.roze"));
             let sanitized = path.replace("::", "_");
             if sanitized != path {
+                list.push(dir.join("libs").join(&sanitized).join("src").join("lib.roze"));
                 list.push(dir.join("libs").join(&sanitized).join("lib.roze"));
                 list.push(dir.join("libs").join(format!("{}.roze", sanitized)));
                 list.push(dir.join("packages").join(&sanitized).join("src").join("lib.roze"));

@@ -4723,6 +4723,24 @@ fn native_milestone_gate_m4_universal_runtime_gate() {
     assert!(stdout.contains("SUCCESS: ALL MILESTONE GATE M4 VERIFICATION SUITES PASSED!"));
 }
 
+#[test]
+fn native_milestone_gate_m5_package_ecosystem_gate() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("milestone_gate_m5_package_ecosystem.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read milestone_gate_m5_package_ecosystem.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("milestone_gate_m5_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("🌹 Milestone Gate M5: Package Ecosystem & Developer Experience Gate"));
+    assert!(stdout.contains("SUITE 1 PASS: Modular Decoupled Framework Architecture Verified"));
+    assert!(stdout.contains("SUITE 2 PASS: Cryptographic Release Integrity & Signing Verified"));
+    assert!(stdout.contains("SUITE 3 PASS: Semantic Versioning & Dependency Specifications Verified"));
+    assert!(stdout.contains("SUITE 4 PASS: Monotonic High-Resolution Timing & Benchmarking Verified"));
+    assert!(stdout.contains("SUITE 5 PASS: Developer Experience & Tooling Verified"));
+    assert!(stdout.contains("SUCCESS: ALL MILESTONE GATE M5 VERIFICATION SUITES PASSED!"));
+}
+
 
 
 

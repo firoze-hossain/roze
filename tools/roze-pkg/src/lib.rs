@@ -209,6 +209,21 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Build a package's documentation using rozedoc
+    Doc {
+        /// Opens the docs in a browser after the operation
+        #[arg(long)]
+        open: bool,
+        /// Disable in-browser live playground simulation buttons
+        #[arg(long)]
+        no_playground: bool,
+        /// Output directory for generated static HTML documentation [default: target/doc]
+        #[arg(short, long, default_value = "target/doc")]
+        output: String,
+        /// Export complete machine-readable AST documentation model as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -263,6 +278,7 @@ pub fn run_cli() {
         Commands::Test => cmd_test(),
         Commands::Bench => cmd_bench(),
         Commands::Manifest { check } => cmd_manifest(check),
+        Commands::Doc { open, no_playground, output, json } => cmd_doc(open, no_playground, output, json),
     };
 
     if let Err(e) = result {
@@ -932,3 +948,43 @@ fn cmd_manifest(check: bool) -> Result<()> {
 
     Ok(())
 }
+
+pub fn cmd_doc(open: bool, no_playground: bool, output: String, json: bool) -> Result<()> {
+    let current_dir = std::env::current_dir()?;
+    let config = load_project_config()?;
+    println!(
+        "{} Building documentation for {} v{}...",
+        "📚".magenta(),
+        config.name.bold(),
+        config.version
+    );
+
+    let generator = rozedoc::DocGenerator::new(rozedoc::DocGeneratorOptions {
+        output_dir: output.clone(),
+        enable_playground: !no_playground,
+        export_json: json,
+    });
+
+    let package = rozedoc::extract_package(&current_dir)?;
+    generator.generate(&package)?;
+
+    let index_path = PathBuf::from(&output).join("index.html");
+    println!(
+        "{} Documentation generated at: {}",
+        "✨".green(),
+        index_path.display().to_string().bold()
+    );
+
+    if open {
+        println!("🌐 Opening documentation in web browser...");
+        #[cfg(target_os = "linux")]
+        let _ = Command::new("xdg-open").arg(&index_path).spawn();
+        #[cfg(target_os = "macos")]
+        let _ = Command::new("open").arg(&index_path).spawn();
+        #[cfg(target_os = "windows")]
+        let _ = Command::new("cmd").args(["/C", "start", &index_path.to_string_lossy()]).spawn();
+    }
+
+    Ok(())
+}
+

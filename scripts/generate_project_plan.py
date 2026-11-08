@@ -516,7 +516,7 @@ s1_rows = [
         ("M5-T09", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Documentation Tool", "Automated Documentation Generator ('rozedoc')",
         "Markdown docstring extractor (/// ...), type signature indexer, and searchable HTML documentation generator with live playground support.",
         "Parity with 'rustdoc' and 'javadoc'.",
-        "Documentation, API Reference, Open Source", "6 Days", ("High", 14), ("Planned", 12)
+        "Documentation, API Reference, Open Source", "6 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M5-T10", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Benchmarking Tool", "Native Microbenchmark & Profiler Harness ('bsr bench')",

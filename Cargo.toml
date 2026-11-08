@@ -6,6 +6,7 @@ members = [
     "tools/roze-build",
     "tools/roze-pkg",
     "tools/roze-lsp",
+    "tools/rozedoc",
 ]
 resolver = "2"
 

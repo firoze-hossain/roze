@@ -1304,6 +1304,7 @@ dependencies = [
  "dirs",
  "fs_extra",
  "roze-compiler",
+ "rozedoc",
  "serde",
  "serde_json",
  "tempfile",
@@ -1320,6 +1321,20 @@ name = "roze-stdlib"
 version = "1.0.0"
 dependencies = [
  "roze-runtime",
+]
+
+[[package]]
+name = "rozedoc"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "colored",
+ "roze-compiler",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "walkdir",
 ]
 
 [[package]]

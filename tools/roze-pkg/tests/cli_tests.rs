@@ -607,5 +607,71 @@ fn test_cli_bsr_git_tag_dependency() {
     assert!(consumer_dir.join("libs/remote_pkg/src/lib.roze").exists());
 }
 
+#[test]
+fn test_cli_bsr_doc_generation() {
+    let temp = tempdir().unwrap();
+    let project_dir = temp.path().join("doc_test_app");
+
+    // 1. Create a new library project
+    let new_status = Command::new(bsr_bin())
+        .arg("new")
+        .arg(&project_dir)
+        .arg("--lib")
+        .status()
+        .expect("failed to run bsr new");
+    assert!(new_status.success());
+
+    // 2. Add rich docstrings to src/lib.roze
+    let lib_code = r#"
+//! Core documentation test module.
+
+/// Computes the square of an integer.
+///
+/// @param n Integer to square
+/// @return Square value
+/// @example
+/// let res = square(5);
+func square(n: int) -> int {
+    return n * n;
+}
+
+/// A 2D point representation.
+class Point {
+    x: float,
+    y: float,
+}
+"#;
+    fs::write(project_dir.join("src/lib.roze"), lib_code).unwrap();
+
+    // 3. Run bsr doc --output target/doc --json
+    let doc_status = Command::new(bsr_bin())
+        .arg("doc")
+        .arg("--output")
+        .arg(project_dir.join("target/doc").display().to_string())
+        .arg("--json")
+        .current_dir(&project_dir)
+        .status()
+        .expect("failed to run bsr doc");
+    assert!(doc_status.success());
+
+    // 4. Verify generated static documentation assets
+    let out_dir = project_dir.join("target/doc");
+    assert!(out_dir.join("index.html").exists());
+    assert!(out_dir.join("rozedoc.css").exists());
+    assert!(out_dir.join("search.js").exists());
+    assert!(out_dir.join("search-index.js").exists());
+    assert!(out_dir.join("playground.js").exists());
+    assert!(out_dir.join("doc.json").exists());
+
+    let index_html = fs::read_to_string(out_dir.join("index.html")).unwrap();
+    assert!(index_html.contains("doc_test_app"));
+    assert!(index_html.contains("ROZE CRATE"));
+
+    let search_js = fs::read_to_string(out_dir.join("search-index.js")).unwrap();
+    assert!(search_js.contains("square"));
+    assert!(search_js.contains("Point"));
+}
+
+
 
 

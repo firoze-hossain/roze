@@ -510,7 +510,7 @@ s1_rows = [
         ("M5-T08", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "IDE Tooling", "Language Server Protocol (LSP) Engine ('roze-lsp')",
         "Full LSP v3.17 server: real-time syntax diagnostics, semantic tokens, hover documentation, go-to-definition, and autocomplete for VS Code, Neovim, Zed.",
         "Matches rust-analyzer and Eclipse JDT language server experience.",
-        "Developer Productivity, IDEs, Editors", "8 Days", ("High", 14), ("Planned", 12)
+        "Developer Productivity, IDEs, Editors", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M5-T09", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Documentation Tool", "Automated Documentation Generator ('rozedoc')",

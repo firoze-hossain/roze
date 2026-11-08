@@ -208,7 +208,7 @@ pub fn resolve_imports(program: Program, base_dir: &Path) -> Result<Program> {
 
 /// Attempts to locate and load a modular bsr package (e.g. rozeboot, roze-orm, roze-net, roze-crypto)
 /// from the workspace `packages/` directory, project `libs/` directory, cache, or environment.
-fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, String)> {
+pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, String)> {
     let pkg_subpath = match path {
         "rozeboot" | "rozeboot2" | "roze::boot" | "roze-boot" | "roze_boot" | "ioc" | "annotations" => {
             Some("rozeboot/src/lib.roze".to_string())

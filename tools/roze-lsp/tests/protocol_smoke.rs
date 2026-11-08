@@ -1,12 +1,10 @@
 // tools/roze-lsp/tests/protocol_smoke.rs
 //
-// An end-to-end protocol smoke test: speaks real LSP JSON-RPC-over-stdio
-// to the actual compiled `roze-lsp` binary, the same way VS Code's
-// language client does. The VS Code extension itself (see ide/vscode) is
-// thin boilerplate that just spawns this binary and forwards messages
-// between the editor UI and it -- the real behavior worth testing is the
-// server's, which this exercises directly and completely without needing
-// an actual VS Code GUI.
+// Comprehensive end-to-end protocol smoke test for Roze LSP v3.17.
+// Exercises real JSON-RPC-over-stdio against the compiled `roze-lsp` binary:
+// diagnostics, semantic tokens, hover documentation, go-to-definition,
+// find-references, completion with snippets, signature help, and document formatting.
+
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
@@ -31,7 +29,12 @@ impl LspClient {
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
 
-        Self { child, stdin, reader: BufReader::new(stdout), next_id: 1 }
+        Self {
+            child,
+            stdin,
+            reader: BufReader::new(stdout),
+            next_id: 1,
+        }
     }
 
     fn write_message(&mut self, msg: &Value) {
@@ -54,7 +57,6 @@ impl LspClient {
         self.write_message(&json!({ "jsonrpc": "2.0", "method": method, "params": params }));
     }
 
-    /// Reads one framed message from the server.
     fn read_message(&mut self) -> Option<Value> {
         let mut content_length: Option<usize> = None;
         loop {
@@ -64,9 +66,13 @@ impl LspClient {
             }
             let line = line.trim_end();
             if line.is_empty() {
-                break; // end of headers
+                break;
             }
-            if let Some(rest) = line.to_ascii_lowercase().strip_prefix("content-length:").map(|s| s.to_string()) {
+            if let Some(rest) = line
+                .to_ascii_lowercase()
+                .strip_prefix("content-length:")
+                .map(|s| s.to_string())
+            {
                 content_length = rest.trim().parse().ok();
             }
         }
@@ -76,8 +82,6 @@ impl LspClient {
         serde_json::from_slice(&buf).ok()
     }
 
-    /// Reads messages (skipping ones that don't match, e.g. log
-    /// notifications) until `pred` matches one or `timeout` elapses.
     fn wait_for(&mut self, timeout: Duration, pred: impl Fn(&Value) -> bool) -> Option<Value> {
         let start = Instant::now();
         while start.elapsed() < timeout {
@@ -86,7 +90,6 @@ impl LspClient {
                     if pred(&msg) {
                         return Some(msg);
                     }
-                    // else: an unrelated message (e.g. window/logMessage) -- keep reading
                 }
                 None => return None,
             }
@@ -96,91 +99,225 @@ impl LspClient {
 
     fn shutdown_and_exit(mut self) -> std::io::Result<std::process::ExitStatus> {
         let id = self.request("shutdown", Value::Null);
-        self.wait_for(Duration::from_secs(5), |m| m.get("id") == Some(&json!(id)));
+        self.wait_for(Duration::from_secs(5), |m| {
+            m.get("id") == Some(&json!(id))
+        });
         self.notify("exit", Value::Null);
-        drop(self.stdin); // close stdin -- the server's read loop ends on EOF, same as a real client detaching
+        drop(self.stdin);
         self.child.wait()
     }
 }
 
-const BROKEN_SOURCE: &str = "func add(a: int, b: int) -> int {\n    return \"not a number\";\n}\n\nfunc main() {\n    println(add(1, 2));\n}\n";
+const BROKEN_SOURCE: &str =
+    "func add(a: int, b: int) -> int {\n    return \"not a number\";\n}\n\nfunc main() {\n    println(add(1, 2));\n}\n";
 
-const VALID_SOURCE: &str = "import \"core\";\n\nfunc classify(x: int) -> string {\n    if x > 0 {\n        return \"positive\";\n    } else {\n        return \"non-positive\";\n    }\n}\n\nfunc main() {\n    for let i = 0; i < 3; i = i + 1 {\n        println(classify(i));\n    }\n    println(square(5));\n}\n";
+const VALID_SOURCE: &str = "import \"core\";\n\n/// Classifies whether a number is positive or non-positive.\nfunc classify(x: int) -> string {\n    if x > 0 {\n        return \"positive\";\n    } else {\n        return \"non-positive\";\n    }\n}\n\nfunc main() {\n    for let i = 0; i < 3; i = i + 1 {\n        println(classify(i));\n    }\n    println(square(5));\n}\n";
 
 #[test]
 fn full_lsp_session_against_the_real_binary() {
     let mut client = LspClient::start();
 
-    // ---- initialize / initialized ----
-    let init_id = client.request("initialize", json!({
-        "processId": Value::Null,
-        "rootUri": "file:///tmp/roze_lsp_rust_test",
-        "capabilities": {},
-    }));
-    let init_resp = client.wait_for(Duration::from_secs(5), |m| m.get("id") == Some(&json!(init_id)))
+    // 1. Initialize & Advertised Capabilities
+    let init_id = client.request(
+        "initialize",
+        json!({
+            "processId": Value::Null,
+            "rootUri": "file:///tmp/roze_lsp_rust_test",
+            "capabilities": {},
+        }),
+    );
+    let init_resp = client
+        .wait_for(Duration::from_secs(5), |m| {
+            m.get("id") == Some(&json!(init_id))
+        })
         .expect("no response to initialize");
     let caps = &init_resp["result"]["capabilities"];
     assert!(caps.get("hoverProvider").is_some(), "expected hover support declared");
     assert!(caps.get("completionProvider").is_some(), "expected completion support declared");
+    assert!(caps.get("definitionProvider").is_some(), "expected definition support declared");
+    assert!(caps.get("referencesProvider").is_some(), "expected references support declared");
     assert!(caps.get("documentSymbolProvider").is_some(), "expected documentSymbol support declared");
+    assert!(caps.get("semanticTokensProvider").is_some(), "expected semanticTokens support declared");
+    assert!(caps.get("signatureHelpProvider").is_some(), "expected signatureHelp support declared");
+    assert!(caps.get("documentFormattingProvider").is_some(), "expected documentFormatting support declared");
 
     client.notify("initialized", json!({}));
 
-    // ---- open a program with a real type error ----
+    // 2. Diagnostics: Open broken program -> publishDiagnostics with exact type error
     let broken_uri = "file:///tmp/roze_lsp_rust_test/broken.roze";
-    client.notify("textDocument/didOpen", json!({
-        "textDocument": { "uri": broken_uri, "languageId": "roze", "version": 1, "text": BROKEN_SOURCE }
-    }));
-    let diag_msg = client.wait_for(Duration::from_secs(5), |m| m.get("method") == Some(&json!("textDocument/publishDiagnostics")))
+    client.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": { "uri": broken_uri, "languageId": "roze", "version": 1, "text": BROKEN_SOURCE }
+        }),
+    );
+    let diag_msg = client
+        .wait_for(Duration::from_secs(5), |m| {
+            m.get("method") == Some(&json!("textDocument/publishDiagnostics"))
+        })
         .expect("expected a publishDiagnostics notification");
     let diags = diag_msg["params"]["diagnostics"].as_array().unwrap();
-    assert_eq!(diags.len(), 1, "expected exactly one diagnostic for the return-type error, got {:?}", diags);
+    assert_eq!(diags.len(), 1, "expected 1 diagnostic for return type error");
     let message = diags[0]["message"].as_str().unwrap().to_lowercase();
-    assert!(message.contains("return") || message.contains("int"), "diagnostic should describe the real type error, got: {}", message);
-    assert_eq!(diags[0]["range"]["start"]["line"], 1, "should point at the return statement (0-indexed line 1)");
+    assert!(message.contains("return") || message.contains("int"));
+    assert_eq!(diags[0]["range"]["start"]["line"], 1);
 
-    // ---- open a genuinely valid program using for-loops + imports, expect zero diagnostics ----
+    // 3. Diagnostics: Open valid program -> zero diagnostics
     let valid_uri = "file:///tmp/roze_lsp_rust_test/valid.roze";
-    client.notify("textDocument/didOpen", json!({
-        "textDocument": { "uri": valid_uri, "languageId": "roze", "version": 1, "text": VALID_SOURCE }
-    }));
-    let diag_msg2 = client.wait_for(Duration::from_secs(5), |m| {
-        m.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-            && m["params"]["uri"] == json!(valid_uri)
-    }).expect("expected a publishDiagnostics notification for the valid document");
+    client.notify(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": { "uri": valid_uri, "languageId": "roze", "version": 1, "text": VALID_SOURCE }
+        }),
+    );
+    let diag_msg2 = client
+        .wait_for(Duration::from_secs(5), |m| {
+            m.get("method") == Some(&json!("textDocument/publishDiagnostics"))
+                && m["params"]["uri"] == json!(valid_uri)
+        })
+        .expect("expected publishDiagnostics for valid document");
     let diags2 = diag_msg2["params"]["diagnostics"].as_array().unwrap();
-    assert!(diags2.is_empty(), "a genuinely valid program (using for-loops and imports) should have zero diagnostics, got {:?}", diags2);
+    assert!(diags2.is_empty(), "valid program should have 0 diagnostics");
 
-    // ---- documentSymbol on the valid document ----
-    let sym_id = client.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": valid_uri } }));
-    let sym_resp = client.wait_for(Duration::from_secs(5), |m| m.get("id") == Some(&json!(sym_id)))
+    // 4. Document Symbols: hierarchical symbols outline
+    let sym_id = client.request(
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": valid_uri } }),
+    );
+    let sym_resp = client
+        .wait_for(Duration::from_secs(5), |m| {
+            m.get("id") == Some(&json!(sym_id))
+        })
         .expect("no response to documentSymbol");
     let symbols = sym_resp["result"].as_array().cloned().unwrap_or_default();
-    let names: Vec<String> = symbols.iter().map(|s| s["name"].as_str().unwrap_or("").to_string()).collect();
-    assert!(names.contains(&"classify".to_string()) && names.contains(&"main".to_string()),
-        "expected both functions in document symbols, got {:?}", names);
+    let names: Vec<String> = symbols
+        .iter()
+        .map(|s| s["name"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(names.contains(&"classify".to_string()) && names.contains(&"main".to_string()));
 
-    // ---- hover ----
-    let hover_id = client.request("textDocument/hover", json!({
-        "textDocument": { "uri": valid_uri },
-        "position": { "line": 2, "character": 6 },
-    }));
-    let hover_resp = client.wait_for(Duration::from_secs(5), |m| m.get("id") == Some(&json!(hover_id)))
+    // 5. Semantic Tokens (LSP v3.17): delta-encoded syntax tokens
+    let sem_id = client.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": valid_uri } }),
+    );
+    let sem_resp = client
+        .wait_for(Duration::from_secs(5), |m| {
+            m.get("id") == Some(&json!(sem_id))
+        })
+        .expect("no response to semanticTokens");
+    let sem_data = sem_resp["result"]["data"].as_array().expect("expected semantic tokens data array");
+    assert!(!sem_data.is_empty(), "expected non-empty semantic tokens data");
+
+    // 6. Hover Documentation: Markdown popup with signature and docstring
+    let hover_id = client.request(
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": valid_uri },
+            "position": { "line": 3, "character": 6 }, // on classify
+        }),
+    );
+    let hover_resp = client
+        .wait_for(Duration::from_secs(5), |m| {
+            m.get("id") == Some(&json!(hover_id))
+        })
         .expect("no response to hover");
-    assert!(hover_resp.get("result").is_some());
+    let hover_val = hover_resp["result"]["contents"]["value"].as_str().unwrap_or("");
+    assert!(hover_val.contains("classify"));
+    assert!(hover_val.contains("Classifies whether a number is positive"));
 
-    // ---- completion ----
-    let comp_id = client.request("textDocument/completion", json!({
-        "textDocument": { "uri": valid_uri },
-        "position": { "line": 0, "character": 0 },
-    }));
-    let comp_resp = client.wait_for(Duration::from_secs(5), |m| m.get("id") == Some(&json!(comp_id)))
+    // 7. Context-Aware Autocomplete: Keywords, builtins, snippets
+    let comp_id = client.request(
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": valid_uri },
+            "position": { "line": 0, "character": 0 },
+        }),
+    );
+    let comp_resp = client
+        .wait_for(Duration::from_secs(5), |m| {
+            m.get("id") == Some(&json!(comp_id))
+        })
         .expect("no response to completion");
     let items = comp_resp["result"].as_array().cloned().unwrap_or_default();
-    let labels: Vec<String> = items.iter().map(|i| i["label"].as_str().unwrap_or("").to_string()).collect();
-    assert!(labels.contains(&"func".to_string()), "expected 'func' keyword in completions, got {:?}", labels);
+    let labels: Vec<String> = items
+        .iter()
+        .map(|i| i["label"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(labels.contains(&"func".to_string()));
+    assert!(labels.contains(&"println".to_string()));
+    assert!(labels.contains(&"classify".to_string()));
 
-    // ---- shutdown / exit ----
-    let status = client.shutdown_and_exit().expect("failed to wait on child process");
-    assert!(status.success(), "roze-lsp should exit cleanly after shutdown+exit, got {:?}", status);
+    // 8. Go-To-Definition: Jump to function declaration
+    let def_id = client.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": valid_uri },
+            "position": { "line": 13, "character": 18 }, // on classify(i) call
+        }),
+    );
+    let def_resp = client
+        .wait_for(Duration::from_secs(5), |m| {
+            m.get("id") == Some(&json!(def_id))
+        })
+        .expect("no response to definition");
+    let def_range = &def_resp["result"]["range"];
+    assert_eq!(def_range["start"]["line"], 3, "should jump to classify definition on line 3");
+
+    // 9. Find References: Find all occurrences
+    let ref_id = client.request(
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": valid_uri },
+            "position": { "line": 3, "character": 6 }, // on classify definition
+            "context": { "includeDeclaration": true },
+        }),
+    );
+    let ref_resp = client
+        .wait_for(Duration::from_secs(5), |m| {
+            m.get("id") == Some(&json!(ref_id))
+        })
+        .expect("no response to references");
+    let ref_locs = ref_resp["result"].as_array().expect("expected references array");
+    assert!(ref_locs.len() >= 2, "expected at least declaration + call references");
+
+    // 10. Signature Help: Active parameter popup
+    let sig_id = client.request(
+        "textDocument/signatureHelp",
+        json!({
+            "textDocument": { "uri": valid_uri },
+            "position": { "line": 13, "character": 25 }, // inside classify(i|)
+        }),
+    );
+    let sig_resp = client
+        .wait_for(Duration::from_secs(5), |m| {
+            m.get("id") == Some(&json!(sig_id))
+        })
+        .expect("no response to signatureHelp");
+    let sigs = sig_resp["result"]["signatures"].as_array().expect("expected signatures array");
+    assert!(!sigs.is_empty());
+    assert!(sigs[0]["label"].as_str().unwrap().contains("classify"));
+
+    // 11. Document Formatting: Consistent 4-space indent
+    let fmt_id = client.request(
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": valid_uri },
+            "options": { "tabSize": 4, "insertSpaces": true },
+        }),
+    );
+    let fmt_resp = client
+        .wait_for(Duration::from_secs(5), |m| {
+            m.get("id") == Some(&json!(fmt_id))
+        })
+        .expect("no response to formatting");
+    let edits = fmt_resp["result"].as_array().expect("expected formatting edits");
+    assert_eq!(edits.len(), 1);
+    assert!(!edits[0]["newText"].as_str().unwrap().is_empty());
+
+    // 12. Clean Shutdown & Exit
+    let status = client
+        .shutdown_and_exit()
+        .expect("failed to wait on child process");
+    assert!(status.success(), "roze-lsp should exit cleanly with 0");
 }

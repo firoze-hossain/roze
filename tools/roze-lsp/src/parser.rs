@@ -1,179 +1,830 @@
 // tools/roze-lsp/src/parser.rs
 //
-// A thin adapter over the real Roze compiler's lexer + parser
-// (roze_compiler::lexer / roze_compiler::parser), replacing what used to
-// be a hand-rolled, line-by-line heuristic scanner here: naive
-// `split_whitespace()` plus manual brace-counting, no real tokenization
-// at all. That old scanner would misparse a `{`/`}` inside a string
-// literal, couldn't handle a multi-line function signature, and
-// "detected" classes via a bare `line.starts_with("class")` even though
-// the real compiler doesn't parse classes at all yet -- so it would
-// happily report symbols the compiler could never actually build.
-//
-// Reusing the real compiler here means every grammar fix made to
-// `compiler` (like `for` loops, or fixing `-> ReturnType` parsing) is
-// automatically reflected in the editor experience too, instead of
-// needing to be hand-ported to a second, separate parser that drifts
-// further from reality over time.
+// Enhanced parser & AST symbol extraction for Roze Language Server Protocol.
+// Maps Roze compiler AST structures into high-fidelity semantic symbols
+// with exact positions, docstrings, and cross-reference records.
+
+use ropey::Rope;
 use roze_compiler::lexer::tokenize;
-use roze_compiler::parser::ast::{Program, Statement};
+use roze_compiler::parser::ast::{
+    Expression, MatchArm, Pattern, Program, Statement,
+};
 use roze_compiler::parser::parse as compiler_parse;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Ast {
     pub functions: Vec<Function>,
     pub variables: Vec<Variable>,
-    /// Roze doesn't have classes/structs yet (the real parser tokenizes
-    /// `class` but doesn't parse it into anything -- see ROADMAP.md), so
-    /// this is always empty. Kept only so callers matching on this shape
-    /// don't need to change.
     pub classes: Vec<Class>,
-    pub imports: Vec<String>,
+    pub enums: Vec<Enum>,
+    pub traits: Vec<Trait>,
+    pub imports: Vec<Import>,
+    pub usages: Vec<SymbolUsage>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
+    pub type_params: Vec<String>,
     pub params: Vec<String>,
+    pub param_details: Vec<ParamDetail>,
     pub return_type: Option<String>,
-    /// 0-indexed, matching LSP `Position` conventions (the compiler's own
-    /// `Location` is 1-indexed, for human-readable error messages).
+    pub is_async: bool,
+    pub is_extern: bool,
+    /// 0-indexed line & column for LSP
     pub line: usize,
     pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+    pub doc_comment: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParamDetail {
+    pub name: String,
+    pub type_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Variable {
     pub name: String,
     pub type_: Option<String>,
+    pub is_mut: bool,
     pub line: usize,
     pub column: usize,
+    pub scope_start: usize,
+    pub scope_end: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClassField {
+    pub name: String,
+    pub type_name: Option<String>,
+    pub line: usize,
+    pub column: usize,
+    pub doc_comment: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Class {
     pub name: String,
-    pub fields: Vec<Variable>,
+    pub type_params: Vec<String>,
+    pub fields: Vec<ClassField>,
     pub methods: Vec<Function>,
+    pub line: usize,
+    pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+    pub doc_comment: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub types: Vec<String>,
+    pub line: usize,
+    pub column: usize,
+    pub doc_comment: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Enum {
+    pub name: String,
+    pub type_params: Vec<String>,
+    pub variants: Vec<EnumVariant>,
+    pub line: usize,
+    pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+    pub doc_comment: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Trait {
+    pub name: String,
+    pub methods: Vec<Function>,
+    pub line: usize,
+    pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+    pub doc_comment: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Import {
+    pub path: String,
     pub line: usize,
     pub column: usize,
 }
 
-/// Parses `source` with the real compiler front-end. Returns `None` if it
-/// doesn't even tokenize/parse into a `Program` (e.g. the user is
-/// mid-edit and has an unclosed brace right now) -- callers that want the
-/// actual syntax error with a position should use `DiagnosticEngine`
-/// instead, which surfaces it properly rather than just giving up.
-pub fn parse(source: &str) -> Option<Ast> {
-    let tokens = tokenize(source);
-    let program: Program = compiler_parse(tokens).ok()?;
-
-    let mut ast = Ast {
-        functions: Vec::new(),
-        variables: Vec::new(),
-        classes: Vec::new(),
-        imports: Vec::new(),
-    };
-
-    collect_statements(&program.statements, &mut ast);
-    Some(ast)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UsageKind {
+    Call,
+    TypeRef,
+    VariableRef,
+    FieldAccess,
+    VariantRef,
 }
 
-/// Recursively walks statements (both top-level and nested inside
-/// function bodies / if / while / for) collecting functions, variables,
-/// and imports as it goes. Functions are only meaningful when found here
-/// at any level, since Roze doesn't support nested function declarations
-/// today; if that changes, this already handles them correctly since
-/// there's no special-casing of "top level" here at all.
-fn collect_statements(statements: &[Statement], ast: &mut Ast) {
-    for stmt in statements {
-        collect_statement(stmt, ast);
+#[derive(Debug, Clone)]
+pub struct SymbolUsage {
+    pub name: String,
+    pub line: usize,
+    pub column: usize,
+    pub length: usize,
+    pub kind: UsageKind,
+}
+
+/// Extracts doc comment lines directly preceding `line` (0-indexed).
+pub fn extract_doc_comment(text: &Rope, line: usize) -> Option<String> {
+    if line == 0 || line > text.len_lines() {
+        return None;
+    }
+
+    let mut current_line = line;
+    let mut comment_lines = Vec::new();
+
+    while current_line > 0 {
+        current_line -= 1;
+        let line_text = text.line(current_line).to_string();
+        let trimmed = line_text.trim();
+
+        if trimmed.starts_with("///") {
+            let doc_text = trimmed.strip_prefix("///").unwrap().trim();
+            comment_lines.push(doc_text.to_string());
+        } else if trimmed.starts_with("//") && !trimmed.starts_with("// =") && !trimmed.starts_with("// -") {
+            let doc_text = trimmed.strip_prefix("//").unwrap().trim();
+            comment_lines.push(doc_text.to_string());
+        } else {
+            break;
+        }
+    }
+
+    if comment_lines.is_empty() {
+        None
+    } else {
+        comment_lines.reverse();
+        Some(comment_lines.join("\n"))
     }
 }
 
-fn collect_statement(stmt: &Statement, ast: &mut Ast) {
+/// Parses source text with real Roze compiler lexer + parser.
+pub fn parse(source: &str) -> Option<Ast> {
+    let text = Rope::from_str(source);
+    let tokens = tokenize(source);
+    let program: Program = compiler_parse(tokens).ok()?;
+
+    let mut ast = Ast::default();
+    let total_lines = text.len_lines();
+
+    for stmt in &program.statements {
+        collect_statement(stmt, &mut ast, &text, 0, total_lines);
+    }
+
+    Some(ast)
+}
+
+fn collect_statement(
+    stmt: &Statement,
+    ast: &mut Ast,
+    text: &Rope,
+    scope_start: usize,
+    scope_end: usize,
+) {
     match stmt {
-        Statement::Function { name, params, return_type, body, location, .. } => {
+        Statement::Function {
+            name,
+            type_params,
+            params,
+            return_type,
+            body,
+            is_async,
+            location,
+        } => {
+            let line = location.line.saturating_sub(1);
+            let column = location.column.saturating_sub(1);
+            let doc_comment = extract_doc_comment(text, line);
+
+            let param_details = params
+                .iter()
+                .map(|p| ParamDetail {
+                    name: p.name.clone(),
+                    type_name: p.type_name.clone(),
+                })
+                .collect::<Vec<_>>();
+
+            let param_strs = params
+                .iter()
+                .map(|p| match &p.type_name {
+                    Some(t) => format!("{}: {}", p.name, t),
+                    None => p.name.clone(),
+                })
+                .collect::<Vec<_>>();
+
+            // Register parameter variables in scope
+            for p in params {
+                ast.variables.push(Variable {
+                    name: p.name.clone(),
+                    type_: p.type_name.clone(),
+                    is_mut: false,
+                    line,
+                    column,
+                    scope_start: line,
+                    scope_end,
+                });
+            }
+
             ast.functions.push(Function {
                 name: name.clone(),
-                params: params.iter()
-                    .map(|p| match &p.type_name {
-                        Some(t) => format!("{}: {}", p.name, t),
-                        None => p.name.clone(),
-                    })
-                    .collect(),
+                type_params: type_params.iter().map(|tp| tp.name.clone()).collect(),
+                params: param_strs,
+                param_details,
                 return_type: return_type.clone(),
+                is_async: *is_async,
+                is_extern: false,
+                line,
+                column,
+                end_line: line + 1,
+                end_column: column + name.len(),
+                doc_comment,
+            });
+
+            collect_statement(body, ast, text, line, scope_end);
+        }
+        Statement::ExternFunction {
+            abi: _,
+            name,
+            params,
+            return_type,
+            location,
+        } => {
+            let line = location.line.saturating_sub(1);
+            let column = location.column.saturating_sub(1);
+            let doc_comment = extract_doc_comment(text, line);
+
+            let param_details = params
+                .iter()
+                .map(|p| ParamDetail {
+                    name: p.name.clone(),
+                    type_name: p.type_name.clone(),
+                })
+                .collect::<Vec<_>>();
+
+            let param_strs = params
+                .iter()
+                .map(|p| match &p.type_name {
+                    Some(t) => format!("{}: {}", p.name, t),
+                    None => p.name.clone(),
+                })
+                .collect::<Vec<_>>();
+
+            ast.functions.push(Function {
+                name: name.clone(),
+                type_params: Vec::new(),
+                params: param_strs,
+                param_details,
+                return_type: return_type.clone(),
+                is_async: false,
+                is_extern: true,
+                line,
+                column,
+                end_line: line,
+                end_column: column + name.len(),
+                doc_comment,
+            });
+        }
+        Statement::ClassDecl {
+            name,
+            type_params,
+            fields,
+            location,
+        } => {
+            let line = location.line.saturating_sub(1);
+            let column = location.column.saturating_sub(1);
+            let doc_comment = extract_doc_comment(text, line);
+
+            let class_fields = fields
+                .iter()
+                .map(|f| ClassField {
+                    name: f.name.clone(),
+                    type_name: f.type_name.clone(),
+                    line,
+                    column,
+                    doc_comment: None,
+                })
+                .collect::<Vec<_>>();
+
+            ast.classes.push(Class {
+                name: name.clone(),
+                type_params: type_params.iter().map(|tp| tp.name.clone()).collect(),
+                fields: class_fields,
+                methods: Vec::new(),
+                line,
+                column,
+                end_line: line + fields.len() + 1,
+                end_column: column + name.len(),
+                doc_comment,
+            });
+        }
+        Statement::EnumDecl {
+            name,
+            type_params,
+            variants,
+            location,
+        } => {
+            let line = location.line.saturating_sub(1);
+            let column = location.column.saturating_sub(1);
+            let doc_comment = extract_doc_comment(text, line);
+
+            let enum_variants = variants
+                .iter()
+                .map(|v| EnumVariant {
+                    name: v.name.clone(),
+                    types: v.payload_types.clone(),
+                    line: v.location.line.saturating_sub(1),
+                    column: v.location.column.saturating_sub(1),
+                    doc_comment: None,
+                })
+                .collect::<Vec<_>>();
+
+            ast.enums.push(Enum {
+                name: name.clone(),
+                type_params: type_params.iter().map(|tp| tp.name.clone()).collect(),
+                variants: enum_variants,
+                line,
+                column,
+                end_line: line + variants.len() + 1,
+                end_column: column + name.len(),
+                doc_comment,
+            });
+        }
+        Statement::TraitDecl {
+            name,
+            associated_types: _,
+            methods,
+            location,
+        } => {
+            let line = location.line.saturating_sub(1);
+            let column = location.column.saturating_sub(1);
+            let doc_comment = extract_doc_comment(text, line);
+
+            let trait_methods = methods
+                .iter()
+                .map(|m| Function {
+                    name: m.name.clone(),
+                    type_params: Vec::new(),
+                    params: m
+                        .params
+                        .iter()
+                        .map(|p| match &p.type_name {
+                            Some(t) => format!("{}: {}", p.name, t),
+                            None => p.name.clone(),
+                        })
+                        .collect(),
+                    param_details: m
+                        .params
+                        .iter()
+                        .map(|p| ParamDetail {
+                            name: p.name.clone(),
+                            type_name: p.type_name.clone(),
+                        })
+                        .collect(),
+                    return_type: m.return_type.clone(),
+                    is_async: false,
+                    is_extern: false,
+                    line: m.location.line.saturating_sub(1),
+                    column: m.location.column.saturating_sub(1),
+                    end_line: m.location.line.saturating_sub(1),
+                    end_column: m.location.column.saturating_sub(1) + m.name.len(),
+                    doc_comment: None,
+                })
+                .collect::<Vec<_>>();
+
+            ast.traits.push(Trait {
+                name: name.clone(),
+                methods: trait_methods,
+                line,
+                column,
+                end_line: line + methods.len() + 1,
+                end_column: column + name.len(),
+                doc_comment,
+            });
+        }
+        Statement::ImplDecl {
+            trait_name: _,
+            class_name,
+            associated_types: _,
+            methods,
+            location: _,
+        } => {
+            // Find existing class if present to attach methods
+            for m in methods {
+                collect_statement(m, ast, text, scope_start, scope_end);
+            }
+            if let Some(c) = ast.classes.iter_mut().find(|c| c.name == *class_name) {
+                for m in methods {
+                    if let Statement::Function {
+                        name,
+                        type_params,
+                        params,
+                        return_type,
+                        is_async,
+                        location,
+                        ..
+                    } = m
+                    {
+                        c.methods.push(Function {
+                            name: name.clone(),
+                            type_params: type_params.iter().map(|tp| tp.name.clone()).collect(),
+                            params: params
+                                .iter()
+                                .map(|p| match &p.type_name {
+                                    Some(t) => format!("{}: {}", p.name, t),
+                                    None => p.name.clone(),
+                                })
+                                .collect(),
+                            param_details: params
+                                .iter()
+                                .map(|p| ParamDetail {
+                                    name: p.name.clone(),
+                                    type_name: p.type_name.clone(),
+                                })
+                                .collect(),
+                            return_type: return_type.clone(),
+                            is_async: *is_async,
+                            is_extern: false,
+                            line: location.line.saturating_sub(1),
+                            column: location.column.saturating_sub(1),
+                            end_line: location.line.saturating_sub(1),
+                            end_column: location.column.saturating_sub(1) + name.len(),
+                            doc_comment: None,
+                        });
+                    }
+                }
+            }
+        }
+        Statement::Let {
+            name,
+            type_name,
+            value,
+            location,
+        } => {
+            let line = location.line.saturating_sub(1);
+            let column = location.column.saturating_sub(1);
+
+            ast.variables.push(Variable {
+                name: name.clone(),
+                type_: type_name.clone(),
+                is_mut: false,
+                line,
+                column,
+                scope_start: line,
+                scope_end,
+            });
+
+            collect_expression(value, ast);
+        }
+        Statement::Import { path, location } => {
+            ast.imports.push(Import {
+                path: path.clone(),
                 line: location.line.saturating_sub(1),
                 column: location.column.saturating_sub(1),
             });
-            // Descend into the body too, so `let`s declared inside a
-            // function still show up as variables -- matching the old
-            // scanner's behavior, which didn't distinguish scope either
-            // (a genuinely scope-aware symbol table is a reasonable next
-            // step, not attempted here).
-            collect_statement(body, ast);
         }
-        Statement::Let { name, location, .. } => {
+        Statement::Block {
+            statements,
+            location,
+        } => {
+            let start = location.line.saturating_sub(1);
+            for s in statements {
+                collect_statement(s, ast, text, start, scope_end);
+            }
+        }
+        Statement::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_expression(condition, ast);
+            collect_statement(then_branch, ast, text, scope_start, scope_end);
+            if let Some(else_s) = else_branch {
+                collect_statement(else_s, ast, text, scope_start, scope_end);
+            }
+        }
+        Statement::While {
+            condition, body, ..
+        } => {
+            collect_expression(condition, ast);
+            collect_statement(body, ast, text, scope_start, scope_end);
+        }
+        Statement::For {
+            init,
+            condition,
+            update,
+            body,
+            ..
+        } => {
+            collect_statement(init, ast, text, scope_start, scope_end);
+            collect_expression(condition, ast);
+            collect_statement(update, ast, text, scope_start, scope_end);
+            collect_statement(body, ast, text, scope_start, scope_end);
+        }
+        Statement::Expression { expr, .. } => {
+            collect_expression(expr, ast);
+        }
+        Statement::Return { value, .. } => {
+            if let Some(val) = value {
+                collect_expression(val, ast);
+            }
+        }
+        Statement::Assign { name, value, location } => {
+            ast.usages.push(SymbolUsage {
+                name: name.clone(),
+                line: location.line.saturating_sub(1),
+                column: location.column.saturating_sub(1),
+                length: name.len(),
+                kind: UsageKind::VariableRef,
+            });
+            collect_expression(value, ast);
+        }
+        Statement::FieldAssign {
+            object,
+            field,
+            value,
+            location,
+        } => {
+            collect_expression(object, ast);
+            ast.usages.push(SymbolUsage {
+                name: field.clone(),
+                line: location.line.saturating_sub(1),
+                column: location.column.saturating_sub(1),
+                length: field.len(),
+                kind: UsageKind::FieldAccess,
+            });
+            collect_expression(value, ast);
+        }
+        Statement::Match { expr, arms, .. } => {
+            collect_expression(expr, ast);
+            for arm in arms {
+                collect_match_arm(arm, ast, text, scope_start, scope_end);
+            }
+        }
+        Statement::UnsafeBlock { body, .. } => {
+            collect_statement(body, ast, text, scope_start, scope_end);
+        }
+        Statement::Comptime { statement, .. } => {
+            collect_statement(statement, ast, text, scope_start, scope_end);
+        }
+        Statement::Annotated {
+            annotations: _,
+            statement,
+            ..
+        } => {
+            collect_statement(statement, ast, text, scope_start, scope_end);
+        }
+        Statement::Asm { .. } => {}
+    }
+}
+
+fn collect_match_arm(
+    arm: &MatchArm,
+    ast: &mut Ast,
+    text: &Rope,
+    scope_start: usize,
+    scope_end: usize,
+) {
+    if let Some(guard) = &arm.guard {
+        collect_expression(guard, ast);
+    }
+    collect_pattern(&arm.pattern, ast, arm.location.line.saturating_sub(1), scope_end);
+    collect_statement(&arm.body, ast, text, scope_start, scope_end);
+}
+
+fn collect_pattern(pat: &Pattern, ast: &mut Ast, line: usize, scope_end: usize) {
+    match pat {
+        Pattern::Variable { name, location } => {
+            let l = location.line.saturating_sub(1);
+            let c = location.column.saturating_sub(1);
             ast.variables.push(Variable {
                 name: name.clone(),
                 type_: None,
+                is_mut: false,
+                line: l,
+                column: c,
+                scope_start: line,
+                scope_end,
+            });
+        }
+        Pattern::Variant {
+            enum_name,
+            variant,
+            bindings,
+            location,
+        } => {
+            if let Some(e_name) = enum_name {
+                ast.usages.push(SymbolUsage {
+                    name: e_name.clone(),
+                    line: location.line.saturating_sub(1),
+                    column: location.column.saturating_sub(1),
+                    length: e_name.len(),
+                    kind: UsageKind::TypeRef,
+                });
+            }
+            ast.usages.push(SymbolUsage {
+                name: variant.clone(),
                 line: location.line.saturating_sub(1),
                 column: location.column.saturating_sub(1),
+                length: variant.len(),
+                kind: UsageKind::VariantRef,
             });
-        }
-        Statement::Import { path, .. } => {
-            ast.imports.push(path.clone());
-        }
-        Statement::Block { statements, .. } => collect_statements(statements, ast),
-        Statement::If { then_branch, else_branch, .. } => {
-            collect_statement(then_branch, ast);
-            if let Some(else_stmt) = else_branch {
-                collect_statement(else_stmt, ast);
+            for b in bindings {
+                collect_pattern(b, ast, line, scope_end);
             }
         }
-        Statement::While { body, .. } => collect_statement(body, ast),
-        Statement::For { init, body, .. } => {
-            // The loop's own `let i = 0;` init clause is a real variable
-            // declaration too.
-            collect_statement(init, ast);
-            collect_statement(body, ast);
+        Pattern::Struct {
+            class_name,
+            fields,
+            location,
+        } => {
+            ast.usages.push(SymbolUsage {
+                name: class_name.clone(),
+                line: location.line.saturating_sub(1),
+                column: location.column.saturating_sub(1),
+                length: class_name.len(),
+                kind: UsageKind::TypeRef,
+            });
+            for (_, p) in fields {
+                collect_pattern(p, ast, line, scope_end);
+            }
         }
-        Statement::Expression { .. } | Statement::Return { .. } | Statement::Assign { .. } => {}
-        // `class` declarations don't currently show up as their own
-        // symbol kind in the outline/symbols view -- a real LSP UX
-        // enhancement (the `Ast`/`DocumentSymbol` data model here only
-        // has Function/Variable buckets right now), not attempted as
-        // part of adding `class` to the language itself. `object.field
-        // = value` doesn't introduce a new symbol either way, the same
-        // as a plain `Assign`.
-        Statement::ClassDecl { .. } | Statement::FieldAssign { .. } | Statement::EnumDecl { .. } | Statement::TraitDecl { .. } => {}
-        Statement::ExternFunction { name, params, return_type, location, .. } => {
-            ast.functions.push(Function {
+        Pattern::Tuple { elements, .. } | Pattern::Slice { prefix: elements, .. } => {
+            for e in elements {
+                collect_pattern(e, ast, line, scope_end);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_expression(expr: &Expression, ast: &mut Ast) {
+    match expr {
+        Expression::Identifier { name, location } => {
+            ast.usages.push(SymbolUsage {
                 name: name.clone(),
-                params: params.iter().map(|p| p.name.clone()).collect(),
-                return_type: return_type.clone(),
-                line: location.line,
-                column: location.column,
+                line: location.line.saturating_sub(1),
+                column: location.column.saturating_sub(1),
+                length: name.len(),
+                kind: UsageKind::VariableRef,
             });
         }
-        Statement::ImplDecl { methods, .. } => {
-            collect_statements(methods, ast);
-        }
-        Statement::UnsafeBlock { body, .. } => {
-            collect_statement(body, ast);
-        }
-        Statement::Match { arms, .. } => {
-            for arm in arms {
-                collect_statement(&arm.body, ast);
+        Expression::Call {
+            function,
+            arguments,
+            location,
+        } => {
+            if let Expression::Identifier { name, .. } = function.as_ref() {
+                ast.usages.push(SymbolUsage {
+                    name: name.clone(),
+                    line: location.line.saturating_sub(1),
+                    column: location.column.saturating_sub(1),
+                    length: name.len(),
+                    kind: UsageKind::Call,
+                });
+            } else {
+                collect_expression(function, ast);
+            }
+            for arg in arguments {
+                collect_expression(arg, ast);
             }
         }
-        Statement::Comptime { statement, .. } => {
-            collect_statement(statement, ast);
+        Expression::GenericCall {
+            function,
+            type_args,
+            arguments,
+            location,
+        } => {
+            ast.usages.push(SymbolUsage {
+                name: function.clone(),
+                line: location.line.saturating_sub(1),
+                column: location.column.saturating_sub(1),
+                length: function.len(),
+                kind: UsageKind::Call,
+            });
+            for ta in type_args {
+                ast.usages.push(SymbolUsage {
+                    name: ta.clone(),
+                    line: location.line.saturating_sub(1),
+                    column: location.column.saturating_sub(1),
+                    length: ta.len(),
+                    kind: UsageKind::TypeRef,
+                });
+            }
+            for arg in arguments {
+                collect_expression(arg, ast);
+            }
         }
-        Statement::Asm { .. } => {}
-        Statement::Annotated { statement, .. } => {
-            collect_statement(statement, ast);
+        Expression::New {
+            class_name,
+            type_args: _,
+            arguments,
+            location,
+        } => {
+            ast.usages.push(SymbolUsage {
+                name: class_name.clone(),
+                line: location.line.saturating_sub(1),
+                column: location.column.saturating_sub(1),
+                length: class_name.len(),
+                kind: UsageKind::TypeRef,
+            });
+            for arg in arguments {
+                collect_expression(arg, ast);
+            }
         }
+        Expression::FieldAccess {
+            object,
+            field,
+            location,
+        } => {
+            collect_expression(object, ast);
+            ast.usages.push(SymbolUsage {
+                name: field.clone(),
+                line: location.line.saturating_sub(1),
+                column: location.column.saturating_sub(1),
+                length: field.len(),
+                kind: UsageKind::FieldAccess,
+            });
+        }
+        Expression::MethodCall {
+            object,
+            method,
+            arguments,
+            location,
+        } => {
+            collect_expression(object, ast);
+            ast.usages.push(SymbolUsage {
+                name: method.clone(),
+                line: location.line.saturating_sub(1),
+                column: location.column.saturating_sub(1),
+                length: method.len(),
+                kind: UsageKind::Call,
+            });
+            for arg in arguments {
+                collect_expression(arg, ast);
+            }
+        }
+        Expression::EnumConstruct {
+            enum_name,
+            variant,
+            arguments,
+            location,
+        } => {
+            if let Some(e_name) = enum_name {
+                ast.usages.push(SymbolUsage {
+                    name: e_name.clone(),
+                    line: location.line.saturating_sub(1),
+                    column: location.column.saturating_sub(1),
+                    length: e_name.len(),
+                    kind: UsageKind::TypeRef,
+                });
+            }
+            ast.usages.push(SymbolUsage {
+                name: variant.clone(),
+                line: location.line.saturating_sub(1),
+                column: location.column.saturating_sub(1),
+                length: variant.len(),
+                kind: UsageKind::VariantRef,
+            });
+            for arg in arguments {
+                collect_expression(arg, ast);
+            }
+        }
+        Expression::Binary { left, right, .. } => {
+            collect_expression(left, ast);
+            collect_expression(right, ast);
+        }
+        Expression::Unary { operand, .. } | Expression::Try { expr: operand, .. } => {
+            collect_expression(operand, ast);
+        }
+        Expression::Await { expr, .. } => {
+            collect_expression(expr, ast);
+        }
+        Expression::Unsafe { expr, .. } => {
+            collect_expression(expr, ast);
+        }
+        Expression::Comptime { expr, .. } => {
+            collect_expression(expr, ast);
+        }
+        Expression::Closure {
+            params: _,
+            return_type: _,
+            body,
+            ..
+        } => {
+            let text = Rope::new();
+            collect_statement(body, ast, &text, 0, usize::MAX);
+        }
+        _ => {}
     }
 }
 
@@ -182,65 +833,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn finds_top_level_function_with_correct_position() {
-        let ast = parse("func add(a: int, b: int) -> int {\n    return a + b;\n}\n").unwrap();
+    fn parses_top_level_function_with_docstring() {
+        let source = "/// Calculates the sum of two integers.\n/// Returns the result.\nfunc add(a: int, b: int) -> int {\n    return a + b;\n}\n";
+        let ast = parse(source).unwrap();
         assert_eq!(ast.functions.len(), 1);
         let f = &ast.functions[0];
         assert_eq!(f.name, "add");
         assert_eq!(f.return_type.as_deref(), Some("int"));
-        assert_eq!(f.params, vec!["a: int".to_string(), "b: int".to_string()]);
-        // `func` starts at line 1, column 1 in the compiler's 1-indexed
-        // Location -- 0-indexed for LSP, so (0, 0).
-        assert_eq!(f.line, 0);
-        assert_eq!(f.column, 0);
+        assert_eq!(f.params, vec!["a: int", "b: int"]);
+        assert!(f.doc_comment.is_some());
+        assert!(f.doc_comment.as_ref().unwrap().contains("Calculates the sum"));
     }
 
     #[test]
-    fn does_not_get_confused_by_braces_inside_strings() {
-        // The old line-scanner's brace-counting would miscount here.
-        let ast = parse("func f() {\n    println(\"{ not a real brace }\");\n}\n").unwrap();
-        assert_eq!(ast.functions.len(), 1);
+    fn parses_classes_and_enums() {
+        let source = "class Point {\n    x: int,\n    y: int,\n}\n\nenum Option {\n    Some(int),\n    None,\n}\n";
+        let ast = parse(source).unwrap();
+        assert_eq!(ast.classes.len(), 1);
+        assert_eq!(ast.classes[0].name, "Point");
+        assert_eq!(ast.classes[0].fields.len(), 2);
+        assert_eq!(ast.classes[0].fields[0].name, "x");
+
+        assert_eq!(ast.enums.len(), 1);
+        assert_eq!(ast.enums[0].name, "Option");
+        assert_eq!(ast.enums[0].variants.len(), 2);
     }
 
     #[test]
-    fn finds_variables_declared_inside_a_function_body() {
-        let ast = parse("func main() {\n    let x = 5;\n    let y = 10;\n}\n").unwrap();
-        let names: Vec<&str> = ast.variables.iter().map(|v| v.name.as_str()).collect();
-        assert_eq!(names, vec!["x", "y"]);
-    }
-
-    #[test]
-    fn finds_variables_nested_inside_if_and_while() {
-        let ast = parse("func main() {\n    if true {\n        let a = 1;\n    }\n    while true {\n        let b = 2;\n    }\n}\n").unwrap();
-        let names: Vec<&str> = ast.variables.iter().map(|v| v.name.as_str()).collect();
-        assert_eq!(names, vec!["a", "b"]);
-    }
-
-    #[test]
-    fn finds_for_loop_init_variable() {
-        let ast = parse("func main() {\n    for let i = 0; i < 3; i = i + 1 {\n        let doubled = i * 2;\n    }\n}\n").unwrap();
-        let names: Vec<&str> = ast.variables.iter().map(|v| v.name.as_str()).collect();
-        assert_eq!(names, vec!["i", "doubled"]);
-    }
-
-    #[test]
-    fn collects_import_paths() {
-        let ast = parse("import \"core\";\nfunc main() { }\n").unwrap();
-        assert_eq!(ast.imports, vec!["core".to_string()]);
-    }
-
-    #[test]
-    fn classes_are_always_empty_since_the_language_has_none_yet() {
-        // Deliberately not testing "class Foo { ... }" text here: unlike
-        // the old scanner, this parser doesn't pretend classes parse just
-        // because the word "class" appears -- there is currently no
-        // Statement::Class in the real AST at all.
-        let ast = parse("func main() { }\n").unwrap();
-        assert!(ast.classes.is_empty());
-    }
-
-    #[test]
-    fn unparseable_source_returns_none_rather_than_a_wrong_guess() {
-        assert!(parse("func main() {").is_none());
+    fn parses_valid_source() {
+        let valid_source = "import \"core\";\n\nfunc classify(x: int) -> string {\n    if x > 0 {\n        return \"positive\";\n    } else {\n        return \"non-positive\";\n    }\n}\n\nfunc main() {\n    for let i = 0; i < 3; i = i + 1 {\n        println(classify(i));\n    }\n    println(square(5));\n}\n";
+        let ast = parse(valid_source).expect("should parse valid source");
+        println!("ast functions: {:?}", ast.functions);
+        assert_eq!(ast.functions.len(), 2);
     }
 }

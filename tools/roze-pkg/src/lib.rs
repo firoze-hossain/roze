@@ -12,6 +12,7 @@ pub mod semver;
 pub mod solver;
 pub mod template;
 pub mod vendor;
+pub mod bench;
 
 use clap::{Parser, Subcommand};
 use colored::*;
@@ -201,8 +202,44 @@ enum Commands {
     Keygen,
     /// Run tests
     Test,
-    /// Run benchmarks
-    Bench,
+    /// Run native microbenchmarks with nanosecond timing, statistical warm-up, and throughput analysis
+    Bench {
+        /// Optional name filter (runs only benchmarks matching filter)
+        filter: Option<String>,
+        /// Warm-up duration in milliseconds [default: 500]
+        #[arg(long, default_value = "500")]
+        warmup: u64,
+        /// Measurement duration in milliseconds [default: 2000]
+        #[arg(long, default_value = "2000")]
+        measurement_time: u64,
+        /// Number of samples to collect [default: 50]
+        #[arg(long, default_value = "50")]
+        samples: usize,
+        /// Save benchmark results as a named baseline for regression comparison
+        #[arg(long)]
+        save_baseline: Option<String>,
+        /// Compare benchmark results against a previously saved baseline
+        #[arg(long)]
+        baseline: Option<String>,
+        /// Output benchmark results as structured JSON
+        #[arg(long)]
+        json: bool,
+        /// Enable memory allocation and peak RSS tracking
+        #[arg(long)]
+        profile: bool,
+        /// Compile and execute benchmarks using native backend instead of JVM
+        #[arg(long)]
+        native: bool,
+        /// Compile and execute benchmarks using JVM backend instead of native binary
+        #[arg(long)]
+        jvm: bool,
+        /// Print detailed sample distribution percentiles and histogram
+        #[arg(short, long)]
+        verbose: bool,
+        /// Throughput bytes per iteration for bandwidth calculation (e.g., 1048576)
+        #[arg(long)]
+        throughput_bytes: Option<u64>,
+    },
     /// Inspect or validate the project manifest (bsr.mfz)
     Manifest {
         /// Validate manifest syntax and dependencies without modifying
@@ -276,7 +313,33 @@ pub fn run_cli() {
         Commands::Publish { registry, key, dry_run } => cmd_publish(registry.as_deref(), key.as_deref(), dry_run),
         Commands::Keygen => cmd_keygen(),
         Commands::Test => cmd_test(),
-        Commands::Bench => cmd_bench(),
+        Commands::Bench {
+            filter,
+            warmup,
+            measurement_time,
+            samples,
+            save_baseline,
+            baseline,
+            json,
+            profile,
+            native,
+            jvm,
+            verbose,
+            throughput_bytes,
+        } => cmd_bench(
+            filter,
+            warmup,
+            measurement_time,
+            samples,
+            save_baseline,
+            baseline,
+            json,
+            profile,
+            native,
+            jvm,
+            verbose,
+            throughput_bytes,
+        ),
         Commands::Manifest { check } => cmd_manifest(check),
         Commands::Doc { open, no_playground, output, json } => cmd_doc(open, no_playground, output, json),
     };
@@ -745,39 +808,42 @@ fn cmd_test() -> Result<()> {
     Ok(())
 }
 
-fn cmd_bench() -> Result<()> {
-    println!("⏱️  {}", "Running benchmarks...".yellow());
-
-    let compiler_path = find_compiler()?;
+pub fn cmd_bench(
+    filter: Option<String>,
+    warmup: u64,
+    measurement_time: u64,
+    samples: usize,
+    save_baseline: Option<String>,
+    baseline: Option<String>,
+    json: bool,
+    profile: bool,
+    native: bool,
+    jvm: bool,
+    verbose: bool,
+    throughput_bytes: Option<u64>,
+) -> Result<()> {
     let cur = std::env::current_dir()?;
-    let benches_dir = cur.join("benches");
-    let mut ran_any = false;
+    let config = bench::BenchmarkConfig {
+        filter,
+        warmup_ms: warmup,
+        measurement_time_ms: measurement_time,
+        samples,
+        save_baseline,
+        baseline,
+        json,
+        profile,
+        native,
+        jvm,
+        verbose,
+        throughput_bytes,
+    };
 
-    if benches_dir.is_dir() {
-        let mut entries: Vec<_> = std::fs::read_dir(&benches_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("roze"))
-            .collect();
-        entries.sort_by_key(|e| e.path());
-
-        for entry in entries {
-            let path = entry.path();
-            ran_any = true;
-            println!("  Running benchmark: {}", path.file_name().unwrap().to_string_lossy().cyan());
-            let status = Command::new(&compiler_path)
-                .arg("run")
-                .arg(&path)
-                .status()?;
-            if !status.success() {
-                return Err(anyhow!("Benchmark failed: {}", path.display()));
-            }
-        }
+    if !json {
+        println!("⏱️  {}", "Roze Native Microbenchmark & Profiler Engine ('bsr bench')".yellow().bold());
     }
-
-    if !ran_any {
-        println!("  No benchmarks found in benches/ directory.");
-    } else {
-        println!("✅ {}", "All benchmarks completed!".bright_green());
+    let _ = bench::run_benchmarks(&config, &cur)?;
+    if !json {
+        println!("\n✅ {}", "Benchmark suite finished successfully!".bright_green());
     }
     Ok(())
 }

@@ -522,7 +522,7 @@ s1_rows = [
         ("M5-T10", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Benchmarking Tool", "Native Microbenchmark & Profiler Harness ('bsr bench')",
         "Microbenchmark harness with nanosecond timing, statistical warm-up, memory allocation tracking, and throughput calculation.",
         "Matches Rust criterion and Java JMH benchmark rigor.",
-        "Performance Engineering, Optimization", "6 Days", ("Medium", 14), ("Planned", 12)
+        "Performance Engineering, Optimization", "6 Days", ("Medium", 14), ("Completed", 16)
     ],
     [
         ("M5-T11", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Milestone Gate M5", "Package Ecosystem & Developer Experience Gate",

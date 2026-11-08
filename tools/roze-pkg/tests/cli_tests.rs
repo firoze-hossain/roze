@@ -672,6 +672,100 @@ class Point {
     assert!(search_js.contains("Point"));
 }
 
+#[test]
+fn test_cli_bsr_bench_harness() {
+    let temp = tempdir().unwrap();
+    let project_dir = temp.path().join("bench_pkg");
+
+    // 1. Create a new library project with default benches/bench_main.roze
+    let new_status = Command::new(bsr_bin())
+        .arg("new")
+        .arg(&project_dir)
+        .arg("--lib")
+        .status()
+        .expect("failed to run bsr new");
+    assert!(new_status.success());
+    assert!(project_dir.join("benches/bench_main.roze").exists());
+
+    // 2. Run bsr bench with sampling, warm-up, profiling, and save-baseline
+    let output1 = Command::new(bsr_bin())
+        .arg("bench")
+        .arg("--samples")
+        .arg("5")
+        .arg("--warmup")
+        .arg("50")
+        .arg("--save-baseline")
+        .arg("v1_base")
+        .arg("--profile")
+        .arg("--verbose")
+        .arg("--throughput-bytes")
+        .arg("1048576")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to run bsr bench");
+
+    assert!(output1.status.success());
+    let stdout1 = String::from_utf8_lossy(&output1.stdout);
+    assert!(stdout1.contains("Roze Native Microbenchmark & Profiler Engine"));
+    assert!(stdout1.contains("Benchmarking"));
+    assert!(stdout1.contains("bench_main"));
+    assert!(stdout1.contains("time:"));
+    assert!(stdout1.contains("mean:"));
+    assert!(stdout1.contains("median:"));
+    assert!(stdout1.contains("throughput:"));
+    assert!(stdout1.contains("bandwidth:"));
+    assert!(stdout1.contains("Percentiles:"));
+    assert!(stdout1.contains("Benchmark results saved as baseline 'v1_base'"));
+
+    // Verify baseline file was written to .bsr/bench/v1_base.json
+    let baseline_file = project_dir.join(".bsr/bench/v1_base.json");
+    assert!(baseline_file.exists());
+    let baseline_content = fs::read_to_string(&baseline_file).unwrap();
+    assert!(baseline_content.contains("bench_main"));
+    assert!(baseline_content.contains("mean_ns"));
+
+    // 3. Run bsr bench comparing against the saved baseline
+    let output2 = Command::new(bsr_bin())
+        .arg("bench")
+        .arg("--samples")
+        .arg("5")
+        .arg("--warmup")
+        .arg("50")
+        .arg("--baseline")
+        .arg("v1_base")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to run bsr bench with baseline");
+
+    assert!(output2.status.success());
+    let stdout2 = String::from_utf8_lossy(&output2.stdout);
+    assert!(stdout2.contains("Comparing against baseline 'v1_base'"));
+    assert!(stdout2.contains("comparison:"));
+
+    // 4. Run bsr bench with filter and --json output
+    let output3 = Command::new(bsr_bin())
+        .arg("bench")
+        .arg("bench_main")
+        .arg("--samples")
+        .arg("3")
+        .arg("--warmup")
+        .arg("20")
+        .arg("--json")
+        .current_dir(&project_dir)
+        .output()
+        .expect("failed to run bsr bench with json");
+
+    assert!(output3.status.success());
+    let stdout3 = String::from_utf8_lossy(&output3.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout3.trim()).expect("valid json output");
+    assert_eq!(parsed["package_name"], "bench_pkg");
+    assert!(parsed["benchmarks"].is_array());
+    assert_eq!(parsed["benchmarks"][0]["name"], "bench_main");
+    assert!(parsed["benchmarks"][0]["mean_ns"].is_number());
+    assert!(parsed["benchmarks"][0]["ops_per_sec"].is_number());
+}
+
+
 
 
 

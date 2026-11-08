@@ -1,0 +1,16 @@
+# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
+[package]
+name = "rozeboot"
+version = "1.0.0"
+edition = "2026"
+authors = ["Mohammad Firoze <firoze@roze.dev>"]
+license = "MIT OR Apache-2.0"
+description = "Spring-Boot-style Enterprise IoC, REST microservices, OpenAPI 3.1 & cloud observability framework for Roze"
+main = "src/lib.roze"
+repository = "https://github.com/firoze-hossain/roze"
+keywords = ["web", "framework", "ioc", "microservices", "enterprise", "openapi", "rest"]
+
+[dependencies]
+roze-orm = { path = "../roze-orm", version = "^1.0.0" }
+roze-crypto = { path = "../roze-crypto", version = "^1.0.0" }
+roze-net = { path = "../roze-net", version = "^1.0.0" }

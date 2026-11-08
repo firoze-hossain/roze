@@ -1,0 +1,13 @@
+# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
+[package]
+name = "roze-net"
+version = "1.0.0"
+edition = "2026"
+authors = ["Mohammad Firoze <firoze@roze.dev>"]
+license = "MIT OR Apache-2.0"
+description = "Promiscuous raw sockets, Scapy-style packet crafter/dissector, PCAP 2.4 engine, and SYN port scanner in pure Roze"
+main = "src/lib.roze"
+repository = "https://github.com/firoze-hossain/roze"
+keywords = ["network", "raw-socket", "packet", "pcap", "sniffer", "scanner", "security"]
+
+[dependencies]

@@ -1,0 +1,13 @@
+# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
+[package]
+name = "roze-crypto"
+version = "1.0.0"
+edition = "2026"
+authors = ["Mohammad Firoze <firoze@roze.dev>"]
+license = "MIT OR Apache-2.0"
+description = "Pure Roze cryptographic suite: SHA-256/512/3, HMAC, AES-GCM, ChaCha20-Poly1305, Ed25519, RSA-4096, and pure TLS 1.3"
+main = "src/lib.roze"
+repository = "https://github.com/firoze-hossain/roze"
+keywords = ["crypto", "tls", "sha256", "ed25519", "aes", "chacha20", "security"]
+
+[dependencies]

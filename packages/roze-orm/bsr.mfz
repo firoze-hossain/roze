@@ -1,0 +1,13 @@
+# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
+[package]
+name = "roze-orm"
+version = "1.0.0"
+edition = "2026"
+authors = ["Mohammad Firoze <firoze@roze.dev>"]
+license = "MIT OR Apache-2.0"
+description = "High-throughput asynchronous ORM, HikariCP-equivalent connection pool, and type-safe SQL query builder for Roze"
+main = "src/lib.roze"
+repository = "https://github.com/firoze-hossain/roze"
+keywords = ["orm", "database", "sql", "jdbc", "sqlite", "query-builder", "transactions"]
+
+[dependencies]

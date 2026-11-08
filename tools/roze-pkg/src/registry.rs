@@ -332,6 +332,79 @@ impl RegistryClient {
                 },
             ],
         );
+
+        // 6. roze-crypto
+        self.register_builtin_package(
+            "roze-crypto",
+            "Pure Roze cryptographic suite: SHA-256/512/3, HMAC, AES-GCM, ChaCha20, Ed25519, RSA, and pure TLS 1.3",
+            vec![
+                PackageVersionInfo {
+                    version: Version::parse("1.0.0").unwrap(),
+                    dependencies: HashMap::new(),
+                    description: "Cryptographic primitives and TLS 1.3 engine".to_string(),
+                    checksum: None,
+                    signature: None,
+                    public_key: None,
+                    yanked: false,
+                },
+            ],
+        );
+
+        // 7. roze-net
+        self.register_builtin_package(
+            "roze-net",
+            "Promiscuous raw sockets, Scapy-style packet crafter/dissector, PCAP 2.4, and SYN scanner in pure Roze",
+            vec![
+                PackageVersionInfo {
+                    version: Version::parse("1.0.0").unwrap(),
+                    dependencies: HashMap::new(),
+                    description: "Raw socket networking and packet analysis".to_string(),
+                    checksum: None,
+                    signature: None,
+                    public_key: None,
+                    yanked: false,
+                },
+            ],
+        );
+
+        // 8. roze-orm
+        self.register_builtin_package(
+            "roze-orm",
+            "High-throughput asynchronous ORM, HikariCP-equivalent connection pool, and type-safe SQL query builder",
+            vec![
+                PackageVersionInfo {
+                    version: Version::parse("1.0.0").unwrap(),
+                    dependencies: HashMap::new(),
+                    description: "High-throughput ORM and SQL query builder".to_string(),
+                    checksum: None,
+                    signature: None,
+                    public_key: None,
+                    yanked: false,
+                },
+            ],
+        );
+
+        // 9. rozeboot
+        let mut rozeboot_deps = HashMap::new();
+        rozeboot_deps.insert("roze-orm".to_string(), "^1.0.0".to_string());
+        rozeboot_deps.insert("roze-crypto".to_string(), "^1.0.0".to_string());
+        rozeboot_deps.insert("roze-net".to_string(), "^1.0.0".to_string());
+
+        self.register_builtin_package(
+            "rozeboot",
+            "Spring-Boot-style Enterprise IoC, REST microservices, OpenAPI 3.1 & cloud observability framework",
+            vec![
+                PackageVersionInfo {
+                    version: Version::parse("1.0.0").unwrap(),
+                    dependencies: rozeboot_deps,
+                    description: "Enterprise IoC, REST microservices & observability".to_string(),
+                    checksum: None,
+                    signature: None,
+                    public_key: None,
+                    yanked: false,
+                },
+            ],
+        );
     }
 
     fn register_builtin_package(&mut self, name: &str, desc: &str, versions: Vec<PackageVersionInfo>) {
@@ -554,9 +627,46 @@ impl RegistryClient {
         let temp_build = tempfile::tempdir()?;
         let temp_path = temp_build.path();
 
-        let safe_fn = name.replace("::", "_").replace('-', "_");
-        let lib_src = format!(
-            r#"// Package: {}
+        // If package exists in workspace `packages/<name>`, copy real source
+        let package_source_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("packages").join(name));
+
+        let mut copied_real_package = false;
+        if let Some(ref pkg_dir) = package_source_dir {
+            if pkg_dir.exists() {
+                let src_dir = if pkg_dir.join("src").exists() {
+                    pkg_dir.join("src")
+                } else {
+                    pkg_dir.clone()
+                };
+                for entry in walkdir::WalkDir::new(&src_dir) {
+                    if let Ok(entry) = entry {
+                        if let Ok(rel) = entry.path().strip_prefix(&src_dir) {
+                            let target = temp_path.join(rel);
+                            if entry.file_type().is_dir() {
+                                let _ = fs::create_dir_all(&target);
+                            } else if entry.file_type().is_file() {
+                                if let Some(p) = target.parent() {
+                                    let _ = fs::create_dir_all(p);
+                                }
+                                let _ = fs::copy(entry.path(), &target);
+                            }
+                        }
+                    }
+                }
+                if pkg_dir.join("bsr.mfz").exists() {
+                    let _ = fs::copy(pkg_dir.join("bsr.mfz"), temp_path.join("bsr.mfz"));
+                }
+                copied_real_package = true;
+            }
+        }
+
+        if !copied_real_package {
+            let safe_fn = name.replace("::", "_").replace('-', "_");
+            let lib_src = format!(
+                r#"// Package: {}
 // Version: {}
 // Downloaded from Roze Package Registry ({})
 
@@ -568,22 +678,23 @@ func {}_info() -> string {{
     return "Package {} v{}";
 }}
 "#,
-            name, ver_str, self.registry_url, safe_fn, ver_str, safe_fn, name, ver_str
-        );
+                name, ver_str, self.registry_url, safe_fn, ver_str, safe_fn, name, ver_str
+            );
 
-        fs::write(temp_path.join("lib.roze"), lib_src)?;
-        fs::write(
-            temp_path.join("roze.toml"),
-            format!(
-                r#"[package]
+            fs::write(temp_path.join("lib.roze"), lib_src)?;
+            fs::write(
+                temp_path.join("roze.toml"),
+                format!(
+                    r#"[package]
 name = "{}"
 version = "{}"
 authors = ["Roze Registry"]
 main = "lib.roze"
 "#,
-                name, ver_str
-            ),
-        )?;
+                    name, ver_str
+                ),
+            )?;
+        }
 
         // Store into cache
         let checksum = self.cache.store_package(name, &ver_str, temp_path)?;

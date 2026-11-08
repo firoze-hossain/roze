@@ -48,14 +48,8 @@ const SYNC_DISPLAY_NAME: &str = "sync (built-in)";
 const WEB_SOURCE: &str = include_str!("../../stdlib/src/web.roze");
 const WEB_DISPLAY_NAME: &str = "web (built-in)";
 
-const ENTERPRISE_WEB_SOURCE: &str = include_str!("../../stdlib/src/enterprise_web.roze");
-const ENTERPRISE_WEB_DISPLAY_NAME: &str = "enterprise_web (built-in)";
-
 const VGA_SOURCE: &str = include_str!("../../stdlib/src/vga.roze");
 const VGA_DISPLAY_NAME: &str = "vga (built-in)";
-
-const ROZEBOOT_SOURCE: &str = include_str!("../../stdlib/src/rozeboot.roze");
-const ROZEBOOT_DISPLAY_NAME: &str = "rozeboot (built-in)";
 
 const RAYLIB_SOURCE: &str = include_str!("../../stdlib/src/raylib.roze");
 const RAYLIB_DISPLAY_NAME: &str = "raylib (built-in)";
@@ -81,23 +75,11 @@ const INTERRUPTS_DISPLAY_NAME: &str = "interrupts (built-in)";
 const DRIVERS_SOURCE: &str = include_str!("../../stdlib/src/drivers.roze");
 const DRIVERS_DISPLAY_NAME: &str = "drivers (built-in)";
 
-const RAW_NET_SOURCE: &str = include_str!("../../stdlib/src/raw_net.roze");
-const RAW_NET_DISPLAY_NAME: &str = "raw_net (built-in)";
-
-const CRYPTO_SOURCE: &str = include_str!("../../stdlib/src/crypto.roze");
-const CRYPTO_DISPLAY_NAME: &str = "crypto (built-in)";
-
 const BINARY_SOURCE: &str = include_str!("../../stdlib/src/binary.roze");
 const BINARY_DISPLAY_NAME: &str = "binary (built-in)";
 
 const FORENSICS_SOURCE: &str = include_str!("../../stdlib/src/forensics.roze");
 const FORENSICS_DISPLAY_NAME: &str = "forensics (built-in)";
-
-const ORM_SOURCE: &str = include_str!("../../stdlib/src/orm.roze");
-const ORM_DISPLAY_NAME: &str = "orm (built-in)";
-
-const CLOUD_SECURITY_SOURCE: &str = include_str!("../../stdlib/src/cloud_security.roze");
-const CLOUD_SECURITY_DISPLAY_NAME: &str = "cloud_security (built-in)";
 
 const FFI_SOURCE: &str = include_str!("../../stdlib/src/ffi.roze");
 const FFI_DISPLAY_NAME: &str = "ffi (built-in)";
@@ -224,12 +206,128 @@ pub fn resolve_imports(program: Program, base_dir: &Path) -> Result<Program> {
     Ok(Program { statements })
 }
 
+/// Attempts to locate and load a modular bsr package (e.g. rozeboot, roze-orm, roze-net, roze-crypto)
+/// from the workspace `packages/` directory, project `libs/` directory, cache, or environment.
+fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, String)> {
+    let pkg_subpath = match path {
+        "rozeboot" | "rozeboot2" | "roze::boot" | "roze-boot" | "roze_boot" | "ioc" | "annotations" => {
+            Some("rozeboot/src/lib.roze".to_string())
+        }
+        "enterprise_web" | "roze::web" | "http" | "http2" | "http3" | "quic" | "h2" | "h3" => {
+            Some("rozeboot/src/enterprise_web.roze".to_string())
+        }
+        "cloud_security" | "security" | "roze::security" | "oauth2" | "jwt" | "metrics" | "telemetry" | "openapi" | "swagger" => {
+            Some("rozeboot/src/cloud_security.roze".to_string())
+        }
+        "orm" | "data" | "roze::data" | "roze::orm" | "roze-orm" | "roze_orm" | "sql_orm" | "jpa" | "diesel" | "seaorm" => {
+            Some("roze-orm/src/lib.roze".to_string())
+        }
+        "raw_net" | "net" | "packet" | "pcap" | "roze::net::raw" | "packet_crafting" | "protocol" | "dissector" | "dns" | "dhcp"
+        | "scanner" | "port_scanner" | "net_scan" | "roze::net::scanner" | "roze-net" | "roze_net" => {
+            Some("roze-net/src/lib.roze".to_string())
+        }
+        "crypto" | "roze::crypto" | "roze-crypto" | "roze_crypto" | "tls" | "sha" | "aes" | "chacha" | "rsa" => {
+            Some("roze-crypto/src/lib.roze".to_string())
+        }
+        _ => None,
+    };
+
+    let subpaths = match pkg_subpath {
+        Some(sp) => vec![sp],
+        None => {
+            let sanitized = path.replace("::", "_").replace('-', "_");
+            let mut list = Vec::new();
+            list.push(format!("{}/src/lib.roze", path));
+            if sanitized != path {
+                list.push(format!("{}/src/lib.roze", sanitized));
+            }
+            list
+        }
+    };
+
+    for subpath in &subpaths {
+        let mut candidates = Vec::new();
+
+        // 1. Direct relative check
+        candidates.push(base_dir.join("packages").join(subpath));
+        candidates.push(base_dir.join(subpath));
+
+        // 2. Ascending parent directories
+        let mut curr = Some(base_dir);
+        let mut depth = 0;
+        while let Some(dir) = curr {
+            if depth > 5 {
+                break;
+            }
+            candidates.push(dir.join("packages").join(subpath));
+            curr = dir.parent();
+            depth += 1;
+        }
+
+        // 3. Workspace repository root via CARGO_MANIFEST_DIR
+        if let Some(parent) = Path::new(env!("CARGO_MANIFEST_DIR")).parent() {
+            candidates.push(parent.join("packages").join(subpath));
+        }
+
+        // 4. Environment variable ROZE_PACKAGES_DIR / BSR_PACKAGES_DIR
+        if let Ok(dir) = std::env::var("ROZE_PACKAGES_DIR").or_else(|_| std::env::var("BSR_PACKAGES_DIR")) {
+            candidates.push(PathBuf::from(dir).join(subpath));
+        }
+
+        // 5. Relative to executable
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                if let Some(root) = exe_dir.parent() {
+                    candidates.push(root.join("packages").join(subpath));
+                    candidates.push(root.join("share").join("roze").join("packages").join(subpath));
+                }
+            }
+        }
+
+        // 6. User package cache (~/.bsr/cache/packages/...)
+        if let Ok(home) = std::env::var("HOME") {
+            candidates.push(PathBuf::from(home).join(".bsr").join("cache").join("packages").join(subpath));
+        }
+
+        // 7. Fallback to stdlib directory on disk if present
+        if let Some(parent) = Path::new(env!("CARGO_MANIFEST_DIR")).parent() {
+            let stdlib_file = match path {
+                "enterprise_web" => Some("enterprise_web.roze"),
+                "cloud_security" => Some("cloud_security.roze"),
+                "rozeboot" => Some("rozeboot.roze"),
+                "orm" => Some("orm.roze"),
+                "raw_net" => Some("raw_net.roze"),
+                "crypto" => Some("crypto.roze"),
+                _ => None,
+            };
+            if let Some(sf) = stdlib_file {
+                candidates.push(parent.join("stdlib").join("src").join(sf));
+            }
+        }
+
+        for candidate in candidates {
+            if candidate.exists() && candidate.is_file() {
+                if let Ok(source) = std::fs::read_to_string(&candidate) {
+                    return Some((source, candidate.display().to_string()));
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Resolves an import path to its source text and a human-readable name
 /// for error reporting. `"core"` is special-cased to the bundled
 /// standard library; anything else is a filesystem path relative to the
 /// importing file's own directory (`.roze` is appended if not already
 /// present).
 fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Result<(String, String)> {
+    // 1. First, check modular bsr packages (rozeboot, roze-orm, roze-net, roze-crypto)
+    if let Some((source, display_name)) = resolve_modular_package(path, base_dir) {
+        return Ok((source, display_name));
+    }
+
     if path == "core" {
         return Ok((CORE_SOURCE.to_string(), CORE_DISPLAY_NAME.to_string()));
     }
@@ -242,14 +340,8 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "web" {
         return Ok((WEB_SOURCE.to_string(), WEB_DISPLAY_NAME.to_string()));
     }
-    if path == "enterprise_web" || path == "roze::web" || path == "http" || path == "http2" || path == "http3" || path == "quic" || path == "h2" || path == "h3" {
-        return Ok((ENTERPRISE_WEB_SOURCE.to_string(), ENTERPRISE_WEB_DISPLAY_NAME.to_string()));
-    }
     if path == "vga" {
         return Ok((VGA_SOURCE.to_string(), VGA_DISPLAY_NAME.to_string()));
-    }
-    if path == "rozeboot" || path == "rozeboot2" || path == "roze::boot" || path == "ioc" || path == "annotations" {
-        return Ok((ROZEBOOT_SOURCE.to_string(), ROZEBOOT_DISPLAY_NAME.to_string()));
     }
     if path == "raylib" || path == "std::raylib" || path == "roze::raylib" || path == "game::raylib" {
         return Ok((RAYLIB_SOURCE.to_string(), RAYLIB_DISPLAY_NAME.to_string()));
@@ -275,25 +367,11 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "drivers" || path == "uart" || path == "keyboard" || path == "mouse" || path == "ps2" || path == "timer" || path == "pit" || path == "hpet" || path == "gop" || path == "framebuffer" {
         return Ok((DRIVERS_SOURCE.to_string(), DRIVERS_DISPLAY_NAME.to_string()));
     }
-    if path == "raw_net" || path == "net" || path == "packet" || path == "pcap" || path == "roze::net::raw"
-        || path == "packet_crafting" || path == "protocol" || path == "dissector" || path == "dns" || path == "dhcp"
-        || path == "scanner" || path == "port_scanner" || path == "net_scan" || path == "roze::net::scanner" {
-        return Ok((RAW_NET_SOURCE.to_string(), RAW_NET_DISPLAY_NAME.to_string()));
-    }
-    if path == "crypto" || path == "roze::crypto" || path == "tls" || path == "sha" || path == "aes" || path == "chacha" || path == "rsa" {
-        return Ok((CRYPTO_SOURCE.to_string(), CRYPTO_DISPLAY_NAME.to_string()));
-    }
     if path == "binary" || path == "roze::binary" || path == "disasm" || path == "roze::disasm" || path == "elf" || path == "pe" || path == "macho" {
         return Ok((BINARY_SOURCE.to_string(), BINARY_DISPLAY_NAME.to_string()));
     }
     if path == "forensics" || path == "roze::forensics" || path == "mem_forensics" || path == "memory_forensics" || path == "rop" {
         return Ok((FORENSICS_SOURCE.to_string(), FORENSICS_DISPLAY_NAME.to_string()));
-    }
-    if path == "orm" || path == "data" || path == "roze::data" || path == "roze::orm" || path == "sql_orm" || path == "jpa" || path == "diesel" || path == "seaorm" {
-        return Ok((ORM_SOURCE.to_string(), ORM_DISPLAY_NAME.to_string()));
-    }
-    if path == "cloud_security" || path == "security" || path == "roze::security" || path == "oauth2" || path == "jwt" || path == "metrics" || path == "telemetry" || path == "openapi" || path == "swagger" {
-        return Ok((CLOUD_SECURITY_SOURCE.to_string(), CLOUD_SECURITY_DISPLAY_NAME.to_string()));
     }
     if path == "ffi" || path == "roze::ffi" || path == "c_ffi" || path == "cabi" || path == "panama" || path == "dl" {
         return Ok((FFI_SOURCE.to_string(), FFI_DISPLAY_NAME.to_string()));
@@ -343,19 +421,25 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         // 1. Direct path relative to base_dir
         list.push(primary_path.clone());
 
-        // 2. Search in `libs/` relative to base_dir and its parent directories (project root)
+        // 2. Search in `libs/` and `packages/` relative to base_dir and its parent directories (project root)
         let mut curr = Some(base_dir);
         let mut depth = 0;
         while let Some(dir) = curr {
-            if depth > 4 {
+            if depth > 5 {
                 break;
             }
             list.push(dir.join("libs").join(path).join("lib.roze"));
             list.push(dir.join("libs").join(format!("{}.roze", path)));
+            list.push(dir.join("packages").join(path).join("src").join("lib.roze"));
             let sanitized = path.replace("::", "_");
             if sanitized != path {
                 list.push(dir.join("libs").join(&sanitized).join("lib.roze"));
                 list.push(dir.join("libs").join(format!("{}.roze", sanitized)));
+                list.push(dir.join("packages").join(&sanitized).join("src").join("lib.roze"));
+            }
+            let hyphenated = path.replace('_', "-");
+            if hyphenated != path {
+                list.push(dir.join("packages").join(&hyphenated).join("src").join("lib.roze"));
             }
             curr = dir.parent();
             depth += 1;
@@ -374,7 +458,7 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         location.line,
         location.column,
     )
-    .with_hint("built-in modules: \"core\", \"concurrency\", \"web\", \"vga\", \"rozeboot\", \"raylib\", \"ai\" -- packages in \"libs/<pkg>/lib.roze\" or a relative .roze file")
+    .with_hint("built-in modules: \"core\", \"concurrency\", \"sync\", \"web\", \"fs\", \"io\", \"process\", \"time\", \"serde\", \"reflect\" -- modular packages: \"rozeboot\", \"roze-orm\", \"roze-net\", \"roze-crypto\", \"packages/<pkg>\", or \"libs/<pkg>/lib.roze\"")
     .into())
 }
 

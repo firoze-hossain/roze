@@ -504,7 +504,7 @@ s1_rows = [
         ("M5-T07", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "Framework Modularization", "Decoupling Frameworks into Standalone Packages",
         "Extract Month 3 frameworks (rozeboot, roze-orm, roze-net, roze-crypto) into standalone, modular bsr packages with bsr.mfz manifests, decoupling them from core compiler.",
         "Makes Roze core compiler pristine and establishes the modular ecosystem model.",
-        "Framework Architecture, Clean Core", "7 Days", ("Critical", 14), ("Planned", 12)
+        "Framework Architecture, Clean Core", "7 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M5-T08", 8), ("Month 5", 7), ("Sprint 10 (W19-W20)", 8), "IDE Tooling", "Language Server Protocol (LSP) Engine ('roze-lsp')",

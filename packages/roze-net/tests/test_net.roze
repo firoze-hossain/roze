@@ -1,0 +1,53 @@
+// packages/roze-net/tests/test_net.roze
+// Integration test suite for the standalone roze-net package.
+
+import "roze-net";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("❌ Assertion failed: " + msg);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_str(actual: string, expected: string, msg: string) {
+    if actual != expected {
+        println("❌ Assertion failed: " + msg);
+        println("   Expected: " + expected);
+        println("   Actual:   " + actual);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func test_network_addresses() {
+    let mac = mac_new(0, 12, 41, 67, 142, 222);
+    let mac_str = mac_to_string(mac);
+    assert_eq_str(mac_str, "00:0C:29:43:8E:DE", "MAC address formatting");
+
+    let bcast = mac_broadcast();
+    assert_eq_str(mac_to_string(bcast), "FF:FF:FF:FF:FF:FF", "Broadcast MAC");
+
+    let ip = ipv4_new(192, 168, 1, 100);
+    assert_eq_str(ipv4_to_string(ip), "192.168.1.100", "IPv4 address formatting");
+
+    let u32_val = ipv4_to_u32(ip);
+    let ip_roundtrip = ipv4_from_u32(u32_val);
+    assert_true(ipv4_equals(ip, ip_roundtrip), "IPv4 u32 roundtrip conversion");
+}
+
+func test_protocol_constants() {
+    assert_true(ethertype_ipv4() == 2048, "EtherType IPv4 constant");
+    assert_true(ethertype_arp() == 2054, "EtherType ARP constant");
+    assert_true(ipproto_tcp() == 6, "IPProto TCP constant");
+    assert_true(ipproto_udp() == 17, "IPProto UDP constant");
+    assert_true(ipproto_icmp() == 1, "IPProto ICMP constant");
+}
+
+func main() {
+    println("🧪 Running roze-net standalone package tests...");
+    test_network_addresses();
+    test_protocol_constants();
+    println("🎉 roze-net test suite completed successfully!");
+}

@@ -1,0 +1,62 @@
+// packages/roze-crypto/tests/test_crypto.roze
+// Integration test suite for the standalone roze-crypto package.
+
+import "roze-crypto";
+
+func assert_eq_str(actual: string, expected: string, msg: string) {
+    if actual != expected {
+        println("❌ Assertion failed: " + msg);
+        println("   Expected: " + expected);
+        println("   Actual:   " + actual);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("❌ Assertion failed: " + msg);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func test_sha256_standard_vector() {
+    let empty_hash = sha256_hex("");
+    assert_eq_str(empty_hash, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA-256 empty string standard vector");
+
+    let abc_hash = sha256_hex("abc");
+    assert_eq_str(abc_hash, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA-256 'abc' NIST test vector");
+}
+
+func test_hmac_sha256() {
+    let key = bytes_from_string("key");
+    let msg = bytes_from_string("The quick brown fox jumps over the lazy dog");
+    let mac = hex_encode(hmac_sha256(key, msg));
+    assert_eq_str(mac, "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8", "HMAC-SHA256 standard test vector");
+}
+
+func test_ed25519_signatures() {
+    let seed = bytes_new(32);
+    let i = 0;
+    while i < 32 {
+        list_set(seed, i, bit_and(i * 37 + 11, 255));
+        i = i + 1;
+    }
+    let kp = ed25519_keypair_from_seed(seed);
+    let msg = bytes_from_string("Roze Language RFC 8032 Payload");
+    let sig = ed25519_sign(kp.seed, msg);
+    let valid = ed25519_verify(kp.public_key, msg, sig);
+    assert_true(valid, "Ed25519 keygen, sign, and verify cycle");
+
+    let invalid = ed25519_verify(kp.public_key, bytes_from_string("Tampered payload"), sig);
+    assert_true(!invalid, "Ed25519 rejects tampered message");
+}
+
+func main() {
+    println("🧪 Running roze-crypto standalone package tests...");
+    test_sha256_standard_vector();
+    test_hmac_sha256();
+    test_ed25519_signatures();
+    println("🎉 roze-crypto test suite completed successfully!");
+}

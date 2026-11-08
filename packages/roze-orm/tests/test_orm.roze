@@ -1,0 +1,55 @@
+// packages/roze-orm/tests/test_orm.roze
+// Integration test suite for the standalone roze-orm package.
+
+import "roze-orm";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("❌ Assertion failed: " + msg);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_str(actual: string, expected: string, msg: string) {
+    if actual != expected {
+        println("❌ Assertion failed: " + msg);
+        println("   Expected: " + expected);
+        println("   Actual:   " + actual);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func test_entity_metadata() {
+    let em = entity_meta_new("AccountModel", "bank_accounts", "id", "version");
+    entity_meta_add_col(em, col_meta_new("id", "id", "int", true, false));
+    entity_meta_add_col(em, col_meta_new("account_no", "account_no", "string", false, false));
+    entity_meta_add_col(em, col_meta_new("balance_cents", "balance_cents", "int", false, false));
+
+    assert_eq_str(em.entity_name, "AccountModel", "Entity name match");
+    assert_eq_str(em.table_name, "bank_accounts", "Table name match");
+    assert_true(list_length(em.columns) == 3, "Column count match");
+}
+
+func test_sql_query_builder() {
+    let qb = sql_select_from("bank_accounts");
+    sql_as(qb, "acc");
+    sql_col(qb, "acc.id");
+    sql_col(qb, "acc.account_no");
+    sql_where_eq(qb, "acc.status", "ACTIVE");
+    sql_order_by(qb, "acc.balance_cents", "DESC");
+    sql_limit(qb, 10);
+
+    let sql_str = sql_to_string(qb);
+    assert_true(string_contains(sql_str, "SELECT"), "SQL contains SELECT");
+    assert_true(string_contains(sql_str, "FROM bank_accounts"), "SQL contains FROM");
+    assert_true(string_contains(sql_str, "WHERE"), "SQL contains WHERE");
+}
+
+func main() {
+    println("🧪 Running roze-orm standalone package tests...");
+    test_entity_metadata();
+    test_sql_query_builder();
+    println("🎉 roze-orm test suite completed successfully!");
+}

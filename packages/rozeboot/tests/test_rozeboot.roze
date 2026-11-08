@@ -1,0 +1,60 @@
+// packages/rozeboot/tests/test_rozeboot.roze
+// Integration test suite for the standalone rozeboot package.
+
+import "rozeboot";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("❌ Assertion failed: " + msg);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_str(actual: string, expected: string, msg: string) {
+    if actual != expected {
+        println("❌ Assertion failed: " + msg);
+        println("   Expected: " + expected);
+        println("   Actual:   " + actual);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func test_ioc_container() {
+    let ioc = ioc_container_new();
+    let def_logger = bean_definition_new("auditLogger", "AuditLogger", 1);
+    ioc_register_definition(ioc, def_logger);
+
+    let def_service = bean_definition_new("orderService", "OrderService", 1);
+    bean_def_add_dependency(def_service, "auditLogger");
+    ioc_register_definition(ioc, def_service);
+
+    assert_true(list_length(ioc.definitions) == 2, "IoC definitions registered");
+    let ok = ioc_resolve_dependencies(ioc);
+    assert_true(ok, "IoC dependency graph resolves without cycle");
+}
+
+func test_controller_binding_and_validation() {
+    let app = rozeboot2_new("RozeOrderApp", 8080);
+    assert_eq_str(app.name, "RozeOrderApp", "App name match");
+    assert_true(app.port == 8080, "App port match");
+
+    let ctrl = rest_controller_new("OrderController", "/api/v1");
+    let ep = endpoint_binding_new("GET", "/orders", "OrderController", "getOrders", 1);
+    rest_controller_add_endpoint(ctrl, ep);
+    rozeboot2_register_controller(app, ctrl);
+
+    assert_true(list_length(app.controllers) == 1, "Controller registered in app");
+
+    let r_email = rule_email("email", "Must be a valid email");
+    rozeboot2_add_validation_rule(app, r_email);
+    assert_true(list_length(app.validation_rules) == 1, "Validation rule added");
+}
+
+func main() {
+    println("🧪 Running rozeboot standalone package tests...");
+    test_ioc_container();
+    test_controller_binding_and_validation();
+    println("🎉 rozeboot test suite completed successfully!");
+}

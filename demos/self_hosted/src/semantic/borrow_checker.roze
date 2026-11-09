@@ -1,0 +1,141 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - ARC Borrow Lifetime Analyzer (M6-T02 Semantic)
+// ==============================================================================
+
+import "../ast.roze";
+import "symbols.roze";
+
+func is_copy_type(type_name: string) -> int {
+    if type_name == "int" || type_name == "bool" || type_name == "char" || type_name == "float" || type_name == "void" {
+        return 1;
+    }
+    return 0;
+}
+
+func add_borrow_var(tc: TypeChecker, name: string, type_name: string, state: int, line: int) {
+    let b = new BorrowVar(name, type_name, state, "", line, tc.borrow_vars);
+    tc.borrow_vars = b;
+}
+
+func lookup_borrow_var(tc: TypeChecker, name: string) -> BorrowVar {
+    let curr = tc.borrow_vars;
+    while curr != null {
+        if curr.name == name {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func mark_var_moved(tc: TypeChecker, from_var: string, to_var: string, line: int) {
+    let b = lookup_borrow_var(tc, from_var);
+    if b != null {
+        if is_copy_type(b.type_name) == 0 {
+            b.state = BORROW_MOVED();
+            b.moved_to = to_var;
+        }
+    }
+}
+
+func restore_var_ownership(tc: TypeChecker, name: string) {
+    let b = lookup_borrow_var(tc, name);
+    if b != null {
+        b.state = BORROW_OWNED();
+        b.moved_to = "";
+    }
+}
+
+func check_expr_borrow_use(tc: TypeChecker, expr: AstNode) {
+    if expr == null { return; }
+
+    if expr.kind == NODE_IDENT() {
+        let b = lookup_borrow_var(tc, expr.name);
+        if b != null && b.state == BORROW_MOVED() {
+            tc_report_error(tc, "Use of moved value '" + expr.name + "' (ownership was transferred to '" + b.moved_to + "')", expr.line);
+        }
+    }
+
+    check_expr_borrow_use(tc, expr.child1);
+    check_expr_borrow_use(tc, expr.child2);
+    check_expr_borrow_use(tc, expr.child3);
+    check_expr_borrow_use(tc, expr.child4);
+    check_expr_borrow_use(tc, expr.next);
+}
+
+func check_stmt_borrow(tc: TypeChecker, stmt: AstNode) {
+    if stmt == null { return; }
+
+    let kind = stmt.kind;
+
+    if kind == NODE_VAR_DECL() {
+        let init_expr = stmt.child1;
+        if init_expr != null {
+            check_expr_borrow_use(tc, init_expr);
+            // If initializing from an existing identifier of ARC type, transfer ownership
+            if init_expr.kind == NODE_IDENT() {
+                mark_var_moved(tc, init_expr.name, stmt.name, stmt.line);
+            }
+        }
+        add_borrow_var(tc, stmt.name, stmt.type_name, BORROW_OWNED(), stmt.line);
+    } else if kind == NODE_ASSIGN() {
+        let target = stmt.child1;
+        let val = stmt.child2;
+        if target != null && target.kind == NODE_IDENT() {
+            restore_var_ownership(tc, target.name);
+        }
+        check_expr_borrow_use(tc, val);
+        if val != null && val.kind == NODE_IDENT() && target != null && target.kind == NODE_IDENT() {
+            mark_var_moved(tc, val.name, target.name, stmt.line);
+        }
+    } else {
+        check_expr_borrow_use(tc, stmt.child1);
+        check_expr_borrow_use(tc, stmt.child2);
+        check_expr_borrow_use(tc, stmt.child3);
+        check_expr_borrow_use(tc, stmt.child4);
+    }
+
+    check_stmt_borrow(tc, stmt.next);
+}
+
+// Check for cyclic reference hazards between classes (A has B, B has A)
+func check_cyclic_reference_hazards(tc: TypeChecker) {
+    let c1 = tc.classes;
+    while c1 != null {
+        let f1 = c1.fields;
+        while f1 != null {
+            if f1.type_name != c1.name {
+                let target_cls = lookup_class_def(tc, f1.type_name);
+                if target_cls != null {
+                    let f2 = target_cls.fields;
+                    while f2 != null {
+                        if f2.type_name == c1.name {
+                            tc_report_warning(tc, "Potential strong reference cycle detected between classes '" + c1.name + "' and '" + target_cls.name + "'. Consider using Weak<T> to prevent memory leaks.", 0);
+                        }
+                        f2 = f2.next;
+                    }
+                }
+            }
+            f1 = f1.next;
+        }
+        c1 = c1.next;
+    }
+}
+
+func analyze_borrows(tc: TypeChecker, prog: AstNode) -> int {
+    if prog == null { return 0; }
+    tc.borrow_vars = null;
+
+    check_cyclic_reference_hazards(tc);
+
+    let decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() {
+            tc.borrow_vars = null; // Fresh borrow scope per function
+            check_stmt_borrow(tc, decl.child2);
+        }
+        decl = decl.next;
+    }
+
+    return tc.error_count;
+}

@@ -1,0 +1,122 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Generic Monomorphizer (M6-T02 Pure Roze Semantic)
+// ==============================================================================
+
+import "../ast.roze";
+import "symbols.roze";
+
+func record_mono_entry(tc: TypeChecker, generic_name: string, concrete_type: string, spec_name: string) {
+    let entry = new MonoEntry(generic_name, concrete_type, spec_name, tc.mono_table);
+    tc.mono_table = entry;
+}
+
+func lookup_mono_entry(tc: TypeChecker, generic_name: string, concrete_type: string) -> string {
+    let curr = tc.mono_table;
+    while curr != null {
+        if curr.generic_name == generic_name && curr.concrete_type == concrete_type {
+            return curr.specialized_name;
+        }
+        curr = curr.next;
+    }
+    return "";
+}
+
+func substitute_type_in_ast(node: AstNode, param_name: string, concrete_type: string) {
+    if node == null { return; }
+    if node.type_name == param_name {
+        node.type_name = concrete_type;
+    }
+    substitute_type_in_ast(node.child1, param_name, concrete_type);
+    substitute_type_in_ast(node.child2, param_name, concrete_type);
+    substitute_type_in_ast(node.child3, param_name, concrete_type);
+    substitute_type_in_ast(node.child4, param_name, concrete_type);
+    substitute_type_in_ast(node.next, param_name, concrete_type);
+}
+
+func find_generic_decl(prog: AstNode, name: string, kind: int) -> AstNode {
+    let curr = prog.child1;
+    while curr != null {
+        if curr.kind == kind && curr.name == name && curr.op != "" {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+// Monomorphize a single generic class instantiation: new Box<int>(10)
+func monomorphize_class_instantiation(tc: TypeChecker, prog: AstNode, new_node: AstNode) {
+    if new_node == null || new_node.op == "" { return; }
+
+    let gen_name = new_node.name;
+    let concrete_type = new_node.op;
+    let spec_name = gen_name + "__" + concrete_type;
+
+    let existing = lookup_mono_entry(tc, gen_name, concrete_type);
+    if existing == "" {
+        // Specialize this generic class
+        let gen_cls = find_generic_decl(prog, gen_name, NODE_CLASS_DECL());
+        if gen_cls != null {
+            let spec_cls = clone_ast_node(gen_cls);
+            spec_cls.next = null;
+            spec_cls.name = spec_name;
+            spec_cls.type_name = spec_name;
+            let param_name = gen_cls.op;
+            spec_cls.op = ""; // Specialized, no longer generic
+            substitute_type_in_ast(spec_cls, param_name, concrete_type);
+
+            // Append specialized class to top-level declarations
+            let tail = prog.child1;
+            while tail.next != null {
+                tail = tail.next;
+            }
+            tail.next = spec_cls;
+            record_mono_entry(tc, gen_name, concrete_type, spec_name);
+        }
+    }
+
+    // Rewrite instantiation to specialized class
+    new_node.name = spec_name;
+    new_node.type_name = spec_name;
+    new_node.op = "";
+}
+
+// Walk expressions to find generic instantiations and calls
+func monomorphize_expr(tc: TypeChecker, prog: AstNode, expr: AstNode) {
+    if expr == null { return; }
+
+    if expr.kind == NODE_NEW() && expr.op != "" {
+        monomorphize_class_instantiation(tc, prog, expr);
+    }
+
+    monomorphize_expr(tc, prog, expr.child1);
+    monomorphize_expr(tc, prog, expr.child2);
+    monomorphize_expr(tc, prog, expr.child3);
+    monomorphize_expr(tc, prog, expr.child4);
+    monomorphize_expr(tc, prog, expr.next);
+}
+
+func monomorphize_statement(tc: TypeChecker, prog: AstNode, stmt: AstNode) {
+    if stmt == null { return; }
+
+    monomorphize_expr(tc, prog, stmt.child1);
+    monomorphize_expr(tc, prog, stmt.child2);
+    monomorphize_expr(tc, prog, stmt.child3);
+    monomorphize_expr(tc, prog, stmt.child4);
+
+    monomorphize_statement(tc, prog, stmt.next);
+}
+
+func monomorphize_program(prog: AstNode) -> AstNode {
+    if prog == null { return null; }
+    let tc = make_type_checker();
+
+    let decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() {
+            monomorphize_statement(tc, prog, decl.child2);
+        }
+        decl = decl.next;
+    }
+    return prog;
+}

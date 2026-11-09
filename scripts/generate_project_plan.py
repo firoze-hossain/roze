@@ -542,7 +542,7 @@ s1_rows = [
         ("M6-T02", 8), ("Month 6", 11), ("Sprint 11 (W21-W22)", 8), "Pure Roze Semantic", "Roze-in-Roze Type Checker & Monomorphizer",
         "Rewrite semantic analyzer in pure Roze: scoped symbol tables, type inference, trait resolution, generic monomorphization, and ARC borrow lifetime analyzer.",
         "Zero Rust dependency for type validation and generic code specialization.",
-        "Self-Hosting Compiler, Language Independence", "9 Days", ("Critical", 14), ("Planned", 12)
+        "Self-Hosting Compiler, Language Independence", "9 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M6-T03", 8), ("Month 6", 11), ("Sprint 11 (W21-W22)", 8), "Pure Roze Optimizer", "Typed SSA IR & Optimization Passes in Roze",
@@ -828,7 +828,7 @@ s4_rows = [
         "Implement Type Checker, Trait Solver, Monomorphizer, and ARC Borrow Checker in pure Roze. Validates symbols, resolves interfaces, and handles generics.",
         "50% - Semantic analysis decoupled",
         "Type check compiler source with zero errors",
-        ("Planned", 12)
+        ("Completed", 16)
     ],
     [
         ("Stage 3", 5), "Pure Roze Optimizer", "Roze-in-Roze SSA IR & Optimizer",

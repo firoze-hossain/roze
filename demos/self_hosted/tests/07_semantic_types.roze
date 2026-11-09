@@ -1,0 +1,75 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Semantic Type Checker & Monomorphizer Test (M6-T02)
+// ==============================================================================
+
+class Point {
+    x: int,
+    y: int
+}
+
+class User {
+    id: int,
+    name: string
+}
+
+trait Greeter {
+    func greet() -> string;
+}
+
+impl Greeter for User {
+    func greet() -> string {
+        return "Welcome, " + "Roze User";
+    }
+}
+
+class Container<T> {
+    val: int
+}
+
+func add(a: int, b: int) -> int {
+    return a + b;
+}
+
+func identity(x: int) -> int {
+    return x;
+}
+
+func main() {
+    println("=== 1. Scoped Symbol Tables & Shadowing ===");
+    let score = 100;
+    println("Outer score: " + rz_int_to_str(score));
+    {
+        let score = 200;
+        println("Inner score (shadowed): " + rz_int_to_str(score));
+    }
+    println("Outer score restored: " + rz_int_to_str(score));
+
+    println("=== 2. Type Inference for Let Bindings ===");
+    let count = 42;
+    let label = "Total count: ";
+    let flag = true;
+    println(label + rz_int_to_str(count));
+    if flag {
+        println("Flag is true");
+    }
+
+    println("=== 3. Classes and Field Resolution ===");
+    let pt = new Point(15, 27);
+    println("Point: " + rz_int_to_str(pt.x) + ", " + rz_int_to_str(pt.y));
+    println("Sum: " + rz_int_to_str(add(pt.x, pt.y)));
+
+    println("=== 4. Traits & Impl Conformance ===");
+    let u = new User(1, "Alice");
+    println("User ID: " + rz_int_to_str(u.id));
+    println("User Name: " + u.name);
+
+    println("=== 5. Generic Class Monomorphization ===");
+    let box = new Container<int>(99);
+    println("Container val: " + rz_int_to_str(box.val));
+
+    println("=== 6. Function Resolution & Return Types ===");
+    let res = identity(777);
+    println("Identity result: " + rz_int_to_str(res));
+
+    println("✅ All semantic type checker and monomorphizer tests passed!");
+}

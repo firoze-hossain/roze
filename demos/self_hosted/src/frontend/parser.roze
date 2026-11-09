@@ -125,9 +125,15 @@ func parse_primary(p: Parser) -> AstNode {
         let class_name = consume_tok(p, TOK_IDENT(), "Expected class name after 'new'").text;
 
         // Check for generic type arguments: new ClassName<T>(...)
+        let generic_arg = "";
         if check_token(p, TOK_LT()) {
             advance_token(p); // '<'
             while !check_token(p, TOK_GT()) && !check_token(p, TOK_EOF()) {
+                if generic_arg == "" {
+                    generic_arg = p.curr.text;
+                } else {
+                    generic_arg = generic_arg + "," + p.curr.text;
+                }
                 advance_token(p);
             }
             consume_tok(p, TOK_GT(), "Expected '>' after type arguments");
@@ -135,6 +141,7 @@ func parse_primary(p: Parser) -> AstNode {
 
         consume_tok(p, TOK_LPAREN(), "Expected '(' after class name");
         let node = make_ast_node(NODE_NEW(), class_name, class_name, line, col);
+        node.op = generic_arg;
 
         let args_head: AstNode = null;
         let args_tail: AstNode = null;
@@ -884,9 +891,15 @@ func parse_func_decl(p: Parser) -> AstNode {
     let name = consume_tok(p, TOK_IDENT(), "Expected function name").text;
 
     // Optional generics: func name<T, U>(...)
+    let fn_generic = "";
     if check_token(p, TOK_LT()) {
         advance_token(p); // '<'
         while !check_token(p, TOK_GT()) && !check_token(p, TOK_EOF()) {
+            if fn_generic == "" {
+                fn_generic = p.curr.text;
+            } else {
+                fn_generic = fn_generic + "," + p.curr.text;
+            }
             advance_token(p);
         }
         consume_tok(p, TOK_GT(), "Expected '>' after function type parameters");
@@ -932,6 +945,7 @@ func parse_func_decl(p: Parser) -> AstNode {
 
     let body = parse_block(p);
     let node = make_ast_node(NODE_FUNC_DECL(), name, ret_type, line, col);
+    node.op = fn_generic;
     node.child1 = params_head;
     node.child2 = body;
     if is_async { node.str_val = "async"; }
@@ -1003,9 +1017,15 @@ func parse_class_decl(p: Parser) -> AstNode {
     let name = consume_tok(p, TOK_IDENT(), "Expected class name").text;
 
     // Optional generics: class Name<T, U>
+    let cls_generic = "";
     if check_token(p, TOK_LT()) {
         advance_token(p); // '<'
         while !check_token(p, TOK_GT()) && !check_token(p, TOK_EOF()) {
+            if cls_generic == "" {
+                cls_generic = p.curr.text;
+            } else {
+                cls_generic = cls_generic + "," + p.curr.text;
+            }
             advance_token(p);
         }
         consume_tok(p, TOK_GT(), "Expected '>' after class type parameters");
@@ -1039,6 +1059,7 @@ func parse_class_decl(p: Parser) -> AstNode {
 
     consume_tok(p, TOK_RBRACE(), "Expected '}' at end of class declaration");
     let node = make_ast_node(NODE_CLASS_DECL(), name, name, line, col);
+    node.op = cls_generic;
     node.child1 = fields_head;
     return node;
 }

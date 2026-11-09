@@ -1,0 +1,1003 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Semantic Analyzer & Type Checker (M6-T02)
+// ==============================================================================
+// Pure Roze Semantic Analysis Pipeline:
+// 1. Scoped Symbol Tables & Lexical Environment (symbols.roze)
+// 2. Trait Resolution & Interface Conformance Engine (trait_solver.roze)
+// 3. Generic Monomorphizer & AST Specializer (monomorphizer.roze)
+// 4. ARC Borrow Lifetime & Ownership Analyzer (borrow_checker.roze)
+// 5. Bidirectional Type Checker & Type Inference Engine (typechecker.roze)
+// ==============================================================================
+
+import "ast.roze";
+
+class TypeChecker {
+    symbols: Symbol,
+    scope_level: int,
+    error_count: int,
+    warning_count: int,
+    current_func_ret: string,
+    current_func_name: string,
+    classes: ClassDef,
+    traits: TraitDef,
+    impls: ImplDef,
+    mono_table: MonoEntry,
+    borrow_vars: BorrowVar
+}
+
+func make_type_checker() -> TypeChecker {
+    return new TypeChecker(null, 0, 0, 0, "void", "", null, null, null, null, null);
+}
+
+// ------------------------------------------------------------------------------
+// 1. Scoped Symbol Tables
+// ------------------------------------------------------------------------------
+
+func enter_scope(tc: TypeChecker) {
+    tc.scope_level = tc.scope_level + 1;
+}
+
+func exit_scope(tc: TypeChecker) {
+    while tc.symbols != null && tc.symbols.scope_level == tc.scope_level {
+        tc.symbols = tc.symbols.next;
+    }
+    tc.scope_level = tc.scope_level - 1;
+}
+
+func define_symbol(tc: TypeChecker, name: string, type_name: string, kind: int) {
+    let sym = new Symbol(name, type_name, kind, tc.scope_level, 0, BORROW_OWNED(), null, tc.symbols);
+    tc.symbols = sym;
+}
+
+func define_symbol_with_decl(tc: TypeChecker, name: string, type_name: string, kind: int, is_mut: int, decl: AstNode) {
+    let sym = new Symbol(name, type_name, kind, tc.scope_level, is_mut, BORROW_OWNED(), decl, tc.symbols);
+    tc.symbols = sym;
+}
+
+func lookup_symbol(tc: TypeChecker, name: string) -> Symbol {
+    let curr = tc.symbols;
+    while curr != null {
+        if curr.name == name {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func lookup_symbol_in_current_scope(tc: TypeChecker, name: string) -> Symbol {
+    let curr = tc.symbols;
+    while curr != null && curr.scope_level == tc.scope_level {
+        if curr.name == name {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+// Class Field Registry
+func register_class_def(tc: TypeChecker, name: string, fields: AstNode) {
+    let f_head: ClassField = null;
+    let f_tail: ClassField = null;
+    let curr = fields;
+    while curr != null {
+        if curr.kind == NODE_FIELD() {
+            let cf = new ClassField(curr.name, curr.type_name, null);
+            if f_head == null {
+                f_head = cf;
+                f_tail = cf;
+            } else {
+                f_tail.next = cf;
+                f_tail = cf;
+            }
+        }
+        curr = curr.next;
+    }
+    let cdef = new ClassDef(name, f_head, tc.classes);
+    tc.classes = cdef;
+}
+
+func lookup_class_def(tc: TypeChecker, name: string) -> ClassDef {
+    let curr = tc.classes;
+    while curr != null {
+        if curr.name == name {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func lookup_class_field(tc: TypeChecker, class_name: string, field_name: string) -> string {
+    let cdef = lookup_class_def(tc, class_name);
+    if cdef == null { return ""; }
+    let curr = cdef.fields;
+    while curr != null {
+        if curr.name == field_name {
+            return curr.type_name;
+        }
+        curr = curr.next;
+    }
+    return "";
+}
+
+func tc_report_error(tc: TypeChecker, msg: string, line: int) {
+    if line > 0 {
+        println("❌ Type Error [Line " + rz_int_to_str(line) + "]: " + msg);
+    } else {
+        println("❌ Type Error: " + msg);
+    }
+    tc.error_count = tc.error_count + 1;
+}
+
+func tc_report_warning(tc: TypeChecker, msg: string, line: int) {
+    if line > 0 {
+        println("⚠️ Semantic Warning [Line " + rz_int_to_str(line) + "]: " + msg);
+    } else {
+        println("⚠️ Semantic Warning: " + msg);
+    }
+    tc.warning_count = tc.warning_count + 1;
+}
+
+// ------------------------------------------------------------------------------
+// 2. Trait Solver & Interface Conformance
+// ------------------------------------------------------------------------------
+
+func register_trait_def(tc: TypeChecker, name: string, methods_ast: AstNode) {
+    let m_head: TraitMethod = null;
+    let m_tail: TraitMethod = null;
+    let curr = methods_ast;
+    while curr != null {
+        if curr.kind == NODE_FUNC_DECL() {
+            let m = new TraitMethod(curr.name, curr.type_name, curr.op, null);
+            if m_head == null {
+                m_head = m;
+                m_tail = m;
+            } else {
+                m_tail.next = m;
+                m_tail = m;
+            }
+        }
+        curr = curr.next;
+    }
+    let tdef = new TraitDef(name, m_head, tc.traits);
+    tc.traits = tdef;
+}
+
+func lookup_trait_def(tc: TypeChecker, name: string) -> TraitDef {
+    let curr = tc.traits;
+    while curr != null {
+        if curr.name == name {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func register_impl_def(tc: TypeChecker, trait_name: string, target_type: string, methods_ast: AstNode) {
+    let m_head: TraitMethod = null;
+    let m_tail: TraitMethod = null;
+    let curr = methods_ast;
+    while curr != null {
+        if curr.kind == NODE_FUNC_DECL() {
+            let m = new TraitMethod(curr.name, curr.type_name, curr.op, null);
+            if m_head == null {
+                m_head = m;
+                m_tail = m;
+            } else {
+                m_tail.next = m;
+                m_tail = m;
+            }
+        }
+        curr = curr.next;
+    }
+    let idef = new ImplDef(trait_name, target_type, m_head, tc.impls);
+    tc.impls = idef;
+}
+
+func lookup_impl_def(tc: TypeChecker, trait_name: string, target_type: string) -> ImplDef {
+    let curr = tc.impls;
+    while curr != null {
+        if curr.trait_name == trait_name && curr.target_type == target_type {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func verify_trait_conformance(tc: TypeChecker, impl_node: AstNode) {
+    if impl_node == null { return; }
+    let trait_name = impl_node.str_val;
+    if trait_name == "" { return; }
+    let target_type = impl_node.name;
+    let line = impl_node.line;
+
+    let tdef = lookup_trait_def(tc, trait_name);
+    if tdef == null {
+        tc_report_error(tc, "Implementation references undefined trait '" + trait_name + "'", line);
+        return;
+    }
+
+    let req_m = tdef.methods;
+    while req_m != null {
+        let found = false;
+        let impl_m = impl_node.child1;
+        while impl_m != null {
+            if impl_m.kind == NODE_FUNC_DECL() && impl_m.name == req_m.name {
+                found = true;
+                if req_m.ret_type != "void" && req_m.ret_type != "" && impl_m.type_name != req_m.ret_type {
+                    tc_report_error(tc, "Method '" + req_m.name + "' in impl '" + trait_name + "' for '" + target_type + "' returns '" + impl_m.type_name + "', expected '" + req_m.ret_type + "'", impl_m.line);
+                }
+            }
+            impl_m = impl_m.next;
+        }
+        if !found {
+            tc_report_error(tc, "Type '" + target_type + "' does not fully implement trait '" + trait_name + "': missing required method '" + req_m.name + "'", line);
+        }
+        req_m = req_m.next;
+    }
+}
+
+func resolve_trait_method(tc: TypeChecker, target_type: string, method_name: string) -> string {
+    let curr = tc.impls;
+    while curr != null {
+        if curr.target_type == target_type {
+            let m = curr.methods;
+            while m != null {
+                if m.name == method_name {
+                    return m.ret_type;
+                }
+                m = m.next;
+            }
+        }
+        curr = curr.next;
+    }
+    return "";
+}
+
+// ------------------------------------------------------------------------------
+// 3. Generic Monomorphizer
+// ------------------------------------------------------------------------------
+
+func record_mono_entry(tc: TypeChecker, generic_name: string, concrete_type: string, spec_name: string) {
+    let entry = new MonoEntry(generic_name, concrete_type, spec_name, tc.mono_table);
+    tc.mono_table = entry;
+}
+
+func lookup_mono_entry(tc: TypeChecker, generic_name: string, concrete_type: string) -> string {
+    let curr = tc.mono_table;
+    while curr != null {
+        if curr.generic_name == generic_name && curr.concrete_type == concrete_type {
+            return curr.specialized_name;
+        }
+        curr = curr.next;
+    }
+    return "";
+}
+
+func substitute_type_in_ast(node: AstNode, param_name: string, concrete_type: string) {
+    if node == null { return; }
+    if node.type_name == param_name {
+        node.type_name = concrete_type;
+    }
+    substitute_type_in_ast(node.child1, param_name, concrete_type);
+    substitute_type_in_ast(node.child2, param_name, concrete_type);
+    substitute_type_in_ast(node.child3, param_name, concrete_type);
+    substitute_type_in_ast(node.child4, param_name, concrete_type);
+    substitute_type_in_ast(node.next, param_name, concrete_type);
+}
+
+func find_generic_decl(prog: AstNode, name: string, kind: int) -> AstNode {
+    let curr = prog.child1;
+    while curr != null {
+        if curr.kind == kind && curr.name == name && curr.op != "" {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func monomorphize_class_instantiation(tc: TypeChecker, prog: AstNode, new_node: AstNode) {
+    if new_node == null || new_node.op == "" { return; }
+
+    let gen_name = new_node.name;
+    let concrete_type = new_node.op;
+    let spec_name = gen_name + "__" + concrete_type;
+
+    let existing = lookup_mono_entry(tc, gen_name, concrete_type);
+    if existing == "" {
+        let gen_cls = find_generic_decl(prog, gen_name, NODE_CLASS_DECL());
+        if gen_cls != null {
+            let spec_cls = clone_ast_node(gen_cls);
+            spec_cls.next = null;
+            spec_cls.name = spec_name;
+            spec_cls.type_name = spec_name;
+            let param_name = gen_cls.op;
+            spec_cls.op = "";
+            substitute_type_in_ast(spec_cls, param_name, concrete_type);
+
+            let tail = prog.child1;
+            while tail.next != null {
+                tail = tail.next;
+            }
+            tail.next = spec_cls;
+            record_mono_entry(tc, gen_name, concrete_type, spec_name);
+        }
+    }
+
+    new_node.name = spec_name;
+    new_node.type_name = spec_name;
+    new_node.op = "";
+}
+
+func monomorphize_expr(tc: TypeChecker, prog: AstNode, expr: AstNode) {
+    if expr == null { return; }
+
+    if expr.kind == NODE_NEW() && expr.op != "" {
+        monomorphize_class_instantiation(tc, prog, expr);
+    }
+
+    monomorphize_expr(tc, prog, expr.child1);
+    monomorphize_expr(tc, prog, expr.child2);
+    monomorphize_expr(tc, prog, expr.child3);
+    monomorphize_expr(tc, prog, expr.child4);
+    monomorphize_expr(tc, prog, expr.next);
+}
+
+func monomorphize_statement(tc: TypeChecker, prog: AstNode, stmt: AstNode) {
+    if stmt == null { return; }
+
+    monomorphize_expr(tc, prog, stmt.child1);
+    monomorphize_expr(tc, prog, stmt.child2);
+    monomorphize_expr(tc, prog, stmt.child3);
+    monomorphize_expr(tc, prog, stmt.child4);
+
+    monomorphize_statement(tc, prog, stmt.next);
+}
+
+func monomorphize_program(prog: AstNode) -> AstNode {
+    if prog == null { return null; }
+    let tc = make_type_checker();
+
+    let decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() {
+            monomorphize_statement(tc, prog, decl.child2);
+        }
+        decl = decl.next;
+    }
+    return prog;
+}
+
+// ------------------------------------------------------------------------------
+// 4. ARC Borrow Lifetime Analyzer
+// ------------------------------------------------------------------------------
+
+func is_copy_type(type_name: string) -> int {
+    if type_name == "int" || type_name == "bool" || type_name == "char" || type_name == "float" || type_name == "void" {
+        return 1;
+    }
+    return 0;
+}
+
+func add_borrow_var(tc: TypeChecker, name: string, type_name: string, state: int, line: int) {
+    let b = new BorrowVar(name, type_name, state, "", line, tc.borrow_vars);
+    tc.borrow_vars = b;
+}
+
+func lookup_borrow_var(tc: TypeChecker, name: string) -> BorrowVar {
+    let curr = tc.borrow_vars;
+    while curr != null {
+        if curr.name == name {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func mark_var_moved(tc: TypeChecker, from_var: string, to_var: string, line: int) {
+    let b = lookup_borrow_var(tc, from_var);
+    if b != null {
+        if is_copy_type(b.type_name) == 0 {
+            b.state = BORROW_MOVED();
+            b.moved_to = to_var;
+        }
+    }
+}
+
+func restore_var_ownership(tc: TypeChecker, name: string) {
+    let b = lookup_borrow_var(tc, name);
+    if b != null {
+        b.state = BORROW_OWNED();
+        b.moved_to = "";
+    }
+}
+
+func check_expr_borrow_use(tc: TypeChecker, expr: AstNode) {
+    if expr == null { return; }
+
+    if expr.kind == NODE_IDENT() {
+        let b = lookup_borrow_var(tc, expr.name);
+        if b != null && b.state == BORROW_MOVED() {
+            tc_report_error(tc, "Use of moved value '" + expr.name + "' (ownership was transferred to '" + b.moved_to + "')", expr.line);
+        }
+    }
+
+    check_expr_borrow_use(tc, expr.child1);
+    check_expr_borrow_use(tc, expr.child2);
+    check_expr_borrow_use(tc, expr.child3);
+    check_expr_borrow_use(tc, expr.child4);
+    check_expr_borrow_use(tc, expr.next);
+}
+
+func check_stmt_borrow(tc: TypeChecker, stmt: AstNode) {
+    if stmt == null { return; }
+
+    let kind = stmt.kind;
+
+    if kind == NODE_VAR_DECL() {
+        let init_expr = stmt.child1;
+        if init_expr != null {
+            check_expr_borrow_use(tc, init_expr);
+            // If initialized from an existing identifier of ARC type, transfer ownership
+            if init_expr.kind == NODE_IDENT() {
+                mark_var_moved(tc, init_expr.name, stmt.name, stmt.line);
+            }
+        }
+        add_borrow_var(tc, stmt.name, stmt.type_name, BORROW_OWNED(), stmt.line);
+    } else if kind == NODE_ASSIGN() {
+        let target = stmt.child1;
+        let val = stmt.child2;
+        if target != null && target.kind == NODE_IDENT() {
+            restore_var_ownership(tc, target.name);
+        }
+        check_expr_borrow_use(tc, val);
+        if val != null && val.kind == NODE_IDENT() && target != null && target.kind == NODE_IDENT() {
+            mark_var_moved(tc, val.name, target.name, stmt.line);
+        }
+    } else {
+        check_expr_borrow_use(tc, stmt.child1);
+        check_expr_borrow_use(tc, stmt.child2);
+        check_expr_borrow_use(tc, stmt.child3);
+        check_expr_borrow_use(tc, stmt.child4);
+    }
+
+    check_stmt_borrow(tc, stmt.next);
+}
+
+func check_cyclic_reference_hazards(tc: TypeChecker) {
+    let c1 = tc.classes;
+    while c1 != null {
+        let f1 = c1.fields;
+        while f1 != null {
+            if f1.type_name != c1.name {
+                let target_cls = lookup_class_def(tc, f1.type_name);
+                if target_cls != null {
+                    let f2 = target_cls.fields;
+                    while f2 != null {
+                        if f2.type_name == c1.name {
+                            tc_report_warning(tc, "Potential strong reference cycle detected between classes '" + c1.name + "' and '" + target_cls.name + "'. Consider using Weak<T> to prevent memory leaks.", 0);
+                        }
+                        f2 = f2.next;
+                    }
+                }
+            }
+            f1 = f1.next;
+        }
+        c1 = c1.next;
+    }
+}
+
+func analyze_borrows(tc: TypeChecker, prog: AstNode) -> int {
+    if prog == null { return 0; }
+    tc.borrow_vars = null;
+
+    check_cyclic_reference_hazards(tc);
+
+    let decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() {
+            tc.borrow_vars = null;
+            check_stmt_borrow(tc, decl.child2);
+        }
+        decl = decl.next;
+    }
+
+    return tc.error_count;
+}
+
+// ------------------------------------------------------------------------------
+// 5. Type Compatibility & Bidirectional Type Checking
+// ------------------------------------------------------------------------------
+
+func is_type_compatible(expected: string, actual: string) -> int {
+    if expected == actual { return 1; }
+    if expected == "void" && actual == "void" { return 1; }
+    if expected == "any" || actual == "any" { return 1; }
+    if actual == "unknown" || expected == "unknown" { return 1; }
+
+    // Null compatibility with classes and pointer types
+    if actual == "null" {
+        if expected != "int" && expected != "bool" && expected != "char" && expected != "float" && expected != "void" {
+            return 1;
+        }
+        return 0;
+    }
+
+    // Integer widening
+    if expected == "int" {
+        if actual == "i8" || actual == "u8" || actual == "i16" || actual == "u16" || actual == "i32" || actual == "u32" || actual == "i64" || actual == "u64" || actual == "usize" || actual == "isize" {
+            return 1;
+        }
+    }
+    // Float widening
+    if expected == "float" {
+        if actual == "f32" || actual == "f64" || actual == "int" {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+func check_expression_type(tc: TypeChecker, expr: AstNode) -> string {
+    if expr == null { return "void"; }
+
+    let kind = expr.kind;
+
+    if kind == NODE_LITERAL_INT() {
+        return "int";
+    }
+    if kind == NODE_LITERAL_STR() {
+        return "string";
+    }
+    if kind == NODE_LITERAL_BOOL() {
+        return "bool";
+    }
+    if kind == NODE_LITERAL_CHAR() {
+        return "char";
+    }
+    if kind == NODE_LITERAL_NULL() {
+        return "null";
+    }
+    if kind == NODE_IDENT() {
+        let sym = lookup_symbol(tc, expr.name);
+        if sym == null {
+            tc_report_error(tc, "Undefined identifier '" + expr.name + "'", expr.line);
+            return "unknown";
+        }
+        expr.type_name = sym.type_name;
+        return sym.type_name;
+    }
+    if kind == NODE_BIN_OP() {
+        let t_left = check_expression_type(tc, expr.child1);
+        let t_right = check_expression_type(tc, expr.child2);
+
+        if expr.op == "+" {
+            if t_left == "string" || t_right == "string" {
+                expr.type_name = "string";
+                return "string";
+            }
+            if t_left == "float" || t_right == "float" {
+                expr.type_name = "float";
+                return "float";
+            }
+            expr.type_name = "int";
+            return "int";
+        }
+        if expr.op == "-" || expr.op == "*" || expr.op == "/" || expr.op == "%" {
+            if t_left == "float" || t_right == "float" {
+                expr.type_name = "float";
+                return "float";
+            }
+            expr.type_name = "int";
+            return "int";
+        }
+        if expr.op == "==" || expr.op == "!=" || expr.op == "<" || expr.op == "<=" || expr.op == ">" || expr.op == ">=" || expr.op == "&&" || expr.op == "||" {
+            expr.type_name = "bool";
+            return "bool";
+        }
+        if expr.op == "&" || expr.op == "|" || expr.op == "^" || expr.op == "<<" || expr.op == ">>" {
+            expr.type_name = "int";
+            return "int";
+        }
+        return "int";
+    }
+    if kind == NODE_UNARY_OP() {
+        let t_operand = check_expression_type(tc, expr.child1);
+        if expr.op == "!" {
+            expr.type_name = "bool";
+            return "bool";
+        }
+        expr.type_name = t_operand;
+        return t_operand;
+    }
+    if kind == NODE_CALL() {
+        let func_name = expr.name;
+        if func_name == "println" {
+            if expr.child2 != null {
+                check_expression_type(tc, expr.child2);
+            }
+            expr.type_name = "void";
+            return "void";
+        }
+
+        let sym = lookup_symbol(tc, func_name);
+        if sym == null {
+            tc_report_error(tc, "Call to undefined function '" + func_name + "'", expr.line);
+            return "unknown";
+        }
+
+        // Validate argument types
+        let arg = expr.child2;
+        while arg != null {
+            check_expression_type(tc, arg);
+            arg = arg.next;
+        }
+
+        expr.type_name = sym.type_name;
+        return sym.type_name;
+    }
+    if kind == NODE_NEW() {
+        let class_sym = lookup_symbol(tc, expr.name);
+        if class_sym == null {
+            tc_report_error(tc, "Instantiation of undefined class '" + expr.name + "'", expr.line);
+        }
+        let arg = expr.child1;
+        while arg != null {
+            check_expression_type(tc, arg);
+            arg = arg.next;
+        }
+        expr.type_name = expr.name;
+        return expr.name;
+    }
+    if kind == NODE_MEMBER() {
+        let obj_type = check_expression_type(tc, expr.child1);
+        let m_name = expr.name;
+
+        // Dynamic class field lookup
+        let f_ty = lookup_class_field(tc, obj_type, m_name);
+        if f_ty != "" {
+            expr.type_name = f_ty;
+            return f_ty;
+        }
+
+        // Trait method resolution
+        let tr_ty = resolve_trait_method(tc, obj_type, m_name);
+        if tr_ty != "" {
+            expr.type_name = tr_ty;
+            return tr_ty;
+        }
+
+        // Compiler internal classes fallback
+        if obj_type == "TypeChecker" {
+            if m_name == "symbols" { expr.type_name = "Symbol"; return "Symbol"; }
+            if m_name == "scope_level" || m_name == "error_count" || m_name == "warning_count" { expr.type_name = "int"; return "int"; }
+            if m_name == "current_func_ret" || m_name == "current_func_name" { expr.type_name = "string"; return "string"; }
+            if m_name == "classes" { expr.type_name = "ClassDef"; return "ClassDef"; }
+            if m_name == "traits" { expr.type_name = "TraitDef"; return "TraitDef"; }
+            if m_name == "impls" { expr.type_name = "ImplDef"; return "ImplDef"; }
+            if m_name == "mono_table" { expr.type_name = "MonoEntry"; return "MonoEntry"; }
+            if m_name == "borrow_vars" { expr.type_name = "BorrowVar"; return "BorrowVar"; }
+        }
+        if obj_type == "Symbol" {
+            if m_name == "next" { expr.type_name = "Symbol"; return "Symbol"; }
+            if m_name == "name" || m_name == "type_name" { expr.type_name = "string"; return "string"; }
+            if m_name == "kind" || m_name == "scope_level" || m_name == "is_mut" || m_name == "borrow_state" { expr.type_name = "int"; return "int"; }
+            if m_name == "decl_node" { expr.type_name = "AstNode"; return "AstNode"; }
+        }
+        if obj_type == "ClassDef" {
+            if m_name == "name" { expr.type_name = "string"; return "string"; }
+            if m_name == "fields" { expr.type_name = "ClassField"; return "ClassField"; }
+            if m_name == "next" { expr.type_name = "ClassDef"; return "ClassDef"; }
+        }
+        if obj_type == "ClassField" {
+            if m_name == "name" || m_name == "type_name" { expr.type_name = "string"; return "string"; }
+            if m_name == "next" { expr.type_name = "ClassField"; return "ClassField"; }
+        }
+        if obj_type == "TraitDef" {
+            if m_name == "name" { expr.type_name = "string"; return "string"; }
+            if m_name == "methods" { expr.type_name = "TraitMethod"; return "TraitMethod"; }
+            if m_name == "next" { expr.type_name = "TraitDef"; return "TraitDef"; }
+        }
+        if obj_type == "TraitMethod" {
+            if m_name == "name" || m_name == "ret_type" || m_name == "param_types" { expr.type_name = "string"; return "string"; }
+            if m_name == "next" { expr.type_name = "TraitMethod"; return "TraitMethod"; }
+        }
+        if obj_type == "ImplDef" {
+            if m_name == "trait_name" || m_name == "target_type" { expr.type_name = "string"; return "string"; }
+            if m_name == "methods" { expr.type_name = "TraitMethod"; return "TraitMethod"; }
+            if m_name == "next" { expr.type_name = "ImplDef"; return "ImplDef"; }
+        }
+        if obj_type == "MonoEntry" {
+            if m_name == "generic_name" || m_name == "concrete_type" || m_name == "specialized_name" { expr.type_name = "string"; return "string"; }
+            if m_name == "next" { expr.type_name = "MonoEntry"; return "MonoEntry"; }
+        }
+        if obj_type == "BorrowVar" {
+            if m_name == "name" || m_name == "type_name" || m_name == "moved_to" { expr.type_name = "string"; return "string"; }
+            if m_name == "state" || m_name == "line" { expr.type_name = "int"; return "int"; }
+            if m_name == "next" { expr.type_name = "BorrowVar"; return "BorrowVar"; }
+        }
+        if obj_type == "Parser" {
+            if m_name == "curr" { expr.type_name = "Token"; return "Token"; }
+            if m_name == "pos" || m_name == "len" { expr.type_name = "int"; return "int"; }
+        }
+        if obj_type == "Token" {
+            if m_name == "next" { expr.type_name = "Token"; return "Token"; }
+            if m_name == "text" { expr.type_name = "string"; return "string"; }
+            if m_name == "kind" || m_name == "int_val" || m_name == "line" || m_name == "col" { expr.type_name = "int"; return "int"; }
+        }
+        if obj_type == "AstNode" {
+            if m_name == "child1" || m_name == "child2" || m_name == "child3" || m_name == "child4" || m_name == "next" { expr.type_name = "AstNode"; return "AstNode"; }
+            if m_name == "kind" || m_name == "int_val" || m_name == "line" || m_name == "col" { expr.type_name = "int"; return "int"; }
+            if m_name == "name" || m_name == "type_name" || m_name == "op" || m_name == "str_val" { expr.type_name = "string"; return "string"; }
+        }
+
+        expr.type_name = "int";
+        return "int";
+    }
+    if kind == NODE_METHOD_CALL() {
+        let obj_type = check_expression_type(tc, expr.child1);
+        let arg = expr.child2;
+        while arg != null {
+            check_expression_type(tc, arg);
+            arg = arg.next;
+        }
+
+        let tr_ty = resolve_trait_method(tc, obj_type, expr.name);
+        if tr_ty != "" {
+            expr.type_name = tr_ty;
+            return tr_ty;
+        }
+        expr.type_name = "void";
+        return "void";
+    }
+    if kind == NODE_INDEX() {
+        check_expression_type(tc, expr.child1);
+        check_expression_type(tc, expr.child2);
+        expr.type_name = "int";
+        return "int";
+    }
+    if kind == NODE_TRY() || kind == NODE_COMPTIME_EXPR() || kind == NODE_AWAIT() {
+        let t_inner = check_expression_type(tc, expr.child1);
+        expr.type_name = t_inner;
+        return t_inner;
+    }
+    if kind == NODE_MACRO_CALL() {
+        let arg = expr.child1;
+        while arg != null {
+            check_expression_type(tc, arg);
+            arg = arg.next;
+        }
+        expr.type_name = "void";
+        return "void";
+    }
+    if kind == NODE_CLOSURE() {
+        expr.type_name = "closure";
+        return "closure";
+    }
+
+    return "unknown";
+}
+
+// ------------------------------------------------------------------------------
+// 6. Statement Type Checking
+// ------------------------------------------------------------------------------
+
+func check_statement_type(tc: TypeChecker, stmt: AstNode) {
+    if stmt == null { return; }
+
+    let kind = stmt.kind;
+
+    if kind == NODE_VAR_DECL() {
+        let val_type = "void";
+        if stmt.child1 != null {
+            val_type = check_expression_type(tc, stmt.child1);
+        }
+        let var_type = stmt.type_name;
+        if var_type == "" || var_type == "unknown" {
+            var_type = val_type;
+            stmt.type_name = var_type;
+        } else if val_type != "void" && val_type != "unknown" {
+            if is_type_compatible(var_type, val_type) == 0 {
+                tc_report_error(tc, "Mismatched types in variable declaration: expected '" + var_type + "', got '" + val_type + "'", stmt.line);
+            }
+        }
+        define_symbol_with_decl(tc, stmt.name, var_type, SYM_VAR(), 1, stmt);
+    } else if kind == NODE_ASSIGN() {
+        let t_target = check_expression_type(tc, stmt.child1);
+        let t_val = check_expression_type(tc, stmt.child2);
+        if t_target != "unknown" && t_val != "unknown" {
+            if is_type_compatible(t_target, t_val) == 0 {
+                tc_report_error(tc, "Assignment type mismatch: cannot assign '" + t_val + "' to target of type '" + t_target + "'", stmt.line);
+            }
+        }
+    } else if kind == NODE_FIELD_ASSIGN() {
+        check_expression_type(tc, stmt.child1);
+        check_expression_type(tc, stmt.child2);
+    } else if kind == NODE_INDEX_ASSIGN() {
+        check_expression_type(tc, stmt.child1);
+        check_expression_type(tc, stmt.child2);
+        if stmt.child3 != null { check_expression_type(tc, stmt.child3); }
+    } else if kind == NODE_IF() {
+        check_expression_type(tc, stmt.child1);
+        check_statement_type(tc, stmt.child2);
+        if stmt.child3 != null {
+            check_statement_type(tc, stmt.child3);
+        }
+    } else if kind == NODE_WHILE() {
+        check_expression_type(tc, stmt.child1);
+        check_statement_type(tc, stmt.child2);
+    } else if kind == NODE_FOR() {
+        enter_scope(tc);
+        if stmt.child1 != null { check_statement_type(tc, stmt.child1); }
+        if stmt.child2 != null { check_expression_type(tc, stmt.child2); }
+        if stmt.child3 != null { check_statement_type(tc, stmt.child3); }
+        if stmt.child4 != null { check_statement_type(tc, stmt.child4); }
+        exit_scope(tc);
+    } else if kind == NODE_MATCH() {
+        check_expression_type(tc, stmt.child1);
+        let arm = stmt.child2;
+        while arm != null {
+            if arm.child2 != null { check_expression_type(tc, arm.child2); }
+            if arm.child3 != null { check_statement_type(tc, arm.child3); }
+            arm = arm.next;
+        }
+    } else if kind == NODE_UNSAFE_BLOCK() || kind == NODE_COMPTIME_STMT() {
+        check_statement_type(tc, stmt.child1);
+    } else if kind == NODE_ANNOTATION() {
+        check_statement_type(tc, stmt.child1);
+    } else if kind == NODE_IMPL_DECL() {
+        let m = stmt.child1;
+        while m != null {
+            check_statement_type(tc, m);
+            m = m.next;
+        }
+    } else if kind == NODE_RETURN() {
+        let ret_type = "void";
+        if stmt.child1 != null {
+            ret_type = check_expression_type(tc, stmt.child1);
+        }
+        if tc.current_func_ret != "" && tc.current_func_ret != "void" && stmt.child1 == null {
+            tc_report_error(tc, "Expected return value of type '" + tc.current_func_ret + "' in function '" + tc.current_func_name + "'", stmt.line);
+        } else if tc.current_func_ret == "void" && stmt.child1 != null {
+            tc_report_error(tc, "Cannot return a value from void function '" + tc.current_func_name + "'", stmt.line);
+        } else if stmt.child1 != null && tc.current_func_ret != "" && tc.current_func_ret != "void" {
+            if is_type_compatible(tc.current_func_ret, ret_type) == 0 {
+                tc_report_error(tc, "Return type mismatch in function '" + tc.current_func_name + "': expected '" + tc.current_func_ret + "', got '" + ret_type + "'", stmt.line);
+            }
+        }
+    } else if kind == NODE_BLOCK() {
+        enter_scope(tc);
+        let s = stmt.child1;
+        while s != null {
+            check_statement_type(tc, s);
+            s = s.next;
+        }
+        exit_scope(tc);
+    } else if kind == NODE_EXPR_STMT() {
+        check_expression_type(tc, stmt.child1);
+    }
+}
+
+// ------------------------------------------------------------------------------
+// 7. Whole Program Semantic Analysis Pipeline
+// ------------------------------------------------------------------------------
+
+func check_program_types(tc: TypeChecker, prog: AstNode) -> int {
+    if prog == null { return 0; }
+
+    // Pass 1: Built-in runtime symbols
+    define_symbol(tc, "rz_create_string", "string", SYM_FUNC());
+    define_symbol(tc, "rz_str_concat", "string", SYM_FUNC());
+    define_symbol(tc, "rz_str_len", "int", SYM_FUNC());
+    define_symbol(tc, "rz_char_at", "int", SYM_FUNC());
+    define_symbol(tc, "rz_substring", "string", SYM_FUNC());
+    define_symbol(tc, "rz_char_to_str", "string", SYM_FUNC());
+    define_symbol(tc, "rz_int_to_str", "string", SYM_FUNC());
+    define_symbol(tc, "rz_str_eq", "int", SYM_FUNC());
+    define_symbol(tc, "rz_read_file", "string", SYM_FUNC());
+    define_symbol(tc, "rz_write_file", "int", SYM_FUNC());
+    define_symbol(tc, "rz_file_exists", "int", SYM_FUNC());
+    define_symbol(tc, "rz_exec", "int", SYM_FUNC());
+    define_symbol(tc, "rz_get_arg_count", "int", SYM_FUNC());
+    define_symbol(tc, "rz_get_arg", "string", SYM_FUNC());
+    define_symbol(tc, "rz_get_env", "string", SYM_FUNC());
+    define_symbol(tc, "rz_print_str", "void", SYM_FUNC());
+    define_symbol(tc, "rz_print_int", "void", SYM_FUNC());
+    define_symbol(tc, "rz_compiler_banner", "void", SYM_FUNC());
+    define_symbol(tc, "println", "void", SYM_FUNC());
+
+    // Pass 2: Pre-register user classes, enums, traits, impls, and functions
+    let decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_CLASS_DECL() {
+            define_symbol(tc, decl.name, decl.name, SYM_CLASS());
+            register_class_def(tc, decl.name, decl.child1);
+        } else if decl.kind == NODE_ENUM_DECL() {
+            define_symbol(tc, decl.name, decl.name, SYM_ENUM());
+        } else if decl.kind == NODE_TRAIT_DECL() {
+            define_symbol(tc, decl.name, decl.name, SYM_TRAIT());
+            register_trait_def(tc, decl.name, decl.child1);
+        } else if decl.kind == NODE_IMPL_DECL() {
+            let tr_name = decl.str_val;
+            let tgt_type = decl.name;
+            if tr_name != "" {
+                define_symbol(tc, tr_name, tgt_type, SYM_IMPL());
+                register_impl_def(tc, tr_name, tgt_type, decl.child1);
+            }
+        } else if decl.kind == NODE_FUNC_DECL() || decl.kind == NODE_EXTERN_DECL() {
+            define_symbol_with_decl(tc, decl.name, decl.type_name, SYM_FUNC(), 0, decl);
+        } else if decl.kind == NODE_ANNOTATION() && decl.child1 != null {
+            let inner = decl.child1;
+            if inner.kind == NODE_CLASS_DECL() {
+                define_symbol(tc, inner.name, inner.name, SYM_CLASS());
+                register_class_def(tc, inner.name, inner.child1);
+            } else if inner.kind == NODE_ENUM_DECL() {
+                define_symbol(tc, inner.name, inner.name, SYM_ENUM());
+            } else if inner.kind == NODE_TRAIT_DECL() {
+                define_symbol(tc, inner.name, inner.name, SYM_TRAIT());
+                register_trait_def(tc, inner.name, inner.child1);
+            } else if inner.kind == NODE_FUNC_DECL() || inner.kind == NODE_EXTERN_DECL() {
+                define_symbol_with_decl(tc, inner.name, inner.type_name, SYM_FUNC(), 0, inner);
+            }
+        }
+        decl = decl.next;
+    }
+
+    // Pass 3: Trait Conformance Verification
+    decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_IMPL_DECL() {
+            verify_trait_conformance(tc, decl);
+        }
+        decl = decl.next;
+    }
+
+    // Pass 4: Type Check Function Bodies & Statements
+    decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() {
+            enter_scope(tc);
+            tc.current_func_ret = decl.type_name;
+            tc.current_func_name = decl.name;
+
+            let param = decl.child1;
+            while param != null {
+                define_symbol_with_decl(tc, param.name, param.type_name, SYM_PARAM(), 0, param);
+                param = param.next;
+            }
+
+            check_statement_type(tc, decl.child2);
+            exit_scope(tc);
+        } else if decl.kind == NODE_IMPL_DECL() {
+            let m = decl.child1;
+            while m != null {
+                if m.kind == NODE_FUNC_DECL() {
+                    enter_scope(tc);
+                    tc.current_func_ret = m.type_name;
+                    tc.current_func_name = m.name;
+                    define_symbol(tc, "this", decl.name, SYM_PARAM());
+                    let m_param = m.child1;
+                    while m_param != null {
+                        define_symbol_with_decl(tc, m_param.name, m_param.type_name, SYM_PARAM(), 0, m_param);
+                        m_param = m_param.next;
+                    }
+                    check_statement_type(tc, m.child2);
+                    exit_scope(tc);
+                }
+                m = m.next;
+            }
+        } else if decl.kind != NODE_CLASS_DECL() && decl.kind != NODE_ENUM_DECL() && decl.kind != NODE_TRAIT_DECL() && decl.kind != NODE_EXTERN_DECL() {
+            check_statement_type(tc, decl);
+        }
+        decl = decl.next;
+    }
+
+    return tc.error_count;
+}

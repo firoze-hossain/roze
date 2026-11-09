@@ -1,0 +1,121 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Trait Solver & Conformance (M6-T02 Pure Roze Semantic)
+// ==============================================================================
+
+import "../ast.roze";
+import "symbols.roze";
+
+func register_trait_def(tc: TypeChecker, name: string, methods_ast: AstNode) {
+    let m_head: TraitMethod = null;
+    let m_tail: TraitMethod = null;
+    let curr = methods_ast;
+    while curr != null {
+        if curr.kind == NODE_FUNC_DECL() {
+            let m = new TraitMethod(curr.name, curr.type_name, curr.op, null);
+            if m_head == null {
+                m_head = m;
+                m_tail = m;
+            } else {
+                m_tail.next = m;
+                m_tail = m;
+            }
+        }
+        curr = curr.next;
+    }
+    let tdef = new TraitDef(name, m_head, tc.traits);
+    tc.traits = tdef;
+}
+
+func lookup_trait_def(tc: TypeChecker, name: string) -> TraitDef {
+    let curr = tc.traits;
+    while curr != null {
+        if curr.name == name {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func register_impl_def(tc: TypeChecker, trait_name: string, target_type: string, methods_ast: AstNode) {
+    let m_head: TraitMethod = null;
+    let m_tail: TraitMethod = null;
+    let curr = methods_ast;
+    while curr != null {
+        if curr.kind == NODE_FUNC_DECL() {
+            let m = new TraitMethod(curr.name, curr.type_name, curr.op, null);
+            if m_head == null {
+                m_head = m;
+                m_tail = m;
+            } else {
+                m_tail.next = m;
+                m_tail = m;
+            }
+        }
+        curr = curr.next;
+    }
+    let idef = new ImplDef(trait_name, target_type, m_head, tc.impls);
+    tc.impls = idef;
+}
+
+func lookup_impl_def(tc: TypeChecker, trait_name: string, target_type: string) -> ImplDef {
+    let curr = tc.impls;
+    while curr != null {
+        if curr.trait_name == trait_name && curr.target_type == target_type {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func verify_trait_conformance(tc: TypeChecker, impl_node: AstNode) {
+    if impl_node == null { return; }
+    let trait_name = impl_node.name;
+    let target_type = impl_node.type_name;
+    let line = impl_node.line;
+
+    let tdef = lookup_trait_def(tc, trait_name);
+    if tdef == null {
+        tc_report_error(tc, "Implementation references undefined trait '" + trait_name + "'", line);
+        return;
+    }
+
+    // Check that every method in the trait is implemented
+    let req_m = tdef.methods;
+    while req_m != null {
+        let found = false;
+        let impl_m = impl_node.child1;
+        while impl_m != null {
+            if impl_m.kind == NODE_FUNC_DECL() && impl_m.name == req_m.name {
+                found = true;
+                // Check return type conformance
+                if req_m.ret_type != "void" && req_m.ret_type != "" && impl_m.type_name != req_m.ret_type {
+                    tc_report_error(tc, "Method '" + req_m.name + "' in impl '" + trait_name + "' for '" + target_type + "' returns '" + impl_m.type_name + "', expected '" + req_m.ret_type + "'", impl_m.line);
+                }
+            }
+            impl_m = impl_m.next;
+        }
+        if !found {
+            tc_report_error(tc, "Type '" + target_type + "' does not fully implement trait '" + trait_name + "': missing required method '" + req_m.name + "'", line);
+        }
+        req_m = req_m.next;
+    }
+}
+
+func resolve_trait_method(tc: TypeChecker, target_type: string, method_name: string) -> string {
+    let curr = tc.impls;
+    while curr != null {
+        if curr.target_type == target_type {
+            let m = curr.methods;
+            while m != null {
+                if m.name == method_name {
+                    return m.ret_type;
+                }
+                m = m.next;
+            }
+        }
+        curr = curr.next;
+    }
+    return "";
+}

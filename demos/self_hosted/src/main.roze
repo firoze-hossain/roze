@@ -23,13 +23,37 @@ func compile_source_to_c(source: string) -> string {
     let parser = make_parser(tokens);
     let ast = parse_program(parser);
     let expanded = expand_macros(ast);
+    let monomorphized = monomorphize_program(expanded);
     let tc = make_type_checker();
-    let err_count = check_program_types(tc, expanded);
-    if err_count > 0 {
-        println("❌ Compilation failed with " + rz_int_to_str(err_count) + " type error(s).");
+    check_program_types(tc, monomorphized);
+    analyze_borrows(tc, monomorphized);
+    if tc.error_count > 0 {
+        println("❌ Compilation failed with " + rz_int_to_str(tc.error_count) + " semantic error(s).");
         return "";
     }
-    return generate_c_code(expanded);
+    return generate_c_code(monomorphized);
+}
+
+func verify_semantic_checking(file_path: string) -> int {
+    if rz_file_exists(file_path) == 0 {
+        println("❌ Error: file not found: " + file_path);
+        return 1;
+    }
+    let src = rz_read_file(file_path);
+    let tokens = tokenize(src);
+    let parser = make_parser(tokens);
+    let ast = parse_program(parser);
+    let expanded = expand_macros(ast);
+    let monomorphized = monomorphize_program(expanded);
+    let tc = make_type_checker();
+    check_program_types(tc, monomorphized);
+    analyze_borrows(tc, monomorphized);
+    if tc.error_count > 0 {
+        println("❌ Semantic verification failed: " + file_path + " (" + rz_int_to_str(tc.error_count) + " errors)");
+        return 1;
+    }
+    println("✅ [Pure Roze Semantic] Successfully validated types, traits, generics, and ARC lifetimes for: " + file_path);
+    return 0;
 }
 
 func verify_frontend_parsing(file_path: string) -> int {
@@ -170,6 +194,13 @@ func main() {
                 verify_frontend_parsing(parse_target);
                 return;
             }
+        } else if arg == "--check-only" || arg == "-k" {
+            i = i + 1;
+            if i < argc {
+                let check_target = rz_get_arg(i);
+                verify_semantic_checking(check_target);
+                return;
+            }
         } else if arg == "--test" {
             run_built_in_self_test();
             return;
@@ -179,6 +210,7 @@ func main() {
             println("  -o <bin>        Specify output executable path");
             println("  -c <out.c>      Specify emitted C source path");
             println("  --parse-only, -p <file> Verify pure Roze frontend parsing and macro expansion");
+            println("  --check-only, -k <file> Verify semantic type checking, traits, generics and borrows");
             println("  --test          Run compiler self-test suite");
             println("  --help, -h      Show this help message");
             return;

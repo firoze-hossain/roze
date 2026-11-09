@@ -1,0 +1,131 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Scoped Symbol Table (M6-T02 Pure Roze Semantic)
+// ==============================================================================
+
+import "../ast.roze";
+
+class TypeChecker {
+    symbols: Symbol,
+    scope_level: int,
+    error_count: int,
+    warning_count: int,
+    current_func_ret: string,
+    current_func_name: string,
+    classes: ClassDef,
+    traits: TraitDef,
+    impls: ImplDef,
+    mono_table: MonoEntry,
+    borrow_vars: BorrowVar
+}
+
+func make_type_checker() -> TypeChecker {
+    return new TypeChecker(null, 0, 0, 0, "void", "", null, null, null, null, null);
+}
+
+func enter_scope(tc: TypeChecker) {
+    tc.scope_level = tc.scope_level + 1;
+}
+
+func exit_scope(tc: TypeChecker) {
+    while tc.symbols != null && tc.symbols.scope_level == tc.scope_level {
+        tc.symbols = tc.symbols.next;
+    }
+    tc.scope_level = tc.scope_level - 1;
+}
+
+func define_symbol(tc: TypeChecker, name: string, type_name: string, kind: int) {
+    let sym = new Symbol(name, type_name, kind, tc.scope_level, 0, BORROW_OWNED(), null, tc.symbols);
+    tc.symbols = sym;
+}
+
+func define_symbol_with_decl(tc: TypeChecker, name: string, type_name: string, kind: int, is_mut: int, decl: AstNode) {
+    let sym = new Symbol(name, type_name, kind, tc.scope_level, is_mut, BORROW_OWNED(), decl, tc.symbols);
+    tc.symbols = sym;
+}
+
+func lookup_symbol(tc: TypeChecker, name: string) -> Symbol {
+    let curr = tc.symbols;
+    while curr != null {
+        if curr.name == name {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func lookup_symbol_in_current_scope(tc: TypeChecker, name: string) -> Symbol {
+    let curr = tc.symbols;
+    while curr != null && curr.scope_level == tc.scope_level {
+        if curr.name == name {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+// --- Class Field Registry ---
+
+func register_class_def(tc: TypeChecker, name: string, fields: AstNode) {
+    let f_head: ClassField = null;
+    let f_tail: ClassField = null;
+    let curr = fields;
+    while curr != null {
+        if curr.kind == NODE_FIELD() {
+            let cf = new ClassField(curr.name, curr.type_name, null);
+            if f_head == null {
+                f_head = cf;
+                f_tail = cf;
+            } else {
+                f_tail.next = cf;
+                f_tail = cf;
+            }
+        }
+        curr = curr.next;
+    }
+    let cdef = new ClassDef(name, f_head, tc.classes);
+    tc.classes = cdef;
+}
+
+func lookup_class_def(tc: TypeChecker, name: string) -> ClassDef {
+    let curr = tc.classes;
+    while curr != null {
+        if curr.name == name {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func lookup_class_field(tc: TypeChecker, class_name: string, field_name: string) -> string {
+    let cdef = lookup_class_def(tc, class_name);
+    if cdef == null { return ""; }
+    let curr = cdef.fields;
+    while curr != null {
+        if curr.name == field_name {
+            return curr.type_name;
+        }
+        curr = curr.next;
+    }
+    return "";
+}
+
+func tc_report_error(tc: TypeChecker, msg: string, line: int) {
+    if line > 0 {
+        println("❌ Type Error [Line " + rz_int_to_str(line) + "]: " + msg);
+    } else {
+        println("❌ Type Error: " + msg);
+    }
+    tc.error_count = tc.error_count + 1;
+}
+
+func tc_report_warning(tc: TypeChecker, msg: string, line: int) {
+    if line > 0 {
+        println("⚠️ Semantic Warning [Line " + rz_int_to_str(line) + "]: " + msg);
+    } else {
+        println("⚠️ Semantic Warning: " + msg);
+    }
+    tc.warning_count = tc.warning_count + 1;
+}

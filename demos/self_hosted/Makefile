@@ -21,9 +21,9 @@ SOURCES = $(SRC_DIR)/ast.roze \
 RUNTIME_C = $(SRC_DIR)/runtime.c
 ROZE_COMPILER_ROZE = $(SRC_DIR)/roze_compiler.roze
 
-.PHONY: all clean bundle stage1 stage2 stage3 bootstrap_test test_programs test_frontend
+.PHONY: all clean bundle stage1 stage2 stage3 bootstrap_test test_programs test_frontend test_semantic
 
-all: bootstrap_test test_programs test_frontend
+all: bootstrap_test test_programs test_frontend test_semantic
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
@@ -79,6 +79,16 @@ test_frontend: stage2
 	./$(BIN_DIR)/roze_stage2 --parse-only ../../stdlib/src/serde.roze
 	./$(BIN_DIR)/roze_stage2 --parse-only ../kernel/src/main.roze
 	@echo "✅ Over 10,000 LOC of real Roze code successfully parsed without syntax errors!"
+
+test_semantic: stage2
+	@echo "=================================================================="
+	@echo "🧪 Verifying Pure Roze Semantic Analyzer, Traits & Monomorphizer"
+	@echo "=================================================================="
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/07_semantic_types.roze -o $(BIN_DIR)/test07 && ./$(BIN_DIR)/test07
+	./$(BIN_DIR)/roze_stage2 --check-only $(TEST_DIR)/07_semantic_types.roze
+	./$(BIN_DIR)/roze_stage2 --check-only $(TEST_DIR)/06_frontend_grammar.roze
+	./$(BIN_DIR)/roze_stage2 --check-only $(ROZE_COMPILER_ROZE)
+	@echo "✅ Pure Roze semantic type checker, monomorphizer and borrow analyzer verified!"
 
 clean:
 	rm -rf $(BIN_DIR)/*.o $(BIN_DIR)/*.c $(BIN_DIR)/test* $(BIN_DIR)/self_test* $(BIN_DIR)/roze_stage*

@@ -161,6 +161,25 @@ func NODE_AWAIT() -> int { return 141; }
 func NODE_ASM() -> int { return 142; }
 func NODE_LITERAL_CHAR() -> int { return 145; }
 
+// --- Symbol Kinds ---
+func SYM_VAR() -> int { return 1; }
+func SYM_PARAM() -> int { return 2; }
+func SYM_FUNC() -> int { return 3; }
+func SYM_CLASS() -> int { return 4; }
+func SYM_ENUM() -> int { return 5; }
+func SYM_VARIANT() -> int { return 6; }
+func SYM_TRAIT() -> int { return 7; }
+func SYM_IMPL() -> int { return 8; }
+func SYM_CONST() -> int { return 9; }
+func SYM_GENERIC_PARAM() -> int { return 10; }
+
+// --- ARC Borrow States ---
+func BORROW_NONE() -> int { return 0; }
+func BORROW_OWNED() -> int { return 1; }
+func BORROW_SHARED() -> int { return 2; }
+func BORROW_MUT() -> int { return 3; }
+func BORROW_MOVED() -> int { return 4; }
+
 // --- Data Classes ---
 class Token {
     kind: int,
@@ -192,7 +211,58 @@ class Symbol {
     type_name: string,
     kind: int,
     scope_level: int,
+    is_mut: int,
+    borrow_state: int,
+    decl_node: AstNode,
     next: Symbol
+}
+
+class ClassField {
+    name: string,
+    type_name: string,
+    next: ClassField
+}
+
+class ClassDef {
+    name: string,
+    fields: ClassField,
+    next: ClassDef
+}
+
+class TraitMethod {
+    name: string,
+    ret_type: string,
+    param_types: string,
+    next: TraitMethod
+}
+
+class TraitDef {
+    name: string,
+    methods: TraitMethod,
+    next: TraitDef
+}
+
+class ImplDef {
+    trait_name: string,
+    target_type: string,
+    methods: TraitMethod,
+    next: ImplDef
+}
+
+class MonoEntry {
+    generic_name: string,
+    concrete_type: string,
+    specialized_name: string,
+    next: MonoEntry
+}
+
+class BorrowVar {
+    name: string,
+    type_name: string,
+    state: int,
+    moved_to: string,
+    line: int,
+    next: BorrowVar
 }
 
 func make_token(kind: int, text: string, int_val: int, line: int, col: int) -> Token {
@@ -201,6 +271,24 @@ func make_token(kind: int, text: string, int_val: int, line: int, col: int) -> T
 
 func make_ast_node(kind: int, name: string, type_name: string, line: int, col: int) -> AstNode {
     return new AstNode(kind, name, type_name, "", 0, "", null, null, null, null, null, line, col);
+}
+
+func clone_ast_node(node: AstNode) -> AstNode {
+    if node == null { return null; }
+    let copy = make_ast_node(node.kind, node.name, node.type_name, node.line, node.col);
+    copy.op = node.op;
+    copy.int_val = node.int_val;
+    copy.str_val = node.str_val;
+    copy.child1 = clone_ast_node(node.child1);
+    copy.child2 = clone_ast_node(node.child2);
+    copy.child3 = clone_ast_node(node.child3);
+    copy.child4 = clone_ast_node(node.child4);
+    copy.next = clone_ast_node(node.next);
+    return copy;
+}
+
+func make_symbol(name: string, type_name: string, kind: int, scope_level: int, is_mut: int, next: Symbol) -> Symbol {
+    return new Symbol(name, type_name, kind, scope_level, is_mut, 1, null, next);
 }
 
 func token_kind_to_str(kind: int) -> string {

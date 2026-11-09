@@ -548,7 +548,7 @@ s1_rows = [
         ("M6-T03", 8), ("Month 6", 11), ("Sprint 11 (W21-W22)", 8), "Pure Roze Optimizer", "Typed SSA IR & Optimization Passes in Roze",
         "Typed SSA Intermediate Representation with Control Flow Graph (CFG) in pure Roze: Dead Code Elimination, Inlining, Loop Invariant Hoisting, and Constant Folding.",
         "Production compiler optimization engine written in pure Roze.",
-        "Self-Hosting Compiler, Performance", "9 Days", ("Critical", 14), ("Planned", 12)
+        "Self-Hosting Compiler, Performance", "9 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M6-T04", 8), ("Month 6", 11), ("Sprint 11 (W21-W22)", 8), "Pure Roze Native Backend", "Standalone Binary Code Generator in Roze",
@@ -835,7 +835,7 @@ s4_rows = [
         "Implement Typed SSA IR generator and optimization pipeline in pure Roze: Dead Code Elimination, Inlining, Loop Unrolling, Constant Folding, and CFG analysis.",
         "75% - IR & optimization decoupled",
         "Verify optimized IR passes on benchmark suite",
-        ("Planned", 12)
+        ("Completed", 16)
     ],
     [
         ("Stage 4", 6), "Pure Roze Native Backend", "Machine Code Emitter & Cranelift",

@@ -1,0 +1,126 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Leaf Function Inlining (M6-T03)
+// ==============================================================================
+
+import "../ast.roze";
+import "constant_folding.roze";
+
+func find_inlinable_func(head: InlinableFunc, name: string) -> InlinableFunc {
+    let curr = head;
+    while curr != null {
+        if curr.name == name {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func substitute_param_with_arg(expr: AstNode, param_name: string, arg_expr: AstNode) -> AstNode {
+    if expr == null { return null; }
+
+    if expr.kind == NODE_IDENT() && expr.name == param_name {
+        return clone_single_node(arg_expr);
+    }
+
+    expr.child1 = substitute_param_with_arg(expr.child1, param_name, arg_expr);
+    expr.child2 = substitute_param_with_arg(expr.child2, param_name, arg_expr);
+    expr.child3 = substitute_param_with_arg(expr.child3, param_name, arg_expr);
+    expr.child4 = substitute_param_with_arg(expr.child4, param_name, arg_expr);
+    return expr;
+}
+
+func inline_call_expr(call_node: AstNode, inlinable_list: InlinableFunc, stats: OptStats) -> AstNode {
+    if call_node == null || inlinable_list == null { return call_node; }
+
+    if call_node.kind == NODE_CALL() {
+        let fn_info = find_inlinable_func(inlinable_list, call_node.name);
+        if fn_info != null {
+            // Check if arguments match parameters
+            let ret_copy = clone_single_node(fn_info.ret_expr);
+            let p = fn_info.params;
+            let a = call_node.child1;
+            let match_ok = 1;
+
+            while p != null && a != null {
+                ret_copy = substitute_param_with_arg(ret_copy, p.name, a);
+                p = p.next;
+                a = a.next;
+            }
+
+            if p != null || a != null {
+                // Argument count mismatch: do not inline
+                match_ok = 0;
+            }
+
+            if match_ok == 1 && ret_copy != null {
+                stats.funcs_inlined = stats.funcs_inlined + 1;
+                return ret_copy;
+            }
+        }
+    }
+
+    call_node.child1 = inline_calls_in_expr(call_node.child1, inlinable_list, stats);
+    call_node.child2 = inline_calls_in_expr(call_node.child2, inlinable_list, stats);
+    call_node.child3 = inline_calls_in_expr(call_node.child3, inlinable_list, stats);
+    call_node.child4 = inline_calls_in_expr(call_node.child4, inlinable_list, stats);
+    return call_node;
+}
+
+func inline_calls_in_expr(expr: AstNode, inlinable_list: InlinableFunc, stats: OptStats) -> AstNode {
+    if expr == null { return null; }
+    return inline_call_expr(expr, inlinable_list, stats);
+}
+
+func inline_calls_in_stmt(stmt: AstNode, inlinable_list: InlinableFunc, stats: OptStats) {
+    if stmt == null || inlinable_list == null { return; }
+
+    let k = stmt.kind;
+    if k == NODE_BLOCK() {
+        let curr = stmt.child1;
+        while curr != null {
+            inline_calls_in_stmt(curr, inlinable_list, stats);
+            curr = curr.next;
+        }
+    } else if k == NODE_VAR_DECL() || k == NODE_ASSIGN() || k == NODE_RETURN() || k == NODE_EXPR_STMT() {
+        stmt.child1 = inline_calls_in_expr(stmt.child1, inlinable_list, stats);
+    } else if k == NODE_IF() {
+        stmt.child1 = inline_calls_in_expr(stmt.child1, inlinable_list, stats);
+        inline_calls_in_stmt(stmt.child2, inlinable_list, stats);
+        inline_calls_in_stmt(stmt.child3, inlinable_list, stats);
+    } else if k == NODE_WHILE() {
+        stmt.child1 = inline_calls_in_expr(stmt.child1, inlinable_list, stats);
+        inline_calls_in_stmt(stmt.child2, inlinable_list, stats);
+    } else if k == NODE_FOR() {
+        inline_calls_in_stmt(stmt.child1, inlinable_list, stats);
+        stmt.child2 = inline_calls_in_expr(stmt.child2, inlinable_list, stats);
+        inline_calls_in_stmt(stmt.child3, inlinable_list, stats);
+        inline_calls_in_stmt(stmt.child4, inlinable_list, stats);
+    }
+}
+
+func collect_inlinable_functions(prog: AstNode) -> InlinableFunc {
+    let list_head: InlinableFunc = null;
+    let decl = prog.child1;
+
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() && decl.name != "main" && decl.name != "rz_user_main" {
+            // Check if function has a single-return body:
+            let body = decl.child2;
+            if body != null && body.kind == NODE_BLOCK() {
+                let first_stmt = body.child1;
+                if first_stmt != null && first_stmt.kind == NODE_RETURN() && first_stmt.next == null {
+                    let ret_expr = first_stmt.child1;
+                    // Ensure non-recursive
+                    if ret_expr != null && has_ident_ref(ret_expr, decl.name) == 0 {
+                        let entry = new InlinableFunc(decl.name, decl.type_name, decl.child1, ret_expr, list_head);
+                        list_head = entry;
+                    }
+                }
+            }
+        }
+        decl = decl.next;
+    }
+
+    return list_head;
+}

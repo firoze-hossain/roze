@@ -1,0 +1,151 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Dead Code Elimination (M6-T03)
+// ==============================================================================
+
+import "../ast.roze";
+import "constant_folding.roze";
+
+func has_ident_ref(node: AstNode, name: string) -> int {
+    if node == null { return 0; }
+    if node.kind == NODE_IDENT() && node.name == name {
+        return 1;
+    }
+    if has_ident_ref(node.child1, name) == 1 { return 1; }
+    if has_ident_ref(node.child2, name) == 1 { return 1; }
+    if has_ident_ref(node.child3, name) == 1 { return 1; }
+    if has_ident_ref(node.child4, name) == 1 { return 1; }
+    if has_ident_ref(node.next, name) == 1 { return 1; }
+    return 0;
+}
+
+func eliminate_dead_statements(stmt_list: AstNode, stats: OptStats) -> AstNode {
+    if stmt_list == null { return null; }
+
+    let head: AstNode = null;
+    let tail: AstNode = null;
+    let curr = stmt_list;
+    let reached_return = 0;
+
+    while curr != null {
+        if reached_return == 1 {
+            // All statements after return in the same block are unreachable dead code!
+            stats.dead_stmts_removed = stats.dead_stmts_removed + 1;
+            curr = curr.next;
+        } else {
+            let next_stmt = curr.next;
+            curr.next = null; // Detach for isolated processing
+
+            // Recursively optimize statement
+            let optimized_stmt = eliminate_dead_code_stmt(curr, stats);
+
+            if optimized_stmt != null {
+                if head == null {
+                    head = optimized_stmt;
+                    tail = optimized_stmt;
+                } else {
+                    // Find tail of optimized_stmt chain
+                    let t = tail;
+                    while t.next != null {
+                        t = t.next;
+                    }
+                    t.next = optimized_stmt;
+                    tail = optimized_stmt;
+                }
+
+                // Check if this statement unconditionally returns
+                if optimized_stmt.kind == NODE_RETURN() {
+                    reached_return = 1;
+                }
+            }
+
+            curr = next_stmt;
+        }
+    }
+
+    return head;
+}
+
+func eliminate_dead_code_stmt(stmt: AstNode, stats: OptStats) -> AstNode {
+    if stmt == null { return null; }
+
+    let k = stmt.kind;
+
+    if k == NODE_BLOCK() {
+        stmt.child1 = eliminate_dead_statements(stmt.child1, stats);
+        return stmt;
+    }
+
+    if k == NODE_IF() {
+        // Fold condition
+        stmt.child1 = fold_constants_expr(stmt.child1, stats);
+        let cond = stmt.child1;
+
+        if cond != null && (cond.kind == NODE_LITERAL_BOOL() || cond.kind == NODE_LITERAL_INT()) {
+            if cond.int_val == 1 {
+                // Condition is always TRUE: eliminate false branch and unwrap true branch
+                stats.dead_stmts_removed = stats.dead_stmts_removed + 1;
+                let then_branch = stmt.child2;
+                if then_branch != null {
+                    return eliminate_dead_code_stmt(then_branch, stats);
+                }
+                return null;
+            }
+            if cond.int_val == 0 {
+                // Condition is always FALSE: eliminate true branch and unwrap false branch
+                stats.dead_stmts_removed = stats.dead_stmts_removed + 1;
+                let else_branch = stmt.child3;
+                if else_branch != null {
+                    return eliminate_dead_code_stmt(else_branch, stats);
+                }
+                return null;
+            }
+        }
+
+        // Both branches might execute: process both
+        stmt.child2 = eliminate_dead_code_stmt(stmt.child2, stats);
+        stmt.child3 = eliminate_dead_code_stmt(stmt.child3, stats);
+        return stmt;
+    }
+
+    if k == NODE_WHILE() {
+        stmt.child1 = fold_constants_expr(stmt.child1, stats);
+        let cond = stmt.child1;
+        if cond != null && (cond.kind == NODE_LITERAL_BOOL() || cond.kind == NODE_LITERAL_INT()) && cond.int_val == 0 {
+            // While (false) loop never executes: eliminate!
+            stats.dead_stmts_removed = stats.dead_stmts_removed + 1;
+            return null;
+        }
+        stmt.child2 = eliminate_dead_code_stmt(stmt.child2, stats);
+        return stmt;
+    }
+
+    if k == NODE_FOR() {
+        stmt.child1 = eliminate_dead_code_stmt(stmt.child1, stats);
+        stmt.child2 = fold_constants_expr(stmt.child2, stats);
+        stmt.child3 = eliminate_dead_code_stmt(stmt.child3, stats);
+        stmt.child4 = eliminate_dead_code_stmt(stmt.child4, stats);
+        return stmt;
+    }
+
+    if k == NODE_VAR_DECL() {
+        stmt.child1 = fold_constants_expr(stmt.child1, stats);
+        return stmt;
+    }
+
+    if k == NODE_ASSIGN() {
+        stmt.child1 = fold_constants_expr(stmt.child1, stats);
+        return stmt;
+    }
+
+    if k == NODE_RETURN() {
+        stmt.child1 = fold_constants_expr(stmt.child1, stats);
+        return stmt;
+    }
+
+    if k == NODE_EXPR_STMT() {
+        stmt.child1 = fold_constants_expr(stmt.child1, stats);
+        return stmt;
+    }
+
+    return stmt;
+}

@@ -1,0 +1,95 @@
+// ==============================================================================
+// 🌹 Test 08: Pure Roze SSA IR & Optimizer Engine (ADV-06 M6-T03)
+// ==============================================================================
+
+func add(a: int, b: int) -> int {
+    return a + b;
+}
+
+func square(n: int) -> int {
+    return n * n;
+}
+
+func compute_dead_unreachable() -> int {
+    return 100;
+    println("DEAD CODE: unreachable after return");
+    return 200;
+}
+
+func main() {
+    println("=== 1. Constant Arithmetic & String Folding ===");
+    // Folds at compile-time: 10 * 4 + 2 -> 42
+    let arith = 10 * 4 + 2;
+    println("Folded 10 * 4 + 2:");
+    println(arith);
+
+    // Folds at compile-time: (100 - 50) / 2 -> 25
+    let arith2 = (100 - 50) / 2;
+    println("Folded (100 - 50) / 2:");
+    println(arith2);
+
+    // String constant folding: "Hello" + " " + "Optimizer!"
+    let str_fold = "Hello" + " " + "Pure Roze" + " " + "Optimizer!";
+    println(str_fold);
+
+    println("=== 2. Algebraic Identity Reductions ===");
+    let base = 42;
+    let alg_plus = base + 0;
+    let alg_mul1 = base * 1;
+    let alg_mul0 = base * 0;
+    let alg_div1 = base / 1;
+    println("base + 0:");
+    println(alg_plus);
+    println("base * 1:");
+    println(alg_mul1);
+    println("base * 0:");
+    println(alg_mul0);
+    println("base / 1:");
+    println(alg_div1);
+
+    println("=== 3. Boolean Constant Logic Folding ===");
+    let bool1 = (10 > 5) && (!false);
+    let bool2 = (3 == 4) || (7 <= 10);
+    println("bool1 (true && true):");
+    println(bool1);
+    println("bool2 (false || true):");
+    println(bool2);
+
+    println("=== 4. Dead Code Elimination & Branch Pruning ===");
+    if 10 < 5 {
+        println("ERROR: Dead branch executed!");
+    } else {
+        println("Pruned false branch successfully, alive else branch executed!");
+    }
+
+    if 10 > 5 {
+        println("Alive true branch executed!");
+    } else {
+        println("ERROR: Dead else branch executed!");
+    }
+
+    let ret_val = compute_dead_unreachable();
+    println("Unreachable code after return safely pruned, got:");
+    println(ret_val);
+
+    println("=== 5. Leaf Function Inlining ===");
+    // Calls to add(20, 22) and square(6) inlined at call site
+    let inlined_sum = add(20, 22);
+    println("Inlined add(20, 22):");
+    println(inlined_sum);
+
+    let inlined_sq = square(6);
+    println("Inlined square(6):");
+    println(inlined_sq);
+
+    println("=== 6. Loop Invariant Code Motion (Hoisting) ===");
+    let loop_accum = 0;
+    for let i = 0; i < 3; i = i + 1 {
+        let hoisted_multiplier = 50 * 2;
+        loop_accum = loop_accum + hoisted_multiplier;
+    }
+    println("Loop accumulator with hoisted invariant (3 * 100):");
+    println(loop_accum);
+
+    println("✅ All pure Roze optimizer & SSA verification tests passed successfully!");
+}

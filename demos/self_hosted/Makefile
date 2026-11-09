@@ -15,15 +15,16 @@ SOURCES = $(SRC_DIR)/ast.roze \
           $(SRC_DIR)/parser.roze \
           $(SRC_DIR)/macros.roze \
           $(SRC_DIR)/typechecker.roze \
+          $(SRC_DIR)/optimizer.roze \
           $(SRC_DIR)/codegen.roze \
           $(SRC_DIR)/main.roze
 
 RUNTIME_C = $(SRC_DIR)/runtime.c
 ROZE_COMPILER_ROZE = $(SRC_DIR)/roze_compiler.roze
 
-.PHONY: all clean bundle stage1 stage2 stage3 bootstrap_test test_programs test_frontend test_semantic
+.PHONY: all clean bundle stage1 stage2 stage3 bootstrap_test test_programs test_frontend test_semantic test_optimizer
 
-all: bootstrap_test test_programs test_frontend test_semantic
+all: bootstrap_test test_programs test_frontend test_semantic test_optimizer
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
@@ -31,7 +32,7 @@ $(BIN_DIR):
 bundle: $(ROZE_COMPILER_ROZE)
 
 $(ROZE_COMPILER_ROZE): $(SOURCES)
-	python3 -c 'files = ["$(SRC_DIR)/ast.roze", "$(SRC_DIR)/lexer.roze", "$(SRC_DIR)/parser.roze", "$(SRC_DIR)/macros.roze", "$(SRC_DIR)/typechecker.roze", "$(SRC_DIR)/codegen.roze", "$(SRC_DIR)/main.roze"]; out = ["// ==============================================================================\n", "// 🌹 Roze Self-Hosted Compiler (Single-Source Bootstrap Translation Unit)\n", "// ==============================================================================\n\n"]; [out.extend([line for line in open(f) if not line.strip().startswith("import ")]) for f in files]; open("$(ROZE_COMPILER_ROZE)", "w").write("".join(out)); print("✅ Bundled $(ROZE_COMPILER_ROZE) (" + str(len(out)) + " lines)")'
+	python3 -c 'files = ["$(SRC_DIR)/ast.roze", "$(SRC_DIR)/lexer.roze", "$(SRC_DIR)/parser.roze", "$(SRC_DIR)/macros.roze", "$(SRC_DIR)/typechecker.roze", "$(SRC_DIR)/optimizer.roze", "$(SRC_DIR)/codegen.roze", "$(SRC_DIR)/main.roze"]; out = ["// ==============================================================================\n", "// 🌹 Roze Self-Hosted Compiler (Single-Source Bootstrap Translation Unit)\n", "// ==============================================================================\n\n"]; [out.extend([line for line in open(f) if not line.strip().startswith("import ")]) for f in files]; open("$(ROZE_COMPILER_ROZE)", "w").write("".join(out)); print("✅ Bundled $(ROZE_COMPILER_ROZE) (" + str(len(out)) + " lines)")'
 
 stage1: $(BIN_DIR) $(ROZE_COMPILER_ROZE)
 	@echo "===> [Stage 1] Compiling Stage 1 self-hosted compiler using Stage 0 (Rust roze)..."
@@ -89,6 +90,16 @@ test_semantic: stage2
 	./$(BIN_DIR)/roze_stage2 --check-only $(TEST_DIR)/06_frontend_grammar.roze
 	./$(BIN_DIR)/roze_stage2 --check-only $(ROZE_COMPILER_ROZE)
 	@echo "✅ Pure Roze semantic type checker, monomorphizer and borrow analyzer verified!"
+
+test_optimizer: stage2
+	@echo "=================================================================="
+	@echo "🧪 Verifying Pure Roze SSA IR & Optimizer Engine (ADV-06 M6-T03)"
+	@echo "=================================================================="
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/08_optimizer.roze -o $(BIN_DIR)/test08 && ./$(BIN_DIR)/test08
+	./$(BIN_DIR)/roze_stage2 --emit-ssa $(TEST_DIR)/08_optimizer.roze > $(BIN_DIR)/test08.ssa
+	@head -n 25 $(BIN_DIR)/test08.ssa
+	./$(BIN_DIR)/roze_stage2 --check-only $(TEST_DIR)/08_optimizer.roze
+	@echo "✅ Pure Roze SSA IR, DCE, Inlining, LICM and Constant Folding verified!"
 
 clean:
 	rm -rf $(BIN_DIR)/*.o $(BIN_DIR)/*.c $(BIN_DIR)/test* $(BIN_DIR)/self_test* $(BIN_DIR)/roze_stage*

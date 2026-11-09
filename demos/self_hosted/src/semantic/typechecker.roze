@@ -737,6 +737,50 @@ func check_expression_type(tc: TypeChecker, expr: AstNode) -> string {
             if m_name == "kind" || m_name == "int_val" || m_name == "line" || m_name == "col" { expr.type_name = "int"; return "int"; }
             if m_name == "name" || m_name == "type_name" || m_name == "op" || m_name == "str_val" { expr.type_name = "string"; return "string"; }
         }
+        if obj_type == "SsaBlockRef" {
+            if m_name == "name" { expr.type_name = "string"; return "string"; }
+            if m_name == "next" { expr.type_name = "SsaBlockRef"; return "SsaBlockRef"; }
+        }
+        if obj_type == "SsaInst" {
+            if m_name == "id" || m_name == "kind" || m_name == "int_val" || m_name == "is_dead" { expr.type_name = "int"; return "int"; }
+            if m_name == "dest" || m_name == "type_name" || m_name == "op" || m_name == "arg1" || m_name == "arg2" || m_name == "arg3" || m_name == "str_val" || m_name == "target_label" || m_name == "false_label" { expr.type_name = "string"; return "string"; }
+            if m_name == "next" { expr.type_name = "SsaInst"; return "SsaInst"; }
+        }
+        if obj_type == "BasicBlock" {
+            if m_name == "id" || m_name == "inst_count" || m_name == "pred_count" || m_name == "succ_count" || m_name == "is_terminated" { expr.type_name = "int"; return "int"; }
+            if m_name == "label" { expr.type_name = "string"; return "string"; }
+            if m_name == "inst_head" || m_name == "inst_tail" { expr.type_name = "SsaInst"; return "SsaInst"; }
+            if m_name == "preds" || m_name == "succs" { expr.type_name = "SsaBlockRef"; return "SsaBlockRef"; }
+            if m_name == "next" { expr.type_name = "BasicBlock"; return "BasicBlock"; }
+        }
+        if obj_type == "SsaParam" {
+            if m_name == "name" || m_name == "type_name" { expr.type_name = "string"; return "string"; }
+            if m_name == "next" { expr.type_name = "SsaParam"; return "SsaParam"; }
+        }
+        if obj_type == "SsaFunction" {
+            if m_name == "name" || m_name == "ret_type" { expr.type_name = "string"; return "string"; }
+            if m_name == "params" { expr.type_name = "SsaParam"; return "SsaParam"; }
+            if m_name == "block_head" || m_name == "block_tail" { expr.type_name = "BasicBlock"; return "BasicBlock"; }
+            if m_name == "block_count" || m_name == "var_counter" || m_name == "is_inlinable" { expr.type_name = "int"; return "int"; }
+            if m_name == "next" { expr.type_name = "SsaFunction"; return "SsaFunction"; }
+        }
+        if obj_type == "SsaProgram" {
+            if m_name == "functions" { expr.type_name = "SsaFunction"; return "SsaFunction"; }
+            if m_name == "next" { expr.type_name = "SsaProgram"; return "SsaProgram"; }
+        }
+        if obj_type == "ConstBinding" {
+            if m_name == "name" || m_name == "str_val" { expr.type_name = "string"; return "string"; }
+            if m_name == "kind" || m_name == "int_val" { expr.type_name = "int"; return "int"; }
+            if m_name == "next" { expr.type_name = "ConstBinding"; return "ConstBinding"; }
+        }
+        if obj_type == "InlinableFunc" {
+            if m_name == "name" || m_name == "ret_type" { expr.type_name = "string"; return "string"; }
+            if m_name == "params" || m_name == "ret_expr" { expr.type_name = "AstNode"; return "AstNode"; }
+            if m_name == "next" { expr.type_name = "InlinableFunc"; return "InlinableFunc"; }
+        }
+        if obj_type == "OptStats" {
+            if m_name == "const_folded" || m_name == "dead_stmts_removed" || m_name == "funcs_inlined" || m_name == "loops_hoisted" { expr.type_name = "int"; return "int"; }
+        }
 
         expr.type_name = "int";
         return "int";

@@ -184,6 +184,24 @@ func BORROW_SHARED() -> int { return 2; }
 func BORROW_MUT() -> int { return 3; }
 func BORROW_MOVED() -> int { return 4; }
 
+// --- SSA IR Kinds (Constants) ---
+func SSA_NOP() -> int { return 200; }
+func SSA_CONST_INT() -> int { return 201; }
+func SSA_CONST_STR() -> int { return 202; }
+func SSA_CONST_BOOL() -> int { return 203; }
+func SSA_BIN_OP() -> int { return 204; }
+func SSA_UNARY_OP() -> int { return 205; }
+func SSA_CALL() -> int { return 206; }
+func SSA_ALLOC() -> int { return 207; }
+func SSA_LOAD() -> int { return 208; }
+func SSA_STORE() -> int { return 209; }
+func SSA_GET_FIELD() -> int { return 210; }
+func SSA_SET_FIELD() -> int { return 211; }
+func SSA_PHI() -> int { return 212; }
+func SSA_BR() -> int { return 213; }
+func SSA_BR_COND() -> int { return 214; }
+func SSA_RETURN() -> int { return 215; }
+
 // --- Data Classes ---
 class Token {
     kind: int,
@@ -269,6 +287,88 @@ class BorrowVar {
     next: BorrowVar
 }
 
+class SsaBlockRef {
+    name: string,
+    next: SsaBlockRef
+}
+
+class SsaInst {
+    id: int,
+    kind: int,
+    dest: string,
+    type_name: string,
+    op: string,
+    arg1: string,
+    arg2: string,
+    arg3: string,
+    int_val: int,
+    str_val: string,
+    target_label: string,
+    false_label: string,
+    is_dead: int,
+    next: SsaInst
+}
+
+class BasicBlock {
+    id: int,
+    label: string,
+    inst_head: SsaInst,
+    inst_tail: SsaInst,
+    inst_count: int,
+    pred_count: int,
+    succ_count: int,
+    preds: SsaBlockRef,
+    succs: SsaBlockRef,
+    is_terminated: int,
+    next: BasicBlock
+}
+
+class SsaParam {
+    name: string,
+    type_name: string,
+    next: SsaParam
+}
+
+class SsaFunction {
+    name: string,
+    ret_type: string,
+    params: SsaParam,
+    block_head: BasicBlock,
+    block_tail: BasicBlock,
+    block_count: int,
+    var_counter: int,
+    is_inlinable: int,
+    next: SsaFunction
+}
+
+class SsaProgram {
+    functions: SsaFunction,
+    next: SsaProgram
+}
+
+class ConstBinding {
+    name: string,
+    kind: int,
+    int_val: int,
+    str_val: string,
+    next: ConstBinding
+}
+
+class InlinableFunc {
+    name: string,
+    ret_type: string,
+    params: AstNode,
+    ret_expr: AstNode,
+    next: InlinableFunc
+}
+
+class OptStats {
+    const_folded: int,
+    dead_stmts_removed: int,
+    funcs_inlined: int,
+    loops_hoisted: int
+}
+
 func make_token(kind: int, text: string, int_val: int, line: int, col: int) -> Token {
     return new Token(kind, text, int_val, line, col, null);
 }
@@ -288,6 +388,20 @@ func clone_ast_node(node: AstNode) -> AstNode {
     copy.child3 = clone_ast_node(node.child3);
     copy.child4 = clone_ast_node(node.child4);
     copy.next = clone_ast_node(node.next);
+    return copy;
+}
+
+func clone_single_node(node: AstNode) -> AstNode {
+    if node == null { return null; }
+    let copy = make_ast_node(node.kind, node.name, node.type_name, node.line, node.col);
+    copy.op = node.op;
+    copy.int_val = node.int_val;
+    copy.str_val = node.str_val;
+    copy.child1 = clone_ast_node(node.child1);
+    copy.child2 = clone_ast_node(node.child2);
+    copy.child3 = clone_ast_node(node.child3);
+    copy.child4 = clone_ast_node(node.child4);
+    copy.next = null;
     return copy;
 }
 
@@ -3101,6 +3215,50 @@ func check_expression_type(tc: TypeChecker, expr: AstNode) -> string {
             if m_name == "kind" || m_name == "int_val" || m_name == "line" || m_name == "col" { expr.type_name = "int"; return "int"; }
             if m_name == "name" || m_name == "type_name" || m_name == "op" || m_name == "str_val" { expr.type_name = "string"; return "string"; }
         }
+        if obj_type == "SsaBlockRef" {
+            if m_name == "name" { expr.type_name = "string"; return "string"; }
+            if m_name == "next" { expr.type_name = "SsaBlockRef"; return "SsaBlockRef"; }
+        }
+        if obj_type == "SsaInst" {
+            if m_name == "id" || m_name == "kind" || m_name == "int_val" || m_name == "is_dead" { expr.type_name = "int"; return "int"; }
+            if m_name == "dest" || m_name == "type_name" || m_name == "op" || m_name == "arg1" || m_name == "arg2" || m_name == "arg3" || m_name == "str_val" || m_name == "target_label" || m_name == "false_label" { expr.type_name = "string"; return "string"; }
+            if m_name == "next" { expr.type_name = "SsaInst"; return "SsaInst"; }
+        }
+        if obj_type == "BasicBlock" {
+            if m_name == "id" || m_name == "inst_count" || m_name == "pred_count" || m_name == "succ_count" || m_name == "is_terminated" { expr.type_name = "int"; return "int"; }
+            if m_name == "label" { expr.type_name = "string"; return "string"; }
+            if m_name == "inst_head" || m_name == "inst_tail" { expr.type_name = "SsaInst"; return "SsaInst"; }
+            if m_name == "preds" || m_name == "succs" { expr.type_name = "SsaBlockRef"; return "SsaBlockRef"; }
+            if m_name == "next" { expr.type_name = "BasicBlock"; return "BasicBlock"; }
+        }
+        if obj_type == "SsaParam" {
+            if m_name == "name" || m_name == "type_name" { expr.type_name = "string"; return "string"; }
+            if m_name == "next" { expr.type_name = "SsaParam"; return "SsaParam"; }
+        }
+        if obj_type == "SsaFunction" {
+            if m_name == "name" || m_name == "ret_type" { expr.type_name = "string"; return "string"; }
+            if m_name == "params" { expr.type_name = "SsaParam"; return "SsaParam"; }
+            if m_name == "block_head" || m_name == "block_tail" { expr.type_name = "BasicBlock"; return "BasicBlock"; }
+            if m_name == "block_count" || m_name == "var_counter" || m_name == "is_inlinable" { expr.type_name = "int"; return "int"; }
+            if m_name == "next" { expr.type_name = "SsaFunction"; return "SsaFunction"; }
+        }
+        if obj_type == "SsaProgram" {
+            if m_name == "functions" { expr.type_name = "SsaFunction"; return "SsaFunction"; }
+            if m_name == "next" { expr.type_name = "SsaProgram"; return "SsaProgram"; }
+        }
+        if obj_type == "ConstBinding" {
+            if m_name == "name" || m_name == "str_val" { expr.type_name = "string"; return "string"; }
+            if m_name == "kind" || m_name == "int_val" { expr.type_name = "int"; return "int"; }
+            if m_name == "next" { expr.type_name = "ConstBinding"; return "ConstBinding"; }
+        }
+        if obj_type == "InlinableFunc" {
+            if m_name == "name" || m_name == "ret_type" { expr.type_name = "string"; return "string"; }
+            if m_name == "params" || m_name == "ret_expr" { expr.type_name = "AstNode"; return "AstNode"; }
+            if m_name == "next" { expr.type_name = "InlinableFunc"; return "InlinableFunc"; }
+        }
+        if obj_type == "OptStats" {
+            if m_name == "const_folded" || m_name == "dead_stmts_removed" || m_name == "funcs_inlined" || m_name == "loops_hoisted" { expr.type_name = "int"; return "int"; }
+        }
 
         expr.type_name = "int";
         return "int";
@@ -3364,6 +3522,1299 @@ func check_program_types(tc: TypeChecker, prog: AstNode) -> int {
     }
 
     return tc.error_count;
+}
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Optimizer & SSA IR Engine (ADV-06 M6-T03)
+// ==============================================================================
+// Pure Roze Optimizer Pipeline:
+// 1. Typed SSA Intermediate Representation & Basic Block Construction
+// 2. Control Flow Graph (CFG) Analysis & Edge Resolution
+// 3. Constant Folding & Algebraic Simplification
+// 4. Dead Code Elimination (DCE) & Branch Pruning
+// 5. Leaf Function Inlining
+// 6. Loop Invariant Code Motion (LICM / Hoisting)
+// ==============================================================================
+
+
+// --- Section 1: SSA IR Constructors & Basic Block Operations ---
+
+func make_ssa_inst(id: int, kind: int, dest: string, type_name: string, op: string, arg1: string, arg2: string, int_val: int, str_val: string, target_label: string, false_label: string) -> SsaInst {
+    return new SsaInst(id, kind, dest, type_name, op, arg1, arg2, "", int_val, str_val, target_label, false_label, 0, null);
+}
+
+func make_basic_block(id: int, label: string) -> BasicBlock {
+    return new BasicBlock(id, label, null, null, 0, 0, 0, null, null, 0, null);
+}
+
+func make_ssa_param(name: string, type_name: string) -> SsaParam {
+    return new SsaParam(name, type_name, null);
+}
+
+func make_ssa_function(name: string, ret_type: string) -> SsaFunction {
+    return new SsaFunction(name, ret_type, null, null, null, 0, 0, 0, null);
+}
+
+func make_ssa_program() -> SsaProgram {
+    return new SsaProgram(null, null);
+}
+
+func bb_append_inst(bb: BasicBlock, inst: SsaInst) {
+    if bb == null || inst == null { return; }
+    if bb.inst_head == null {
+        bb.inst_head = inst;
+        bb.inst_tail = inst;
+    } else {
+        bb.inst_tail.next = inst;
+        bb.inst_tail = inst;
+    }
+    bb.inst_count = bb.inst_count + 1;
+    if inst.kind == SSA_BR() || inst.kind == SSA_BR_COND() || inst.kind == SSA_RETURN() {
+        bb.is_terminated = 1;
+    }
+}
+
+func fn_append_bb(fn: SsaFunction, bb: BasicBlock) {
+    if fn == null || bb == null { return; }
+    if fn.block_head == null {
+        fn.block_head = bb;
+        fn.block_tail = bb;
+    } else {
+        fn.block_tail.next = bb;
+        fn.block_tail = bb;
+    }
+    fn.block_count = fn.block_count + 1;
+}
+
+func fn_new_temp(fn: SsaFunction) -> string {
+    let t = "%t" + rz_int_to_str(fn.var_counter);
+    fn.var_counter = fn.var_counter + 1;
+    return t;
+}
+
+func bb_add_pred(bb: BasicBlock, pred_label: string) {
+    if bb == null || pred_label == "" { return; }
+    let curr = bb.preds;
+    while curr != null {
+        if curr.name == pred_label { return; }
+        curr = curr.next;
+    }
+    let ref = new SsaBlockRef(pred_label, bb.preds);
+    bb.preds = ref;
+    bb.pred_count = bb.pred_count + 1;
+}
+
+func bb_add_succ(bb: BasicBlock, succ_label: string) {
+    if bb == null || succ_label == "" { return; }
+    let curr = bb.succs;
+    while curr != null {
+        if curr.name == succ_label { return; }
+        curr = curr.next;
+    }
+    let ref = new SsaBlockRef(succ_label, bb.succs);
+    bb.succs = ref;
+    bb.succ_count = bb.succ_count + 1;
+}
+
+func fn_find_bb(fn: SsaFunction, label: string) -> BasicBlock {
+    let curr = fn.block_head;
+    while curr != null {
+        if curr.label == label { return curr; }
+        curr = curr.next;
+    }
+    return null;
+}
+
+// --- Section 2: CFG Analysis & Dead Block Elimination ---
+
+func resolve_cfg_edges(fn: SsaFunction) {
+    if fn == null { return; }
+
+    let bb = fn.block_head;
+    while bb != null {
+        let inst = bb.inst_head;
+        while inst != null {
+            if inst.kind == SSA_BR() {
+                let tgt_label = inst.target_label;
+                bb_add_succ(bb, tgt_label);
+                let tgt_bb = fn_find_bb(fn, tgt_label);
+                if tgt_bb != null {
+                    bb_add_pred(tgt_bb, bb.label);
+                }
+            } else if inst.kind == SSA_BR_COND() {
+                let t_label = inst.target_label;
+                let f_label = inst.false_label;
+                bb_add_succ(bb, t_label);
+                bb_add_succ(bb, f_label);
+                let t_bb = fn_find_bb(fn, t_label);
+                if t_bb != null {
+                    bb_add_pred(t_bb, bb.label);
+                }
+                let f_bb = fn_find_bb(fn, f_label);
+                if f_bb != null {
+                    bb_add_pred(f_bb, bb.label);
+                }
+            }
+            inst = inst.next;
+        }
+        bb = bb.next;
+    }
+}
+
+func eliminate_dead_basic_blocks(fn: SsaFunction) -> int {
+    if fn == null || fn.block_head == null { return 0; }
+
+    let removed = 0;
+    let prev: BasicBlock = null;
+    let curr = fn.block_head;
+
+    while curr != null {
+        let is_entry = 0;
+        if curr.label == "entry" {
+            is_entry = 1;
+        }
+
+        if is_entry == 0 && curr.pred_count == 0 {
+            if prev == null {
+                fn.block_head = curr.next;
+            } else {
+                prev.next = curr.next;
+            }
+            if fn.block_tail == curr {
+                fn.block_tail = prev;
+            }
+            fn.block_count = fn.block_count - 1;
+            removed = removed + 1;
+            curr = curr.next;
+        } else {
+            prev = curr;
+            curr = curr.next;
+        }
+    }
+
+    return removed;
+}
+
+// --- Section 3: Textual SSA Emission ---
+
+func dump_ssa_inst(inst: SsaInst) -> string {
+    if inst == null || inst.is_dead == 1 { return ""; }
+    let k = inst.kind;
+
+    if k == SSA_CONST_INT() {
+        return "    " + inst.dest + " = const_int " + rz_int_to_str(inst.int_val) + "\n";
+    }
+    if k == SSA_CONST_STR() {
+        return "    " + inst.dest + " = const_str \"" + inst.str_val + "\"\n";
+    }
+    if k == SSA_CONST_BOOL() {
+        if inst.int_val == 1 {
+            return "    " + inst.dest + " = const_bool true\n";
+        }
+        return "    " + inst.dest + " = const_bool false\n";
+    }
+    if k == SSA_BIN_OP() {
+        return "    " + inst.dest + " = " + inst.op + " " + inst.type_name + " " + inst.arg1 + ", " + inst.arg2 + "\n";
+    }
+    if k == SSA_UNARY_OP() {
+        return "    " + inst.dest + " = " + inst.op + " " + inst.type_name + " " + inst.arg1 + "\n";
+    }
+    if k == SSA_CALL() {
+        return "    " + inst.dest + " = call " + inst.type_name + " @" + inst.target_label + "(" + inst.arg1 + ")\n";
+    }
+    if k == SSA_ALLOC() {
+        return "    " + inst.dest + " = alloca " + inst.type_name + "\n";
+    }
+    if k == SSA_LOAD() {
+        return "    " + inst.dest + " = load " + inst.type_name + " " + inst.arg1 + "\n";
+    }
+    if k == SSA_STORE() {
+        return "    store " + inst.type_name + " " + inst.arg1 + ", " + inst.dest + "\n";
+    }
+    if k == SSA_GET_FIELD() {
+        return "    " + inst.dest + " = getfield " + inst.type_name + " " + inst.arg1 + "." + inst.arg2 + "\n";
+    }
+    if k == SSA_SET_FIELD() {
+        return "    setfield " + inst.type_name + " " + inst.arg1 + "." + inst.arg2 + " = " + inst.arg3 + "\n";
+    }
+    if k == SSA_PHI() {
+        return "    " + inst.dest + " = phi " + inst.type_name + " [" + inst.arg1 + "], [" + inst.arg2 + "]\n";
+    }
+    if k == SSA_BR() {
+        return "    br label %" + inst.target_label + "\n";
+    }
+    if k == SSA_BR_COND() {
+        return "    br i1 " + inst.arg1 + ", label %" + inst.target_label + ", label %" + inst.false_label + "\n";
+    }
+    if k == SSA_RETURN() {
+        if inst.arg1 != "" {
+            return "    ret " + inst.type_name + " " + inst.arg1 + "\n";
+        }
+        return "    ret void\n";
+    }
+    if k == SSA_NOP() {
+        return "    nop\n";
+    }
+    return "";
+}
+
+func dump_basic_block(bb: BasicBlock) -> string {
+    if bb == null { return ""; }
+    let out = bb.label + ":\n";
+
+    if bb.pred_count > 0 {
+        out = out + "    ; preds: ";
+        let p = bb.preds;
+        let first = true;
+        while p != null {
+            if first == false { out = out + ", "; }
+            out = out + "%" + p.name;
+            first = false;
+            p = p.next;
+        }
+        out = out + "\n";
+    }
+
+    let inst = bb.inst_head;
+    while inst != null {
+        out = out + dump_ssa_inst(inst);
+        inst = inst.next;
+    }
+    return out;
+}
+
+func dump_ssa_function(fn: SsaFunction) -> string {
+    if fn == null { return ""; }
+    let out = "define " + fn.ret_type + " @" + fn.name + "(";
+    let param = fn.params;
+    let first = true;
+    while param != null {
+        if first == false { out = out + ", "; }
+        out = out + param.type_name + " %" + param.name;
+        first = false;
+        param = param.next;
+    }
+    out = out + ") {\n";
+
+    let bb = fn.block_head;
+    while bb != null {
+        out = out + dump_basic_block(bb);
+        bb = bb.next;
+    }
+    out = out + "}\n\n";
+    return out;
+}
+
+func dump_ssa_ir(prog: SsaProgram) -> string {
+    if prog == null { return ""; }
+    let out = "; ==============================================================================\n";
+    out = out + "; 🌹 Roze SSA Intermediate Representation (ADV-06 M6-T03)\n";
+    out = out + "; ==============================================================================\n\n";
+
+    let fn = prog.functions;
+    while fn != null {
+        out = out + dump_ssa_function(fn);
+        fn = fn.next;
+    }
+    return out;
+}
+
+// --- Section 4: AST to SSA Lowering ---
+
+func lower_ast_expr_to_ssa(fn: SsaFunction, bb: BasicBlock, expr: AstNode) -> string {
+    if expr == null { return ""; }
+    let k = expr.kind;
+
+    if k == NODE_LITERAL_INT() {
+        let t = fn_new_temp(fn);
+        let inst = make_ssa_inst(bb.inst_count, SSA_CONST_INT(), t, "int", "", "", "", expr.int_val, "", "", "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    if k == NODE_LITERAL_STR() {
+        let t = fn_new_temp(fn);
+        let inst = make_ssa_inst(bb.inst_count, SSA_CONST_STR(), t, "string", "", "", "", 0, expr.str_val, "", "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    if k == NODE_LITERAL_BOOL() {
+        let t = fn_new_temp(fn);
+        let inst = make_ssa_inst(bb.inst_count, SSA_CONST_BOOL(), t, "bool", "", "", "", expr.int_val, "", "", "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    if k == NODE_IDENT() {
+        return "%" + expr.name;
+    }
+    if k == NODE_BIN_OP() {
+        let l = lower_ast_expr_to_ssa(fn, bb, expr.child1);
+        let r = lower_ast_expr_to_ssa(fn, bb, expr.child2);
+        let t = fn_new_temp(fn);
+        let op_ty = expr.type_name;
+        if op_ty == "" { op_ty = "int"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_BIN_OP(), t, op_ty, expr.op, l, r, 0, "", "", "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    if k == NODE_UNARY_OP() {
+        let sub = lower_ast_expr_to_ssa(fn, bb, expr.child1);
+        let t = fn_new_temp(fn);
+        let op_ty = expr.type_name;
+        if op_ty == "" { op_ty = "int"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_UNARY_OP(), t, op_ty, expr.op, sub, "", 0, "", "", "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    if k == NODE_CALL() {
+        let args_str = "";
+        let arg = expr.child2;
+        let first = true;
+        while arg != null {
+            if first == false { args_str = args_str + ", "; }
+            let a_res = lower_ast_expr_to_ssa(fn, bb, arg);
+            args_str = args_str + a_res;
+            first = false;
+            arg = arg.next;
+        }
+        let t = fn_new_temp(fn);
+        let ret_ty = expr.type_name;
+        if ret_ty == "" { ret_ty = "void"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_CALL(), t, ret_ty, "", args_str, "", 0, "", expr.name, "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    if k == NODE_MEMBER() {
+        let obj = lower_ast_expr_to_ssa(fn, bb, expr.child1);
+        let t = fn_new_temp(fn);
+        let f_ty = expr.type_name;
+        if f_ty == "" { f_ty = "int"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_GET_FIELD(), t, f_ty, "", obj, expr.name, 0, "", "", "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    return "";
+}
+
+func lower_ast_stmt_to_ssa(fn: SsaFunction, bb: BasicBlock, stmt: AstNode) -> BasicBlock {
+    if stmt == null { return bb; }
+    let k = stmt.kind;
+
+    if k == NODE_BLOCK() {
+        let curr = stmt.child1;
+        let curr_bb = bb;
+        while curr != null {
+            curr_bb = lower_ast_stmt_to_ssa(fn, curr_bb, curr);
+            curr = curr.next;
+        }
+        return curr_bb;
+    }
+
+    if k == NODE_VAR_DECL() {
+        let val_temp = lower_ast_expr_to_ssa(fn, bb, stmt.child1);
+        let ty = stmt.type_name;
+        if ty == "" { ty = "int"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_STORE(), "%" + stmt.name, ty, "", val_temp, "", 0, "", "", "");
+        bb_append_inst(bb, inst);
+        return bb;
+    }
+
+    if k == NODE_ASSIGN() {
+        let val_temp = lower_ast_expr_to_ssa(fn, bb, stmt.child1);
+        let ty = stmt.type_name;
+        if ty == "" { ty = "int"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_STORE(), "%" + stmt.name, ty, "", val_temp, "", 0, "", "", "");
+        bb_append_inst(bb, inst);
+        return bb;
+    }
+
+    if k == NODE_RETURN() {
+        let ret_val = "";
+        if stmt.child1 != null {
+            ret_val = lower_ast_expr_to_ssa(fn, bb, stmt.child1);
+        }
+        let ty = fn.ret_type;
+        if ty == "" { ty = "void"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_RETURN(), "", ty, "", ret_val, "", 0, "", "", "");
+        bb_append_inst(bb, inst);
+        return bb;
+    }
+
+    if k == NODE_EXPR_STMT() {
+        lower_ast_expr_to_ssa(fn, bb, stmt.child1);
+        return bb;
+    }
+
+    if k == NODE_IF() {
+        let cond_val = lower_ast_expr_to_ssa(fn, bb, stmt.child1);
+        let then_lbl = "then_" + rz_int_to_str(fn.block_count);
+        let else_lbl = "else_" + rz_int_to_str(fn.block_count);
+        let merge_lbl = "merge_" + rz_int_to_str(fn.block_count);
+
+        let then_bb = make_basic_block(fn.block_count, then_lbl);
+        fn_append_bb(fn, then_bb);
+        let else_bb: BasicBlock = null;
+        if stmt.child3 != null {
+            else_bb = make_basic_block(fn.block_count, else_lbl);
+            fn_append_bb(fn, else_bb);
+        }
+        let merge_bb = make_basic_block(fn.block_count, merge_lbl);
+        fn_append_bb(fn, merge_bb);
+
+        let false_target = merge_lbl;
+        if else_bb != null { false_target = else_lbl; }
+
+        let br_cond = make_ssa_inst(bb.inst_count, SSA_BR_COND(), "", "i1", "", cond_val, "", 0, "", then_lbl, false_target);
+        bb_append_inst(bb, br_cond);
+
+        let then_end = lower_ast_stmt_to_ssa(fn, then_bb, stmt.child2);
+        if then_end != null && then_end.is_terminated == 0 {
+            let br_merge = make_ssa_inst(then_end.inst_count, SSA_BR(), "", "", "", "", "", 0, "", merge_lbl, "");
+            bb_append_inst(then_end, br_merge);
+        }
+
+        if else_bb != null {
+            let else_end = lower_ast_stmt_to_ssa(fn, else_bb, stmt.child3);
+            if else_end != null && else_end.is_terminated == 0 {
+                let br_merge2 = make_ssa_inst(else_end.inst_count, SSA_BR(), "", "", "", "", "", 0, "", merge_lbl, "");
+                bb_append_inst(else_end, br_merge2);
+            }
+        }
+
+        return merge_bb;
+    }
+
+    if k == NODE_WHILE() {
+        let hdr_lbl = "while_hdr_" + rz_int_to_str(fn.block_count);
+        let body_lbl = "while_body_" + rz_int_to_str(fn.block_count);
+        let exit_lbl = "while_exit_" + rz_int_to_str(fn.block_count);
+
+        let hdr_bb = make_basic_block(fn.block_count, hdr_lbl);
+        fn_append_bb(fn, hdr_bb);
+        let body_bb = make_basic_block(fn.block_count, body_lbl);
+        fn_append_bb(fn, body_bb);
+        let exit_bb = make_basic_block(fn.block_count, exit_lbl);
+        fn_append_bb(fn, exit_bb);
+
+        let br_hdr = make_ssa_inst(bb.inst_count, SSA_BR(), "", "", "", "", "", 0, "", hdr_lbl, "");
+        bb_append_inst(bb, br_hdr);
+
+        let cond_val = lower_ast_expr_to_ssa(fn, hdr_bb, stmt.child1);
+        let br_cond = make_ssa_inst(hdr_bb.inst_count, SSA_BR_COND(), "", "i1", "", cond_val, "", 0, "", body_lbl, exit_lbl);
+        bb_append_inst(hdr_bb, br_cond);
+
+        let body_end = lower_ast_stmt_to_ssa(fn, body_bb, stmt.child2);
+        if body_end != null && body_end.is_terminated == 0 {
+            let back_edge = make_ssa_inst(body_end.inst_count, SSA_BR(), "", "", "", "", "", 0, "", hdr_lbl, "");
+            bb_append_inst(body_end, back_edge);
+        }
+
+        return exit_bb;
+    }
+
+    return bb;
+}
+
+func lower_ast_func_to_ssa(decl: AstNode) -> SsaFunction {
+    if decl == null || decl.kind != NODE_FUNC_DECL() { return null; }
+
+    let fn = make_ssa_function(decl.name, decl.type_name);
+
+    let p = decl.child1;
+    let p_head: SsaParam = null;
+    let p_tail: SsaParam = null;
+    while p != null {
+        let param_ty = p.type_name;
+        if param_ty == "" { param_ty = "int"; }
+        let sp = make_ssa_param(p.name, param_ty);
+        if p_head == null {
+            p_head = sp;
+            p_tail = sp;
+        } else {
+            p_tail.next = sp;
+            p_tail = sp;
+        }
+        p = p.next;
+    }
+    fn.params = p_head;
+
+    let entry_bb = make_basic_block(0, "entry");
+    fn_append_bb(fn, entry_bb);
+
+    let last_bb = lower_ast_stmt_to_ssa(fn, entry_bb, decl.child2);
+    if last_bb != null && last_bb.is_terminated == 0 {
+        let ret_inst = make_ssa_inst(last_bb.inst_count, SSA_RETURN(), "", fn.ret_type, "", "", "", 0, "", "", "");
+        bb_append_inst(last_bb, ret_inst);
+    }
+
+    return fn;
+}
+
+func build_ssa_ir(prog: AstNode) -> SsaProgram {
+    let ssa_prog = make_ssa_program();
+    if prog == null { return ssa_prog; }
+
+    let fn_head: SsaFunction = null;
+    let fn_tail: SsaFunction = null;
+
+    let decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() {
+            let ssa_fn = lower_ast_func_to_ssa(decl);
+            if ssa_fn != null {
+                if fn_head == null {
+                    fn_head = ssa_fn;
+                    fn_tail = ssa_fn;
+                } else {
+                    fn_tail.next = ssa_fn;
+                    fn_tail = ssa_fn;
+                }
+            }
+        }
+        decl = decl.next;
+    }
+
+    ssa_prog.functions = fn_head;
+    return ssa_prog;
+}
+
+// --- Section 5: Constant Folding & Propagation ---
+
+func make_int_literal_node(val: int, line: int, col: int) -> AstNode {
+    let node = make_ast_node(NODE_LITERAL_INT(), "", "int", line, col);
+    node.int_val = val;
+    return node;
+}
+
+func make_str_literal_node(val: string, line: int, col: int) -> AstNode {
+    let node = make_ast_node(NODE_LITERAL_STR(), "", "string", line, col);
+    node.str_val = val;
+    return node;
+}
+
+func make_bool_literal_node(val: int, line: int, col: int) -> AstNode {
+    let node = make_ast_node(NODE_LITERAL_BOOL(), "", "bool", line, col);
+    node.int_val = val;
+    return node;
+}
+
+func is_pure_expr(expr: AstNode) -> int {
+    if expr == null { return 1; }
+    let k = expr.kind;
+    if k == NODE_LITERAL_INT() || k == NODE_LITERAL_STR() || k == NODE_LITERAL_BOOL() || k == NODE_LITERAL_NULL() {
+        return 1;
+    }
+    if k == NODE_IDENT() {
+        return 1;
+    }
+    if k == NODE_BIN_OP() {
+        if is_pure_expr(expr.child1) == 1 && is_pure_expr(expr.child2) == 1 {
+            return 1;
+        }
+        return 0;
+    }
+    if k == NODE_UNARY_OP() {
+        return is_pure_expr(expr.child1);
+    }
+    return 0;
+}
+
+func eval_int_bin_op(op: string, a: int, b: int) -> int {
+    if op == "+" { return a + b; }
+    if op == "-" { return a - b; }
+    if op == "*" { return a * b; }
+    if op == "/" {
+        if b != 0 { return a / b; }
+        return 0;
+    }
+    if op == "%" {
+        if b != 0 { return a % b; }
+        return 0;
+    }
+    if op == "==" { if a == b { return 1; } return 0; }
+    if op == "!=" { if a != b { return 1; } return 0; }
+    if op == "<" { if a < b { return 1; } return 0; }
+    if op == "<=" { if a <= b { return 1; } return 0; }
+    if op == ">" { if a > b { return 1; } return 0; }
+    if op == ">=" { if a >= b { return 1; } return 0; }
+    return 0;
+}
+
+func fold_constants_expr(expr: AstNode, stats: OptStats) -> AstNode {
+    if expr == null { return null; }
+
+    expr.child1 = fold_constants_expr(expr.child1, stats);
+    expr.child2 = fold_constants_expr(expr.child2, stats);
+    expr.child3 = fold_constants_expr(expr.child3, stats);
+    expr.child4 = fold_constants_expr(expr.child4, stats);
+
+    let k = expr.kind;
+
+    if k == NODE_UNARY_OP() {
+        let sub = expr.child1;
+        if sub != null {
+            if expr.op == "!" && sub.kind == NODE_LITERAL_BOOL() {
+                let folded_val = 0;
+                if sub.int_val == 0 { folded_val = 1; }
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(folded_val, expr.line, expr.col);
+            }
+            if expr.op == "-" && sub.kind == NODE_LITERAL_INT() {
+                stats.const_folded = stats.const_folded + 1;
+                return make_int_literal_node(0 - sub.int_val, expr.line, expr.col);
+            }
+        }
+        return expr;
+    }
+
+    if k == NODE_BIN_OP() {
+        let left = expr.child1;
+        let right = expr.child2;
+        if left == null || right == null { return expr; }
+
+        let lk = left.kind;
+        let rk = right.kind;
+
+        // Integer arithmetic & comparison folding
+        if lk == NODE_LITERAL_INT() && rk == NODE_LITERAL_INT() {
+            let op = expr.op;
+            if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" {
+                let res = eval_int_bin_op(op, left.int_val, right.int_val);
+                stats.const_folded = stats.const_folded + 1;
+                return make_int_literal_node(res, expr.line, expr.col);
+            }
+            if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" {
+                let res_bool = eval_int_bin_op(op, left.int_val, right.int_val);
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(res_bool, expr.line, expr.col);
+            }
+        }
+
+        // String concatenation folding
+        if lk == NODE_LITERAL_STR() && rk == NODE_LITERAL_STR() && expr.op == "+" {
+            stats.const_folded = stats.const_folded + 1;
+            return make_str_literal_node(left.str_val + right.str_val, expr.line, expr.col);
+        }
+
+        // Boolean constant logic folding
+        if lk == NODE_LITERAL_BOOL() && rk == NODE_LITERAL_BOOL() {
+            if expr.op == "&&" {
+                let b_res = 0;
+                if left.int_val == 1 && right.int_val == 1 { b_res = 1; }
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(b_res, expr.line, expr.col);
+            }
+            if expr.op == "||" {
+                let b_res = 0;
+                if left.int_val == 1 || right.int_val == 1 { b_res = 1; }
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(b_res, expr.line, expr.col);
+            }
+            if expr.op == "==" {
+                let b_res = 0;
+                if left.int_val == right.int_val { b_res = 1; }
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(b_res, expr.line, expr.col);
+            }
+            if expr.op == "!=" {
+                let b_res = 0;
+                if left.int_val != right.int_val { b_res = 1; }
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(b_res, expr.line, expr.col);
+            }
+        }
+
+        // Algebraic Identity Simplifications
+        if expr.op == "+" {
+            if rk == NODE_LITERAL_INT() && right.int_val == 0 {
+                stats.const_folded = stats.const_folded + 1;
+                return left;
+            }
+            if lk == NODE_LITERAL_INT() && left.int_val == 0 {
+                stats.const_folded = stats.const_folded + 1;
+                return right;
+            }
+        }
+        if expr.op == "-" {
+            if rk == NODE_LITERAL_INT() && right.int_val == 0 {
+                stats.const_folded = stats.const_folded + 1;
+                return left;
+            }
+        }
+        if expr.op == "*" {
+            if rk == NODE_LITERAL_INT() && right.int_val == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return left;
+            }
+            if lk == NODE_LITERAL_INT() && left.int_val == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return right;
+            }
+            if rk == NODE_LITERAL_INT() && right.int_val == 0 && is_pure_expr(left) == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return make_int_literal_node(0, expr.line, expr.col);
+            }
+            if lk == NODE_LITERAL_INT() && left.int_val == 0 && is_pure_expr(right) == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return make_int_literal_node(0, expr.line, expr.col);
+            }
+        }
+        if expr.op == "/" {
+            if rk == NODE_LITERAL_INT() && right.int_val == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return left;
+            }
+        }
+        if expr.op == "&&" {
+            if lk == NODE_LITERAL_BOOL() && left.int_val == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return right;
+            }
+            if rk == NODE_LITERAL_BOOL() && right.int_val == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return left;
+            }
+            if lk == NODE_LITERAL_BOOL() && left.int_val == 0 && is_pure_expr(right) == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(0, expr.line, expr.col);
+            }
+            if rk == NODE_LITERAL_BOOL() && right.int_val == 0 && is_pure_expr(left) == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(0, expr.line, expr.col);
+            }
+        }
+        if expr.op == "||" {
+            if lk == NODE_LITERAL_BOOL() && left.int_val == 0 {
+                stats.const_folded = stats.const_folded + 1;
+                return right;
+            }
+            if rk == NODE_LITERAL_BOOL() && right.int_val == 0 {
+                stats.const_folded = stats.const_folded + 1;
+                return left;
+            }
+            if lk == NODE_LITERAL_BOOL() && left.int_val == 1 && is_pure_expr(right) == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(1, expr.line, expr.col);
+            }
+            if rk == NODE_LITERAL_BOOL() && right.int_val == 1 && is_pure_expr(left) == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(1, expr.line, expr.col);
+            }
+        }
+    }
+
+    return expr;
+}
+
+// --- Section 6: Dead Code Elimination (DCE) ---
+
+func has_ident_ref(node: AstNode, name: string) -> int {
+    if node == null { return 0; }
+    if node.kind == NODE_IDENT() && node.name == name {
+        return 1;
+    }
+    if has_ident_ref(node.child1, name) == 1 { return 1; }
+    if has_ident_ref(node.child2, name) == 1 { return 1; }
+    if has_ident_ref(node.child3, name) == 1 { return 1; }
+    if has_ident_ref(node.child4, name) == 1 { return 1; }
+    if has_ident_ref(node.next, name) == 1 { return 1; }
+    return 0;
+}
+
+func eliminate_dead_statements(stmt_list: AstNode, stats: OptStats) -> AstNode {
+    if stmt_list == null { return null; }
+
+    let head: AstNode = null;
+    let tail: AstNode = null;
+    let curr = stmt_list;
+    let reached_return = 0;
+
+    while curr != null {
+        if reached_return == 1 {
+            stats.dead_stmts_removed = stats.dead_stmts_removed + 1;
+            curr = curr.next;
+        } else {
+            let next_stmt = curr.next;
+            curr.next = null;
+
+            let optimized_stmt = eliminate_dead_code_stmt(curr, stats);
+
+            if optimized_stmt != null {
+                if head == null {
+                    head = optimized_stmt;
+                    tail = optimized_stmt;
+                } else {
+                    let t = tail;
+                    while t.next != null {
+                        t = t.next;
+                    }
+                    t.next = optimized_stmt;
+                    tail = optimized_stmt;
+                }
+
+                if optimized_stmt.kind == NODE_RETURN() {
+                    reached_return = 1;
+                }
+            }
+
+            curr = next_stmt;
+        }
+    }
+
+    return head;
+}
+
+func eliminate_dead_code_stmt(stmt: AstNode, stats: OptStats) -> AstNode {
+    if stmt == null { return null; }
+
+    let k = stmt.kind;
+
+    if k == NODE_BLOCK() {
+        stmt.child1 = eliminate_dead_statements(stmt.child1, stats);
+        return stmt;
+    }
+
+    if k == NODE_IF() {
+        stmt.child1 = fold_constants_expr(stmt.child1, stats);
+        let cond = stmt.child1;
+
+        if cond != null && (cond.kind == NODE_LITERAL_BOOL() || cond.kind == NODE_LITERAL_INT()) {
+            if cond.int_val == 1 {
+                stats.dead_stmts_removed = stats.dead_stmts_removed + 1;
+                let then_branch = stmt.child2;
+                if then_branch != null {
+                    return eliminate_dead_code_stmt(then_branch, stats);
+                }
+                return null;
+            }
+            if cond.int_val == 0 {
+                stats.dead_stmts_removed = stats.dead_stmts_removed + 1;
+                let else_branch = stmt.child3;
+                if else_branch != null {
+                    return eliminate_dead_code_stmt(else_branch, stats);
+                }
+                return null;
+            }
+        }
+
+        stmt.child2 = eliminate_dead_code_stmt(stmt.child2, stats);
+        stmt.child3 = eliminate_dead_code_stmt(stmt.child3, stats);
+        return stmt;
+    }
+
+    if k == NODE_WHILE() {
+        stmt.child1 = fold_constants_expr(stmt.child1, stats);
+        let cond = stmt.child1;
+        if cond != null && (cond.kind == NODE_LITERAL_BOOL() || cond.kind == NODE_LITERAL_INT()) && cond.int_val == 0 {
+            stats.dead_stmts_removed = stats.dead_stmts_removed + 1;
+            return null;
+        }
+        stmt.child2 = eliminate_dead_code_stmt(stmt.child2, stats);
+        return stmt;
+    }
+
+    if k == NODE_FOR() {
+        stmt.child1 = eliminate_dead_code_stmt(stmt.child1, stats);
+        stmt.child2 = fold_constants_expr(stmt.child2, stats);
+        stmt.child3 = eliminate_dead_code_stmt(stmt.child3, stats);
+        stmt.child4 = eliminate_dead_code_stmt(stmt.child4, stats);
+        return stmt;
+    }
+
+    if k == NODE_VAR_DECL() {
+        stmt.child1 = fold_constants_expr(stmt.child1, stats);
+        return stmt;
+    }
+
+    if k == NODE_ASSIGN() {
+        stmt.child1 = fold_constants_expr(stmt.child1, stats);
+        return stmt;
+    }
+
+    if k == NODE_RETURN() {
+        stmt.child1 = fold_constants_expr(stmt.child1, stats);
+        return stmt;
+    }
+
+    if k == NODE_EXPR_STMT() {
+        stmt.child1 = fold_constants_expr(stmt.child1, stats);
+        return stmt;
+    }
+
+    return stmt;
+}
+
+// --- Section 7: Leaf Function Inlining ---
+
+func find_inlinable_func(head: InlinableFunc, name: string) -> InlinableFunc {
+    let curr = head;
+    while curr != null {
+        if curr.name == name {
+            return curr;
+        }
+        curr = curr.next;
+    }
+    return null;
+}
+
+func substitute_param_with_arg(expr: AstNode, param_name: string, arg_expr: AstNode) -> AstNode {
+    if expr == null { return null; }
+
+    if expr.kind == NODE_IDENT() && expr.name == param_name {
+        return clone_single_node(arg_expr);
+    }
+
+    expr.child1 = substitute_param_with_arg(expr.child1, param_name, arg_expr);
+    expr.child2 = substitute_param_with_arg(expr.child2, param_name, arg_expr);
+    expr.child3 = substitute_param_with_arg(expr.child3, param_name, arg_expr);
+    expr.child4 = substitute_param_with_arg(expr.child4, param_name, arg_expr);
+    return expr;
+}
+
+func inline_call_expr(call_node: AstNode, inlinable_list: InlinableFunc, stats: OptStats) -> AstNode {
+    if call_node == null || inlinable_list == null { return call_node; }
+
+    if call_node.kind == NODE_CALL() {
+        let fn_info = find_inlinable_func(inlinable_list, call_node.name);
+        if fn_info != null {
+            let ret_copy = clone_single_node(fn_info.ret_expr);
+            let p = fn_info.params;
+            let a = call_node.child2;
+            let match_ok = 1;
+
+            while p != null && a != null {
+                ret_copy = substitute_param_with_arg(ret_copy, p.name, a);
+                p = p.next;
+                a = a.next;
+            }
+
+            if p != null || a != null {
+                match_ok = 0;
+            }
+
+            if match_ok == 1 && ret_copy != null {
+                stats.funcs_inlined = stats.funcs_inlined + 1;
+                return ret_copy;
+            }
+        }
+    }
+
+    return call_node;
+}
+
+func inline_calls_in_expr(expr: AstNode, inlinable_list: InlinableFunc, stats: OptStats) -> AstNode {
+    if expr == null { return null; }
+
+    if expr.kind == NODE_CALL() {
+        let arg = expr.child2;
+        while arg != null {
+            arg.child1 = inline_calls_in_expr(arg.child1, inlinable_list, stats);
+            arg.child2 = inline_calls_in_expr(arg.child2, inlinable_list, stats);
+            arg = arg.next;
+        }
+        return inline_call_expr(expr, inlinable_list, stats);
+    }
+
+    expr.child1 = inline_calls_in_expr(expr.child1, inlinable_list, stats);
+    expr.child2 = inline_calls_in_expr(expr.child2, inlinable_list, stats);
+    expr.child3 = inline_calls_in_expr(expr.child3, inlinable_list, stats);
+    expr.child4 = inline_calls_in_expr(expr.child4, inlinable_list, stats);
+    return expr;
+}
+
+func inline_calls_in_stmt(stmt: AstNode, inlinable_list: InlinableFunc, stats: OptStats) {
+    if stmt == null || inlinable_list == null { return; }
+
+    let k = stmt.kind;
+    if k == NODE_BLOCK() {
+        let curr = stmt.child1;
+        while curr != null {
+            inline_calls_in_stmt(curr, inlinable_list, stats);
+            curr = curr.next;
+        }
+    } else if k == NODE_VAR_DECL() || k == NODE_ASSIGN() || k == NODE_RETURN() || k == NODE_EXPR_STMT() {
+        stmt.child1 = inline_calls_in_expr(stmt.child1, inlinable_list, stats);
+    } else if k == NODE_IF() {
+        stmt.child1 = inline_calls_in_expr(stmt.child1, inlinable_list, stats);
+        inline_calls_in_stmt(stmt.child2, inlinable_list, stats);
+        inline_calls_in_stmt(stmt.child3, inlinable_list, stats);
+    } else if k == NODE_WHILE() {
+        stmt.child1 = inline_calls_in_expr(stmt.child1, inlinable_list, stats);
+        inline_calls_in_stmt(stmt.child2, inlinable_list, stats);
+    } else if k == NODE_FOR() {
+        inline_calls_in_stmt(stmt.child1, inlinable_list, stats);
+        stmt.child2 = inline_calls_in_expr(stmt.child2, inlinable_list, stats);
+        inline_calls_in_stmt(stmt.child3, inlinable_list, stats);
+        inline_calls_in_stmt(stmt.child4, inlinable_list, stats);
+    }
+}
+
+func is_inlinable_ret_expr(expr: AstNode) -> int {
+    if expr == null { return 0; }
+    let k = expr.kind;
+    if k == NODE_LITERAL_INT() || k == NODE_LITERAL_STR() || k == NODE_LITERAL_BOOL() {
+        return 1;
+    }
+    if k == NODE_IDENT() {
+        return 1;
+    }
+    if k == NODE_BIN_OP() {
+        if is_inlinable_ret_expr(expr.child1) == 1 && is_inlinable_ret_expr(expr.child2) == 1 {
+            return 1;
+        }
+        return 0;
+    }
+    if k == NODE_UNARY_OP() {
+        return is_inlinable_ret_expr(expr.child1);
+    }
+    return 0;
+}
+
+func is_compiler_internal_func(name: string) -> int {
+    if name == "is_digit" || name == "is_alpha" || name == "is_alnum" || name == "is_ident_char" { return 1; }
+    if name == "check_token" || name == "advance_token" || name == "peek_line" || name == "peek_col" { return 1; }
+    if name == "keyword_kind" || name == "c_type" || name == "escape_c_string" { return 1; }
+    let len = rz_str_len(name);
+    if len >= 4 {
+        let p4 = rz_substring(name, 0, 4);
+        if p4 == "TOK_" || p4 == "NODE" || p4 == "SYM_" || p4 == "SSA_" || p4 == "make" || p4 == "rz_c" || p4 == "rz_s" {
+            return 1;
+        }
+    }
+    if len >= 7 {
+        let p7 = rz_substring(name, 0, 7);
+        if p7 == "BORROW_" {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+func collect_inlinable_functions(prog: AstNode) -> InlinableFunc {
+    let list_head: InlinableFunc = null;
+    let decl = prog.child1;
+
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() && decl.name != "main" && decl.name != "rz_user_main" && is_compiler_internal_func(decl.name) == 0 {
+            let body = decl.child2;
+            if body != null && body.kind == NODE_BLOCK() {
+                let first_stmt = body.child1;
+                if first_stmt != null && first_stmt.kind == NODE_RETURN() && first_stmt.next == null {
+                    let ret_expr = first_stmt.child1;
+                    if ret_expr != null && is_inlinable_ret_expr(ret_expr) == 1 && has_ident_ref(ret_expr, decl.name) == 0 {
+                        let entry = new InlinableFunc(decl.name, decl.type_name, decl.child1, ret_expr, list_head);
+                        list_head = entry;
+                    }
+                }
+            }
+        }
+        decl = decl.next;
+    }
+
+    return list_head;
+}
+
+// --- Section 8: Loop Invariant Code Motion (LICM) ---
+
+func add_ident_ref(head: SsaBlockRef, name: string) -> SsaBlockRef {
+    let curr = head;
+    while curr != null {
+        if curr.name == name { return head; }
+        curr = curr.next;
+    }
+    return new SsaBlockRef(name, head);
+}
+
+func has_ident_in_list(head: SsaBlockRef, name: string) -> int {
+    let curr = head;
+    while curr != null {
+        if curr.name == name { return 1; }
+        curr = curr.next;
+    }
+    return 0;
+}
+
+func collect_mutated_vars_in_node(node: AstNode, muts: SsaBlockRef) -> SsaBlockRef {
+    if node == null { return muts; }
+
+    if node.kind == NODE_ASSIGN() && node.name != "" {
+        muts = add_ident_ref(muts, node.name);
+    }
+
+    muts = collect_mutated_vars_in_node(node.child1, muts);
+    muts = collect_mutated_vars_in_node(node.child2, muts);
+    muts = collect_mutated_vars_in_node(node.child3, muts);
+    muts = collect_mutated_vars_in_node(node.child4, muts);
+    muts = collect_mutated_vars_in_node(node.next, muts);
+    return muts;
+}
+
+func is_expr_invariant(expr: AstNode, muts: SsaBlockRef) -> int {
+    if expr == null { return 1; }
+
+    let k = expr.kind;
+    if k == NODE_LITERAL_INT() || k == NODE_LITERAL_STR() || k == NODE_LITERAL_BOOL() || k == NODE_LITERAL_NULL() {
+        return 1;
+    }
+
+    if k == NODE_IDENT() {
+        if has_ident_in_list(muts, expr.name) == 1 {
+            return 0;
+        }
+        return 1;
+    }
+
+    if k == NODE_BIN_OP() {
+        if is_expr_invariant(expr.child1, muts) == 1 && is_expr_invariant(expr.child2, muts) == 1 {
+            return 1;
+        }
+        return 0;
+    }
+
+    if k == NODE_UNARY_OP() {
+        return is_expr_invariant(expr.child1, muts);
+    }
+
+    return 0;
+}
+
+func hoist_loop_invariants_in_block(block: AstNode, stats: OptStats) {
+    if block == null || block.kind != NODE_BLOCK() { return; }
+
+    let prev: AstNode = null;
+    let curr = block.child1;
+
+    while curr != null {
+        if curr.kind == NODE_WHILE() || curr.kind == NODE_FOR() {
+            let loop_body = curr.child2;
+            if curr.kind == NODE_FOR() {
+                loop_body = curr.child4;
+            }
+
+            if loop_body != null && loop_body.kind == NODE_BLOCK() {
+                let muts: SsaBlockRef = null;
+                if curr.kind == NODE_FOR() {
+                    muts = collect_mutated_vars_in_node(curr.child3, muts);
+                }
+                muts = collect_mutated_vars_in_node(loop_body.child1, muts);
+
+                let body_prev: AstNode = null;
+                let body_curr = loop_body.child1;
+                let hoisted_head: AstNode = null;
+                let hoisted_tail: AstNode = null;
+
+                while body_curr != null {
+                    let next_stmt = body_curr.next;
+
+                    if body_curr.kind == NODE_VAR_DECL() {
+                        let init_expr = body_curr.child1;
+                        if init_expr != null && is_expr_invariant(init_expr, muts) == 1 {
+                            if body_prev == null {
+                                loop_body.child1 = next_stmt;
+                            } else {
+                                body_prev.next = next_stmt;
+                            }
+                            body_curr.next = null;
+
+                            if hoisted_head == null {
+                                hoisted_head = body_curr;
+                                hoisted_tail = body_curr;
+                            } else {
+                                hoisted_tail.next = body_curr;
+                                hoisted_tail = body_curr;
+                            }
+
+                            stats.loops_hoisted = stats.loops_hoisted + 1;
+                            muts = add_ident_ref(muts, body_curr.name);
+                        } else {
+                            body_prev = body_curr;
+                        }
+                    } else {
+                        body_prev = body_curr;
+                    }
+
+                    body_curr = next_stmt;
+                }
+
+                if hoisted_head != null {
+                    if prev == null {
+                        block.child1 = hoisted_head;
+                        hoisted_tail.next = curr;
+                        prev = hoisted_tail;
+                    } else {
+                        prev.next = hoisted_head;
+                        hoisted_tail.next = curr;
+                        prev = hoisted_tail;
+                    }
+                }
+            }
+        } else if curr.kind == NODE_BLOCK() {
+            hoist_loop_invariants_in_block(curr, stats);
+        }
+
+        prev = curr;
+        curr = curr.next;
+    }
+}
+
+// --- Section 9: Unified Optimizer Coordinator ---
+
+func optimize_program(prog: AstNode) -> AstNode {
+    if prog == null { return null; }
+
+    let stats = new OptStats(0, 0, 0, 0);
+
+    // Pass 1: Leaf Function Inlining
+    let inlinable_list = collect_inlinable_functions(prog);
+    if inlinable_list != null {
+        let decl = prog.child1;
+        while decl != null {
+            if decl.kind == NODE_FUNC_DECL() {
+                inline_calls_in_stmt(decl.child2, inlinable_list, stats);
+            }
+            decl = decl.next;
+        }
+    }
+
+    // Pass 2: Loop Invariant Code Motion (Hoisting)
+    let decl2 = prog.child1;
+    while decl2 != null {
+        if decl2.kind == NODE_FUNC_DECL() {
+            hoist_loop_invariants_in_block(decl2.child2, stats);
+        }
+        decl2 = decl2.next;
+    }
+
+    // Pass 3: Constant Folding & Dead Code Elimination (Iterative)
+    for let iter = 0; iter < 3; iter = iter + 1 {
+        let prev_folded = stats.const_folded;
+        let prev_dead = stats.dead_stmts_removed;
+
+        let decl3 = prog.child1;
+        while decl3 != null {
+            if decl3.kind == NODE_FUNC_DECL() {
+                if decl3.child2 != null {
+                    decl3.child2 = eliminate_dead_code_stmt(decl3.child2, stats);
+                }
+            }
+            decl3 = decl3.next;
+        }
+
+        if stats.const_folded == prev_folded && stats.dead_stmts_removed == prev_dead {
+            iter = 3;
+        }
+    }
+
+    return prog;
+}
+
+func emit_program_ssa(prog: AstNode) -> string {
+    let ssa_prog = build_ssa_ir(prog);
+    let ssa_fn = ssa_prog.functions;
+    while ssa_fn != null {
+        resolve_cfg_edges(ssa_fn);
+        eliminate_dead_basic_blocks(ssa_fn);
+        ssa_fn = ssa_fn.next;
+    }
+    return dump_ssa_ir(ssa_prog);
 }
 // ==============================================================================
 // 🌹 Roze Self-Hosted Compiler - C99 Code Generator (ADV-06)
@@ -3857,7 +5308,32 @@ func compile_source_to_c(source: string) -> string {
         println("❌ Compilation failed with " + rz_int_to_str(tc.error_count) + " semantic error(s).");
         return "";
     }
-    return generate_c_code(monomorphized);
+    let optimized = optimize_program(monomorphized);
+    return generate_c_code(optimized);
+}
+
+func emit_ssa_for_file(file_path: string) -> int {
+    if rz_file_exists(file_path) == 0 {
+        println("❌ Error: file not found: " + file_path);
+        return 1;
+    }
+    let src = rz_read_file(file_path);
+    let tokens = tokenize(src);
+    let parser = make_parser(tokens);
+    let ast = parse_program(parser);
+    let expanded = expand_macros(ast);
+    let monomorphized = monomorphize_program(expanded);
+    let tc = make_type_checker();
+    check_program_types(tc, monomorphized);
+    analyze_borrows(tc, monomorphized);
+    if tc.error_count > 0 {
+        println("❌ Semantic verification failed: " + file_path + " (" + rz_int_to_str(tc.error_count) + " errors)");
+        return 1;
+    }
+    let optimized = optimize_program(monomorphized);
+    let ssa_text = emit_program_ssa(optimized);
+    println(ssa_text);
+    return 0;
 }
 
 func verify_semantic_checking(file_path: string) -> int {
@@ -4027,6 +5503,13 @@ func main() {
                 verify_semantic_checking(check_target);
                 return;
             }
+        } else if arg == "--emit-ssa" || arg == "--ssa" {
+            i = i + 1;
+            if i < argc {
+                let ssa_target = rz_get_arg(i);
+                emit_ssa_for_file(ssa_target);
+                return;
+            }
         } else if arg == "--test" {
             run_built_in_self_test();
             return;
@@ -4037,6 +5520,7 @@ func main() {
             println("  -c <out.c>      Specify emitted C source path");
             println("  --parse-only, -p <file> Verify pure Roze frontend parsing and macro expansion");
             println("  --check-only, -k <file> Verify semantic type checking, traits, generics and borrows");
+            println("  --emit-ssa, --ssa <file> Lower AST to SSA IR and emit textual SSA IR");
             println("  --test          Run compiler self-test suite");
             println("  --help, -h      Show this help message");
             return;

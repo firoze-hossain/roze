@@ -1,0 +1,156 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Loop Invariant Code Motion (LICM) (M6-T03)
+// ==============================================================================
+
+import "../ast.roze";
+import "constant_folding.roze";
+
+func add_ident_ref(head: SsaBlockRef, name: string) -> SsaBlockRef {
+    let curr = head;
+    while curr != null {
+        if curr.name == name { return head; }
+        curr = curr.next;
+    }
+    return new SsaBlockRef(name, head);
+}
+
+func has_ident_in_list(head: SsaBlockRef, name: string) -> int {
+    let curr = head;
+    while curr != null {
+        if curr.name == name { return 1; }
+        curr = curr.next;
+    }
+    return 0;
+}
+
+func collect_mutated_vars_in_node(node: AstNode, muts: SsaBlockRef) -> SsaBlockRef {
+    if node == null { return muts; }
+
+    if node.kind == NODE_ASSIGN() && node.name != "" {
+        muts = add_ident_ref(muts, node.name);
+    }
+
+    muts = collect_mutated_vars_in_node(node.child1, muts);
+    muts = collect_mutated_vars_in_node(node.child2, muts);
+    muts = collect_mutated_vars_in_node(node.child3, muts);
+    muts = collect_mutated_vars_in_node(node.child4, muts);
+    muts = collect_mutated_vars_in_node(node.next, muts);
+    return muts;
+}
+
+func is_expr_invariant(expr: AstNode, muts: SsaBlockRef) -> int {
+    if expr == null { return 1; }
+
+    let k = expr.kind;
+    if k == NODE_LITERAL_INT() || k == NODE_LITERAL_STR() || k == NODE_LITERAL_BOOL() || k == NODE_LITERAL_NULL() {
+        return 1;
+    }
+
+    if k == NODE_IDENT() {
+        if has_ident_in_list(muts, expr.name) == 1 {
+            return 0; // Variable is modified inside the loop!
+        }
+        return 1;
+    }
+
+    if k == NODE_BIN_OP() {
+        if is_expr_invariant(expr.child1, muts) == 1 && is_expr_invariant(expr.child2, muts) == 1 {
+            return 1;
+        }
+        return 0;
+    }
+
+    if k == NODE_UNARY_OP() {
+        return is_expr_invariant(expr.child1, muts);
+    }
+
+    // Function calls, allocations, etc. are not considered pure invariant
+    return 0;
+}
+
+func hoist_loop_invariants_in_block(block: AstNode, stats: OptStats) {
+    if block == null || block.kind != NODE_BLOCK() { return; }
+
+    let prev: AstNode = null;
+    let curr = block.child1;
+
+    while curr != null {
+        if curr.kind == NODE_WHILE() || curr.kind == NODE_FOR() {
+            let loop_body = curr.child2;
+            if curr.kind == NODE_FOR() {
+                loop_body = curr.child4;
+            }
+
+            if loop_body != null && loop_body.kind == NODE_BLOCK() {
+                // Collect variables modified in the loop body
+                let muts: SsaBlockRef = null;
+                if curr.kind == NODE_FOR() {
+                    // For loop increment mutates loop variable
+                    muts = collect_mutated_vars_in_node(curr.child3, muts);
+                }
+                muts = collect_mutated_vars_in_node(loop_body.child1, muts);
+
+                // Identify loop invariant declarations in the loop body
+                let body_prev: AstNode = null;
+                let body_curr = loop_body.child1;
+                let hoisted_head: AstNode = null;
+                let hoisted_tail: AstNode = null;
+
+                while body_curr != null {
+                    let next_stmt = body_curr.next;
+
+                    if body_curr.kind == NODE_VAR_DECL() {
+                        let init_expr = body_curr.child1;
+                        if init_expr != null && is_expr_invariant(init_expr, muts) == 1 {
+                            // Can be safely hoisted out of loop!
+                            // Unlink from loop body
+                            if body_prev == null {
+                                loop_body.child1 = next_stmt;
+                            } else {
+                                body_prev.next = next_stmt;
+                            }
+                            body_curr.next = null;
+
+                            // Add to hoisted chain
+                            if hoisted_head == null {
+                                hoisted_head = body_curr;
+                                hoisted_tail = body_curr;
+                            } else {
+                                hoisted_tail.next = body_curr;
+                                hoisted_tail = body_curr;
+                            }
+
+                            stats.loops_hoisted = stats.loops_hoisted + 1;
+                            // Add hoisted variable to muts so dependent statements aren't hoisted before it
+                            muts = add_ident_ref(muts, body_curr.name);
+                        } else {
+                            body_prev = body_curr;
+                        }
+                    } else {
+                        body_prev = body_curr;
+                    }
+
+                    body_curr = next_stmt;
+                }
+
+                // If any statement was hoisted, insert hoisted_head before curr loop!
+                if hoisted_head != null {
+                    if prev == null {
+                        block.child1 = hoisted_head;
+                        hoisted_tail.next = curr;
+                        prev = hoisted_tail;
+                    } else {
+                        prev.next = hoisted_head;
+                        hoisted_tail.next = curr;
+                        prev = hoisted_tail;
+                    }
+                }
+            }
+        } else if curr.kind == NODE_BLOCK() {
+            hoist_loop_invariants_in_block(curr, stats);
+        }
+
+        prev = curr;
+        curr = curr.next;
+    }
+}

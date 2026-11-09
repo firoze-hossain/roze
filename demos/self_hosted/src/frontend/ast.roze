@@ -180,6 +180,24 @@ func BORROW_SHARED() -> int { return 2; }
 func BORROW_MUT() -> int { return 3; }
 func BORROW_MOVED() -> int { return 4; }
 
+// --- SSA IR Kinds (Constants) ---
+func SSA_NOP() -> int { return 200; }
+func SSA_CONST_INT() -> int { return 201; }
+func SSA_CONST_STR() -> int { return 202; }
+func SSA_CONST_BOOL() -> int { return 203; }
+func SSA_BIN_OP() -> int { return 204; }
+func SSA_UNARY_OP() -> int { return 205; }
+func SSA_CALL() -> int { return 206; }
+func SSA_ALLOC() -> int { return 207; }
+func SSA_LOAD() -> int { return 208; }
+func SSA_STORE() -> int { return 209; }
+func SSA_GET_FIELD() -> int { return 210; }
+func SSA_SET_FIELD() -> int { return 211; }
+func SSA_PHI() -> int { return 212; }
+func SSA_BR() -> int { return 213; }
+func SSA_BR_COND() -> int { return 214; }
+func SSA_RETURN() -> int { return 215; }
+
 // --- Data Classes ---
 class Token {
     kind: int,
@@ -265,6 +283,88 @@ class BorrowVar {
     next: BorrowVar
 }
 
+class SsaBlockRef {
+    name: string,
+    next: SsaBlockRef
+}
+
+class SsaInst {
+    id: int,
+    kind: int,
+    dest: string,
+    type_name: string,
+    op: string,
+    arg1: string,
+    arg2: string,
+    arg3: string,
+    int_val: int,
+    str_val: string,
+    target_label: string,
+    false_label: string,
+    is_dead: int,
+    next: SsaInst
+}
+
+class BasicBlock {
+    id: int,
+    label: string,
+    inst_head: SsaInst,
+    inst_tail: SsaInst,
+    inst_count: int,
+    pred_count: int,
+    succ_count: int,
+    preds: SsaBlockRef,
+    succs: SsaBlockRef,
+    is_terminated: int,
+    next: BasicBlock
+}
+
+class SsaParam {
+    name: string,
+    type_name: string,
+    next: SsaParam
+}
+
+class SsaFunction {
+    name: string,
+    ret_type: string,
+    params: SsaParam,
+    block_head: BasicBlock,
+    block_tail: BasicBlock,
+    block_count: int,
+    var_counter: int,
+    is_inlinable: int,
+    next: SsaFunction
+}
+
+class SsaProgram {
+    functions: SsaFunction,
+    next: SsaProgram
+}
+
+class ConstBinding {
+    name: string,
+    kind: int,
+    int_val: int,
+    str_val: string,
+    next: ConstBinding
+}
+
+class InlinableFunc {
+    name: string,
+    ret_type: string,
+    params: AstNode,
+    ret_expr: AstNode,
+    next: InlinableFunc
+}
+
+class OptStats {
+    const_folded: int,
+    dead_stmts_removed: int,
+    funcs_inlined: int,
+    loops_hoisted: int
+}
+
 func make_token(kind: int, text: string, int_val: int, line: int, col: int) -> Token {
     return new Token(kind, text, int_val, line, col, null);
 }
@@ -284,6 +384,20 @@ func clone_ast_node(node: AstNode) -> AstNode {
     copy.child3 = clone_ast_node(node.child3);
     copy.child4 = clone_ast_node(node.child4);
     copy.next = clone_ast_node(node.next);
+    return copy;
+}
+
+func clone_single_node(node: AstNode) -> AstNode {
+    if node == null { return null; }
+    let copy = make_ast_node(node.kind, node.name, node.type_name, node.line, node.col);
+    copy.op = node.op;
+    copy.int_val = node.int_val;
+    copy.str_val = node.str_val;
+    copy.child1 = clone_ast_node(node.child1);
+    copy.child2 = clone_ast_node(node.child2);
+    copy.child3 = clone_ast_node(node.child3);
+    copy.child4 = clone_ast_node(node.child4);
+    copy.next = null;
     return copy;
 }
 

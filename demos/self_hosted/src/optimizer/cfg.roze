@@ -1,0 +1,77 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Control Flow Graph (CFG) Analysis (M6-T03)
+// ==============================================================================
+
+import "../ast.roze";
+import "ssa.roze";
+
+func resolve_cfg_edges(fn: SsaFunction) {
+    if fn == null { return; }
+
+    let bb = fn.block_head;
+    while bb != null {
+        // Inspect instructions in bb to locate terminator
+        let inst = bb.inst_head;
+        while inst != null {
+            if inst.kind == SSA_BR() {
+                let tgt_label = inst.target_label;
+                bb_add_succ(bb, tgt_label);
+                let tgt_bb = fn_find_bb(fn, tgt_label);
+                if tgt_bb != null {
+                    bb_add_pred(tgt_bb, bb.label);
+                }
+            } else if inst.kind == SSA_BR_COND() {
+                let t_label = inst.target_label;
+                let f_label = inst.false_label;
+                bb_add_succ(bb, t_label);
+                bb_add_succ(bb, f_label);
+                let t_bb = fn_find_bb(fn, t_label);
+                if t_bb != null {
+                    bb_add_pred(t_bb, bb.label);
+                }
+                let f_bb = fn_find_bb(fn, f_label);
+                if f_bb != null {
+                    bb_add_pred(f_bb, bb.label);
+                }
+            }
+            inst = inst.next;
+        }
+        bb = bb.next;
+    }
+}
+
+// Dead Block Elimination: Removes basic blocks with 0 predecessors (except entry)
+func eliminate_dead_basic_blocks(fn: SsaFunction) -> int {
+    if fn == null || fn.block_head == null { return 0; }
+
+    let removed = 0;
+    let prev: BasicBlock = null;
+    let curr = fn.block_head;
+
+    while curr != null {
+        let is_entry = 0;
+        if curr.label == "entry" {
+            is_entry = 1;
+        }
+
+        if is_entry == 0 && curr.pred_count == 0 {
+            // Unreachable basic block - prune
+            if prev == null {
+                fn.block_head = curr.next;
+            } else {
+                prev.next = curr.next;
+            }
+            if fn.block_tail == curr {
+                fn.block_tail = prev;
+            }
+            fn.block_count = fn.block_count - 1;
+            removed = removed + 1;
+            curr = curr.next;
+        } else {
+            prev = curr;
+            curr = curr.next;
+        }
+    }
+
+    return removed;
+}

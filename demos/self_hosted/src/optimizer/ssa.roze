@@ -1,0 +1,482 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Typed SSA Intermediate Representation (M6-T03)
+// ==============================================================================
+
+import "../ast.roze";
+
+// --- SSA IR Constructors ---
+
+func make_ssa_inst(id: int, kind: int, dest: string, type_name: string, op: string, arg1: string, arg2: string, int_val: int, str_val: string, target_label: string, false_label: string) -> SsaInst {
+    return new SsaInst(id, kind, dest, type_name, op, arg1, arg2, "", int_val, str_val, target_label, false_label, 0, null);
+}
+
+func make_basic_block(id: int, label: string) -> BasicBlock {
+    return new BasicBlock(id, label, null, null, 0, 0, 0, null, null, 0, null);
+}
+
+func make_ssa_param(name: string, type_name: string) -> SsaParam {
+    return new SsaParam(name, type_name, null);
+}
+
+func make_ssa_function(name: string, ret_type: string) -> SsaFunction {
+    return new SsaFunction(name, ret_type, null, null, null, 0, 0, 0, null);
+}
+
+func make_ssa_program() -> SsaProgram {
+    return new SsaProgram(null, null);
+}
+
+// --- Basic Block & Instruction Operations ---
+
+func bb_append_inst(bb: BasicBlock, inst: SsaInst) {
+    if bb == null || inst == null { return; }
+    if bb.inst_head == null {
+        bb.inst_head = inst;
+        bb.inst_tail = inst;
+    } else {
+        bb.inst_tail.next = inst;
+        bb.inst_tail = inst;
+    }
+    bb.inst_count = bb.inst_count + 1;
+    if inst.kind == SSA_BR() || inst.kind == SSA_BR_COND() || inst.kind == SSA_RETURN() {
+        bb.is_terminated = 1;
+    }
+}
+
+func fn_append_bb(fn: SsaFunction, bb: BasicBlock) {
+    if fn == null || bb == null { return; }
+    if fn.block_head == null {
+        fn.block_head = bb;
+        fn.block_tail = bb;
+    } else {
+        fn.block_tail.next = bb;
+        fn.block_tail = bb;
+    }
+    fn.block_count = fn.block_count + 1;
+}
+
+func fn_new_temp(fn: SsaFunction) -> string {
+    let t = "%t" + rz_int_to_str(fn.var_counter);
+    fn.var_counter = fn.var_counter + 1;
+    return t;
+}
+
+func bb_add_pred(bb: BasicBlock, pred_label: string) {
+    if bb == null || pred_label == "" { return; }
+    // Check if pred already recorded
+    let curr = bb.preds;
+    while curr != null {
+        if curr.name == pred_label { return; }
+        curr = curr.next;
+    }
+    let ref = new SsaBlockRef(pred_label, bb.preds);
+    bb.preds = ref;
+    bb.pred_count = bb.pred_count + 1;
+}
+
+func bb_add_succ(bb: BasicBlock, succ_label: string) {
+    if bb == null || succ_label == "" { return; }
+    // Check if succ already recorded
+    let curr = bb.succs;
+    while curr != null {
+        if curr.name == succ_label { return; }
+        curr = curr.next;
+    }
+    let ref = new SsaBlockRef(succ_label, bb.succs);
+    bb.succs = ref;
+    bb.succ_count = bb.succ_count + 1;
+}
+
+func fn_find_bb(fn: SsaFunction, label: string) -> BasicBlock {
+    let curr = fn.block_head;
+    while curr != null {
+        if curr.label == label { return curr; }
+        curr = curr.next;
+    }
+    return null;
+}
+
+// --- Textual SSA IR Emission ---
+
+func dump_ssa_inst(inst: SsaInst) -> string {
+    if inst == null || inst.is_dead == 1 { return ""; }
+    let k = inst.kind;
+
+    if k == SSA_CONST_INT() {
+        return "    " + inst.dest + " = const_int " + rz_int_to_str(inst.int_val) + "\n";
+    }
+    if k == SSA_CONST_STR() {
+        return "    " + inst.dest + " = const_str \"" + inst.str_val + "\"\n";
+    }
+    if k == SSA_CONST_BOOL() {
+        if inst.int_val == 1 {
+            return "    " + inst.dest + " = const_bool true\n";
+        }
+        return "    " + inst.dest + " = const_bool false\n";
+    }
+    if k == SSA_BIN_OP() {
+        return "    " + inst.dest + " = " + inst.op + " " + inst.type_name + " " + inst.arg1 + ", " + inst.arg2 + "\n";
+    }
+    if k == SSA_UNARY_OP() {
+        return "    " + inst.dest + " = " + inst.op + " " + inst.type_name + " " + inst.arg1 + "\n";
+    }
+    if k == SSA_CALL() {
+        return "    " + inst.dest + " = call " + inst.type_name + " @" + inst.target_label + "(" + inst.arg1 + ")\n";
+    }
+    if k == SSA_ALLOC() {
+        return "    " + inst.dest + " = alloca " + inst.type_name + "\n";
+    }
+    if k == SSA_LOAD() {
+        return "    " + inst.dest + " = load " + inst.type_name + " " + inst.arg1 + "\n";
+    }
+    if k == SSA_STORE() {
+        return "    store " + inst.type_name + " " + inst.arg1 + ", " + inst.dest + "\n";
+    }
+    if k == SSA_GET_FIELD() {
+        return "    " + inst.dest + " = getfield " + inst.type_name + " " + inst.arg1 + "." + inst.arg2 + "\n";
+    }
+    if k == SSA_SET_FIELD() {
+        return "    setfield " + inst.type_name + " " + inst.arg1 + "." + inst.arg2 + " = " + inst.arg3 + "\n";
+    }
+    if k == SSA_PHI() {
+        return "    " + inst.dest + " = phi " + inst.type_name + " [" + inst.arg1 + "], [" + inst.arg2 + "]\n";
+    }
+    if k == SSA_BR() {
+        return "    br label %" + inst.target_label + "\n";
+    }
+    if k == SSA_BR_COND() {
+        return "    br i1 " + inst.arg1 + ", label %" + inst.target_label + ", label %" + inst.false_label + "\n";
+    }
+    if k == SSA_RETURN() {
+        if inst.arg1 != "" {
+            return "    ret " + inst.type_name + " " + inst.arg1 + "\n";
+        }
+        return "    ret void\n";
+    }
+    if k == SSA_NOP() {
+        return "    nop\n";
+    }
+    return "";
+}
+
+func dump_basic_block(bb: BasicBlock) -> string {
+    if bb == null { return ""; }
+    let out = bb.label + ":\n";
+
+    // Comments for predecessor edges
+    if bb.pred_count > 0 {
+        out = out + "    ; preds: ";
+        let p = bb.preds;
+        let first = true;
+        while p != null {
+            if first == false { out = out + ", "; }
+            out = out + "%" + p.name;
+            first = false;
+            p = p.next;
+        }
+        out = out + "\n";
+    }
+
+    let inst = bb.inst_head;
+    while inst != null {
+        out = out + dump_ssa_inst(inst);
+        inst = inst.next;
+    }
+    return out;
+}
+
+func dump_ssa_function(fn: SsaFunction) -> string {
+    if fn == null { return ""; }
+    let out = "define " + fn.ret_type + " @" + fn.name + "(";
+    let param = fn.params;
+    let first = true;
+    while param != null {
+        if first == false { out = out + ", "; }
+        out = out + param.type_name + " %" + param.name;
+        first = false;
+        param = param.next;
+    }
+    out = out + ") {\n";
+
+    let bb = fn.block_head;
+    while bb != null {
+        out = out + dump_basic_block(bb);
+        bb = bb.next;
+    }
+    out = out + "}\n\n";
+    return out;
+}
+
+func dump_ssa_ir(prog: SsaProgram) -> string {
+    if prog == null { return ""; }
+    let out = "; ==============================================================================\n";
+    out = out + "; 🌹 Roze SSA Intermediate Representation (ADV-06 M6-T03)\n";
+    out = out + "; ==============================================================================\n\n";
+
+    let fn = prog.functions;
+    while fn != null {
+        out = out + dump_ssa_function(fn);
+        fn = fn.next;
+    }
+    return out;
+}
+
+// --- AST to SSA Lowering ---
+
+func lower_ast_expr_to_ssa(fn: SsaFunction, bb: BasicBlock, expr: AstNode) -> string {
+    if expr == null { return ""; }
+    let k = expr.kind;
+
+    if k == NODE_LITERAL_INT() {
+        let t = fn_new_temp(fn);
+        let inst = make_ssa_inst(bb.inst_count, SSA_CONST_INT(), t, "int", "", "", "", expr.int_val, "", "", "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    if k == NODE_LITERAL_STR() {
+        let t = fn_new_temp(fn);
+        let inst = make_ssa_inst(bb.inst_count, SSA_CONST_STR(), t, "string", "", "", "", 0, expr.str_val, "", "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    if k == NODE_LITERAL_BOOL() {
+        let t = fn_new_temp(fn);
+        let inst = make_ssa_inst(bb.inst_count, SSA_CONST_BOOL(), t, "bool", "", "", "", expr.int_val, "", "", "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    if k == NODE_IDENT() {
+        return "%" + expr.name;
+    }
+    if k == NODE_BIN_OP() {
+        let l = lower_ast_expr_to_ssa(fn, bb, expr.child1);
+        let r = lower_ast_expr_to_ssa(fn, bb, expr.child2);
+        let t = fn_new_temp(fn);
+        let op_ty = expr.type_name;
+        if op_ty == "" { op_ty = "int"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_BIN_OP(), t, op_ty, expr.op, l, r, 0, "", "", "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    if k == NODE_UNARY_OP() {
+        let sub = lower_ast_expr_to_ssa(fn, bb, expr.child1);
+        let t = fn_new_temp(fn);
+        let op_ty = expr.type_name;
+        if op_ty == "" { op_ty = "int"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_UNARY_OP(), t, op_ty, expr.op, sub, "", 0, "", "", "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    if k == NODE_CALL() {
+        let args_str = "";
+        let arg = expr.child1;
+        let first = true;
+        while arg != null {
+            if first == false { args_str = args_str + ", "; }
+            let a_res = lower_ast_expr_to_ssa(fn, bb, arg);
+            args_str = args_str + a_res;
+            first = false;
+            arg = arg.next;
+        }
+        let t = fn_new_temp(fn);
+        let ret_ty = expr.type_name;
+        if ret_ty == "" { ret_ty = "void"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_CALL(), t, ret_ty, "", args_str, "", 0, "", expr.name, "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    if k == NODE_MEMBER() {
+        let obj = lower_ast_expr_to_ssa(fn, bb, expr.child1);
+        let t = fn_new_temp(fn);
+        let f_ty = expr.type_name;
+        if f_ty == "" { f_ty = "int"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_GET_FIELD(), t, f_ty, "", obj, expr.name, 0, "", "", "");
+        bb_append_inst(bb, inst);
+        return t;
+    }
+    return "";
+}
+
+func lower_ast_stmt_to_ssa(fn: SsaFunction, bb: BasicBlock, stmt: AstNode) -> BasicBlock {
+    if stmt == null { return bb; }
+    let k = stmt.kind;
+
+    if k == NODE_BLOCK() {
+        let curr = stmt.child1;
+        let curr_bb = bb;
+        while curr != null {
+            curr_bb = lower_ast_stmt_to_ssa(fn, curr_bb, curr);
+            curr = curr.next;
+        }
+        return curr_bb;
+    }
+
+    if k == NODE_VAR_DECL() {
+        let val_temp = lower_ast_expr_to_ssa(fn, bb, stmt.child1);
+        let ty = stmt.type_name;
+        if ty == "" { ty = "int"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_STORE(), "%" + stmt.name, ty, "", val_temp, "", 0, "", "", "");
+        bb_append_inst(bb, inst);
+        return bb;
+    }
+
+    if k == NODE_ASSIGN() {
+        let val_temp = lower_ast_expr_to_ssa(fn, bb, stmt.child1);
+        let ty = stmt.type_name;
+        if ty == "" { ty = "int"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_STORE(), "%" + stmt.name, ty, "", val_temp, "", 0, "", "", "");
+        bb_append_inst(bb, inst);
+        return bb;
+    }
+
+    if k == NODE_RETURN() {
+        let ret_val = "";
+        if stmt.child1 != null {
+            ret_val = lower_ast_expr_to_ssa(fn, bb, stmt.child1);
+        }
+        let ty = stmt.type_name;
+        if ty == "" { ty = "void"; }
+        let inst = make_ssa_inst(bb.inst_count, SSA_RETURN(), "", ty, "", ret_val, "", 0, "", "", "");
+        bb_append_inst(bb, inst);
+        return bb;
+    }
+
+    if k == NODE_EXPR_STMT() {
+        lower_ast_expr_to_ssa(fn, bb, stmt.child1);
+        return bb;
+    }
+
+    if k == NODE_IF() {
+        let cond_val = lower_ast_expr_to_ssa(fn, bb, stmt.child1);
+        let then_lbl = "then_" + rz_int_to_str(fn.block_count);
+        let else_lbl = "else_" + rz_int_to_str(fn.block_count);
+        let merge_lbl = "merge_" + rz_int_to_str(fn.block_count);
+
+        let then_bb = make_basic_block(fn.block_count, then_lbl);
+        fn_append_bb(fn, then_bb);
+        let else_bb: BasicBlock = null;
+        if stmt.child3 != null {
+            else_bb = make_basic_block(fn.block_count, else_lbl);
+            fn_append_bb(fn, else_bb);
+        }
+        let merge_bb = make_basic_block(fn.block_count, merge_lbl);
+        fn_append_bb(fn, merge_bb);
+
+        let false_target = merge_lbl;
+        if else_bb != null { false_target = else_lbl; }
+
+        let br_cond = make_ssa_inst(bb.inst_count, SSA_BR_COND(), "", "i1", "", cond_val, "", 0, "", then_lbl, false_target);
+        bb_append_inst(bb, br_cond);
+
+        let then_end = lower_ast_stmt_to_ssa(fn, then_bb, stmt.child2);
+        if then_end != null && then_end.is_terminated == 0 {
+            let br_merge = make_ssa_inst(then_end.inst_count, SSA_BR(), "", "", "", "", "", 0, "", merge_lbl, "");
+            bb_append_inst(then_end, br_merge);
+        }
+
+        if else_bb != null {
+            let else_end = lower_ast_stmt_to_ssa(fn, else_bb, stmt.child3);
+            if else_end != null && else_end.is_terminated == 0 {
+                let br_merge2 = make_ssa_inst(else_end.inst_count, SSA_BR(), "", "", "", "", "", 0, "", merge_lbl, "");
+                bb_append_inst(else_end, br_merge2);
+            }
+        }
+
+        return merge_bb;
+    }
+
+    if k == NODE_WHILE() {
+        let hdr_lbl = "while_hdr_" + rz_int_to_str(fn.block_count);
+        let body_lbl = "while_body_" + rz_int_to_str(fn.block_count);
+        let exit_lbl = "while_exit_" + rz_int_to_str(fn.block_count);
+
+        let hdr_bb = make_basic_block(fn.block_count, hdr_lbl);
+        fn_append_bb(fn, hdr_bb);
+        let body_bb = make_basic_block(fn.block_count, body_lbl);
+        fn_append_bb(fn, body_bb);
+        let exit_bb = make_basic_block(fn.block_count, exit_lbl);
+        fn_append_bb(fn, exit_bb);
+
+        let br_hdr = make_ssa_inst(bb.inst_count, SSA_BR(), "", "", "", "", "", 0, "", hdr_lbl, "");
+        bb_append_inst(bb, br_hdr);
+
+        let cond_val = lower_ast_expr_to_ssa(fn, hdr_bb, stmt.child1);
+        let br_cond = make_ssa_inst(hdr_bb.inst_count, SSA_BR_COND(), "", "i1", "", cond_val, "", 0, "", body_lbl, exit_lbl);
+        bb_append_inst(hdr_bb, br_cond);
+
+        let body_end = lower_ast_stmt_to_ssa(fn, body_bb, stmt.child2);
+        if body_end != null && body_end.is_terminated == 0 {
+            let back_edge = make_ssa_inst(body_end.inst_count, SSA_BR(), "", "", "", "", "", 0, "", hdr_lbl, "");
+            bb_append_inst(body_end, back_edge);
+        }
+
+        return exit_bb;
+    }
+
+    return bb;
+}
+
+func lower_ast_func_to_ssa(decl: AstNode) -> SsaFunction {
+    if decl == null || decl.kind != NODE_FUNC_DECL() { return null; }
+
+    let fn = make_ssa_function(decl.name, decl.type_name);
+
+    // Add params
+    let p = decl.child1;
+    let p_head: SsaParam = null;
+    let p_tail: SsaParam = null;
+    while p != null {
+        let param_ty = p.type_name;
+        if param_ty == "" { param_ty = "int"; }
+        let sp = make_ssa_param(p.name, param_ty);
+        if p_head == null {
+            p_head = sp;
+            p_tail = sp;
+        } else {
+            p_tail.next = sp;
+            p_tail = sp;
+        }
+        p = p.next;
+    }
+    fn.params = p_head;
+
+    // Create entry basic block
+    let entry_bb = make_basic_block(0, "entry");
+    fn_append_bb(fn, entry_bb);
+
+    let last_bb = lower_ast_stmt_to_ssa(fn, entry_bb, decl.child2);
+    if last_bb != null && last_bb.is_terminated == 0 {
+        let ret_inst = make_ssa_inst(last_bb.inst_count, SSA_RETURN(), "", fn.ret_type, "", "", "", 0, "", "", "");
+        bb_append_inst(last_bb, ret_inst);
+    }
+
+    return fn;
+}
+
+func build_ssa_ir(prog: AstNode) -> SsaProgram {
+    let ssa_prog = make_ssa_program();
+    if prog == null { return ssa_prog; }
+
+    let fn_head: SsaFunction = null;
+    let fn_tail: SsaFunction = null;
+
+    let decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() {
+            let ssa_fn = lower_ast_func_to_ssa(decl);
+            if ssa_fn != null {
+                if fn_head == null {
+                    fn_head = ssa_fn;
+                    fn_tail = ssa_fn;
+                } else {
+                    fn_tail.next = ssa_fn;
+                    fn_tail = ssa_fn;
+                }
+            }
+        }
+        decl = decl.next;
+    }
+
+    ssa_prog.functions = fn_head;
+    return ssa_prog;
+}

@@ -1,0 +1,264 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Constant Folding & Propagation (M6-T03)
+// ==============================================================================
+
+import "../ast.roze";
+
+func make_int_literal_node(val: int, line: int, col: int) -> AstNode {
+    let node = make_ast_node(NODE_LITERAL_INT(), "", "int", line, col);
+    node.int_val = val;
+    return node;
+}
+
+func make_str_literal_node(val: string, line: int, col: int) -> AstNode {
+    let node = make_ast_node(NODE_LITERAL_STR(), "", "string", line, col);
+    node.str_val = val;
+    return node;
+}
+
+func make_bool_literal_node(val: int, line: int, col: int) -> AstNode {
+    let node = make_ast_node(NODE_LITERAL_BOOL(), "", "bool", line, col);
+    node.int_val = val;
+    return node;
+}
+
+func is_pure_expr(expr: AstNode) -> int {
+    if expr == null { return 1; }
+    let k = expr.kind;
+    if k == NODE_LITERAL_INT() || k == NODE_LITERAL_STR() || k == NODE_LITERAL_BOOL() || k == NODE_LITERAL_NULL() {
+        return 1;
+    }
+    if k == NODE_IDENT() {
+        return 1;
+    }
+    if k == NODE_BIN_OP() {
+        if is_pure_expr(expr.child1) == 1 && is_pure_expr(expr.child2) == 1 {
+            return 1;
+        }
+        return 0;
+    }
+    if k == NODE_UNARY_OP() {
+        return is_pure_expr(expr.child1);
+    }
+    return 0;
+}
+
+func eval_int_bin_op(op: string, a: int, b: int) -> int {
+    if op == "+" { return a + b; }
+    if op == "-" { return a - b; }
+    if op == "*" { return a * b; }
+    if op == "/" {
+        if b != 0 { return a / b; }
+        return 0;
+    }
+    if op == "%" {
+        if b != 0 { return a % b; }
+        return 0;
+    }
+    if op == "==" { if a == b { return 1; } return 0; }
+    if op == "!=" { if a != b { return 1; } return 0; }
+    if op == "<" { if a < b { return 1; } return 0; }
+    if op == "<=" { if a <= b { return 1; } return 0; }
+    if op == ">" { if a > b { return 1; } return 0; }
+    if op == ">=" { if a >= b { return 1; } return 0; }
+    if op == "&" { return a & b; }
+    if op == "|" { return a | b; }
+    if op == "^" { return a ^ b; }
+    return 0;
+}
+
+func fold_constants_expr(expr: AstNode, stats: OptStats) -> AstNode {
+    if expr == null { return null; }
+
+    expr.child1 = fold_constants_expr(expr.child1, stats);
+    expr.child2 = fold_constants_expr(expr.child2, stats);
+    expr.child3 = fold_constants_expr(expr.child3, stats);
+    expr.child4 = fold_constants_expr(expr.child4, stats);
+
+    let k = expr.kind;
+
+    if k == NODE_UNARY_OP() {
+        let sub = expr.child1;
+        if sub != null {
+            if expr.op == "!" && sub.kind == NODE_LITERAL_BOOL() {
+                let folded_val = 0;
+                if sub.int_val == 0 { folded_val = 1; }
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(folded_val, expr.line, expr.col);
+            }
+            if expr.op == "-" && sub.kind == NODE_LITERAL_INT() {
+                stats.const_folded = stats.const_folded + 1;
+                return make_int_literal_node(0 - sub.int_val, expr.line, expr.col);
+            }
+        }
+        return expr;
+    }
+
+    if k == NODE_BIN_OP() {
+        let left = expr.child1;
+        let right = expr.child2;
+        if left == null || right == null { return expr; }
+
+        let lk = left.kind;
+        let rk = right.kind;
+
+        // 1. Integer Constant Arithmetic & Comparisons
+        if lk == NODE_LITERAL_INT() && rk == NODE_LITERAL_INT() {
+            let op = expr.op;
+            if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" || op == "&" || op == "|" || op == "^" {
+                let res = eval_int_bin_op(op, left.int_val, right.int_val);
+                stats.const_folded = stats.const_folded + 1;
+                return make_int_literal_node(res, expr.line, expr.col);
+            }
+            if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" {
+                let res_bool = eval_int_bin_op(op, left.int_val, right.int_val);
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(res_bool, expr.line, expr.col);
+            }
+        }
+
+        // 2. String Concatenation Constant Folding
+        if lk == NODE_LITERAL_STR() && rk == NODE_LITERAL_STR() && expr.op == "+" {
+            stats.const_folded = stats.const_folded + 1;
+            return make_str_literal_node(left.str_val + right.str_val, expr.line, expr.col);
+        }
+
+        // 3. Boolean Constant Logic Folding
+        if lk == NODE_LITERAL_BOOL() && rk == NODE_LITERAL_BOOL() {
+            if expr.op == "&&" {
+                let b_res = 0;
+                if left.int_val == 1 && right.int_val == 1 { b_res = 1; }
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(b_res, expr.line, expr.col);
+            }
+            if expr.op == "||" {
+                let b_res = 0;
+                if left.int_val == 1 || right.int_val == 1 { b_res = 1; }
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(b_res, expr.line, expr.col);
+            }
+            if expr.op == "==" {
+                let b_res = 0;
+                if left.int_val == right.int_val { b_res = 1; }
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(b_res, expr.line, expr.col);
+            }
+            if expr.op == "!=" {
+                let b_res = 0;
+                if left.int_val != right.int_val { b_res = 1; }
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(b_res, expr.line, expr.col);
+            }
+        }
+
+        // 4. Algebraic Identity Simplifications
+        if expr.op == "+" {
+            if rk == NODE_LITERAL_INT() && right.int_val == 0 {
+                stats.const_folded = stats.const_folded + 1;
+                return left;
+            }
+            if lk == NODE_LITERAL_INT() && left.int_val == 0 {
+                stats.const_folded = stats.const_folded + 1;
+                return right;
+            }
+        }
+        if expr.op == "-" {
+            if rk == NODE_LITERAL_INT() && right.int_val == 0 {
+                stats.const_folded = stats.const_folded + 1;
+                return left;
+            }
+        }
+        if expr.op == "*" {
+            if rk == NODE_LITERAL_INT() && right.int_val == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return left;
+            }
+            if lk == NODE_LITERAL_INT() && left.int_val == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return right;
+            }
+            if rk == NODE_LITERAL_INT() && right.int_val == 0 && is_pure_expr(left) == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return make_int_literal_node(0, expr.line, expr.col);
+            }
+            if lk == NODE_LITERAL_INT() && left.int_val == 0 && is_pure_expr(right) == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return make_int_literal_node(0, expr.line, expr.col);
+            }
+        }
+        if expr.op == "/" {
+            if rk == NODE_LITERAL_INT() && right.int_val == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return left;
+            }
+        }
+        if expr.op == "&&" {
+            if lk == NODE_LITERAL_BOOL() && left.int_val == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return right;
+            }
+            if rk == NODE_LITERAL_BOOL() && right.int_val == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return left;
+            }
+            if lk == NODE_LITERAL_BOOL() && left.int_val == 0 && is_pure_expr(right) == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(0, expr.line, expr.col);
+            }
+            if rk == NODE_LITERAL_BOOL() && right.int_val == 0 && is_pure_expr(left) == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(0, expr.line, expr.col);
+            }
+        }
+        if expr.op == "||" {
+            if lk == NODE_LITERAL_BOOL() && left.int_val == 0 {
+                stats.const_folded = stats.const_folded + 1;
+                return right;
+            }
+            if rk == NODE_LITERAL_BOOL() && right.int_val == 0 {
+                stats.const_folded = stats.const_folded + 1;
+                return left;
+            }
+            if lk == NODE_LITERAL_BOOL() && left.int_val == 1 && is_pure_expr(right) == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(1, expr.line, expr.col);
+            }
+            if rk == NODE_LITERAL_BOOL() && right.int_val == 1 && is_pure_expr(left) == 1 {
+                stats.const_folded = stats.const_folded + 1;
+                return make_bool_literal_node(1, expr.line, expr.col);
+            }
+        }
+    }
+
+    return expr;
+}
+
+// Substitute constant bindings in expressions
+func substitute_constants_in_expr(expr: AstNode, bindings: ConstBinding) -> AstNode {
+    if expr == null || bindings == null { return expr; }
+
+    if expr.kind == NODE_IDENT() {
+        let curr = bindings;
+        while curr != null {
+            if curr.name == expr.name {
+                if curr.kind == 1 {
+                    return make_int_literal_node(curr.int_val, expr.line, expr.col);
+                }
+                if curr.kind == 2 {
+                    return make_str_literal_node(curr.str_val, expr.line, expr.col);
+                }
+                if curr.kind == 3 {
+                    return make_bool_literal_node(curr.int_val, expr.line, expr.col);
+                }
+            }
+            curr = curr.next;
+        }
+        return expr;
+    }
+
+    expr.child1 = substitute_constants_in_expr(expr.child1, bindings);
+    expr.child2 = substitute_constants_in_expr(expr.child2, bindings);
+    expr.child3 = substitute_constants_in_expr(expr.child3, bindings);
+    expr.child4 = substitute_constants_in_expr(expr.child4, bindings);
+    return expr;
+}

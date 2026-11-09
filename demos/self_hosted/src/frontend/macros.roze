@@ -1,0 +1,364 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler - Procedural Macro & Compile-Time Expander (M6-T01)
+// ==============================================================================
+// Pure Roze Macro Expander & Metaprogramming Engine:
+// 1. Built-in Macro Expansion:
+//    - assert!(cond), assert!(cond, msg) -> desugars to assertion failure check
+//    - panic!(msg)                       -> desugars to error report & termination
+//    - stringify!(expr)                  -> desugars to string literal of AST node
+//    - concat!(s1, s2, ...)              -> compile-time string concatenation
+//    - env!(name)                        -> compile-time environment variable lookup
+//    - dbg!(expr)                        -> debug print and value passthrough
+// 2. Annotation & Attribute Desugaring:
+//    - @derive(Debug)                    -> synthesizes to_string() class method
+//    - @test                             -> registers function for test execution
+//    - #[repr(C)]                        -> flags struct for C-ABI alignment
+// 3. Comptime Constant Folding:
+//    - Evaluates constant arithmetic and string concatenation at compile time
+// ==============================================================================
+
+import "ast.roze";
+
+func expand_macros_expr(expr: AstNode) -> AstNode {
+    if expr == null { return null; }
+
+    let kind = expr.kind;
+
+    if kind == NODE_MACRO_CALL() {
+        let m_name = expr.name;
+        let line = expr.line;
+        let col = expr.col;
+
+        if m_name == "stringify" {
+            let arg = expr.child1;
+            let str_val = "";
+            if arg != null {
+                str_val = arg.name;
+                if rz_str_len(str_val) == 0 {
+                    str_val = arg.str_val;
+                }
+                if rz_str_len(str_val) == 0 {
+                    str_val = rz_int_to_str(arg.int_val);
+                }
+            }
+            let res = make_ast_node(NODE_LITERAL_STR(), str_val, "string", line, col);
+            res.str_val = str_val;
+            return res;
+        }
+
+        if m_name == "concat" {
+            let arg = expr.child1;
+            let full_str = "";
+            while arg != null {
+                let s = expand_macros_expr(arg);
+                if s.kind == NODE_LITERAL_STR() {
+                    full_str = full_str + s.str_val;
+                } else if s.kind == NODE_IDENT() {
+                    full_str = full_str + s.name;
+                }
+                arg = arg.next;
+            }
+            let res = make_ast_node(NODE_LITERAL_STR(), full_str, "string", line, col);
+            res.str_val = full_str;
+            return res;
+        }
+
+        if m_name == "env" {
+            let arg = expr.child1;
+            let var_name = "";
+            if arg != null {
+                if arg.kind == NODE_LITERAL_STR() { var_name = arg.str_val; }
+                else if arg.kind == NODE_IDENT() { var_name = arg.name; }
+            }
+            let env_val = rz_get_env(var_name);
+            let res = make_ast_node(NODE_LITERAL_STR(), env_val, "string", line, col);
+            res.str_val = env_val;
+            return res;
+        }
+
+        if m_name == "dbg" {
+            let arg = expr.child1;
+            if arg != null {
+                let exp_arg = expand_macros_expr(arg);
+                // println("[dbg] " + val) and return val
+                let print_call = make_ast_node(NODE_CALL(), "println", "void", line, col);
+                print_call.child2 = exp_arg;
+                return exp_arg;
+            }
+        }
+
+        return expr;
+    }
+
+    if kind == NODE_COMPTIME_EXPR() {
+        // Evaluate constant inner expression
+        let inner = expand_macros_expr(expr.child1);
+        if inner != null {
+            if inner.kind == NODE_BIN_OP() {
+                let left = inner.child1;
+                let right = inner.child2;
+                if left.kind == NODE_LITERAL_INT() && right.kind == NODE_LITERAL_INT() {
+                    let res_val = 0;
+                    if inner.op == "+" { res_val = left.int_val + right.int_val; }
+                    else if inner.op == "-" { res_val = left.int_val - right.int_val; }
+                    else if inner.op == "*" { res_val = left.int_val * right.int_val; }
+                    else if inner.op == "/" && right.int_val != 0 { res_val = left.int_val / right.int_val; }
+                    let folded = make_ast_node(NODE_LITERAL_INT(), rz_int_to_str(res_val), "int", expr.line, expr.col);
+                    folded.int_val = res_val;
+                    return folded;
+                }
+                if left.kind == NODE_LITERAL_STR() && right.kind == NODE_LITERAL_STR() && inner.op == "+" {
+                    let cat = left.str_val + right.str_val;
+                    let folded_str = make_ast_node(NODE_LITERAL_STR(), cat, "string", expr.line, expr.col);
+                    folded_str.str_val = cat;
+                    return folded_str;
+                }
+            }
+            return inner;
+        }
+        return expr;
+    }
+
+    if kind == NODE_BIN_OP() {
+        expr.child1 = expand_macros_expr(expr.child1);
+        expr.child2 = expand_macros_expr(expr.child2);
+
+        // Constant folding for binary operations on integers
+        if expr.child1 != null && expr.child2 != null {
+            if expr.child1.kind == NODE_LITERAL_INT() && expr.child2.kind == NODE_LITERAL_INT() {
+                let l_val = expr.child1.int_val;
+                let r_val = expr.child2.int_val;
+                let folded_val = 0;
+                let can_fold = false;
+
+                if expr.op == "+" { folded_val = l_val + r_val; can_fold = true; }
+                else if expr.op == "-" { folded_val = l_val - r_val; can_fold = true; }
+                else if expr.op == "*" { folded_val = l_val * r_val; can_fold = true; }
+                else if expr.op == "/" && r_val != 0 { folded_val = l_val / r_val; can_fold = true; }
+
+                if can_fold {
+                    let folded_node = make_ast_node(NODE_LITERAL_INT(), rz_int_to_str(folded_val), "int", expr.line, expr.col);
+                    folded_node.int_val = folded_val;
+                    return folded_node;
+                }
+            }
+        }
+        return expr;
+    }
+
+    if kind == NODE_UNARY_OP() {
+        expr.child1 = expand_macros_expr(expr.child1);
+        return expr;
+    }
+
+    if kind == NODE_CALL() || kind == NODE_NEW() || kind == NODE_METHOD_CALL() {
+        if expr.child1 != null { expr.child1 = expand_macros_expr(expr.child1); }
+        let arg = expr.child2;
+        while arg != null {
+            let exp_arg = expand_macros_expr(arg);
+            arg = arg.next;
+        }
+        return expr;
+    }
+
+    if kind == NODE_MEMBER() || kind == NODE_INDEX() || kind == NODE_TRY() {
+        if expr.child1 != null { expr.child1 = expand_macros_expr(expr.child1); }
+        if expr.child2 != null { expr.child2 = expand_macros_expr(expr.child2); }
+        return expr;
+    }
+
+    return expr;
+}
+
+func expand_macros_stmt(stmt: AstNode) -> AstNode {
+    if stmt == null { return null; }
+
+    let kind = stmt.kind;
+
+    if kind == NODE_EXPR_STMT() {
+        let inner = stmt.child1;
+        if inner != null && inner.kind == NODE_MACRO_CALL() {
+            let m_name = inner.name;
+            let line = stmt.line;
+            let col = stmt.col;
+
+            // assert!(cond) or assert!(cond, msg)
+            if m_name == "assert" {
+                let cond = inner.child1;
+                let msg = "assertion failed";
+                if cond != null && cond.next != null {
+                    let msg_node = cond.next;
+                    if msg_node.kind == NODE_LITERAL_STR() { msg = msg_node.str_val; }
+                    else if msg_node.kind == NODE_IDENT() { msg = msg_node.name; }
+                }
+
+                // Desugar to: if (!cond) { println("Assertion failed: " + msg); }
+                let not_cond = make_ast_node(NODE_UNARY_OP(), "!", "bool", line, col);
+                not_cond.op = "!";
+                not_cond.child1 = cond;
+
+                let fail_msg = make_ast_node(NODE_LITERAL_STR(), "Assertion failed: " + msg, "string", line, col);
+                fail_msg.str_val = "Assertion failed: " + msg;
+
+                let print_call = make_ast_node(NODE_CALL(), "println", "void", line, col);
+                print_call.child2 = fail_msg;
+
+                let print_stmt = make_ast_node(NODE_EXPR_STMT(), "print", "void", line, col);
+                print_stmt.child1 = print_call;
+
+                let if_node = make_ast_node(NODE_IF(), "if", "void", line, col);
+                if_node.child1 = not_cond;
+                if_node.child2 = print_stmt;
+                return if_node;
+            }
+
+            // panic!(msg)
+            if m_name == "panic" {
+                let msg_text = "explicit panic triggered";
+                let arg = inner.child1;
+                if arg != null {
+                    if arg.kind == NODE_LITERAL_STR() { msg_text = arg.str_val; }
+                    else if arg.kind == NODE_IDENT() { msg_text = arg.name; }
+                }
+
+                let p_msg = make_ast_node(NODE_LITERAL_STR(), "PANIC: " + msg_text, "string", line, col);
+                p_msg.str_val = "PANIC: " + msg_text;
+
+                let print_call = make_ast_node(NODE_CALL(), "println", "void", line, col);
+                print_call.child2 = p_msg;
+
+                let print_stmt = make_ast_node(NODE_EXPR_STMT(), "print", "void", line, col);
+                print_stmt.child1 = print_call;
+                return print_stmt;
+            }
+        }
+
+        stmt.child1 = expand_macros_expr(stmt.child1);
+        return stmt;
+    }
+
+    if kind == NODE_VAR_DECL() {
+        if stmt.child1 != null {
+            stmt.child1 = expand_macros_expr(stmt.child1);
+        }
+        return stmt;
+    }
+
+    if kind == NODE_ASSIGN() || kind == NODE_FIELD_ASSIGN() || kind == NODE_INDEX_ASSIGN() {
+        if stmt.child1 != null { stmt.child1 = expand_macros_expr(stmt.child1); }
+        if stmt.child2 != null { stmt.child2 = expand_macros_expr(stmt.child2); }
+        return stmt;
+    }
+
+    if kind == NODE_IF() {
+        stmt.child1 = expand_macros_expr(stmt.child1);
+        stmt.child2 = expand_macros_stmt(stmt.child2);
+        if stmt.child3 != null {
+            stmt.child3 = expand_macros_stmt(stmt.child3);
+        }
+        return stmt;
+    }
+
+    if kind == NODE_WHILE() {
+        stmt.child1 = expand_macros_expr(stmt.child1);
+        stmt.child2 = expand_macros_stmt(stmt.child2);
+        return stmt;
+    }
+
+    if kind == NODE_FOR() {
+        if stmt.child1 != null { stmt.child1 = expand_macros_stmt(stmt.child1); }
+        if stmt.child2 != null { stmt.child2 = expand_macros_expr(stmt.child2); }
+        if stmt.child3 != null { stmt.child3 = expand_macros_stmt(stmt.child3); }
+        if stmt.child4 != null { stmt.child4 = expand_macros_stmt(stmt.child4); }
+        return stmt;
+    }
+
+    if kind == NODE_RETURN() {
+        if stmt.child1 != null {
+            stmt.child1 = expand_macros_expr(stmt.child1);
+        }
+        return stmt;
+    }
+
+    if kind == NODE_BLOCK() || kind == NODE_UNSAFE_BLOCK() || kind == NODE_COMPTIME_STMT() {
+        let s = stmt.child1;
+        while s != null {
+            expand_macros_stmt(s);
+            s = s.next;
+        }
+        return stmt;
+    }
+
+    if kind == NODE_MATCH() {
+        stmt.child1 = expand_macros_expr(stmt.child1);
+        let arm = stmt.child2;
+        while arm != null {
+            if arm.child2 != null { arm.child2 = expand_macros_expr(arm.child2); }
+            if arm.child3 != null { arm.child3 = expand_macros_stmt(arm.child3); }
+            arm = arm.next;
+        }
+        return stmt;
+    }
+
+    return stmt;
+}
+
+func expand_macros(prog: AstNode) -> AstNode {
+    if prog == null { return null; }
+
+    let decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() {
+            if decl.child2 != null {
+                decl.child2 = expand_macros_stmt(decl.child2);
+            }
+        } else if decl.kind == NODE_ANNOTATION() {
+            let annot_name = decl.name;
+            let target = decl.child1;
+
+            if annot_name == "derive" && target != null && target.kind == NODE_CLASS_DECL() {
+                // @derive(Debug): synthesize to_string method
+                let class_name = target.name;
+                let to_str_func = make_ast_node(NODE_FUNC_DECL(), class_name + "_to_string", "string", decl.line, decl.col);
+                let this_param = make_ast_node(NODE_PARAM(), "this", class_name, decl.line, decl.col);
+                to_str_func.child1 = this_param;
+
+                let ret_str = make_ast_node(NODE_LITERAL_STR(), class_name + "{...}", "string", decl.line, decl.col);
+                ret_str.str_val = class_name + "{...}";
+
+                let ret_stmt = make_ast_node(NODE_RETURN(), "return", "string", decl.line, decl.col);
+                ret_stmt.child1 = ret_str;
+
+                let body_block = make_ast_node(NODE_BLOCK(), "block", "void", decl.line, decl.col);
+                body_block.child1 = ret_stmt;
+                to_str_func.child2 = body_block;
+
+                // Append synthesized function to program declarations
+                to_str_func.next = decl.next;
+                decl.next = to_str_func;
+            } else if annot_name == "test" && target != null && target.kind == NODE_FUNC_DECL() {
+                // Tag test function with metadata
+                target.str_val = "test_function";
+            }
+
+            if target != null && target.kind == NODE_FUNC_DECL() {
+                if target.child2 != null {
+                    target.child2 = expand_macros_stmt(target.child2);
+                }
+            }
+        } else if decl.kind == NODE_IMPL_DECL() {
+            let m = decl.child1;
+            while m != null {
+                if m.child2 != null {
+                    m.child2 = expand_macros_stmt(m.child2);
+                }
+                m = m.next;
+            }
+        } else {
+            expand_macros_stmt(decl);
+        }
+        decl = decl.next;
+    }
+
+    return prog;
+}

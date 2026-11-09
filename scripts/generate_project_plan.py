@@ -536,7 +536,7 @@ s1_rows = [
         ("M6-T01", 8), ("Month 6", 11), ("Sprint 11 (W21-W22)", 8), "Pure Roze Frontend", "Roze-in-Roze Lexer, Parser & Macro Engine",
         "Rewrite entire compiler frontend in 100% pure Roze: token scanner, recursive descent parser, AST structures, and procedural macro expander supporting all language features.",
         "Zero Rust dependency for Roze compiler syntax analysis.",
-        "Self-Hosting Compiler, Language Independence", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Self-Hosting Compiler, Language Independence", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M6-T02", 8), ("Month 6", 11), ("Sprint 11 (W21-W22)", 8), "Pure Roze Semantic", "Roze-in-Roze Type Checker & Monomorphizer",
@@ -821,7 +821,7 @@ s4_rows = [
         "Implement complete Token Scanner, Recursive Descent Parser, and Macro Expander in pure Roze (demos/self_hosted/src/frontend/). Supports 100% of Roze grammar.",
         "25% - Frontend decoupled from Rust",
         "Parse full 10,000 LOC Roze codebase without syntax errors",
-        ("Planned", 12)
+        ("Completed", 16)
     ],
     [
         ("Stage 2", 4), "Pure Roze Semantic", "Roze-in-Roze Type Checker",

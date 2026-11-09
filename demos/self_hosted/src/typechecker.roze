@@ -177,6 +177,44 @@ func check_expression_type(tc: TypeChecker, expr: AstNode) -> string {
         expr.type_name = "int";
         return "int";
     }
+    if kind == NODE_METHOD_CALL() {
+        check_expression_type(tc, expr.child1);
+        let arg = expr.child2;
+        while arg != null {
+            check_expression_type(tc, arg);
+            arg = arg.next;
+        }
+        expr.type_name = "void";
+        return "void";
+    }
+    if kind == NODE_INDEX() {
+        check_expression_type(tc, expr.child1);
+        check_expression_type(tc, expr.child2);
+        expr.type_name = "int";
+        return "int";
+    }
+    if kind == NODE_TRY() || kind == NODE_COMPTIME_EXPR() || kind == NODE_AWAIT() {
+        let t_inner = check_expression_type(tc, expr.child1);
+        expr.type_name = t_inner;
+        return t_inner;
+    }
+    if kind == NODE_LITERAL_CHAR() {
+        expr.type_name = "char";
+        return "char";
+    }
+    if kind == NODE_MACRO_CALL() {
+        let arg = expr.child1;
+        while arg != null {
+            check_expression_type(tc, arg);
+            arg = arg.next;
+        }
+        expr.type_name = "void";
+        return "void";
+    }
+    if kind == NODE_CLOSURE() {
+        expr.type_name = "closure";
+        return "closure";
+    }
 
     return "unknown";
 }
@@ -204,6 +242,13 @@ func check_statement_type(tc: TypeChecker, stmt: AstNode) {
     } else if kind == NODE_ASSIGN() {
         let t_target = check_expression_type(tc, stmt.child1);
         let t_val = check_expression_type(tc, stmt.child2);
+    } else if kind == NODE_FIELD_ASSIGN() {
+        check_expression_type(tc, stmt.child1);
+        check_expression_type(tc, stmt.child2);
+    } else if kind == NODE_INDEX_ASSIGN() {
+        check_expression_type(tc, stmt.child1);
+        check_expression_type(tc, stmt.child2);
+        if stmt.child3 != null { check_expression_type(tc, stmt.child3); }
     } else if kind == NODE_IF() {
         check_expression_type(tc, stmt.child1);
         check_statement_type(tc, stmt.child2);
@@ -220,6 +265,24 @@ func check_statement_type(tc: TypeChecker, stmt: AstNode) {
         if stmt.child3 != null { check_statement_type(tc, stmt.child3); }
         if stmt.child4 != null { check_statement_type(tc, stmt.child4); }
         exit_scope(tc);
+    } else if kind == NODE_MATCH() {
+        check_expression_type(tc, stmt.child1);
+        let arm = stmt.child2;
+        while arm != null {
+            if arm.child2 != null { check_expression_type(tc, arm.child2); }
+            if arm.child3 != null { check_statement_type(tc, arm.child3); }
+            arm = arm.next;
+        }
+    } else if kind == NODE_UNSAFE_BLOCK() || kind == NODE_COMPTIME_STMT() {
+        check_statement_type(tc, stmt.child1);
+    } else if kind == NODE_ANNOTATION() {
+        check_statement_type(tc, stmt.child1);
+    } else if kind == NODE_IMPL_DECL() {
+        let m = stmt.child1;
+        while m != null {
+            check_statement_type(tc, m);
+            m = m.next;
+        }
     } else if kind == NODE_RETURN() {
         let ret_type = "void";
         if stmt.child1 != null {
@@ -263,13 +326,20 @@ func check_program_types(tc: TypeChecker, prog: AstNode) -> int {
     define_symbol(tc, "rz_print_int", "void", 2);
     define_symbol(tc, "rz_compiler_banner", "void", 2);
 
-    // Pass 2: Pre-register user classes and functions
+    // Pass 2: Pre-register user classes, enums, traits, and functions
     let decl = prog.child1;
     while decl != null {
-        if decl.kind == NODE_CLASS_DECL() {
+        if decl.kind == NODE_CLASS_DECL() || decl.kind == NODE_ENUM_DECL() || decl.kind == NODE_TRAIT_DECL() {
             define_symbol(tc, decl.name, decl.name, 3);
         } else if decl.kind == NODE_FUNC_DECL() || decl.kind == NODE_EXTERN_DECL() {
             define_symbol(tc, decl.name, decl.type_name, 2);
+        } else if decl.kind == NODE_ANNOTATION() && decl.child1 != null {
+            let inner = decl.child1;
+            if inner.kind == NODE_CLASS_DECL() || inner.kind == NODE_ENUM_DECL() || inner.kind == NODE_TRAIT_DECL() {
+                define_symbol(tc, inner.name, inner.name, 3);
+            } else if inner.kind == NODE_FUNC_DECL() || inner.kind == NODE_EXTERN_DECL() {
+                define_symbol(tc, inner.name, inner.type_name, 2);
+            }
         }
         decl = decl.next;
     }
@@ -291,7 +361,23 @@ func check_program_types(tc: TypeChecker, prog: AstNode) -> int {
             // Check function body
             check_statement_type(tc, decl.child2);
             exit_scope(tc);
-        } else if decl.kind != NODE_CLASS_DECL() && decl.kind != NODE_EXTERN_DECL() {
+        } else if decl.kind == NODE_IMPL_DECL() {
+            let m = decl.child1;
+            while m != null {
+                if m.kind == NODE_FUNC_DECL() {
+                    enter_scope(tc);
+                    tc.current_func_ret = m.type_name;
+                    let m_param = m.child1;
+                    while m_param != null {
+                        define_symbol(tc, m_param.name, m_param.type_name, 1);
+                        m_param = m_param.next;
+                    }
+                    check_statement_type(tc, m.child2);
+                    exit_scope(tc);
+                }
+                m = m.next;
+            }
+        } else if decl.kind != NODE_CLASS_DECL() && decl.kind != NODE_ENUM_DECL() && decl.kind != NODE_TRAIT_DECL() && decl.kind != NODE_EXTERN_DECL() {
             check_statement_type(tc, decl);
         }
         decl = decl.next;

@@ -1,0 +1,90 @@
+// ==============================================================================
+// 🌹 Pure Roze Frontend Grammar & Macro Expansion Test Suite (M6-T01)
+// ==============================================================================
+
+// 1. Enums
+enum ShapeKind {
+    Circle,
+    Rectangle,
+    Triangle
+}
+
+// 2. Traits
+trait Geometry {
+    func area() -> int;
+}
+
+// 3. Classes with Attributes
+#[repr(C)]
+class Rectangle {
+    width: int,
+    height: int
+}
+
+// 4. Impl blocks
+impl Geometry for Rectangle {
+    func area() -> int {
+        return this.width * this.height;
+    }
+}
+
+impl Rectangle {
+    func perimeter() -> int {
+        return (this.width + this.height) * 2;
+    }
+}
+
+// 5. Annotations
+@test
+func test_assertions() {
+    // Built-in Macro Expansion
+    assert!(1 + 1 == 2, "1 + 1 must equal 2");
+    let name_str = stringify!(RozeFrontendEngine);
+    println(name_str);
+    let greeting = concat!("Pure ", "Roze ", "Frontend");
+    println(greeting);
+    let val = dbg!(100);
+    println(val);
+}
+
+func main() {
+    println("==================================================================");
+    println("🌹 Pure Roze Frontend Syntax & Macro Engine Verification (M6-T01)");
+    println("==================================================================");
+
+    // Number formats
+    let hex_val = 0xFF;
+    let bin_val = 0b1010;
+    println(hex_val);
+    println(bin_val);
+
+    // Bitwise operators
+    let bit_and = hex_val & 0x0F;
+    let bit_or = 0x10 | 0x01;
+    let bit_xor = 0xFF ^ 0x0F;
+    println(bit_and);
+    println(bit_or);
+    println(bit_xor);
+
+    // Closures
+    let add_closure = |a: int, b: int| -> int {
+        return a + b;
+    };
+
+    // Comptime constant folding
+    let folded_math = comptime 30 + 12;
+    println(folded_math);
+
+    // Macro assertions
+    test_assertions();
+
+    // Match statement
+    let status = 1;
+    match status {
+        0 => { println("Inactive"); },
+        1 => { println("Active"); },
+        _ => { println("Unknown"); }
+    }
+
+    println("✅ All Pure Roze Frontend Grammar Features Verified!");
+}

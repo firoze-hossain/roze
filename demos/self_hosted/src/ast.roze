@@ -1,5 +1,5 @@
 // ==============================================================================
-// 🌹 Roze Self-Hosted Compiler - AST & Token Definitions (ADV-06)
+// 🌹 Roze Self-Hosted Compiler - AST & Token Definitions (M6-T01 Pure Roze Frontend)
 // ==============================================================================
 
 // --- C-FFI Runtime Interface ---
@@ -31,6 +31,7 @@ func TOK_IDENT() -> int { return 1; }
 func TOK_INT() -> int { return 2; }
 func TOK_STRING() -> int { return 3; }
 func TOK_BOOL() -> int { return 4; }
+func TOK_CHAR() -> int { return 5; }
 
 // Keywords
 func TOK_FUNC() -> int { return 10; }
@@ -46,6 +47,22 @@ func TOK_NEW() -> int { return 19; }
 func TOK_EXTERN() -> int { return 20; }
 func TOK_IMPORT() -> int { return 21; }
 func TOK_NULL() -> int { return 22; }
+func TOK_MUT() -> int { return 23; }
+func TOK_CONST() -> int { return 24; }
+func TOK_ENUM() -> int { return 25; }
+func TOK_MATCH() -> int { return 26; }
+func TOK_TRAIT() -> int { return 27; }
+func TOK_IMPL() -> int { return 28; }
+func TOK_THIS() -> int { return 29; }
+func TOK_UNSAFE() -> int { return 61; }
+func TOK_RAW() -> int { return 62; }
+func TOK_COMPTIME() -> int { return 63; }
+func TOK_ASYNC() -> int { return 64; }
+func TOK_AWAIT() -> int { return 65; }
+func TOK_TYPE() -> int { return 66; }
+func TOK_WHERE() -> int { return 67; }
+func TOK_ASM() -> int { return 78; }
+func TOK_IN() -> int { return 79; }
 
 // Operators & Delimiters
 func TOK_PLUS() -> int { return 30; }      // +
@@ -63,6 +80,11 @@ func TOK_GE() -> int { return 41; }        // >=
 func TOK_AND() -> int { return 42; }       // &&
 func TOK_OR() -> int { return 43; }        // ||
 func TOK_NOT() -> int { return 44; }       // !
+func TOK_QUESTION() -> int { return 45; }  // ?
+func TOK_BIT_AND() -> int { return 46; }   // &
+func TOK_BIT_OR() -> int { return 47; }    // |
+func TOK_BIT_XOR() -> int { return 48; }   // ^
+func TOK_BIT_NOT() -> int { return 49; }   // ~
 
 func TOK_LPAREN() -> int { return 50; }    // (
 func TOK_RPAREN() -> int { return 51; }    // )
@@ -75,8 +97,19 @@ func TOK_COMMA() -> int { return 57; }     // ,
 func TOK_COLON() -> int { return 58; }     // :
 func TOK_DOT() -> int { return 59; }       // .
 func TOK_ARROW() -> int { return 60; }     // ->
+func TOK_LSHIFT() -> int { return 68; }    // <<
+func TOK_RSHIFT() -> int { return 69; }    // >>
+func TOK_FAT_ARROW() -> int { return 70; } // =>
+func TOK_COLON_COLON() -> int { return 71; } // ::
+func TOK_DOT_DOT() -> int { return 72; }   // ..
+func TOK_DOT_DOT_EQ() -> int { return 73; }// ..=
+func TOK_AT() -> int { return 74; }        // @
+func TOK_HASH() -> int { return 75; }      // #
+func TOK_UNDERSCORE() -> int { return 76; }// _
+func TOK_BANG() -> int { return 77; }      // !
 
 // --- AST Node Kinds (Constants) ---
+// Program & Declarations
 func NODE_PROGRAM() -> int { return 100; }
 func NODE_FUNC_DECL() -> int { return 101; }
 func NODE_EXTERN_DECL() -> int { return 102; }
@@ -84,7 +117,14 @@ func NODE_CLASS_DECL() -> int { return 103; }
 func NODE_VAR_DECL() -> int { return 104; }
 func NODE_PARAM() -> int { return 105; }
 func NODE_FIELD() -> int { return 106; }
+func NODE_ENUM_DECL() -> int { return 107; }
+func NODE_ENUM_VARIANT() -> int { return 108; }
+func NODE_TRAIT_DECL() -> int { return 109; }
+func NODE_IMPL_DECL() -> int { return 130; }
+func NODE_ANNOTATION() -> int { return 131; }
+func NODE_IMPORT() -> int { return 140; }
 
+// Statements
 func NODE_BLOCK() -> int { return 110; }
 func NODE_IF() -> int { return 111; }
 func NODE_WHILE() -> int { return 112; }
@@ -92,7 +132,14 @@ func NODE_FOR() -> int { return 113; }
 func NODE_RETURN() -> int { return 114; }
 func NODE_ASSIGN() -> int { return 115; }
 func NODE_EXPR_STMT() -> int { return 116; }
+func NODE_MATCH() -> int { return 117; }
+func NODE_MATCH_ARM() -> int { return 118; }
+func NODE_UNSAFE_BLOCK() -> int { return 119; }
+func NODE_COMPTIME_STMT() -> int { return 132; }
+func NODE_FIELD_ASSIGN() -> int { return 143; }
+func NODE_INDEX_ASSIGN() -> int { return 144; }
 
+// Expressions
 func NODE_BIN_OP() -> int { return 120; }
 func NODE_UNARY_OP() -> int { return 121; }
 func NODE_CALL() -> int { return 122; }
@@ -103,6 +150,16 @@ func NODE_LITERAL_STR() -> int { return 126; }
 func NODE_LITERAL_BOOL() -> int { return 127; }
 func NODE_LITERAL_NULL() -> int { return 128; }
 func NODE_IDENT() -> int { return 129; }
+func NODE_METHOD_CALL() -> int { return 133; }
+func NODE_INDEX() -> int { return 134; }
+func NODE_TRY() -> int { return 135; }
+func NODE_CLOSURE() -> int { return 136; }
+func NODE_COMPTIME_EXPR() -> int { return 137; }
+func NODE_MACRO_CALL() -> int { return 138; }
+func NODE_PATTERN() -> int { return 139; }
+func NODE_AWAIT() -> int { return 141; }
+func NODE_ASM() -> int { return 142; }
+func NODE_LITERAL_CHAR() -> int { return 145; }
 
 // --- Data Classes ---
 class Token {
@@ -144,4 +201,35 @@ func make_token(kind: int, text: string, int_val: int, line: int, col: int) -> T
 
 func make_ast_node(kind: int, name: string, type_name: string, line: int, col: int) -> AstNode {
     return new AstNode(kind, name, type_name, "", 0, "", null, null, null, null, null, line, col);
+}
+
+func token_kind_to_str(kind: int) -> string {
+    if kind == TOK_EOF() { return "EOF"; }
+    if kind == TOK_IDENT() { return "IDENT"; }
+    if kind == TOK_INT() { return "INT"; }
+    if kind == TOK_STRING() { return "STRING"; }
+    if kind == TOK_BOOL() { return "BOOL"; }
+    if kind == TOK_CHAR() { return "CHAR"; }
+    if kind == TOK_FUNC() { return "func"; }
+    if kind == TOK_LET() { return "let"; }
+    if kind == TOK_VAR() { return "var"; }
+    if kind == TOK_IF() { return "if"; }
+    if kind == TOK_ELSE() { return "else"; }
+    if kind == TOK_WHILE() { return "while"; }
+    if kind == TOK_FOR() { return "for"; }
+    if kind == TOK_RETURN() { return "return"; }
+    if kind == TOK_CLASS() { return "class"; }
+    if kind == TOK_NEW() { return "new"; }
+    if kind == TOK_EXTERN() { return "extern"; }
+    if kind == TOK_IMPORT() { return "import"; }
+    if kind == TOK_NULL() { return "null"; }
+    if kind == TOK_ENUM() { return "enum"; }
+    if kind == TOK_MATCH() { return "match"; }
+    if kind == TOK_TRAIT() { return "trait"; }
+    if kind == TOK_IMPL() { return "impl"; }
+    if kind == TOK_UNSAFE() { return "unsafe"; }
+    if kind == TOK_COMPTIME() { return "comptime"; }
+    if kind == TOK_ASYNC() { return "async"; }
+    if kind == TOK_AWAIT() { return "await"; }
+    return "TOKEN";
 }

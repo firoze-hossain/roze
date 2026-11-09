@@ -152,7 +152,7 @@ func gen_statement(stmt: AstNode, indent: string) -> string {
         }
         return indent + c_ty + " " + stmt.name + " = " + init_val + ";\n";
     }
-    if kind == NODE_ASSIGN() {
+    if kind == NODE_ASSIGN() || kind == NODE_FIELD_ASSIGN() {
         let target_code = gen_expression(stmt.child1);
         let val_code = gen_expression(stmt.child2);
         return indent + target_code + " = " + val_code + ";\n";

@@ -1,5 +1,5 @@
 // ==============================================================================
-// 🌹 Roze Self-Hosted Compiler - Lexer (ADV-06)
+// 🌹 Roze Self-Hosted Compiler - Lexer (M6-T01 Pure Roze Frontend)
 // ==============================================================================
 
 import "ast.roze";
@@ -23,6 +23,8 @@ func keyword_kind(text: string) -> int {
     if text == "func" { return TOK_FUNC(); }
     if text == "let" { return TOK_LET(); }
     if text == "var" { return TOK_VAR(); }
+    if text == "mut" { return TOK_MUT(); }
+    if text == "const" { return TOK_CONST(); }
     if text == "if" { return TOK_IF(); }
     if text == "else" { return TOK_ELSE(); }
     if text == "while" { return TOK_WHILE(); }
@@ -32,6 +34,20 @@ func keyword_kind(text: string) -> int {
     if text == "new" { return TOK_NEW(); }
     if text == "extern" { return TOK_EXTERN(); }
     if text == "import" { return TOK_IMPORT(); }
+    if text == "enum" { return TOK_ENUM(); }
+    if text == "match" { return TOK_MATCH(); }
+    if text == "trait" { return TOK_TRAIT(); }
+    if text == "impl" { return TOK_IMPL(); }
+    if text == "this" { return TOK_THIS(); }
+    if text == "unsafe" { return TOK_UNSAFE(); }
+    if text == "raw" { return TOK_RAW(); }
+    if text == "comptime" { return TOK_COMPTIME(); }
+    if text == "async" { return TOK_ASYNC(); }
+    if text == "await" { return TOK_AWAIT(); }
+    if text == "asm" { return TOK_ASM(); }
+    if text == "type" { return TOK_TYPE(); }
+    if text == "where" { return TOK_WHERE(); }
+    if text == "in" { return TOK_IN(); }
     if text == "null" { return TOK_NULL(); }
     if text == "true" { return TOK_BOOL(); }
     if text == "false" { return TOK_BOOL(); }
@@ -58,7 +74,7 @@ func tokenize(source: string) -> Token {
             pos = pos + 1;
             line = line + 1;
             col = 1;
-        } else if ch == 47 { // '/' check for comments
+        } else if ch == 47 { // '/' check for comments or division
             let next_ch = rz_char_at(source, pos + 1);
             if next_ch == 47 { // '//' single line comment
                 pos = pos + 2;
@@ -67,20 +83,25 @@ func tokenize(source: string) -> Token {
                     pos = pos + 1;
                     col = col + 1;
                 }
-            } else if next_ch == 42 { // '/*' multi-line comment
+            } else if next_ch == 42 { // '/*' multi-line comment with nesting support
                 pos = pos + 2;
                 col = col + 2;
-                let in_comment = true;
-                while pos < len && in_comment {
+                let comment_depth = 1;
+                while pos < len && comment_depth > 0 {
                     let c = rz_char_at(source, pos);
+                    let n = rz_char_at(source, pos + 1);
                     if c == 10 {
                         line = line + 1;
                         col = 1;
                         pos = pos + 1;
-                    } else if c == 42 && rz_char_at(source, pos + 1) == 47 { // '*/'
+                    } else if c == 47 && n == 42 { // nested '/*'
+                        comment_depth = comment_depth + 1;
                         pos = pos + 2;
                         col = col + 2;
-                        in_comment = false;
+                    } else if c == 42 && n == 47 { // '*/'
+                        comment_depth = comment_depth - 1;
+                        pos = pos + 2;
+                        col = col + 2;
                     } else {
                         pos = pos + 1;
                         col = col + 1;
@@ -108,15 +129,59 @@ func tokenize(source: string) -> Token {
             let tok = make_token(kind, word, int_val, line, start_col);
             if head == null { head = tok; tail = tok; } else { tail.next = tok; tail = tok; }
         } else if is_digit(ch) {
-            // Integer number
+            // Number literal (Decimal, Hex 0x..., or Binary 0b...)
             let start_pos = pos;
             let start_col = col;
             let val = 0;
-            while pos < len && is_digit(rz_char_at(source, pos)) {
-                let d = rz_char_at(source, pos) - 48;
-                val = val * 10 + d;
-                pos = pos + 1;
-                col = col + 1;
+            let next_ch = rz_char_at(source, pos + 1);
+
+            if ch == 48 && (next_ch == 120 || next_ch == 88) { // 0x or 0X (Hex)
+                pos = pos + 2;
+                col = col + 2;
+                let reading_hex = true;
+                while pos < len && reading_hex {
+                    let hc = rz_char_at(source, pos);
+                    if hc >= 48 && hc <= 57 {
+                        val = val * 16 + (hc - 48);
+                        pos = pos + 1; col = col + 1;
+                    } else if hc >= 97 && hc <= 102 { // a-f
+                        val = val * 16 + (hc - 97 + 10);
+                        pos = pos + 1; col = col + 1;
+                    } else if hc >= 65 && hc <= 70 { // A-F
+                        val = val * 16 + (hc - 65 + 10);
+                        pos = pos + 1; col = col + 1;
+                    } else if hc == 95 { // '_' separator
+                        pos = pos + 1; col = col + 1;
+                    } else {
+                        reading_hex = false;
+                    }
+                }
+            } else if ch == 48 && (next_ch == 98 || next_ch == 66) { // 0b or 0B (Binary)
+                pos = pos + 2;
+                col = col + 2;
+                let reading_bin = true;
+                while pos < len && reading_bin {
+                    let bc = rz_char_at(source, pos);
+                    if bc == 48 || bc == 49 { // '0' or '1'
+                        val = val * 2 + (bc - 48);
+                        pos = pos + 1; col = col + 1;
+                    } else if bc == 95 {
+                        pos = pos + 1; col = col + 1;
+                    } else {
+                        reading_bin = false;
+                    }
+                }
+            } else {
+                // Decimal
+                while pos < len && (is_digit(rz_char_at(source, pos)) || rz_char_at(source, pos) == 95) {
+                    let dc = rz_char_at(source, pos);
+                    if dc != 95 {
+                        let d = dc - 48;
+                        val = val * 10 + d;
+                    }
+                    pos = pos + 1;
+                    col = col + 1;
+                }
             }
             let num_str = rz_substring(source, start_pos, pos - start_pos);
             let tok = make_token(TOK_INT(), num_str, val, line, start_col);
@@ -141,10 +206,14 @@ func tokenize(source: string) -> Token {
                         str_val = str_val + "\n";
                     } else if esc == 116 { // 't'
                         str_val = str_val + "\t";
+                    } else if esc == 114 { // 'r'
+                        str_val = str_val + "\r";
                     } else if esc == 34 { // '"'
                         str_val = str_val + "\"";
                     } else if esc == 92 { // '\'
                         str_val = str_val + "\\";
+                    } else if esc == 48 { // '0'
+                        str_val = str_val + "\0";
                     } else {
                         str_val = str_val + rz_char_to_str(esc);
                     }
@@ -163,6 +232,33 @@ func tokenize(source: string) -> Token {
             }
             let tok = make_token(TOK_STRING(), str_val, 0, line, start_col);
             if head == null { head = tok; tail = tok; } else { tail.next = tok; tail = tok; }
+        } else if ch == 39 { // '\'' Character literal
+            let start_col = col;
+            pos = pos + 1;
+            col = col + 1;
+            let c = rz_char_at(source, pos);
+            let char_val = 0;
+            let char_str = "";
+            if c == 92 { // escape '\'
+                pos = pos + 1; col = col + 1;
+                let esc = rz_char_at(source, pos);
+                if esc == 110 { char_val = 10; char_str = "\n"; }
+                else if esc == 116 { char_val = 9; char_str = "\t"; }
+                else if esc == 114 { char_val = 13; char_str = "\r"; }
+                else if esc == 48 { char_val = 0; char_str = "\0"; }
+                else if esc == 39 { char_val = 39; char_str = "'"; }
+                else if esc == 92 { char_val = 92; char_str = "\\"; }
+                else { char_val = esc; char_str = rz_char_to_str(esc); }
+            } else {
+                char_val = c;
+                char_str = rz_char_to_str(c);
+            }
+            pos = pos + 1; col = col + 1;
+            if pos < len && rz_char_at(source, pos) == 39 {
+                pos = pos + 1; col = col + 1;
+            }
+            let tok = make_token(TOK_CHAR(), char_str, char_val, line, start_col);
+            if head == null { head = tok; tail = tok; } else { tail.next = tok; tail = tok; }
         } else {
             // Symbols and operators
             let tok_kind = 0;
@@ -180,22 +276,34 @@ func tokenize(source: string) -> Token {
             else if ch == 37 { tok_kind = TOK_PERCENT(); tok_text = "%"; }
             else if ch == 61 {
                 if next_c == 61 { tok_kind = TOK_EQ(); tok_text = "=="; advance = 2; }
+                else if next_c == 62 { tok_kind = TOK_FAT_ARROW(); tok_text = "=>"; advance = 2; }
                 else { tok_kind = TOK_ASSIGN(); tok_text = "="; }
             }
             else if ch == 33 {
                 if next_c == 61 { tok_kind = TOK_NE(); tok_text = "!="; advance = 2; }
-                else { tok_kind = TOK_NOT(); tok_text = "!"; }
+                else { tok_kind = TOK_BANG(); tok_text = "!"; }
             }
             else if ch == 60 {
                 if next_c == 61 { tok_kind = TOK_LE(); tok_text = "<="; advance = 2; }
+                else if next_c == 60 { tok_kind = TOK_LSHIFT(); tok_text = "<<"; advance = 2; }
                 else { tok_kind = TOK_LT(); tok_text = "<"; }
             }
             else if ch == 62 {
                 if next_c == 61 { tok_kind = TOK_GE(); tok_text = ">="; advance = 2; }
+                else if next_c == 62 { tok_kind = TOK_RSHIFT(); tok_text = ">>"; advance = 2; }
                 else { tok_kind = TOK_GT(); tok_text = ">"; }
             }
-            else if ch == 38 && next_c == 38 { tok_kind = TOK_AND(); tok_text = "&&"; advance = 2; }
-            else if ch == 124 && next_c == 124 { tok_kind = TOK_OR(); tok_text = "||"; advance = 2; }
+            else if ch == 38 {
+                if next_c == 38 { tok_kind = TOK_AND(); tok_text = "&&"; advance = 2; }
+                else { tok_kind = TOK_BIT_AND(); tok_text = "&"; }
+            }
+            else if ch == 124 {
+                if next_c == 124 { tok_kind = TOK_OR(); tok_text = "||"; advance = 2; }
+                else { tok_kind = TOK_BIT_OR(); tok_text = "|"; }
+            }
+            else if ch == 94 { tok_kind = TOK_BIT_XOR(); tok_text = "^"; }
+            else if ch == 126 { tok_kind = TOK_BIT_NOT(); tok_text = "~"; }
+            else if ch == 63 { tok_kind = TOK_QUESTION(); tok_text = "?"; }
             else if ch == 40 { tok_kind = TOK_LPAREN(); tok_text = "("; }
             else if ch == 41 { tok_kind = TOK_RPAREN(); tok_text = ")"; }
             else if ch == 123 { tok_kind = TOK_LBRACE(); tok_text = "{"; }
@@ -204,8 +312,22 @@ func tokenize(source: string) -> Token {
             else if ch == 93 { tok_kind = TOK_RBRACKET(); tok_text = "]"; }
             else if ch == 59 { tok_kind = TOK_SEMI(); tok_text = ";"; }
             else if ch == 44 { tok_kind = TOK_COMMA(); tok_text = ","; }
-            else if ch == 58 { tok_kind = TOK_COLON(); tok_text = ":"; }
-            else if ch == 46 { tok_kind = TOK_DOT(); tok_text = "."; }
+            else if ch == 58 {
+                if next_c == 58 { tok_kind = TOK_COLON_COLON(); tok_text = "::"; advance = 2; }
+                else { tok_kind = TOK_COLON(); tok_text = ":"; }
+            }
+            else if ch == 46 {
+                if next_c == 46 {
+                    let third_c = rz_char_at(source, pos + 2);
+                    if third_c == 61 { tok_kind = TOK_DOT_DOT_EQ(); tok_text = "..="; advance = 3; }
+                    else { tok_kind = TOK_DOT_DOT(); tok_text = ".."; advance = 2; }
+                } else {
+                    tok_kind = TOK_DOT(); tok_text = ".";
+                }
+            }
+            else if ch == 64 { tok_kind = TOK_AT(); tok_text = "@"; }
+            else if ch == 35 { tok_kind = TOK_HASH(); tok_text = "#"; }
+            else if ch == 95 { tok_kind = TOK_UNDERSCORE(); tok_text = "_"; }
 
             if tok_kind > 0 {
                 let tok = make_token(tok_kind, tok_text, 0, line, col);

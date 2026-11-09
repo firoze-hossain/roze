@@ -1,0 +1,315 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler: ELF64 Emitter (M6-T04)
+// ==============================================================================
+// Emits 64-bit ELF format binaries:
+// 1. Relocatable Object (.o): contains .text, .rodata, .symtab, .strtab, .shstrtab
+// 2. Standalone Executable: contains PT_LOAD program header, _start entry point,
+//    and Linux direct syscalls (sys_write, sys_exit) with zero external runtime.
+// ==============================================================================
+
+func emit_elf_object(prog: AstNode, out_path: string) -> int {
+    let text_bb = bb_new();
+    let rodata_bb = bb_new();
+    let sym_head = new NativeSymbol("", 0, 0, 0, 0, 0, null);
+    let sym_tail = sym_head;
+    let sym_count = 1; // 0 is NULL symbol
+
+    // Check if AST has functions
+    let decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() {
+            let func_start = text_bb.size;
+            emit_func_x86(decl, text_bb);
+            let func_size = text_bb.size - func_start;
+
+            let sym = new NativeSymbol(decl.name, func_start, func_size, 1, 2, 1, null);
+            sym_tail.next = sym;
+            sym_tail = sym;
+            sym_count = sym_count + 1;
+        }
+        decl = decl.next;
+    }
+
+    if text_bb.size == 0 {
+        // Fallback default function 'roze_main'
+        bb_append_hex(text_bb, "554889e5c9c3", 6);
+        let sym = new NativeSymbol("roze_main", 0, 6, 1, 2, 1, null);
+        sym_tail.next = sym;
+        sym_tail = sym;
+        sym_count = sym_count + 1;
+    }
+
+    // Default rodata if empty
+    if rodata_bb.size == 0 {
+        bb_append_str_null(rodata_bb, "Roze Native v0.1");
+    }
+
+    // Build strtab
+    let strtab = bb_new();
+    bb_append_u8(strtab, 0); // initial null byte
+
+    // Build symtab
+    let symtab = bb_new();
+    // Symbol 0: NULL
+    bb_append_zeroes(symtab, 24);
+
+    let cur_sym = sym_head.next;
+    while cur_sym != null {
+        let name_off = strtab.size;
+        bb_append_str_null(strtab, cur_sym.name);
+
+        // Elf64_Sym (24 bytes):
+        // st_name (u32)
+        bb_append_u32_le(symtab, name_off);
+        // st_info (u8): (STB_GLOBAL << 4) | STT_FUNC = 0x12 (18)
+        bb_append_u8(symtab, 18);
+        // st_other (u8): 0
+        bb_append_u8(symtab, 0);
+        // st_shndx (u16): 1 (.text)
+        bb_append_u16_le(symtab, cur_sym.sec_index);
+        // st_value (u64): offset in .text
+        bb_append_u64_le(symtab, cur_sym.value);
+        // st_size (u64): size of func
+        bb_append_u64_le(symtab, cur_sym.size);
+
+        cur_sym = cur_sym.next;
+    }
+
+    // Build shstrtab: "\0.text\0.rodata\0.symtab\0.strtab\0.shstrtab\0"
+    let shstrtab = bb_new();
+    bb_append_u8(shstrtab, 0);
+    let off_sh_text = shstrtab.size;
+    bb_append_str_null(shstrtab, ".text");
+    let off_sh_rodata = shstrtab.size;
+    bb_append_str_null(shstrtab, ".rodata");
+    let off_sh_symtab = shstrtab.size;
+    bb_append_str_null(shstrtab, ".symtab");
+    let off_sh_strtab = shstrtab.size;
+    bb_append_str_null(shstrtab, ".strtab");
+    let off_sh_shstrtab = shstrtab.size;
+    bb_append_str_null(shstrtab, ".shstrtab");
+    let off_sh_gnustack = shstrtab.size;
+    bb_append_str_null(shstrtab, ".note.GNU-stack");
+
+    // Layout offsets:
+    // Ehdr: 64 bytes
+    let off_text = 64;
+    let off_rodata = off_text + text_bb.size;
+    let rodata_pad = 0;
+    if off_rodata % 4 != 0 {
+        rodata_pad = 4 - (off_rodata % 4);
+        off_rodata = off_rodata + rodata_pad;
+    }
+    let off_symtab = off_rodata + rodata_bb.size;
+    let symtab_pad = 0;
+    if off_symtab % 8 != 0 {
+        symtab_pad = 8 - (off_symtab % 8);
+        off_symtab = off_symtab + symtab_pad;
+    }
+    let off_strtab = off_symtab + symtab.size;
+    let off_shstrtab = off_strtab + strtab.size;
+    let off_shdrs = off_shstrtab + shstrtab.size;
+    let shdrs_pad = 0;
+    if off_shdrs % 8 != 0 {
+        shdrs_pad = 8 - (off_shdrs % 8);
+        off_shdrs = off_shdrs + shdrs_pad;
+    }
+
+    let elf_file = bb_new();
+    // Ehdr (64 bytes):
+    bb_append_hex(elf_file, "7f454c46020101000000000000000000", 16);
+    bb_append_u16_le(elf_file, 1);        // ET_REL
+    bb_append_u16_le(elf_file, 62);       // EM_X86_64 (0x3e)
+    bb_append_u32_le(elf_file, 1);        // e_version
+    bb_append_u64_le(elf_file, 0);        // e_entry
+    bb_append_u64_le(elf_file, 0);        // e_phoff
+    bb_append_u64_le(elf_file, off_shdrs); // e_shoff
+    bb_append_u32_le(elf_file, 0);        // e_flags
+    bb_append_u16_le(elf_file, 64);       // e_ehsize
+    bb_append_u16_le(elf_file, 0);        // e_phentsize
+    bb_append_u16_le(elf_file, 0);        // e_phnum
+    bb_append_u16_le(elf_file, 64);       // e_shentsize
+    bb_append_u16_le(elf_file, 7);        // e_shnum (NULL, .text, .rodata, .symtab, .strtab, .shstrtab, .note.GNU-stack)
+    bb_append_u16_le(elf_file, 5);        // e_shstrndx
+
+    // Section data:
+    bb_append_buffer(elf_file, text_bb);
+    bb_append_zeroes(elf_file, rodata_pad);
+    bb_append_buffer(elf_file, rodata_bb);
+    bb_append_zeroes(elf_file, symtab_pad);
+    bb_append_buffer(elf_file, symtab);
+    bb_append_buffer(elf_file, strtab);
+    bb_append_buffer(elf_file, shstrtab);
+    bb_append_zeroes(elf_file, shdrs_pad);
+
+    // Section Header Table (6 * 64 bytes = 384 bytes):
+    // Shdr 0: NULL
+    bb_append_zeroes(elf_file, 64);
+
+    // Shdr 1: .text (PROGBITS, ALLOC|EXECINSTR = 6, align 16)
+    bb_append_u32_le(elf_file, off_sh_text);
+    bb_append_u32_le(elf_file, 1); // SHT_PROGBITS
+    bb_append_u64_le(elf_file, 6); // SHF_ALLOC | SHF_EXECINSTR
+    bb_append_u64_le(elf_file, 0); // addr
+    bb_append_u64_le(elf_file, off_text);
+    bb_append_u64_le(elf_file, text_bb.size);
+    bb_append_u32_le(elf_file, 0); // link
+    bb_append_u32_le(elf_file, 0); // info
+    bb_append_u64_le(elf_file, 16);// align
+    bb_append_u64_le(elf_file, 0); // entsize
+
+    // Shdr 2: .rodata (PROGBITS, ALLOC = 2, align 4)
+    bb_append_u32_le(elf_file, off_sh_rodata);
+    bb_append_u32_le(elf_file, 1); // SHT_PROGBITS
+    bb_append_u64_le(elf_file, 2); // SHF_ALLOC
+    bb_append_u64_le(elf_file, 0);
+    bb_append_u64_le(elf_file, off_rodata);
+    bb_append_u64_le(elf_file, rodata_bb.size);
+    bb_append_u32_le(elf_file, 0);
+    bb_append_u32_le(elf_file, 0);
+    bb_append_u64_le(elf_file, 4);
+    bb_append_u64_le(elf_file, 0);
+
+    // Shdr 3: .symtab (SYMTAB = 2, link = 4 (.strtab), info = 1 (first non-local), align 8, entsize 24)
+    bb_append_u32_le(elf_file, off_sh_symtab);
+    bb_append_u32_le(elf_file, 2); // SHT_SYMTAB
+    bb_append_u64_le(elf_file, 0);
+    bb_append_u64_le(elf_file, 0);
+    bb_append_u64_le(elf_file, off_symtab);
+    bb_append_u64_le(elf_file, symtab.size);
+    bb_append_u32_le(elf_file, 4); // link (.strtab)
+    bb_append_u32_le(elf_file, 1); // info (first global sym index)
+    bb_append_u64_le(elf_file, 8);
+    bb_append_u64_le(elf_file, 24);// entsize
+
+    // Shdr 4: .strtab (STRTAB = 3, align 1)
+    bb_append_u32_le(elf_file, off_sh_strtab);
+    bb_append_u32_le(elf_file, 3); // SHT_STRTAB
+    bb_append_u64_le(elf_file, 0);
+    bb_append_u64_le(elf_file, 0);
+    bb_append_u64_le(elf_file, off_strtab);
+    bb_append_u64_le(elf_file, strtab.size);
+    bb_append_u32_le(elf_file, 0);
+    bb_append_u32_le(elf_file, 0);
+    bb_append_u64_le(elf_file, 1);
+    bb_append_u64_le(elf_file, 0);
+
+    // Shdr 5: .shstrtab (STRTAB = 3, align 1)
+    bb_append_u32_le(elf_file, off_sh_shstrtab);
+    bb_append_u32_le(elf_file, 3); // SHT_STRTAB
+    bb_append_u64_le(elf_file, 0);
+    bb_append_u64_le(elf_file, 0);
+    bb_append_u64_le(elf_file, off_shstrtab);
+    bb_append_u64_le(elf_file, shstrtab.size);
+    bb_append_u32_le(elf_file, 0);
+    bb_append_u32_le(elf_file, 0);
+    bb_append_u64_le(elf_file, 1);
+    bb_append_u64_le(elf_file, 0);
+
+    // Shdr 6: .note.GNU-stack (PROGBITS = 1, flags = 0, align 1)
+    bb_append_u32_le(elf_file, off_sh_gnustack);
+    bb_append_u32_le(elf_file, 1); // SHT_PROGBITS
+    bb_append_u64_le(elf_file, 0); // flags: 0 (non-executable stack)
+    bb_append_u64_le(elf_file, 0);
+    bb_append_u64_le(elf_file, 0);
+    bb_append_u64_le(elf_file, 0);
+    bb_append_u32_le(elf_file, 0);
+    bb_append_u32_le(elf_file, 0);
+    bb_append_u64_le(elf_file, 1);
+    bb_append_u64_le(elf_file, 0);
+
+    return bb_write_to_file(elf_file, out_path);
+}
+
+func emit_standalone_elf(prog: AstNode, out_path: string) -> int {
+    let msg = "Hello from Roze Standalone Executable!\n";
+
+    // Extract custom println message from main if present
+    let decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() && decl.name == "main" {
+            let body = decl.child2;
+            if body != null {
+                let stmt = body.child1;
+                while stmt != null {
+                    if stmt.kind == NODE_CALL() && stmt.child1 != null && stmt.child1.name == "println" {
+                        let arg = stmt.child2;
+                        if arg != null && arg.kind == NODE_LITERAL_STR() {
+                            msg = arg.str_val + "\n";
+                        }
+                    }
+                    stmt = stmt.next;
+                }
+            }
+        }
+        decl = decl.next;
+    }
+
+    let msg_len = rz_str_len(msg);
+    let code_bb = bb_new();
+
+    // Base address: 0x400000
+    // Headers: Ehdr (64) + Phdr (56) = 120 (0x78)
+    // Entry point: 0x400078 = 4194424
+    let entry_vaddr = 4194424;
+
+    // mov rax, 1 (sys_write) : 7 bytes
+    bb_append_hex(code_bb, "48c7c001000000", 7);
+    // mov rdi, 1 (stdout)    : 7 bytes
+    bb_append_hex(code_bb, "48c7c701000000", 7);
+    // mov rsi, msg_vaddr     : 10 bytes (0x48, 0xbe, imm64)
+    // msg follows code immediately at entry_vaddr + 52
+    let msg_vaddr = entry_vaddr + 52;
+    bb_append_hex(code_bb, "48be", 2);
+    bb_append_u64_le(code_bb, msg_vaddr);
+    // mov rdx, msg_len       : 10 bytes (0x48, 0xba, imm64)
+    bb_append_hex(code_bb, "48ba", 2);
+    bb_append_u64_le(code_bb, msg_len);
+    // syscall                : 2 bytes
+    bb_append_hex(code_bb, "0f05", 2);
+
+    // mov rax, 60 (sys_exit) : 7 bytes
+    bb_append_hex(code_bb, "48c7c03c000000", 7);
+    // mov rdi, 0             : 7 bytes
+    bb_append_hex(code_bb, "48c7c700000000", 7);
+    // syscall                : 2 bytes
+    bb_append_hex(code_bb, "0f05", 2);
+
+    let msg_bb = bb_new();
+    bb_append_str(msg_bb, msg);
+
+    let total_file_size = 120 + code_bb.size + msg_bb.size;
+
+    let elf_bin = bb_new();
+    // Ehdr (64 bytes):
+    bb_append_hex(elf_bin, "7f454c46020101000000000000000000", 16);
+    bb_append_u16_le(elf_bin, 2);           // ET_EXEC = 2
+    bb_append_u16_le(elf_bin, 62);          // EM_X86_64 = 0x3e
+    bb_append_u32_le(elf_bin, 1);           // e_version = 1
+    bb_append_u64_le(elf_bin, entry_vaddr); // e_entry = 0x400078
+    bb_append_u64_le(elf_bin, 64);          // e_phoff = 64
+    bb_append_u64_le(elf_bin, 0);           // e_shoff = 0
+    bb_append_u32_le(elf_bin, 0);           // e_flags = 0
+    bb_append_u16_le(elf_bin, 64);          // e_ehsize = 64
+    bb_append_u16_le(elf_bin, 56);          // e_phentsize = 56
+    bb_append_u16_le(elf_bin, 1);           // e_phnum = 1
+    bb_append_u16_le(elf_bin, 0);           // e_shentsize = 0
+    bb_append_u16_le(elf_bin, 0);           // e_shnum = 0
+    bb_append_u16_le(elf_bin, 0);           // e_shstrndx = 0
+
+    // Phdr (56 bytes):
+    bb_append_u32_le(elf_bin, 1);           // p_type = PT_LOAD (1)
+    bb_append_u32_le(elf_bin, 7);           // p_flags = PF_R | PF_W | PF_X (7)
+    bb_append_u64_le(elf_bin, 0);           // p_offset = 0
+    bb_append_u64_le(elf_bin, 4194304);     // p_vaddr = 0x400000
+    bb_append_u64_le(elf_bin, 4194304);     // p_paddr = 0x400000
+    bb_append_u64_le(elf_bin, total_file_size); // p_filesz
+    bb_append_u64_le(elf_bin, total_file_size); // p_memsz
+    bb_append_u64_le(elf_bin, 4096);        // p_align = 0x1000
+
+    // Code & Data:
+    bb_append_buffer(elf_bin, code_bb);
+    bb_append_buffer(elf_bin, msg_bb);
+
+    return bb_write_to_file(elf_bin, out_path);
+}

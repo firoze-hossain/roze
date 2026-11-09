@@ -17,14 +17,15 @@ SOURCES = $(SRC_DIR)/ast.roze \
           $(SRC_DIR)/typechecker.roze \
           $(SRC_DIR)/optimizer.roze \
           $(SRC_DIR)/codegen.roze \
+          $(SRC_DIR)/native_emitter.roze \
           $(SRC_DIR)/main.roze
 
 RUNTIME_C = $(SRC_DIR)/runtime.c
 ROZE_COMPILER_ROZE = $(SRC_DIR)/roze_compiler.roze
 
-.PHONY: all clean bundle stage1 stage2 stage3 bootstrap_test test_programs test_frontend test_semantic test_optimizer
+.PHONY: all clean bundle stage1 stage2 stage3 bootstrap_test test_programs test_frontend test_semantic test_optimizer test_native_backend
 
-all: bootstrap_test test_programs test_frontend test_semantic test_optimizer
+all: bootstrap_test test_programs test_frontend test_semantic test_optimizer test_native_backend
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
@@ -32,7 +33,7 @@ $(BIN_DIR):
 bundle: $(ROZE_COMPILER_ROZE)
 
 $(ROZE_COMPILER_ROZE): $(SOURCES)
-	python3 -c 'files = ["$(SRC_DIR)/ast.roze", "$(SRC_DIR)/lexer.roze", "$(SRC_DIR)/parser.roze", "$(SRC_DIR)/macros.roze", "$(SRC_DIR)/typechecker.roze", "$(SRC_DIR)/optimizer.roze", "$(SRC_DIR)/codegen.roze", "$(SRC_DIR)/main.roze"]; out = ["// ==============================================================================\n", "// 🌹 Roze Self-Hosted Compiler (Single-Source Bootstrap Translation Unit)\n", "// ==============================================================================\n\n"]; [out.extend([line for line in open(f) if not line.strip().startswith("import ")]) for f in files]; open("$(ROZE_COMPILER_ROZE)", "w").write("".join(out)); print("✅ Bundled $(ROZE_COMPILER_ROZE) (" + str(len(out)) + " lines)")'
+	python3 -c 'files = ["$(SRC_DIR)/ast.roze", "$(SRC_DIR)/lexer.roze", "$(SRC_DIR)/parser.roze", "$(SRC_DIR)/macros.roze", "$(SRC_DIR)/typechecker.roze", "$(SRC_DIR)/optimizer.roze", "$(SRC_DIR)/codegen.roze", "$(SRC_DIR)/native_emitter.roze", "$(SRC_DIR)/main.roze"]; out = ["// ==============================================================================\n", "// 🌹 Roze Self-Hosted Compiler (Single-Source Bootstrap Translation Unit)\n", "// ==============================================================================\n\n"]; [out.extend([line for line in open(f) if not line.strip().startswith("import ")]) for f in files]; open("$(ROZE_COMPILER_ROZE)", "w").write("".join(out)); print("✅ Bundled $(ROZE_COMPILER_ROZE) (" + str(len(out)) + " lines)")'
 
 stage1: $(BIN_DIR) $(ROZE_COMPILER_ROZE)
 	@echo "===> [Stage 1] Compiling Stage 1 self-hosted compiler using Stage 0 (Rust roze)..."
@@ -101,5 +102,28 @@ test_optimizer: stage2
 	./$(BIN_DIR)/roze_stage2 --check-only $(TEST_DIR)/08_optimizer.roze
 	@echo "✅ Pure Roze SSA IR, DCE, Inlining, LICM and Constant Folding verified!"
 
+test_native_backend: stage2
+	@echo "=================================================================="
+	@echo "🧪 Verifying Pure Roze Native Backend: ELF, Mach-O & PE/COFF (M6-T04)"
+	@echo "=================================================================="
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/09_native_binary.roze --target-elf $(BIN_DIR)/native_test.o
+	@readelf -h -S -s $(BIN_DIR)/native_test.o
+	@file $(BIN_DIR)/native_test.o
+	@echo "✅ ELF64 relocatable object generation verified!"
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/09_native_binary.roze --target-macho $(BIN_DIR)/native_test_macho.o
+	@file $(BIN_DIR)/native_test_macho.o
+	@echo "✅ Mach-O 64-bit relocatable object generation verified!"
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/09_native_binary.roze --target-pe $(BIN_DIR)/native_test.obj
+	@file $(BIN_DIR)/native_test.obj
+	@objdump -h $(BIN_DIR)/native_test.obj
+	@echo "✅ PE/COFF 64-bit relocatable object generation verified!"
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/09_native_binary.roze --standalone-bin $(BIN_DIR)/standalone_roze
+	@file $(BIN_DIR)/standalone_roze
+	./$(BIN_DIR)/standalone_roze
+	@echo "✅ Standalone native binary execution with Linux direct syscalls verified!"
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/09_native_binary.roze -o $(BIN_DIR)/test09 && ./$(BIN_DIR)/test09
+	./$(BIN_DIR)/roze_stage2 --check-only $(TEST_DIR)/09_native_binary.roze
+	@echo "✅ All Pure Roze native binary backend tests passed! 🎉"
+
 clean:
-	rm -rf $(BIN_DIR)/*.o $(BIN_DIR)/*.c $(BIN_DIR)/test* $(BIN_DIR)/self_test* $(BIN_DIR)/roze_stage*
+	rm -rf $(BIN_DIR)/*.o $(BIN_DIR)/*.obj $(BIN_DIR)/*.c $(BIN_DIR)/test* $(BIN_DIR)/self_test* $(BIN_DIR)/roze_stage* $(BIN_DIR)/standalone* $(BIN_DIR)/native_*

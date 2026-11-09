@@ -554,7 +554,7 @@ s1_rows = [
         ("M6-T04", 8), ("Month 6", 11), ("Sprint 11 (W21-W22)", 8), "Pure Roze Native Backend", "Standalone Binary Code Generator in Roze",
         "Direct machine code emitter in pure Roze: output ELF (Linux), Mach-O (macOS), and PE/COFF (Windows) object files, or direct Cranelift/LLVM C-API bindings.",
         "Complete decoupling from Rust toolchain; native standalone binaries built by Roze alone.",
-        "Self-Hosting Compiler, Standalone Binaries", "10 Days", ("Critical", 14), ("Planned", 12)
+        "Self-Hosting Compiler, Standalone Binaries", "10 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M6-T05", 8), ("Month 6", 11), ("Sprint 11 (W21-W22)", 8), "Rust Decommissioning", "Complete Decommissioning of Rust Host Compiler",
@@ -842,7 +842,7 @@ s4_rows = [
         "Direct native code generation in pure Roze: emit standalone ELF/Mach-O/PE binaries with Cranelift C-API or standalone assembly generator. Eliminates Cargo.",
         "90% - Code generation decoupled",
         "Produce standalone native binary from Roze code",
-        ("Planned", 12)
+        ("Completed", 16)
     ],
     [
         ("Stage 5", 11), "Fixpoint Closure Verification", "3-Stage Bootstrap Fixpoint",

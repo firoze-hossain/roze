@@ -1,0 +1,102 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler: Native Binary Buffer (M6-T04)
+// ==============================================================================
+// Pure Roze binary buffer utility for assembling machine code and headers.
+// Stores bytes as hex pairs for safe null-byte handling across C FFI boundaries.
+// ==============================================================================
+
+func hex_digit(v: int) -> string {
+    if v == 0 { return "0"; }
+    if v == 1 { return "1"; }
+    if v == 2 { return "2"; }
+    if v == 3 { return "3"; }
+    if v == 4 { return "4"; }
+    if v == 5 { return "5"; }
+    if v == 6 { return "6"; }
+    if v == 7 { return "7"; }
+    if v == 8 { return "8"; }
+    if v == 9 { return "9"; }
+    if v == 10 { return "a"; }
+    if v == 11 { return "b"; }
+    if v == 12 { return "c"; }
+    if v == 13 { return "d"; }
+    if v == 14 { return "e"; }
+    if v == 15 { return "f"; }
+    return "0";
+}
+
+func byte_to_hex(b: int) -> string {
+    let u = b;
+    if u < 0 { u = u + 256; }
+    let hi = (u / 16) % 16;
+    let lo = u % 16;
+    return hex_digit(hi) + hex_digit(lo);
+}
+
+func bb_new() -> BinaryBuffer {
+    return new BinaryBuffer("", 0);
+}
+
+func bb_append_u8(bb: BinaryBuffer, b: int) {
+    bb.hex_data = bb.hex_data + byte_to_hex(b);
+    bb.size = bb.size + 1;
+}
+
+func bb_append_u16_le(bb: BinaryBuffer, val: int) {
+    let v = val;
+    bb_append_u8(bb, v % 256);
+    bb_append_u8(bb, (v / 256) % 256);
+}
+
+func bb_append_u32_le(bb: BinaryBuffer, val: int) {
+    let v = val;
+    bb_append_u8(bb, v % 256);
+    v = v / 256;
+    bb_append_u8(bb, v % 256);
+    v = v / 256;
+    bb_append_u8(bb, v % 256);
+    v = v / 256;
+    bb_append_u8(bb, v % 256);
+}
+
+func bb_append_u64_le(bb: BinaryBuffer, val: int) {
+    let v = val;
+    for let i = 0; i < 8; i = i + 1 {
+        let b = v % 256;
+        if b < 0 { b = b + 256; }
+        bb_append_u8(bb, b);
+        v = (v - b) / 256;
+    }
+}
+
+func bb_append_zeroes(bb: BinaryBuffer, count: int) {
+    for let i = 0; i < count; i = i + 1 {
+        bb_append_u8(bb, 0);
+    }
+}
+
+func bb_append_hex(bb: BinaryBuffer, hex_str: string, byte_count: int) {
+    bb.hex_data = bb.hex_data + hex_str;
+    bb.size = bb.size + byte_count;
+}
+
+func bb_append_str(bb: BinaryBuffer, s: string) {
+    let l = rz_str_len(s);
+    for let i = 0; i < l; i = i + 1 {
+        bb_append_u8(bb, rz_char_at(s, i));
+    }
+}
+
+func bb_append_str_null(bb: BinaryBuffer, s: string) {
+    bb_append_str(bb, s);
+    bb_append_u8(bb, 0);
+}
+
+func bb_append_buffer(bb: BinaryBuffer, src: BinaryBuffer) {
+    bb.hex_data = bb.hex_data + src.hex_data;
+    bb.size = bb.size + src.size;
+}
+
+func bb_write_to_file(bb: BinaryBuffer, path: string) -> int {
+    return rz_write_binary_file(path, bb.hex_data);
+}

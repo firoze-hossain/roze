@@ -1,0 +1,142 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler: PE/COFF 64-bit Emitter (M6-T04)
+// ==============================================================================
+// Emits Windows x64 PE/COFF relocatable object files (.obj):
+// - IMAGE_FILE_HEADER (Machine AMD64 = 0x8664)
+// - IMAGE_SECTION_HEADER for .text (0x60000020) and .rdata (0x40000040)
+// - COFF symbol table and string table
+// ==============================================================================
+
+func emit_pe_object(prog: AstNode, out_path: string) -> int {
+    let text_bb = bb_new();
+    let rdata_bb = bb_new();
+    let sym_head = new NativeSymbol("", 0, 0, 0, 0, 0, null);
+    let sym_tail = sym_head;
+    let sym_count = 0;
+
+    let decl = prog.child1;
+    while decl != null {
+        if decl.kind == NODE_FUNC_DECL() {
+            let func_start = text_bb.size;
+            emit_func_x86(decl, text_bb);
+            let func_size = text_bb.size - func_start;
+
+            let sym = new NativeSymbol(decl.name, func_start, func_size, 1, 32, 2, null);
+            sym_tail.next = sym;
+            sym_tail = sym;
+            sym_count = sym_count + 1;
+        }
+        decl = decl.next;
+    }
+
+    if text_bb.size == 0 {
+        bb_append_hex(text_bb, "554889e5c9c3", 6);
+        let sym = new NativeSymbol("roze_main", 0, 6, 1, 32, 2, null);
+        sym_tail.next = sym;
+        sym_tail = sym;
+        sym_count = sym_count + 1;
+    }
+
+    if rdata_bb.size == 0 {
+        bb_append_str_null(rdata_bb, "Roze Native v0.1");
+    }
+
+    // Pad sections to multiple of 4
+    let text_pad = 0;
+    if text_bb.size % 4 != 0 {
+        text_pad = 4 - (text_bb.size % 4);
+        bb_append_zeroes(text_bb, text_pad);
+    }
+    let rdata_pad = 0;
+    if rdata_bb.size % 4 != 0 {
+        rdata_pad = 4 - (rdata_bb.size % 4);
+        bb_append_zeroes(rdata_bb, rdata_pad);
+    }
+
+    // Layout:
+    // IMAGE_FILE_HEADER: 20 bytes
+    // 2 Section Headers: 2 * 40 = 80 bytes
+    // Headers total = 100 bytes
+    let off_text = 100;
+    let off_rdata = off_text + text_bb.size;
+    let off_symtab = off_rdata + rdata_bb.size;
+
+    // Build symtab & strtab
+    let symtab = bb_new();
+    let strtab = bb_new();
+    bb_append_u32_le(strtab, 4);
+
+    let cur_sym = sym_head.next;
+    while cur_sym != null {
+        let name_len = rz_str_len(cur_sym.name);
+        if name_len <= 8 {
+            // ShortName: 8 bytes
+            bb_append_str(symtab, cur_sym.name);
+            bb_append_zeroes(symtab, 8 - name_len);
+        } else {
+            // 4 zeroes + 4-byte string offset
+            bb_append_u32_le(symtab, 0);
+            bb_append_u32_le(symtab, strtab.size);
+            bb_append_str_null(strtab, cur_sym.name);
+        }
+
+        // Value (u32): offset in .text
+        bb_append_u32_le(symtab, cur_sym.value);
+        // SectionNumber (u16): 1 (.text)
+        bb_append_u16_le(symtab, 1);
+        // Type (u16): 0x20 (IMAGE_SYM_DTYPE_FUNCTION)
+        bb_append_u16_le(symtab, 32);
+        // StorageClass (u8): 2 (IMAGE_SYM_CLASS_EXTERNAL)
+        bb_append_u8(symtab, 2);
+        // NumberOfAuxSymbols (u8): 0
+        bb_append_u8(symtab, 0);
+
+        cur_sym = cur_sym.next;
+    }
+
+    let pe_file = bb_new();
+    // IMAGE_FILE_HEADER (20 bytes):
+    bb_append_hex(pe_file, "6486", 2);      // Machine: IMAGE_FILE_MACHINE_AMD64 (0x8664)
+    bb_append_u16_le(pe_file, 2);           // NumberOfSections: 2 (.text, .rdata)
+    bb_append_u32_le(pe_file, 0);           // TimeDateStamp
+    bb_append_u32_le(pe_file, off_symtab);  // PointerToSymbolTable
+    bb_append_u32_le(pe_file, sym_count);   // NumberOfSymbols
+    bb_append_u16_le(pe_file, 0);           // SizeOfOptionalHeader
+    bb_append_u16_le(pe_file, 0);           // Characteristics
+
+    // Section 1: .text (40 bytes)
+    bb_append_str(pe_file, ".text");
+    bb_append_zeroes(pe_file, 3);           // padded to 8 bytes
+    bb_append_u32_le(pe_file, 0);           // VirtualSize
+    bb_append_u32_le(pe_file, 0);           // VirtualAddress
+    bb_append_u32_le(pe_file, text_bb.size);// SizeOfRawData
+    bb_append_u32_le(pe_file, off_text);    // PointerToRawData
+    bb_append_u32_le(pe_file, 0);           // PointerToRelocations
+    bb_append_u32_le(pe_file, 0);           // PointerToLinenumbers
+    bb_append_u16_le(pe_file, 0);           // NumberOfRelocations
+    bb_append_u16_le(pe_file, 0);           // NumberOfLinenumbers
+    bb_append_hex(pe_file, "20000060", 4);  // Characteristics: CODE | EXECUTE | READ (0x60000020)
+
+    // Section 2: .rdata (40 bytes)
+    bb_append_str(pe_file, ".rdata");
+    bb_append_zeroes(pe_file, 2);           // padded to 8 bytes
+    bb_append_u32_le(pe_file, 0);
+    bb_append_u32_le(pe_file, 0);
+    bb_append_u32_le(pe_file, rdata_bb.size);
+    bb_append_u32_le(pe_file, off_rdata);
+    bb_append_u32_le(pe_file, 0);
+    bb_append_u32_le(pe_file, 0);
+    bb_append_u16_le(pe_file, 0);
+    bb_append_u16_le(pe_file, 0);
+    bb_append_hex(pe_file, "40000040", 4);  // Characteristics: INITIALIZED_DATA | READ (0x40000040)
+
+    // Data sections:
+    bb_append_buffer(pe_file, text_bb);
+    bb_append_buffer(pe_file, rdata_bb);
+    bb_append_buffer(pe_file, symtab);
+    if strtab.size > 4 {
+        bb_append_buffer(pe_file, strtab);
+    }
+
+    return bb_write_to_file(pe_file, out_path);
+}

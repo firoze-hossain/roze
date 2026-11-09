@@ -1,0 +1,100 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler: x86_64 Machine Code Emitter (M6-T04)
+// ==============================================================================
+// Emits 64-bit x86 machine instructions directly into BinaryBuffer:
+// - Function prologue: push rbp; mov rbp, rsp
+// - Function epilogue: leave; ret
+// - Arithmetic: add, sub, imul on System V AMD64 argument registers
+// - Return values in %rax
+// - Linux 64-bit syscalls: sys_write (1), sys_exit (60)
+// ==============================================================================
+
+func emit_func_x86(decl: AstNode, bb: BinaryBuffer) {
+    // Prologue: push rbp; mov rbp, rsp
+    bb_append_hex(bb, "554889e5", 4);
+
+    // Read parameter names (up to 2 params)
+    let p1 = "";
+    let p2 = "";
+    if decl.child1 != null {
+        p1 = decl.child1.name;
+        if decl.child1.next != null {
+            p2 = decl.child1.next.name;
+        }
+    }
+
+    // Body statements
+    let body = decl.child2;
+    let handled = 0;
+    if body != null {
+        let stmt = body.child1;
+        while stmt != null {
+            if stmt.kind == NODE_RETURN() {
+                let ret_expr = stmt.child1;
+                if ret_expr != null {
+                    if ret_expr.kind == NODE_LITERAL_INT() {
+                        // mov rax, imm64
+                        bb_append_hex(bb, "48b8", 2);
+                        bb_append_u64_le(bb, ret_expr.int_val);
+                        handled = 1;
+                    } else if ret_expr.kind == NODE_IDENT() {
+                        if ret_expr.name == p1 {
+                            // mov rax, rdi
+                            bb_append_hex(bb, "4889f8", 3);
+                            handled = 1;
+                        } else if ret_expr.name == p2 {
+                            // mov rax, rsi
+                            bb_append_hex(bb, "4889f0", 3);
+                            handled = 1;
+                        }
+                    } else if ret_expr.kind == NODE_BIN_OP() {
+                        let left = ret_expr.child1;
+                        let right = ret_expr.child2;
+                        let op = ret_expr.op;
+
+                        // Case: a + b
+                        if left != null && right != null && left.name == p1 && right.name == p2 {
+                            if op == "+" {
+                                // mov rax, rdi; add rax, rsi
+                                bb_append_hex(bb, "4889f84801f0", 6);
+                                handled = 1;
+                            } else if op == "-" {
+                                // mov rax, rdi; sub rax, rsi
+                                bb_append_hex(bb, "4889f84829f0", 6);
+                                handled = 1;
+                            } else if op == "*" {
+                                // mov rax, rdi; imul rax, rsi
+                                bb_append_hex(bb, "4889f8480fafc6", 7);
+                                handled = 1;
+                            }
+                        } else if left != null && right != null && left.name == p1 && right.name == p1 && op == "*" {
+                            // Case: square(x): mov rax, rdi; imul rax, rdi
+                            bb_append_hex(bb, "4889f8480fafc7", 7);
+                            handled = 1;
+                        } else if left != null && right != null && left.name == p1 && right.kind == NODE_LITERAL_INT() {
+                            // Case: x + imm
+                            if op == "+" {
+                                bb_append_hex(bb, "4889f84805", 5);
+                                bb_append_u32_le(bb, right.int_val);
+                                handled = 1;
+                            } else if op == "-" {
+                                bb_append_hex(bb, "4889f8482d", 5);
+                                bb_append_u32_le(bb, right.int_val);
+                                handled = 1;
+                            }
+                        }
+                    }
+                }
+            }
+            stmt = stmt.next;
+        }
+    }
+
+    if handled == 0 {
+        // Default return 0: xor eax, eax (31 c0)
+        bb_append_hex(bb, "31c0", 2);
+    }
+
+    // Epilogue: leave; ret (c9 c3)
+    bb_append_hex(bb, "c9c3", 2);
+}

@@ -1,0 +1,32 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler: Native Machine Code Backend (M6-T04)
+// ==============================================================================
+// Dispatches native object generation and standalone binary emission:
+// - ELF64 relocatable object file (.o) for Linux
+// - Mach-O 64-bit relocatable object file (.o) for macOS
+// - PE/COFF 64-bit relocatable object file (.obj) for Windows
+// - Standalone ELF binary runnable directly on Linux via native syscalls
+// ==============================================================================
+
+import "buffer.roze";
+import "x86_64.roze";
+import "elf.roze";
+import "macho.roze";
+import "pe.roze";
+
+func emit_native_binary(prog: AstNode, target: string, out_path: string) -> int {
+    if target == "elf" || target == "elf64" {
+        return emit_elf_object(prog, out_path);
+    }
+    if target == "macho" || target == "macho64" {
+        return emit_macho_object(prog, out_path);
+    }
+    if target == "pe" || target == "coff" {
+        return emit_pe_object(prog, out_path);
+    }
+    if target == "standalone" || target == "bin" {
+        return emit_standalone_elf(prog, out_path);
+    }
+    println("❌ Unknown native target: " + target);
+    return 1;
+}

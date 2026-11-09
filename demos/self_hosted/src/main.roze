@@ -16,6 +16,7 @@ import "macros.roze";
 import "typechecker.roze";
 import "optimizer.roze";
 import "codegen.roze";
+import "native_emitter.roze";
 
 // --- Driver & Pipeline ---
 
@@ -97,6 +98,34 @@ func verify_frontend_parsing(file_path: string) -> int {
         return 1;
     }
     println("✅ [Pure Roze Frontend] Successfully parsed and expanded AST for: " + file_path);
+    return 0;
+}
+
+func emit_native_for_file(file_path: string, target: string, out_path: string) -> int {
+    if rz_file_exists(file_path) == 0 {
+        println("❌ Error: file not found: " + file_path);
+        return 1;
+    }
+    let src = rz_read_file(file_path);
+    let tokens = tokenize(src);
+    let parser = make_parser(tokens);
+    let ast = parse_program(parser);
+    let expanded = expand_macros(ast);
+    let monomorphized = monomorphize_program(expanded);
+    let tc = make_type_checker();
+    check_program_types(tc, monomorphized);
+    analyze_borrows(tc, monomorphized);
+    if tc.error_count > 0 {
+        println("❌ Semantic verification failed: " + file_path + " (" + rz_int_to_str(tc.error_count) + " errors)");
+        return 1;
+    }
+    let optimized = optimize_program(monomorphized);
+    let res = emit_native_binary(optimized, target, out_path);
+    if res == 0 {
+        println("❌ Native binary emission failed for target '" + target + "' -> " + out_path);
+        return 1;
+    }
+    println("✅ [Pure Roze Native Backend] Emitted " + target + " binary: " + out_path);
     return 0;
 }
 
@@ -200,6 +229,8 @@ func main() {
     let in_file = "";
     let out_bin = "";
     let out_c = "";
+    let native_target = "";
+    let native_out = "";
 
     for let i = 1; i < argc; i = i + 1 {
         let arg = rz_get_arg(i);
@@ -212,6 +243,30 @@ func main() {
             i = i + 1;
             if i < argc {
                 out_c = rz_get_arg(i);
+            }
+        } else if arg == "--target-elf" {
+            i = i + 1;
+            if i < argc {
+                native_target = "elf";
+                native_out = rz_get_arg(i);
+            }
+        } else if arg == "--target-macho" {
+            i = i + 1;
+            if i < argc {
+                native_target = "macho";
+                native_out = rz_get_arg(i);
+            }
+        } else if arg == "--target-pe" {
+            i = i + 1;
+            if i < argc {
+                native_target = "pe";
+                native_out = rz_get_arg(i);
+            }
+        } else if arg == "--standalone-bin" || arg == "--emit-bin" {
+            i = i + 1;
+            if i < argc {
+                native_target = "standalone";
+                native_out = rz_get_arg(i);
             }
         } else if arg == "--parse-only" || arg == "-p" {
             i = i + 1;
@@ -242,6 +297,10 @@ func main() {
             println("Options:");
             println("  -o <bin>        Specify output executable path");
             println("  -c <out.c>      Specify emitted C source path");
+            println("  --target-elf <file.o>   Emit standard ELF64 relocatable object file");
+            println("  --target-macho <file.o> Emit Mach-O 64-bit relocatable object file");
+            println("  --target-pe <file.obj>  Emit PE/COFF 64-bit relocatable object file");
+            println("  --standalone-bin <bin>  Emit directly runnable standalone ELF binary");
             println("  --parse-only, -p <file> Verify pure Roze frontend parsing and macro expansion");
             println("  --check-only, -k <file> Verify semantic type checking, traits, generics and borrows");
             println("  --emit-ssa, --ssa <file> Lower AST to SSA IR and emit textual SSA IR");
@@ -255,6 +314,11 @@ func main() {
 
     if in_file == "" {
         run_built_in_self_test();
+        return;
+    }
+
+    if native_target != "" && native_out != "" {
+        emit_native_for_file(in_file, native_target, native_out);
         return;
     }
 

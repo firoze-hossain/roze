@@ -157,6 +157,34 @@ int64_t rz_write_file(const char* path, const char* content) {
     return (written == len) ? 1 : 0;
 }
 
+int64_t rz_write_binary_file(const char* path, const char* hex_data) {
+    if (!path || !hex_data) return 0;
+
+    const char* slash = strrchr(path, '/');
+    if (slash) {
+        char dir[256];
+        size_t len = slash - path;
+        if (len < sizeof(dir)) {
+            strncpy(dir, path, len);
+            dir[len] = '\0';
+            mkdir(dir, 0755);
+        }
+    }
+
+    FILE* f = fopen(path, "wb");
+    if (!f) return 0;
+
+    size_t hex_len = strlen(hex_data);
+    for (size_t i = 0; i + 1 < hex_len; i += 2) {
+        char byte_str[3] = { hex_data[i], hex_data[i+1], '\0' };
+        unsigned char b = (unsigned char)strtoul(byte_str, NULL, 16);
+        fwrite(&b, 1, 1, f);
+    }
+    fclose(f);
+    chmod(path, 0755);
+    return 1;
+}
+
 int64_t rz_file_exists(const char* path) {
     if (!path) return 0;
     return (access(path, F_OK) == 0) ? 1 : 0;

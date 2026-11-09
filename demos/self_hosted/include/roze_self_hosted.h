@@ -30,6 +30,7 @@ int64_t rz_str_eq(const char* a, const char* b);
 // --- File IO & Process Execution ---
 char*   rz_read_file(const char* path);
 int64_t rz_write_file(const char* path, const char* content);
+int64_t rz_write_binary_file(const char* path, const char* hex_data);
 int64_t rz_file_exists(const char* path);
 int64_t rz_exec(const char* cmd);
 

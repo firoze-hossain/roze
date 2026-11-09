@@ -1,0 +1,31 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler: Native Binary Backend Verification (M6-T04)
+// ==============================================================================
+// Tests direct native binary generation and execution:
+// - Standalone ELF binary emission with direct Linux syscalls (sys_write, sys_exit)
+// - ELF64 relocatable object generation (.o)
+// - Mach-O 64-bit relocatable object generation (.o)
+// - PE/COFF 64-bit relocatable object generation (.obj)
+// ==============================================================================
+
+func add(a: int, b: int) -> int {
+    return a + b;
+}
+
+func sub(a: int, b: int) -> int {
+    return a - b;
+}
+
+func square(x: int) -> int {
+    return x * x;
+}
+
+func main() {
+    println("🌹 [Pure Roze Native Backend] Standalone native machine code execution verified!");
+    let sum = add(15, 27);
+    println("add(15, 27) = " + rz_int_to_str(sum));
+    let diff = sub(100, 42);
+    println("sub(100, 42) = " + rz_int_to_str(diff));
+    let sq = square(9);
+    println("square(9) = " + rz_int_to_str(sq));
+}

@@ -14,6 +14,7 @@ extern "C" func rz_str_eq(a: string, b: string) -> int;
 
 extern "C" func rz_read_file(path: string) -> string;
 extern "C" func rz_write_file(path: string, content: string) -> int;
+extern "C" func rz_write_binary_file(path: string, hex_data: string) -> int;
 extern "C" func rz_file_exists(path: string) -> int;
 extern "C" func rz_exec(cmd: string) -> int;
 
@@ -363,6 +364,41 @@ class OptStats {
     dead_stmts_removed: int,
     funcs_inlined: int,
     loops_hoisted: int
+}
+
+class BinaryBuffer {
+    hex_data: string,
+    size: int
+}
+
+class NativeSection {
+    name: string,
+    sec_type: int,
+    flags: int,
+    vaddr: int,
+    offset: int,
+    size: int,
+    align: int,
+    data: BinaryBuffer,
+    next: NativeSection
+}
+
+class NativeSymbol {
+    name: string,
+    value: int,
+    size: int,
+    sec_index: int,
+    sym_type: int,
+    binding: int,
+    next: NativeSymbol
+}
+
+class NativeReloc {
+    offset: int,
+    sym_index: int,
+    rel_type: int,
+    addend: int,
+    next: NativeReloc
 }
 
 func make_token(kind: int, text: string, int_val: int, line: int, col: int) -> Token {

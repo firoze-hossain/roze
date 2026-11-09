@@ -781,6 +781,25 @@ func check_expression_type(tc: TypeChecker, expr: AstNode) -> string {
         if obj_type == "OptStats" {
             if m_name == "const_folded" || m_name == "dead_stmts_removed" || m_name == "funcs_inlined" || m_name == "loops_hoisted" { expr.type_name = "int"; return "int"; }
         }
+        if obj_type == "BinaryBuffer" {
+            if m_name == "hex_data" { expr.type_name = "string"; return "string"; }
+            if m_name == "size" { expr.type_name = "int"; return "int"; }
+        }
+        if obj_type == "NativeSection" {
+            if m_name == "name" { expr.type_name = "string"; return "string"; }
+            if m_name == "sec_type" || m_name == "flags" || m_name == "vaddr" || m_name == "offset" || m_name == "size" || m_name == "align" { expr.type_name = "int"; return "int"; }
+            if m_name == "data" { expr.type_name = "BinaryBuffer"; return "BinaryBuffer"; }
+            if m_name == "next" { expr.type_name = "NativeSection"; return "NativeSection"; }
+        }
+        if obj_type == "NativeSymbol" {
+            if m_name == "name" { expr.type_name = "string"; return "string"; }
+            if m_name == "value" || m_name == "size" || m_name == "sec_index" || m_name == "sym_type" || m_name == "binding" { expr.type_name = "int"; return "int"; }
+            if m_name == "next" { expr.type_name = "NativeSymbol"; return "NativeSymbol"; }
+        }
+        if obj_type == "NativeReloc" {
+            if m_name == "offset" || m_name == "sym_index" || m_name == "rel_type" || m_name == "addend" { expr.type_name = "int"; return "int"; }
+            if m_name == "next" { expr.type_name = "NativeReloc"; return "NativeReloc"; }
+        }
 
         expr.type_name = "int";
         return "int";
@@ -947,6 +966,7 @@ func check_program_types(tc: TypeChecker, prog: AstNode) -> int {
     define_symbol(tc, "rz_str_eq", "int", SYM_FUNC());
     define_symbol(tc, "rz_read_file", "string", SYM_FUNC());
     define_symbol(tc, "rz_write_file", "int", SYM_FUNC());
+    define_symbol(tc, "rz_write_binary_file", "int", SYM_FUNC());
     define_symbol(tc, "rz_file_exists", "int", SYM_FUNC());
     define_symbol(tc, "rz_exec", "int", SYM_FUNC());
     define_symbol(tc, "rz_get_arg_count", "int", SYM_FUNC());

@@ -17,6 +17,10 @@ case "$CMD" in
         echo "🌹 Running Pure Roze Autonomous Bootstrap Pipeline..."
         make bootstrap
         ;;
+    fixpoint)
+        echo "🌹 Running 3-Stage Bootstrap Fixpoint Verification..."
+        make fixpoint
+        ;;
     test)
         echo "🌹 Running Pure Roze Test Suites..."
         make test

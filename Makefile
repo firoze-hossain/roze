@@ -5,7 +5,7 @@
 # ==============================================================================
 
 CC ?= gcc
-CFLAGS ?= -O2 -w
+CFLAGS ?= -O2 -w -s
 PREFIX ?= /usr/local
 
 BIN_DIR = bin
@@ -15,7 +15,7 @@ SELF_HOSTED_DIR = demos/self_hosted
 ROZE_BIN = $(BIN_DIR)/roze
 ROZE_SEED = $(BOOTSTRAP_DIR)/roze_seed.c
 
-.PHONY: all roze bootstrap test clean seed install uninstall help
+.PHONY: all roze bootstrap fixpoint test clean seed install uninstall help
 
 # Default target: build autonomous compiler, verify bootstrap, and create ./roze
 all: bootstrap
@@ -33,14 +33,15 @@ bootstrap:
 	@$(MAKE) -C $(SELF_HOSTED_DIR) bundle
 	@$(MAKE) -C $(SELF_HOSTED_DIR) all
 
+# Dedicated 3-stage bootstrap fixpoint idempotence verification (M6-T06)
+fixpoint:
+	@echo "===> Verifying 3-Stage Bootstrap Fixpoint Idempotence (M6-T06)..."
+	@bash scripts/verify_fixpoint.sh
+
 # Run complete self-hosted test suites using pure Roze compiler
 test: all
 	@echo "===> Running All Pure Roze Test Suites via $(ROZE_BIN)..."
-	@$(MAKE) -C $(SELF_HOSTED_DIR) test_programs
-	@$(MAKE) -C $(SELF_HOSTED_DIR) test_frontend
-	@$(MAKE) -C $(SELF_HOSTED_DIR) test_semantic
-	@$(MAKE) -C $(SELF_HOSTED_DIR) test_optimizer
-	@$(MAKE) -C $(SELF_HOSTED_DIR) test_native_backend
+	@$(MAKE) -C $(SELF_HOSTED_DIR) test_programs test_frontend test_semantic test_optimizer test_native_backend
 	@echo "=================================================================="
 	@echo "🎉 100% Pure Roze Autonomous Test Suites Passed!"
 	@echo "=================================================================="
@@ -75,6 +76,7 @@ help:
 	@echo "Targets:"
 	@echo "  make              Build autonomous Roze compiler into bin/roze and ./roze"
 	@echo "  make bootstrap    Execute 3-stage bootstrap fixpoint closure (0 diff)"
+	@echo "  make fixpoint     Run comprehensive fixpoint idempotence verification (M6-T06)"
 	@echo "  make test         Run full test suite (frontend, semantic, optimizer, native)"
 	@echo "  make seed         Regenerate bootstrap/roze_seed.c from source"
 	@echo "  make install      Install roze to $(PREFIX)/bin"

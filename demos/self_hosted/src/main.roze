@@ -155,7 +155,7 @@ func compile_file(in_path: string, out_c_path: string, out_bin_path: string) -> 
 
     // If binary output path specified, compile via clang/gcc
     if rz_str_len(out_bin_path) > 0 {
-        let cmd = "gcc -O2 -w " + out_c_path + " -o " + out_bin_path + " -lm 2>/dev/null || clang -O2 -w " + out_c_path + " -o " + out_bin_path + " -lm";
+        let cmd = "gcc -O2 -w -s " + out_c_path + " -o " + out_bin_path + " -lm 2>/dev/null || clang -O2 -w -s " + out_c_path + " -o " + out_bin_path + " -lm";
         let res = rz_exec(cmd);
         if res != 0 {
             println("❌ Error: C compiler linking failed (exit code " + rz_int_to_str(res) + ")");
@@ -181,7 +181,7 @@ func run_built_in_self_test() -> int {
     }
 
     rz_write_file("bin/self_test_generated.c", c_code);
-    let cmd = "gcc -O2 -w bin/self_test_generated.c -o bin/self_test_bin -lm 2>/dev/null || clang -O2 -w bin/self_test_generated.c -o bin/self_test_bin -lm";
+    let cmd = "gcc -O2 -w -s bin/self_test_generated.c -o bin/self_test_bin -lm 2>/dev/null || clang -O2 -w -s bin/self_test_generated.c -o bin/self_test_bin -lm";
     let res = rz_exec(cmd);
     if res != 0 {
         println("❌ Self-test compilation failed!");

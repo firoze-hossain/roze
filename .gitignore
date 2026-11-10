@@ -49,6 +49,8 @@ Thumbs.db
 
 # --- Build & Distribution outputs ---
 /dist/
+/bin/
+/roze
 /demos/self_hosted/bin/
 ide/vscode/node_modules/
 ide/vscode/out/

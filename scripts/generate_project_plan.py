@@ -566,7 +566,7 @@ s1_rows = [
         ("M6-T06", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Bootstrap Fixpoint", "3-Stage Bootstrap Fixpoint Idempotence Verification",
         "Execute automated bootstrap cycle: Stage 0 (Legacy) -> Stage 1 (Roze) -> Stage 2 (Roze) -> Stage 3 (Roze). Run byte-level diff: 'diff bin/roze_stage2 bin/roze_stage3' == 0.",
         "Mathematically verified bootstrap closure (zero byte difference).",
-        "Self-Hosting Compiler", "6 Days", ("Critical", 14), ("Planned", 12)
+        "Self-Hosting Compiler", "6 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M6-T07", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "WebAssembly Target", "WebAssembly Compiler Target (--target wasm32 / wasi) & 'roze-bindgen'",
@@ -846,10 +846,10 @@ s4_rows = [
     ],
     [
         ("Stage 5", 11), "Fixpoint Closure Verification", "3-Stage Bootstrap Fixpoint",
-        "Execute full bootstrap cycle: Stage 0 (Rust) builds roze_stage1; roze_stage1 builds roze_stage2; roze_stage2 builds roze_stage3. Run 'diff roze_stage2 roze_stage3'.",
+        "Execute full bootstrap cycle: Stage 0 (Seed) builds roze_stage1; roze_stage1 builds roze_stage2; roze_stage2 builds roze_stage3. Run 'diff roze_stage2 roze_stage3'.",
         "100% - Zero Rust Dependency! Rust removed.",
         "Fixpoint Verification: diff output is exactly 0 bytes",
-        ("Milestone Gate", 15)
+        ("Completed", 16)
     ]
 ]
 

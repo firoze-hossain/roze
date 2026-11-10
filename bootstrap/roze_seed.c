@@ -7829,7 +7829,7 @@ int64_t compile_file(const char* in_path, const char* out_c_path, const char* ou
     rz_write_file(out_c_path, c_code);
     printf("%s\n", rz_str_concat("📝 Emitted C99: ", out_c_path));
     if ((rz_str_len(out_bin_path) > 0)) {
-        const char* cmd = rz_str_concat(rz_str_concat(rz_str_concat(rz_str_concat(rz_str_concat(rz_str_concat(rz_str_concat(rz_str_concat("gcc -O2 -w ", out_c_path), " -o "), out_bin_path), " -lm 2>/dev/null || clang -O2 -w "), out_c_path), " -o "), out_bin_path), " -lm");
+        const char* cmd = rz_str_concat(rz_str_concat(rz_str_concat(rz_str_concat(rz_str_concat(rz_str_concat(rz_str_concat(rz_str_concat("gcc -O2 -w -s ", out_c_path), " -o "), out_bin_path), " -lm 2>/dev/null || clang -O2 -w -s "), out_c_path), " -o "), out_bin_path), " -lm");
         int64_t res = rz_exec(cmd);
         if ((res != 0)) {
             printf("%s\n", rz_str_concat(rz_str_concat("❌ Error: C compiler linking failed (exit code ", rz_int_to_str(res)), ")"));
@@ -7851,7 +7851,7 @@ int64_t run_built_in_self_test(void) {
         return 1;
     }
     rz_write_file("bin/self_test_generated.c", c_code);
-    const char* cmd = "gcc -O2 -w bin/self_test_generated.c -o bin/self_test_bin -lm 2>/dev/null || clang -O2 -w bin/self_test_generated.c -o bin/self_test_bin -lm";
+    const char* cmd = "gcc -O2 -w -s bin/self_test_generated.c -o bin/self_test_bin -lm 2>/dev/null || clang -O2 -w -s bin/self_test_generated.c -o bin/self_test_bin -lm";
     int64_t res = rz_exec(cmd);
     if ((res != 0)) {
         printf("%s\n", "❌ Self-test compilation failed!");

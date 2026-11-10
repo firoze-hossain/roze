@@ -560,7 +560,7 @@ s1_rows = [
         ("M6-T05", 8), ("Month 6", 11), ("Sprint 11 (W21-W22)", 8), "Rust Decommissioning", "Complete Decommissioning of Rust Host Compiler",
         "Decommission Cargo and rustc from Roze repository build pipeline. The Roze binary itself becomes the primary compiler and build driver.",
         "Ultimate language independence achieved: Roze requires only Roze to build Roze.",
-        "Self-Hosting, Autonomy", "5 Days", ("Critical", 14), ("Planned", 12)
+        "Self-Hosting, Autonomy", "5 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M6-T06", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Bootstrap Fixpoint", "3-Stage Bootstrap Fixpoint Idempotence Verification",

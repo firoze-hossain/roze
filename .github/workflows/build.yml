@@ -24,13 +24,18 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Build Pure Roze Compiler (Autonomous Zero-Rust Pipeline)
+        run: |
+          make all
+          ./roze --help
+
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: cargo build (workspace)
+      - name: cargo build (legacy workspace verification)
         run: cargo build --workspace --release
 
       - name: Smoke test -- compile and run an example .roze program

@@ -48,6 +48,21 @@ roze build main.roze --target native
 roze run main.roze
 ```
 
+### Build from Source (Autonomous - Zero Rust Required)
+```bash
+# Clone the repository:
+git clone https://github.com/firoze/roze.git && cd roze
+
+# Build the self-hosted compiler and verify 3-stage bootstrap fixpoint:
+make
+
+# Run the complete pure Roze test suite:
+make test
+
+# Install Roze to /usr/local/bin:
+sudo make install
+```
+
 ---
 
 ## 🌟 Key Language Features

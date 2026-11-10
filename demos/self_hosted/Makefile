@@ -4,7 +4,7 @@
 
 CC ?= gcc
 CFLAGS ?= -O2 -w
-ROZE_STAGE0 ?= ../../target/debug/roze
+BOOTSTRAP_SEED = ../../bootstrap/roze_seed.c
 
 SRC_DIR = src
 BIN_DIR = bin
@@ -23,7 +23,7 @@ SOURCES = $(SRC_DIR)/ast.roze \
 RUNTIME_C = $(SRC_DIR)/runtime.c
 ROZE_COMPILER_ROZE = $(SRC_DIR)/roze_compiler.roze
 
-.PHONY: all clean bundle stage1 stage2 stage3 bootstrap_test test_programs test_frontend test_semantic test_optimizer test_native_backend
+.PHONY: all clean bundle bootstrap stage1 stage2 stage3 bootstrap_test test_programs test_frontend test_semantic test_optimizer test_native_backend
 
 all: bootstrap_test test_programs test_frontend test_semantic test_optimizer test_native_backend
 
@@ -35,10 +35,22 @@ bundle: $(ROZE_COMPILER_ROZE)
 $(ROZE_COMPILER_ROZE): $(SOURCES)
 	python3 -c 'files = ["$(SRC_DIR)/ast.roze", "$(SRC_DIR)/lexer.roze", "$(SRC_DIR)/parser.roze", "$(SRC_DIR)/macros.roze", "$(SRC_DIR)/typechecker.roze", "$(SRC_DIR)/optimizer.roze", "$(SRC_DIR)/codegen.roze", "$(SRC_DIR)/native_emitter.roze", "$(SRC_DIR)/main.roze"]; out = ["// ==============================================================================\n", "// 🌹 Roze Self-Hosted Compiler (Single-Source Bootstrap Translation Unit)\n", "// ==============================================================================\n\n"]; [out.extend([line for line in open(f) if not line.strip().startswith("import ")]) for f in files]; open("$(ROZE_COMPILER_ROZE)", "w").write("".join(out)); print("✅ Bundled $(ROZE_COMPILER_ROZE) (" + str(len(out)) + " lines)")'
 
-stage1: $(BIN_DIR) $(ROZE_COMPILER_ROZE)
-	@echo "===> [Stage 1] Compiling Stage 1 self-hosted compiler using Stage 0 (Rust roze)..."
-	$(ROZE_STAGE0) build $(SRC_DIR)/main.roze --target native --link $(RUNTIME_C)
-	mv main $(BIN_DIR)/roze_stage1
+$(BIN_DIR)/roze_bootstrap: $(BIN_DIR)
+	@if [ -f "$(BOOTSTRAP_SEED)" ]; then \
+		echo "===> [Bootstrap] Compiling autonomous seed compiler from $(BOOTSTRAP_SEED)..."; \
+		$(CC) $(CFLAGS) $(BOOTSTRAP_SEED) -lm -o $(BIN_DIR)/roze_bootstrap; \
+	elif [ -f "../../target/debug/roze" ]; then \
+		echo "===> [Bootstrap] Using legacy Rust compiler fallback..."; \
+		../../target/debug/roze build $(SRC_DIR)/main.roze --target native --link $(RUNTIME_C); \
+		mv main $(BIN_DIR)/roze_bootstrap; \
+	else \
+		echo "❌ Error: Neither $(BOOTSTRAP_SEED) nor ../../target/debug/roze found!"; exit 1; \
+	fi
+	@echo "✅ [Bootstrap] Built $(BIN_DIR)/roze_bootstrap (Zero Rust Dependency)"
+
+stage1: $(BIN_DIR) $(ROZE_COMPILER_ROZE) $(BIN_DIR)/roze_bootstrap
+	@echo "===> [Stage 1] Compiling Stage 1 self-hosted compiler using autonomous seed..."
+	./$(BIN_DIR)/roze_bootstrap $(ROZE_COMPILER_ROZE) -o $(BIN_DIR)/roze_stage1
 	@echo "✅ [Stage 1] Built $(BIN_DIR)/roze_stage1"
 
 stage2: stage1

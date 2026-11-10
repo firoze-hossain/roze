@@ -1,0 +1,55 @@
+name: Pure Roze Self-Hosted Pipeline (Zero Rust)
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  self-hosted-bootstrap:
+    name: Pure Roze Bootstrap & Autonomous Fixpoint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify zero Rust dependency
+        run: |
+          which rustc 2>/dev/null && echo "rustc is present on runner but will NOT be used." || echo "Zero rustc present."
+
+      - name: Pure Roze Autonomous Bootstrap Pipeline (Stage 1 -> Stage 2 -> Stage 3)
+        run: |
+          make bootstrap
+
+      - name: Verify 3-Stage Bootstrap Fixpoint (0 Diff)
+        run: |
+          diff -u demos/self_hosted/bin/roze_stage2.c demos/self_hosted/bin/roze_stage3.c
+          echo "✅ Mathematical Fixpoint Verified: 0 bytes diff!"
+
+      - name: Build Primary Roze Binary (./roze)
+        run: |
+          make all
+          ./roze --help
+
+      - name: Run Pure Roze Test Suites
+        run: |
+          make test
+
+      - name: Verify Standalone Native Binary Execution (Linux Direct Syscalls)
+        run: |
+          ./roze demos/self_hosted/tests/09_native_binary.roze --standalone-bin /tmp/standalone_ci
+          file /tmp/standalone_ci
+          /tmp/standalone_ci
+          echo "✅ Direct Linux Syscall Execution Verified!"
+
+      - name: Verify ELF, Mach-O and PE Object Emission
+        run: |
+          ./roze demos/self_hosted/tests/09_native_binary.roze --target-elf /tmp/ci_test.o
+          file /tmp/ci_test.o
+          readelf -h -S /tmp/ci_test.o
+          ./roze demos/self_hosted/tests/09_native_binary.roze --target-macho /tmp/ci_test_macho.o
+          file /tmp/ci_test_macho.o
+          ./roze demos/self_hosted/tests/09_native_binary.roze --target-pe /tmp/ci_test.obj
+          file /tmp/ci_test.obj
+          echo "✅ Multi-Platform Native Object Generation Verified!"

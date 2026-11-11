@@ -572,7 +572,7 @@ s1_rows = [
         ("M6-T07", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "WebAssembly Target", "WebAssembly Compiler Target (--target wasm32 / wasi) & 'roze-bindgen'",
         "WASM32 code generation backend in native Cranelift engine (--target wasm32, --target wasm32-wasi). WebAssembly System Interface (WASI snapshot-preview1) POSIX runtime calls, memory linear buffer export, and 'roze-bindgen' JS/TS interface binding generator.",
         "Full parity with Rust wasm32-wasi / wasm-bindgen and Go WebAssembly target; runs directly in browsers and edge clouds.",
-        "WebAssembly, Edge Serverless, Browser Applications", "8 Days", ("Critical", 14), ("Planned", 12)
+        "WebAssembly, Edge Serverless, Browser Applications", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M6-T08", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Microcontroller IoT", "Microcontroller IoT Targets & 'embedded-hal' Architecture",

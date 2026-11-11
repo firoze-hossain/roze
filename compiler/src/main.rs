@@ -39,6 +39,12 @@ enum Target {
     Native,
     /// Compile bare-metal freestanding kernel executable with zero libc/glibc/OS.
     Freestanding,
+    /// Compile to WebAssembly (WASM32 standalone browser module).
+    #[value(name = "wasm32", alias = "wasm")]
+    Wasm32,
+    /// Compile to WebAssembly System Interface (WASI snapshot-preview1).
+    #[value(name = "wasm32-wasi", alias = "wasi")]
+    Wasm32Wasi,
 }
 
 #[derive(Subcommand)]
@@ -103,6 +109,15 @@ enum Commands {
         #[arg(long = "disable-float-registers", alias = "no-float")]
         disable_float_registers: bool,
     },
+    /// Generate JavaScript & TypeScript bindings from a WebAssembly module
+    Bindgen {
+        /// WebAssembly file (.wasm)
+        #[arg(value_name = "WASM_FILE")]
+        wasm_file: String,
+        /// Output directory for generated JS/TS bindings
+        #[arg(short, long, default_value = "pkg")]
+        out_dir: String,
+    },
 }
 
 fn main() {
@@ -115,6 +130,14 @@ fn main() {
         Commands::Run { file, classpath, target, link, linker_script, entry, no_heap, disable_float_registers } => {
             build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref(), no_heap, disable_float_registers)
                 .and_then(|_| run_file(&file, classpath.as_deref(), target))
+        }
+        Commands::Bindgen { wasm_file, out_dir } => {
+            let wasm_p = std::path::Path::new(&wasm_file);
+            let out_p = std::path::Path::new(&out_dir);
+            roze_bindgen::generate_bindings(wasm_p, out_p).map_err(|e| {
+                eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);
+                ()
+            })
         }
     };
 
@@ -210,6 +233,8 @@ fn build_file(
             no_heap,
             disable_float_registers,
         ),
+        Target::Wasm32 => codegen::wasm::compile_to_wasm(typed_program, filename, false).map(|_| ()),
+        Target::Wasm32Wasi => codegen::wasm::compile_to_wasm(typed_program, filename, true).map(|_| ()),
     };
     if let Err(e) = codegen_result {
         report_error(&e, filename, &source);
@@ -230,6 +255,14 @@ fn run_file(filename: &str, classpath: Option<&str>, target: Target) -> Result<(
         Target::Jvm => codegen::run_java(&class_name, classpath),
         Target::Native => codegen::native::run_native(&class_name),
         Target::Freestanding => codegen::native::run_freestanding(&class_name),
+        Target::Wasm32 | Target::Wasm32Wasi => {
+            let wasm_file = if filename.ends_with(".roze") {
+                format!("{}.wasm", &filename[..filename.len() - 5])
+            } else {
+                format!("{}.wasm", filename)
+            };
+            codegen::wasm::run_wasm(&wasm_file)
+        }
     };
     if let Err(e) = run_result {
         eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);

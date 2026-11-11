@@ -1,0 +1,21 @@
+[package]
+name = "roze-bindgen"
+version = "1.0.0"
+edition = "2021"
+description = "WebAssembly JS/TS Interface Binding Generator for Roze"
+
+[lib]
+name = "roze_bindgen"
+path = "src/lib.rs"
+
+[[bin]]
+name = "roze-bindgen"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+colored = { workspace = true }
+clap = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.0"

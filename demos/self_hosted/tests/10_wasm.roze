@@ -1,0 +1,30 @@
+// ==============================================================================
+// 🌹 Roze Self-Hosted Compiler: WebAssembly Target Verification (M6-T07)
+// ==============================================================================
+// Tests WebAssembly module generation and WASI preview1 execution:
+// - wasm32-wasi standalone executable with _start and fd_write
+// - wasm32 core library module with exported functions and linear memory
+// - Function exports: add, sub, square, main
+// ==============================================================================
+
+func add(a: int, b: int) -> int {
+    return a + b;
+}
+
+func sub(a: int, b: int) -> int {
+    return a - b;
+}
+
+func square(x: int) -> int {
+    return x * x;
+}
+
+func main() {
+    println("🌹 [WebAssembly WASI] Running Roze on WebAssembly System Interface!");
+    let sum = add(30, 12);
+    println("wasm add(30, 12) = " + rz_int_to_str(sum));
+    let diff = sub(100, 58);
+    println("wasm sub(100, 58) = " + rz_int_to_str(diff));
+    let sq = square(8);
+    println("wasm square(8) = " + rz_int_to_str(sq));
+}

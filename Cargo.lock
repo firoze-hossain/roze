@@ -1246,6 +1246,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "roze-bindgen"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "colored",
+ "tempfile",
+]
+
+[[package]]
 name = "roze-build"
 version = "1.0.0"
 dependencies = [
@@ -1273,6 +1283,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "cranelift-object",
+ "roze-bindgen",
  "target-lexicon",
  "thiserror 1.0.69",
  "which",

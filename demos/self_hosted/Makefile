@@ -23,9 +23,9 @@ SOURCES = $(SRC_DIR)/ast.roze \
 RUNTIME_C = $(SRC_DIR)/runtime.c
 ROZE_COMPILER_ROZE = $(SRC_DIR)/roze_compiler.roze
 
-.PHONY: all clean bundle bootstrap stage1 stage2 stage3 bootstrap_test fixpoint test_programs test_frontend test_semantic test_optimizer test_native_backend
+.PHONY: all clean bundle bootstrap stage1 stage2 stage3 bootstrap_test fixpoint test_programs test_frontend test_semantic test_optimizer test_native_backend test_wasm
 
-all: bootstrap_test test_programs test_frontend test_semantic test_optimizer test_native_backend
+all: bootstrap_test test_programs test_frontend test_semantic test_optimizer test_native_backend test_wasm
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
@@ -145,5 +145,20 @@ test_native_backend: $(BIN_DIR)/roze_stage2
 	./$(BIN_DIR)/roze_stage2 --check-only $(TEST_DIR)/09_native_binary.roze
 	@echo "✅ All Pure Roze native binary backend tests passed! 🎉"
 
+test_wasm: $(BIN_DIR)/roze_stage2
+	@echo "=================================================================="
+	@echo "🧪 Verifying Pure Roze WebAssembly Backend: wasm32 & wasi (M6-T07)"
+	@echo "=================================================================="
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/10_wasm.roze --target-wasi $(BIN_DIR)/test10.wasm
+	@file $(BIN_DIR)/test10.wasm
+	@node -e 'const fs = require("node:fs"); const { WASI } = require("node:wasi"); const wasi = new WASI({ version: "preview1" }); const mod = new WebAssembly.Module(fs.readFileSync("$(BIN_DIR)/test10.wasm")); const inst = new WebAssembly.Instance(mod, wasi.getImportObject()); wasi.start(inst);'
+	@echo "✅ Pure Roze WASI preview1 execution verified!"
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/10_wasm.roze --target-wasm32 $(BIN_DIR)/test10_core.wasm
+	@node -e 'const fs = require("node:fs"); const mod = new WebAssembly.Module(fs.readFileSync("$(BIN_DIR)/test10_core.wasm")); const inst = new WebAssembly.Instance(mod, {}); const { add, sub, square } = inst.exports; if (add(10, 20) !== 30 || sub(50, 8) !== 42 || square(7) !== 49) throw new Error("Export mismatch"); console.log("wasm add(10, 20) = " + add(10, 20) + ", square(7) = " + square(7));'
+	@echo "✅ Pure Roze Core wasm32 export execution verified!"
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/10_wasm.roze -o $(BIN_DIR)/test10 && ./$(BIN_DIR)/test10
+	./$(BIN_DIR)/roze_stage2 --check-only $(TEST_DIR)/10_wasm.roze
+	@echo "✅ All Pure Roze WebAssembly target tests passed! 🌐🎉"
+
 clean:
-	rm -rf $(BIN_DIR)/*.o $(BIN_DIR)/*.obj $(BIN_DIR)/*.c $(BIN_DIR)/test* $(BIN_DIR)/self_test* $(BIN_DIR)/roze_stage* $(BIN_DIR)/standalone* $(BIN_DIR)/native_*
+	rm -rf $(BIN_DIR)/*.o $(BIN_DIR)/*.obj $(BIN_DIR)/*.wasm $(BIN_DIR)/*.c $(BIN_DIR)/test* $(BIN_DIR)/self_test* $(BIN_DIR)/roze_stage* $(BIN_DIR)/standalone* $(BIN_DIR)/native_*

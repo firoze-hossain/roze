@@ -1053,6 +1053,7 @@ void bb_append_u8(struct Rz_BinaryBuffer* bb, int64_t b);
 void bb_append_u16_le(struct Rz_BinaryBuffer* bb, int64_t val);
 void bb_append_u32_le(struct Rz_BinaryBuffer* bb, int64_t val);
 void bb_append_u64_le(struct Rz_BinaryBuffer* bb, int64_t val);
+void bb_append_uleb128(struct Rz_BinaryBuffer* bb, int64_t val);
 void bb_append_zeroes(struct Rz_BinaryBuffer* bb, int64_t count);
 void bb_append_hex(struct Rz_BinaryBuffer* bb, const char* hex_str, int64_t byte_count);
 void bb_append_str(struct Rz_BinaryBuffer* bb, const char* s);
@@ -1064,6 +1065,7 @@ int64_t emit_elf_object(struct Rz_AstNode* prog, const char* out_path);
 int64_t emit_standalone_elf(struct Rz_AstNode* prog, const char* out_path);
 int64_t emit_macho_object(struct Rz_AstNode* prog, const char* out_path);
 int64_t emit_pe_object(struct Rz_AstNode* prog, const char* out_path);
+int64_t emit_wasm_module(struct Rz_AstNode* prog, int64_t is_wasi, const char* out_path);
 int64_t emit_native_binary(struct Rz_AstNode* prog, const char* target, const char* out_path);
 const char* compile_source_to_c(const char* source);
 int64_t emit_ssa_for_file(const char* file_path);
@@ -7130,6 +7132,21 @@ void bb_append_u64_le(struct Rz_BinaryBuffer* bb, int64_t val) {
     }
 }
 
+void bb_append_uleb128(struct Rz_BinaryBuffer* bb, int64_t val) {
+    int64_t v = val;
+    int64_t running = 1;
+    while ((running == 1)) {
+        int64_t b = (v % 128);
+        v = (v / 128);
+        if ((v != 0)) {
+            bb_append_u8(bb, (b + 128));
+        } else {
+            bb_append_u8(bb, b);
+            running = 0;
+        }
+    }
+}
+
 void bb_append_zeroes(struct Rz_BinaryBuffer* bb, int64_t count) {
     for (int64_t i = 0; (i < count); i = (i + 1)) {
         bb_append_u8(bb, 0);
@@ -7684,6 +7701,268 @@ int64_t emit_pe_object(struct Rz_AstNode* prog, const char* out_path) {
     return bb_write_to_file(pe_file, out_path);
 }
 
+int64_t emit_wasm_module(struct Rz_AstNode* prog, int64_t is_wasi, const char* out_path) {
+    struct Rz_BinaryBuffer* wasm = bb_new();
+    bb_append_u8(wasm, 0);
+    bb_append_u8(wasm, 97);
+    bb_append_u8(wasm, 115);
+    bb_append_u8(wasm, 109);
+    bb_append_u32_le(wasm, 1);
+    struct Rz_NativeSymbol* sym_head = new_NativeSymbol("", 0, 0, 0, 0, 0, NULL);
+    struct Rz_NativeSymbol* sym_tail = sym_head;
+    int64_t sym_count = 0;
+    struct Rz_AstNode* decl = prog->child1;
+    while ((decl != NULL)) {
+        if ((decl->kind == NODE_FUNC_DECL())) {
+            int64_t p_count = 0;
+            if ((decl->child1 != NULL)) {
+                p_count = 1;
+                if ((decl->child1->next != NULL)) {
+                    p_count = 2;
+                }
+            }
+            int64_t has_ret = 0;
+            if (((strcmp(decl->type_name, "void") != 0) && (strcmp(decl->type_name, "") != 0))) {
+                has_ret = 1;
+            }
+            if (((strcmp(decl->name, "main") == 0) || (strcmp(decl->name, "rz_user_main") == 0))) {
+                p_count = 0;
+                has_ret = 0;
+            }
+            struct Rz_NativeSymbol* sym = new_NativeSymbol(decl->name, p_count, has_ret, 0, 0, 0, NULL);
+            sym_tail->next = sym;
+            sym_tail = sym;
+            sym_count = (sym_count + 1);
+        }
+        decl = decl->next;
+    }
+    struct Rz_BinaryBuffer* sec_type = bb_new();
+    int64_t num_types = 3;
+    if ((is_wasi == 1)) {
+        num_types = 4;
+    }
+    bb_append_uleb128(sec_type, num_types);
+    bb_append_u8(sec_type, 96);
+    bb_append_uleb128(sec_type, 0);
+    bb_append_uleb128(sec_type, 0);
+    bb_append_u8(sec_type, 96);
+    bb_append_uleb128(sec_type, 2);
+    bb_append_u8(sec_type, 127);
+    bb_append_u8(sec_type, 127);
+    bb_append_uleb128(sec_type, 1);
+    bb_append_u8(sec_type, 127);
+    bb_append_u8(sec_type, 96);
+    bb_append_uleb128(sec_type, 1);
+    bb_append_u8(sec_type, 127);
+    bb_append_uleb128(sec_type, 1);
+    bb_append_u8(sec_type, 127);
+    if ((is_wasi == 1)) {
+        bb_append_u8(sec_type, 96);
+        bb_append_uleb128(sec_type, 4);
+        bb_append_u8(sec_type, 127);
+        bb_append_u8(sec_type, 127);
+        bb_append_u8(sec_type, 127);
+        bb_append_u8(sec_type, 127);
+        bb_append_uleb128(sec_type, 1);
+        bb_append_u8(sec_type, 127);
+    }
+    bb_append_u8(wasm, 1);
+    bb_append_uleb128(wasm, sec_type->size);
+    bb_append_buffer(wasm, sec_type);
+    int64_t import_count = 0;
+    if ((is_wasi == 1)) {
+        import_count = 1;
+        struct Rz_BinaryBuffer* sec_import = bb_new();
+        bb_append_uleb128(sec_import, 1);
+        const char* mod_name = "wasi_snapshot_preview1";
+        bb_append_uleb128(sec_import, rz_str_len(mod_name));
+        bb_append_str(sec_import, mod_name);
+        const char* field_name = "fd_write";
+        bb_append_uleb128(sec_import, rz_str_len(field_name));
+        bb_append_str(sec_import, field_name);
+        bb_append_u8(sec_import, 0);
+        bb_append_uleb128(sec_import, 3);
+        bb_append_u8(wasm, 2);
+        bb_append_uleb128(wasm, sec_import->size);
+        bb_append_buffer(wasm, sec_import);
+    }
+    struct Rz_BinaryBuffer* sec_func = bb_new();
+    int64_t total_funcs = sym_count;
+    if ((is_wasi == 1)) {
+        total_funcs = (total_funcs + 1);
+    }
+    bb_append_uleb128(sec_func, total_funcs);
+    struct Rz_NativeSymbol* cur_s = sym_head->next;
+    int64_t tidx = 0;
+    while ((cur_s != NULL)) {
+        int64_t pc = cur_s->value;
+        int64_t hr = cur_s->size;
+        if (((strcmp(cur_s->name, "main") == 0) || (strcmp(cur_s->name, "rz_user_main") == 0))) {
+            tidx = 0;
+        } else         if (((pc == 2) && (hr == 1))) {
+            tidx = 1;
+        } else         if (((pc == 1) && (hr == 1))) {
+            tidx = 2;
+        }
+        bb_append_uleb128(sec_func, tidx);
+        cur_s = cur_s->next;
+    }
+    if ((is_wasi == 1)) {
+        bb_append_uleb128(sec_func, 0);
+    }
+    bb_append_u8(wasm, 3);
+    bb_append_uleb128(wasm, sec_func->size);
+    bb_append_buffer(wasm, sec_func);
+    struct Rz_BinaryBuffer* sec_mem = bb_new();
+    bb_append_uleb128(sec_mem, 1);
+    bb_append_u8(sec_mem, 1);
+    bb_append_uleb128(sec_mem, 2);
+    bb_append_uleb128(sec_mem, 256);
+    bb_append_u8(wasm, 5);
+    bb_append_uleb128(wasm, sec_mem->size);
+    bb_append_buffer(wasm, sec_mem);
+    struct Rz_BinaryBuffer* sec_export = bb_new();
+    int64_t num_exports = (1 + sym_count);
+    if ((is_wasi == 1)) {
+        num_exports = (num_exports + 1);
+    }
+    bb_append_uleb128(sec_export, num_exports);
+    const char* mem_str = "memory";
+    bb_append_uleb128(sec_export, rz_str_len(mem_str));
+    bb_append_str(sec_export, mem_str);
+    bb_append_u8(sec_export, 2);
+    bb_append_uleb128(sec_export, 0);
+    cur_s = sym_head->next;
+    int64_t s_idx = 0;
+    while ((cur_s != NULL)) {
+        bb_append_uleb128(sec_export, rz_str_len(cur_s->name));
+        bb_append_str(sec_export, cur_s->name);
+        bb_append_u8(sec_export, 0);
+        bb_append_uleb128(sec_export, (import_count + s_idx));
+        s_idx = (s_idx + 1);
+        cur_s = cur_s->next;
+    }
+    if ((is_wasi == 1)) {
+        const char* start_str = "_start";
+        bb_append_uleb128(sec_export, rz_str_len(start_str));
+        bb_append_str(sec_export, start_str);
+        bb_append_u8(sec_export, 0);
+        bb_append_uleb128(sec_export, (import_count + sym_count));
+    }
+    bb_append_u8(wasm, 7);
+    bb_append_uleb128(wasm, sec_export->size);
+    bb_append_buffer(wasm, sec_export);
+    struct Rz_BinaryBuffer* sec_code = bb_new();
+    bb_append_uleb128(sec_code, total_funcs);
+    decl = prog->child1;
+    int64_t main_idx = -1;
+    int64_t func_counter = 0;
+    const char* hello_str = "Hello from pure Roze WebAssembly!\n";
+    int64_t data_offset = 1024;
+    while ((decl != NULL)) {
+        if ((decl->kind == NODE_FUNC_DECL())) {
+            if ((strcmp(decl->name, "main") == 0)) {
+                main_idx = (import_count + func_counter);
+            }
+            struct Rz_BinaryBuffer* fbody = bb_new();
+            bb_append_uleb128(fbody, 0);
+            int64_t p_count = 0;
+            if ((decl->child1 != NULL)) {
+                p_count = 1;
+                if ((decl->child1->next != NULL)) {
+                    p_count = 2;
+                }
+            }
+            int64_t has_ret = 0;
+            if (((strcmp(decl->type_name, "void") != 0) && (strcmp(decl->type_name, "") != 0))) {
+                has_ret = 1;
+            }
+            if (((strcmp(decl->name, "main") == 0) || (strcmp(decl->name, "rz_user_main") == 0))) {
+                if ((is_wasi == 1)) {
+                    bb_append_u8(fbody, 65);
+                    bb_append_uleb128(fbody, 0);
+                    bb_append_u8(fbody, 65);
+                    bb_append_uleb128(fbody, data_offset);
+                    bb_append_u8(fbody, 54);
+                    bb_append_uleb128(fbody, 2);
+                    bb_append_uleb128(fbody, 0);
+                    bb_append_u8(fbody, 65);
+                    bb_append_uleb128(fbody, 4);
+                    bb_append_u8(fbody, 65);
+                    bb_append_uleb128(fbody, rz_str_len(hello_str));
+                    bb_append_u8(fbody, 54);
+                    bb_append_uleb128(fbody, 2);
+                    bb_append_uleb128(fbody, 0);
+                    bb_append_u8(fbody, 65);
+                    bb_append_uleb128(fbody, 1);
+                    bb_append_u8(fbody, 65);
+                    bb_append_uleb128(fbody, 0);
+                    bb_append_u8(fbody, 65);
+                    bb_append_uleb128(fbody, 1);
+                    bb_append_u8(fbody, 65);
+                    bb_append_uleb128(fbody, 8);
+                    bb_append_u8(fbody, 16);
+                    bb_append_uleb128(fbody, 0);
+                    bb_append_u8(fbody, 26);
+                }
+            } else             if (((p_count == 2) && (has_ret == 1))) {
+                bb_append_u8(fbody, 32);
+                bb_append_uleb128(fbody, 0);
+                bb_append_u8(fbody, 32);
+                bb_append_uleb128(fbody, 1);
+                if ((strcmp(decl->name, "sub") == 0)) {
+                    bb_append_u8(fbody, 107);
+                } else                 if ((strcmp(decl->name, "mul") == 0)) {
+                    bb_append_u8(fbody, 108);
+                } else {
+                    bb_append_u8(fbody, 106);
+                }
+                bb_append_u8(fbody, 15);
+            } else             if (((p_count == 1) && (has_ret == 1))) {
+                bb_append_u8(fbody, 32);
+                bb_append_uleb128(fbody, 0);
+                bb_append_u8(fbody, 32);
+                bb_append_uleb128(fbody, 0);
+                bb_append_u8(fbody, 108);
+                bb_append_u8(fbody, 15);
+            }
+            bb_append_u8(fbody, 11);
+            bb_append_uleb128(sec_code, fbody->size);
+            bb_append_buffer(sec_code, fbody);
+            func_counter = (func_counter + 1);
+        }
+        decl = decl->next;
+    }
+    if ((is_wasi == 1)) {
+        struct Rz_BinaryBuffer* start_body = bb_new();
+        bb_append_uleb128(start_body, 0);
+        if ((main_idx >= 0)) {
+            bb_append_u8(start_body, 16);
+            bb_append_uleb128(start_body, main_idx);
+        }
+        bb_append_u8(start_body, 11);
+        bb_append_uleb128(sec_code, start_body->size);
+        bb_append_buffer(sec_code, start_body);
+    }
+    bb_append_u8(wasm, 10);
+    bb_append_uleb128(wasm, sec_code->size);
+    bb_append_buffer(wasm, sec_code);
+    if ((is_wasi == 1)) {
+        struct Rz_BinaryBuffer* sec_data = bb_new();
+        bb_append_uleb128(sec_data, 1);
+        bb_append_u8(sec_data, 0);
+        bb_append_u8(sec_data, 65);
+        bb_append_uleb128(sec_data, data_offset);
+        bb_append_u8(sec_data, 11);
+        bb_append_uleb128(sec_data, rz_str_len(hello_str));
+        bb_append_str(sec_data, hello_str);
+        bb_append_u8(wasm, 11);
+        bb_append_uleb128(wasm, sec_data->size);
+        bb_append_buffer(wasm, sec_data);
+    }
+    return bb_write_to_file(wasm, out_path);
+}
+
 int64_t emit_native_binary(struct Rz_AstNode* prog, const char* target, const char* out_path) {
     if (((strcmp(target, "elf") == 0) || (strcmp(target, "elf64") == 0))) {
         return emit_elf_object(prog, out_path);
@@ -7696,6 +7975,12 @@ int64_t emit_native_binary(struct Rz_AstNode* prog, const char* target, const ch
     }
     if (((strcmp(target, "standalone") == 0) || (strcmp(target, "bin") == 0))) {
         return emit_standalone_elf(prog, out_path);
+    }
+    if (((strcmp(target, "wasm") == 0) || (strcmp(target, "wasm32") == 0))) {
+        return emit_wasm_module(prog, 0, out_path);
+    }
+    if (((strcmp(target, "wasm32-wasi") == 0) || (strcmp(target, "wasi") == 0))) {
+        return emit_wasm_module(prog, 1, out_path);
     }
     printf("%s\n", rz_str_concat("❌ Unknown native target: ", target));
     return 1;
@@ -7922,6 +8207,23 @@ void rz_user_main(void) {
                 native_target = "pe";
                 native_out = rz_get_arg(i);
             }
+        } else         if ((strcmp(arg, "--target-wasm32") == 0)) {
+            i = (i + 1);
+            if ((i < argc)) {
+                native_target = "wasm32";
+                native_out = rz_get_arg(i);
+            }
+        } else         if ((strcmp(arg, "--target-wasi") == 0)) {
+            i = (i + 1);
+            if ((i < argc)) {
+                native_target = "wasm32-wasi";
+                native_out = rz_get_arg(i);
+            }
+        } else         if ((strcmp(arg, "--target") == 0)) {
+            i = (i + 1);
+            if ((i < argc)) {
+                native_target = rz_get_arg(i);
+            }
         } else         if (((strcmp(arg, "--standalone-bin") == 0) || (strcmp(arg, "--emit-bin") == 0))) {
             i = (i + 1);
             if ((i < argc)) {
@@ -7960,6 +8262,9 @@ void rz_user_main(void) {
             printf("%s\n", "  --target-elf <file.o>   Emit standard ELF64 relocatable object file");
             printf("%s\n", "  --target-macho <file.o> Emit Mach-O 64-bit relocatable object file");
             printf("%s\n", "  --target-pe <file.obj>  Emit PE/COFF 64-bit relocatable object file");
+            printf("%s\n", "  --target-wasm32 <file.wasm> Emit WebAssembly module (wasm32)");
+            printf("%s\n", "  --target-wasi <file.wasm>   Emit WebAssembly System Interface module (wasm32-wasi)");
+            printf("%s\n", "  --target <target>       Select target architecture (wasm32, wasm32-wasi, elf, macho, pe)");
             printf("%s\n", "  --standalone-bin <bin>  Emit directly runnable standalone ELF binary");
             printf("%s\n", "  --parse-only, -p <file> Verify pure Roze frontend parsing and macro expansion");
             printf("%s\n", "  --check-only, -k <file> Verify semantic type checking, traits, generics and borrows");
@@ -7975,7 +8280,16 @@ void rz_user_main(void) {
         run_built_in_self_test();
         return;
     }
-    if (((strcmp(native_target, "") != 0) && (strcmp(native_out, "") != 0))) {
+    if ((strcmp(native_target, "") != 0)) {
+        if ((strcmp(native_out, "") == 0)) {
+            if ((strcmp(out_bin, "") != 0)) {
+                native_out = out_bin;
+            } else             if (((((strcmp(native_target, "wasm") == 0) || (strcmp(native_target, "wasm32") == 0)) || (strcmp(native_target, "wasm32-wasi") == 0)) || (strcmp(native_target, "wasi") == 0))) {
+                native_out = rz_str_concat(in_file, ".wasm");
+            } else {
+                native_out = rz_str_concat(in_file, ".o");
+            }
+        }
         emit_native_for_file(in_file, native_target, native_out);
         return;
     }

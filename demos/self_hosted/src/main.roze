@@ -262,6 +262,23 @@ func main() {
                 native_target = "pe";
                 native_out = rz_get_arg(i);
             }
+        } else if arg == "--target-wasm32" {
+            i = i + 1;
+            if i < argc {
+                native_target = "wasm32";
+                native_out = rz_get_arg(i);
+            }
+        } else if arg == "--target-wasi" {
+            i = i + 1;
+            if i < argc {
+                native_target = "wasm32-wasi";
+                native_out = rz_get_arg(i);
+            }
+        } else if arg == "--target" {
+            i = i + 1;
+            if i < argc {
+                native_target = rz_get_arg(i);
+            }
         } else if arg == "--standalone-bin" || arg == "--emit-bin" {
             i = i + 1;
             if i < argc {
@@ -300,6 +317,9 @@ func main() {
             println("  --target-elf <file.o>   Emit standard ELF64 relocatable object file");
             println("  --target-macho <file.o> Emit Mach-O 64-bit relocatable object file");
             println("  --target-pe <file.obj>  Emit PE/COFF 64-bit relocatable object file");
+            println("  --target-wasm32 <file.wasm> Emit WebAssembly module (wasm32)");
+            println("  --target-wasi <file.wasm>   Emit WebAssembly System Interface module (wasm32-wasi)");
+            println("  --target <target>       Select target architecture (wasm32, wasm32-wasi, elf, macho, pe)");
             println("  --standalone-bin <bin>  Emit directly runnable standalone ELF binary");
             println("  --parse-only, -p <file> Verify pure Roze frontend parsing and macro expansion");
             println("  --check-only, -k <file> Verify semantic type checking, traits, generics and borrows");
@@ -317,7 +337,16 @@ func main() {
         return;
     }
 
-    if native_target != "" && native_out != "" {
+    if native_target != "" {
+        if native_out == "" {
+            if out_bin != "" {
+                native_out = out_bin;
+            } else if native_target == "wasm" || native_target == "wasm32" || native_target == "wasm32-wasi" || native_target == "wasi" {
+                native_out = in_file + ".wasm";
+            } else {
+                native_out = in_file + ".o";
+            }
+        }
         emit_native_for_file(in_file, native_target, native_out);
         return;
     }

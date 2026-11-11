@@ -1,6 +1,7 @@
 pub mod jvm;
 pub mod native;
 pub mod wasm;
+pub mod embedded;
 
 use crate::ir::TypedProgram;
 use anyhow::{Result, anyhow};

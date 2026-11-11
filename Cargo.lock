@@ -1284,6 +1284,7 @@ dependencies = [
  "cranelift-native",
  "cranelift-object",
  "roze-bindgen",
+ "roze-svd",
  "target-lexicon",
  "thiserror 1.0.69",
  "which",
@@ -1332,6 +1333,16 @@ name = "roze-stdlib"
 version = "1.0.0"
 dependencies = [
  "roze-runtime",
+]
+
+[[package]]
+name = "roze-svd"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "colored",
+ "tempfile",
 ]
 
 [[package]]

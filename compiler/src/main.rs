@@ -45,6 +45,18 @@ enum Target {
     /// Compile to WebAssembly System Interface (WASI snapshot-preview1).
     #[value(name = "wasm32-wasi", alias = "wasi")]
     Wasm32Wasi,
+    /// Compile to ARM Cortex-M3 / M4 bare-metal microcontroller (STM32F1/F4).
+    #[value(name = "thumbv7m-none-eabi", alias = "thumbv7m", alias = "cortex-m3", alias = "cortex-m4", alias = "stm32")]
+    Thumbv7mNoneEabi,
+    /// Compile to ARM Cortex-M0 / M0+ / RP2040 microcontroller (Raspberry Pi Pico).
+    #[value(name = "thumbv6m-none-eabi", alias = "thumbv6m", alias = "cortex-m0", alias = "rp2040")]
+    Thumbv6mNoneEabi,
+    /// Compile to RISC-V 32-bit IMC bare-metal microcontroller (ESP32-C3 / GD32VF103).
+    #[value(name = "riscv32imc", alias = "riscv32", alias = "esp32c3")]
+    Riscv32imc,
+    /// Compile to Xtensa ESP32 bare-metal microcontroller.
+    #[value(name = "xtensa-esp32-none-elf", alias = "esp32")]
+    XtensaEsp32NoneElf,
 }
 
 #[derive(Subcommand)]
@@ -81,6 +93,9 @@ enum Commands {
         /// Disable floating-point and vector registers for ISR handlers and bare metal safety
         #[arg(long = "disable-float-registers", alias = "no-float")]
         disable_float_registers: bool,
+        /// Target microcontroller chip (stm32, rp2040, esp32)
+        #[arg(long = "chip", value_name = "CHIP")]
+        chip: Option<String>,
     },
     /// Run a Roze file
     Run {
@@ -108,6 +123,9 @@ enum Commands {
         /// Disable floating-point and vector registers for ISR handlers and bare metal safety
         #[arg(long = "disable-float-registers", alias = "no-float")]
         disable_float_registers: bool,
+        /// Target microcontroller chip (stm32, rp2040, esp32)
+        #[arg(long = "chip", value_name = "CHIP")]
+        chip: Option<String>,
     },
     /// Generate JavaScript & TypeScript bindings from a WebAssembly module
     Bindgen {
@@ -118,23 +136,79 @@ enum Commands {
         #[arg(short, long, default_value = "pkg")]
         out_dir: String,
     },
+    /// Program firmware image directly onto target microcontroller flash
+    Flash {
+        /// Source file (.roze) or compiled firmware (.bin, .hex, .elf)
+        #[arg(value_name = "FILE")]
+        file: String,
+        /// Target chip family (stm32, rp2040, esp32)
+        #[arg(short, long, default_value = "stm32")]
+        chip: String,
+        /// Programmer communication serial port
+        #[arg(short, long)]
+        port: Option<String>,
+        /// Debug probe interface (stlink, jlink, cmsis-dap)
+        #[arg(short, long)]
+        interface: Option<String>,
+    },
+    /// Parse CMSIS-SVD hardware description and generate Roze PAC
+    Svd {
+        /// SVD XML file path or template name ('stm32f103', 'rp2040', 'esp32c3')
+        #[arg(value_name = "SVD_FILE")]
+        svd_file: String,
+        /// Output directory for generated Roze PAC
+        #[arg(short, long, default_value = "pac")]
+        out_dir: String,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Build { file, output: _, classpath, target, link, linker_script, entry, no_heap, disable_float_registers } => {
-            build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref(), no_heap, disable_float_registers)
+        Commands::Build { file, output: _, classpath, target, link, linker_script, entry, no_heap, disable_float_registers, chip } => {
+            build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref(), no_heap, disable_float_registers, chip.as_deref())
         }
-        Commands::Run { file, classpath, target, link, linker_script, entry, no_heap, disable_float_registers } => {
-            build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref(), no_heap, disable_float_registers)
+        Commands::Run { file, classpath, target, link, linker_script, entry, no_heap, disable_float_registers, chip } => {
+            build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref(), no_heap, disable_float_registers, chip.as_deref())
                 .and_then(|_| run_file(&file, classpath.as_deref(), target))
         }
         Commands::Bindgen { wasm_file, out_dir } => {
             let wasm_p = std::path::Path::new(&wasm_file);
             let out_p = std::path::Path::new(&out_dir);
             roze_bindgen::generate_bindings(wasm_p, out_p).map_err(|e| {
+                eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);
+                ()
+            })
+        }
+        Commands::Flash { file, chip, port, interface } => {
+            let bin_path = if file.ends_with(".roze") {
+                let target = if chip.contains("rp2040") || chip.contains("pico") {
+                    Target::Thumbv6mNoneEabi
+                } else if chip.contains("esp32") {
+                    Target::Riscv32imc
+                } else {
+                    Target::Thumbv7mNoneEabi
+                };
+                if let Err(()) = build_file(&file, false, None, target, &[], None, None, false, false, Some(&chip)) {
+                    eprintln!("{} Failed to compile firmware for flashing", "❌ Error:".bright_red().bold());
+                    std::process::exit(1);
+                }
+                let stem = codegen::class_name_from_path(&file);
+                std::path::PathBuf::from(format!("{}.bin", stem))
+            } else {
+                std::path::PathBuf::from(&file)
+            };
+
+            codegen::embedded::flash_firmware(&bin_path, &chip, port.as_deref(), interface.as_deref()).map_err(|e| {
+                eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);
+                ()
+            })
+        }
+        Commands::Svd { svd_file, out_dir } => {
+            let svd_p = std::path::Path::new(&svd_file);
+            let out_p = std::path::Path::new(&out_dir);
+            roze_svd::process_svd_file(svd_p, out_p).map_err(|e| {
                 eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);
                 ()
             })
@@ -162,6 +236,7 @@ fn build_file(
     entry: Option<&str>,
     no_heap: bool,
     disable_float_registers: bool,
+    chip: Option<&str>,
 ) -> Result<(), ()> {
     println!("{}", "🌹 Roze Compiler v1.0.0".bright_magenta());
     println!("{} {}", "📁 Compiling:".cyan(), filename);
@@ -235,6 +310,30 @@ fn build_file(
         ),
         Target::Wasm32 => codegen::wasm::compile_to_wasm(typed_program, filename, false).map(|_| ()),
         Target::Wasm32Wasi => codegen::wasm::compile_to_wasm(typed_program, filename, true).map(|_| ()),
+        Target::Thumbv7mNoneEabi => codegen::embedded::compile_embedded_target(
+            typed_program,
+            filename,
+            codegen::embedded::EmbeddedArch::CortexM3M4,
+            chip,
+        ).map(|_| ()),
+        Target::Thumbv6mNoneEabi => codegen::embedded::compile_embedded_target(
+            typed_program,
+            filename,
+            codegen::embedded::EmbeddedArch::CortexM0Plus,
+            chip,
+        ).map(|_| ()),
+        Target::Riscv32imc => codegen::embedded::compile_embedded_target(
+            typed_program,
+            filename,
+            codegen::embedded::EmbeddedArch::Riscv32Imc,
+            chip,
+        ).map(|_| ()),
+        Target::XtensaEsp32NoneElf => codegen::embedded::compile_embedded_target(
+            typed_program,
+            filename,
+            codegen::embedded::EmbeddedArch::XtensaEsp32,
+            chip,
+        ).map(|_| ()),
     };
     if let Err(e) = codegen_result {
         report_error(&e, filename, &source);
@@ -262,6 +361,10 @@ fn run_file(filename: &str, classpath: Option<&str>, target: Target) -> Result<(
                 format!("{}.wasm", filename)
             };
             codegen::wasm::run_wasm(&wasm_file)
+        }
+        Target::Thumbv7mNoneEabi | Target::Thumbv6mNoneEabi | Target::Riscv32imc | Target::XtensaEsp32NoneElf => {
+            println!("{} Microcontroller firmware binary ready for hardware deployment ('roze flash')", "✅ [Embedded Firmware]".bright_green().bold());
+            Ok(())
         }
     };
     if let Err(e) = run_result {

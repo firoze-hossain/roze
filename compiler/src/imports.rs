@@ -117,6 +117,9 @@ const LIBC_DISPLAY_NAME: &str = "libc (built-in)";
 const SQLITE_SOURCE: &str = include_str!("../../stdlib/src/sqlite.roze");
 const SQLITE_DISPLAY_NAME: &str = "sqlite (built-in)";
 
+const EMBEDDED_HAL_SOURCE: &str = include_str!("../../stdlib/src/embedded_hal.roze");
+const EMBEDDED_HAL_DISPLAY_NAME: &str = "embedded_hal (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -410,6 +413,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     }
     if path == "libc" || path == "posix" || path == "std::libc" || path == "std::posix" || path == "roze::libc" {
         return Ok((LIBC_SOURCE.to_string(), LIBC_DISPLAY_NAME.to_string()));
+    }
+    if path == "embedded_hal" || path == "embedded-hal" || path == "embedded" || path == "hal" || path == "roze::embedded_hal" {
+        return Ok((EMBEDDED_HAL_SOURCE.to_string(), EMBEDDED_HAL_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

@@ -23,9 +23,9 @@ SOURCES = $(SRC_DIR)/ast.roze \
 RUNTIME_C = $(SRC_DIR)/runtime.c
 ROZE_COMPILER_ROZE = $(SRC_DIR)/roze_compiler.roze
 
-.PHONY: all clean bundle bootstrap stage1 stage2 stage3 bootstrap_test fixpoint test_programs test_frontend test_semantic test_optimizer test_native_backend test_wasm
+.PHONY: all clean bundle bootstrap stage1 stage2 stage3 bootstrap_test fixpoint test_programs test_frontend test_semantic test_optimizer test_native_backend test_wasm test_embedded
 
-all: bootstrap_test test_programs test_frontend test_semantic test_optimizer test_native_backend test_wasm
+all: bootstrap_test test_programs test_frontend test_semantic test_optimizer test_native_backend test_wasm test_embedded
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
@@ -160,5 +160,25 @@ test_wasm: $(BIN_DIR)/roze_stage2
 	./$(BIN_DIR)/roze_stage2 --check-only $(TEST_DIR)/10_wasm.roze
 	@echo "✅ All Pure Roze WebAssembly target tests passed! 🌐🎉"
 
+test_embedded: $(BIN_DIR)/roze_stage2
+	@echo "=================================================================="
+	@echo "🧪 Verifying Pure Roze Embedded Microcontroller Targets (M6-T08)"
+	@echo "=================================================================="
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/11_embedded_hal.roze --target-thumbv7m $(BIN_DIR)/stm32_firmware.bin
+	@test -f $(BIN_DIR)/stm32_firmware.bin
+	@hexdump -C $(BIN_DIR)/stm32_firmware.bin | head -n 6
+	@echo "✅ ARM Cortex-M3 (STM32) firmware binary generated!"
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/11_embedded_hal.roze --target-rp2040 $(BIN_DIR)/rp2040_firmware.bin
+	@test -f $(BIN_DIR)/rp2040_firmware.bin
+	@hexdump -C $(BIN_DIR)/rp2040_firmware.bin | head -n 6
+	@echo "✅ RP2040 Pico firmware binary generated!"
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/11_embedded_hal.roze --target-riscv32 $(BIN_DIR)/riscv32_firmware.bin
+	@test -f $(BIN_DIR)/riscv32_firmware.bin
+	@hexdump -C $(BIN_DIR)/riscv32_firmware.bin | head -n 6
+	@echo "✅ RISC-V RV32IMC (ESP32-C3) firmware binary generated!"
+	./$(BIN_DIR)/roze_stage2 $(TEST_DIR)/11_embedded_hal.roze -o $(BIN_DIR)/test11 && ./$(BIN_DIR)/test11
+	./$(BIN_DIR)/roze_stage2 --check-only $(TEST_DIR)/11_embedded_hal.roze
+	@echo "✅ All Pure Roze Embedded Microcontroller targets passed! ⚡🎉"
+
 clean:
-	rm -rf $(BIN_DIR)/*.o $(BIN_DIR)/*.obj $(BIN_DIR)/*.wasm $(BIN_DIR)/*.c $(BIN_DIR)/test* $(BIN_DIR)/self_test* $(BIN_DIR)/roze_stage* $(BIN_DIR)/standalone* $(BIN_DIR)/native_*
+	rm -rf $(BIN_DIR)/*.o $(BIN_DIR)/*.obj $(BIN_DIR)/*.wasm $(BIN_DIR)/*.bin $(BIN_DIR)/*.c $(BIN_DIR)/test* $(BIN_DIR)/self_test* $(BIN_DIR)/roze_stage* $(BIN_DIR)/standalone* $(BIN_DIR)/native_*

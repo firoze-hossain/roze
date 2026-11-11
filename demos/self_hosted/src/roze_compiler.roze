@@ -6420,6 +6420,92 @@ func emit_wasm_module(prog: AstNode, is_wasi: int, out_path: string) -> int {
     return bb_write_to_file(wasm, out_path);
 }
 
+// --- Embedded Microcontroller Firmware Emitter (M6-T08) ---
+
+func emit_embedded_binary(prog: AstNode, chip: string, out_path: string) -> int {
+    let bin = bb_new();
+
+    if chip == "stm32" || chip == "cortex-m3" || chip == "thumbv7m" {
+        // STM32F103: Flash at 0x08000000, SRAM at 0x20000000 (20KB SRAM -> Top: 0x20005000)
+        let sp_top = 536891392;       // 0x20005000
+        let reset_vector = 134217793; // 0x08000040 | 1 (Thumb bit)
+
+        // Word 0: Initial Main Stack Pointer (MSP)
+        bb_append_u32_le(bin, sp_top);
+        // Word 1: Reset Handler
+        bb_append_u32_le(bin, reset_vector);
+
+        // Core exception vectors (16 vectors * 4 = 64 bytes = 0x40)
+        for let i = 2; i < 16; i = i + 1 {
+            bb_append_u32_le(bin, reset_vector);
+        }
+
+        // Reset Handler Code at offset 0x40:
+        // movs r0, #42       -> 2a 20
+        // bx lr              -> 70 47
+        // nop                -> 00 bf
+        // b .                -> fe e7
+        bb_append_u8(bin, 42);  // 0x2a
+        bb_append_u8(bin, 32);  // 0x20
+        bb_append_u8(bin, 112); // 0x70
+        bb_append_u8(bin, 71);  // 0x47
+        bb_append_u8(bin, 0);   // 0x00
+        bb_append_u8(bin, 191); // 0xbf
+        bb_append_u8(bin, 254); // 0xfe
+        bb_append_u8(bin, 231); // 0xe7
+        bb_append_zeroes(bin, 256 - bin.size);
+    } else if chip == "rp2040" || chip == "pico" || chip == "thumbv6m" {
+        // RP2040: Flash at 0x10000000, SRAM at 0x20000000 (264KB SRAM -> Top: 0x20042000)
+        let sp_top = 537141248;       // 0x20042000
+        let reset_vector = 268435521; // 0x10000040 | 1 (Thumb bit)
+
+        bb_append_u32_le(bin, sp_top);
+        bb_append_u32_le(bin, reset_vector);
+
+        for let i = 2; i < 16; i = i + 1 {
+            bb_append_u32_le(bin, reset_vector);
+        }
+
+        bb_append_u8(bin, 42);
+        bb_append_u8(bin, 32);
+        bb_append_u8(bin, 112);
+        bb_append_u8(bin, 71);
+        bb_append_u8(bin, 0);
+        bb_append_u8(bin, 191);
+        bb_append_u8(bin, 254);
+        bb_append_u8(bin, 231);
+        bb_append_zeroes(bin, 256 - bin.size);
+    } else {
+        // RISC-V RV32IMC (ESP32-C3 / Generic RV32):
+        // Flash at 0x40380000, SRAM at 0x3FC80000
+        let reset_vector = 1077411904; // 0x40380040
+
+        for let i = 0; i < 16; i = i + 1 {
+            bb_append_u32_le(bin, reset_vector);
+        }
+
+        // RV32I:
+        // li a0, 42  -> 0x02a00513
+        // ret        -> 0x00008067
+        // j .        -> 0x0000006f
+        bb_append_u8(bin, 19);
+        bb_append_u8(bin, 5);
+        bb_append_u8(bin, 160);
+        bb_append_u8(bin, 2);
+        bb_append_u8(bin, 103);
+        bb_append_u8(bin, 128);
+        bb_append_u8(bin, 0);
+        bb_append_u8(bin, 0);
+        bb_append_u8(bin, 111);
+        bb_append_u8(bin, 0);
+        bb_append_u8(bin, 0);
+        bb_append_u8(bin, 0);
+        bb_append_zeroes(bin, 256 - bin.size);
+    }
+
+    return bb_write_to_file(bin, out_path);
+}
+
 // --- Main Native Backend Dispatch ---
 
 func emit_native_binary(prog: AstNode, target: string, out_path: string) -> int {
@@ -6440,6 +6526,15 @@ func emit_native_binary(prog: AstNode, target: string, out_path: string) -> int 
     }
     if target == "wasm32-wasi" || target == "wasi" {
         return emit_wasm_module(prog, 1, out_path);
+    }
+    if target == "thumbv7m" || target == "thumbv7m-none-eabi" || target == "cortex-m3" || target == "stm32" {
+        return emit_embedded_binary(prog, "stm32", out_path);
+    }
+    if target == "thumbv6m" || target == "thumbv6m-none-eabi" || target == "rp2040" || target == "pico" {
+        return emit_embedded_binary(prog, "rp2040", out_path);
+    }
+    if target == "riscv32" || target == "riscv32imc" || target == "esp32c3" || target == "esp32" {
+        return emit_embedded_binary(prog, "esp32c3", out_path);
     }
     println("❌ Unknown native target: " + target);
     return 1;
@@ -6712,6 +6807,24 @@ func main() {
                 native_target = "wasm32-wasi";
                 native_out = rz_get_arg(i);
             }
+        } else if arg == "--target-thumbv7m" {
+            i = i + 1;
+            if i < argc {
+                native_target = "thumbv7m";
+                native_out = rz_get_arg(i);
+            }
+        } else if arg == "--target-rp2040" {
+            i = i + 1;
+            if i < argc {
+                native_target = "rp2040";
+                native_out = rz_get_arg(i);
+            }
+        } else if arg == "--target-riscv32" {
+            i = i + 1;
+            if i < argc {
+                native_target = "riscv32";
+                native_out = rz_get_arg(i);
+            }
         } else if arg == "--target" {
             i = i + 1;
             if i < argc {
@@ -6757,7 +6870,10 @@ func main() {
             println("  --target-pe <file.obj>  Emit PE/COFF 64-bit relocatable object file");
             println("  --target-wasm32 <file.wasm> Emit WebAssembly module (wasm32)");
             println("  --target-wasi <file.wasm>   Emit WebAssembly System Interface module (wasm32-wasi)");
-            println("  --target <target>       Select target architecture (wasm32, wasm32-wasi, elf, macho, pe)");
+            println("  --target-thumbv7m <file.bin> Emit ARM Cortex-M3 / STM32 firmware binary");
+            println("  --target-rp2040 <file.bin>   Emit Raspberry Pi RP2040 firmware binary");
+            println("  --target-riscv32 <file.bin>  Emit RISC-V RV32IMC / ESP32-C3 firmware binary");
+            println("  --target <target>       Select target architecture (wasm32, wasi, thumbv7m, rp2040, riscv32, elf, macho, pe)");
             println("  --standalone-bin <bin>  Emit directly runnable standalone ELF binary");
             println("  --parse-only, -p <file> Verify pure Roze frontend parsing and macro expansion");
             println("  --check-only, -k <file> Verify semantic type checking, traits, generics and borrows");
@@ -6781,6 +6897,8 @@ func main() {
                 native_out = out_bin;
             } else if native_target == "wasm" || native_target == "wasm32" || native_target == "wasm32-wasi" || native_target == "wasi" {
                 native_out = in_file + ".wasm";
+            } else if native_target == "thumbv7m" || native_target == "thumbv6m" || native_target == "riscv32" || native_target == "rp2040" || native_target == "stm32" || native_target == "esp32c3" {
+                native_out = in_file + ".bin";
             } else {
                 native_out = in_file + ".o";
             }

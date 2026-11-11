@@ -274,6 +274,24 @@ func main() {
                 native_target = "wasm32-wasi";
                 native_out = rz_get_arg(i);
             }
+        } else if arg == "--target-thumbv7m" {
+            i = i + 1;
+            if i < argc {
+                native_target = "thumbv7m";
+                native_out = rz_get_arg(i);
+            }
+        } else if arg == "--target-rp2040" {
+            i = i + 1;
+            if i < argc {
+                native_target = "rp2040";
+                native_out = rz_get_arg(i);
+            }
+        } else if arg == "--target-riscv32" {
+            i = i + 1;
+            if i < argc {
+                native_target = "riscv32";
+                native_out = rz_get_arg(i);
+            }
         } else if arg == "--target" {
             i = i + 1;
             if i < argc {
@@ -319,7 +337,10 @@ func main() {
             println("  --target-pe <file.obj>  Emit PE/COFF 64-bit relocatable object file");
             println("  --target-wasm32 <file.wasm> Emit WebAssembly module (wasm32)");
             println("  --target-wasi <file.wasm>   Emit WebAssembly System Interface module (wasm32-wasi)");
-            println("  --target <target>       Select target architecture (wasm32, wasm32-wasi, elf, macho, pe)");
+            println("  --target-thumbv7m <file.bin> Emit ARM Cortex-M3 / STM32 firmware binary");
+            println("  --target-rp2040 <file.bin>   Emit Raspberry Pi RP2040 firmware binary");
+            println("  --target-riscv32 <file.bin>  Emit RISC-V RV32IMC / ESP32-C3 firmware binary");
+            println("  --target <target>       Select target architecture (wasm32, wasi, thumbv7m, rp2040, riscv32, elf, macho, pe)");
             println("  --standalone-bin <bin>  Emit directly runnable standalone ELF binary");
             println("  --parse-only, -p <file> Verify pure Roze frontend parsing and macro expansion");
             println("  --check-only, -k <file> Verify semantic type checking, traits, generics and borrows");
@@ -343,6 +364,8 @@ func main() {
                 native_out = out_bin;
             } else if native_target == "wasm" || native_target == "wasm32" || native_target == "wasm32-wasi" || native_target == "wasi" {
                 native_out = in_file + ".wasm";
+            } else if native_target == "thumbv7m" || native_target == "thumbv6m" || native_target == "riscv32" || native_target == "rp2040" || native_target == "stm32" || native_target == "esp32c3" {
+                native_out = in_file + ".bin";
             } else {
                 native_out = in_file + ".o";
             }

@@ -8,6 +8,7 @@ members = [
     "tools/roze-lsp",
     "tools/rozedoc",
     "tools/roze-bindgen",
+    "tools/roze-svd",
 ]
 resolver = "2"
 

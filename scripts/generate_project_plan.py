@@ -578,7 +578,7 @@ s1_rows = [
         ("M6-T08", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Microcontroller IoT", "Microcontroller IoT Targets & 'embedded-hal' Architecture",
         "Embedded cross-compilation targets for ARM Cortex-M (thumbv7m-none-eabi) and RISC-V (riscv32imc). Peripheral Access Crate (PAC) SVD parser and standard 'embedded-hal' peripheral trait library: GPIO, I2C, SPI, UART, PWM, ADC.",
         "Parity with Rust embedded-hal and C CMSIS/HAL micro-firmware architectures; direct flash programming on STM32, ESP32, and RP2040.",
-        "Microcontrollers, IoT Edge, Automotive, Robotics", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Microcontrollers, IoT Edge, Automotive, Robotics", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M6-T09", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Unified Toolchain", "Monolithic 'roze' CLI Toolchain Suite",

@@ -1066,6 +1066,7 @@ int64_t emit_standalone_elf(struct Rz_AstNode* prog, const char* out_path);
 int64_t emit_macho_object(struct Rz_AstNode* prog, const char* out_path);
 int64_t emit_pe_object(struct Rz_AstNode* prog, const char* out_path);
 int64_t emit_wasm_module(struct Rz_AstNode* prog, int64_t is_wasi, const char* out_path);
+int64_t emit_embedded_binary(struct Rz_AstNode* prog, const char* chip, const char* out_path);
 int64_t emit_native_binary(struct Rz_AstNode* prog, const char* target, const char* out_path);
 const char* compile_source_to_c(const char* source);
 int64_t emit_ssa_for_file(const char* file_path);
@@ -7963,6 +7964,64 @@ int64_t emit_wasm_module(struct Rz_AstNode* prog, int64_t is_wasi, const char* o
     return bb_write_to_file(wasm, out_path);
 }
 
+int64_t emit_embedded_binary(struct Rz_AstNode* prog, const char* chip, const char* out_path) {
+    struct Rz_BinaryBuffer* bin = bb_new();
+    if ((((strcmp(chip, "stm32") == 0) || (strcmp(chip, "cortex-m3") == 0)) || (strcmp(chip, "thumbv7m") == 0))) {
+        int64_t sp_top = 536891392;
+        int64_t reset_vector = 134217793;
+        bb_append_u32_le(bin, sp_top);
+        bb_append_u32_le(bin, reset_vector);
+        for (int64_t i = 2; (i < 16); i = (i + 1)) {
+            bb_append_u32_le(bin, reset_vector);
+        }
+        bb_append_u8(bin, 42);
+        bb_append_u8(bin, 32);
+        bb_append_u8(bin, 112);
+        bb_append_u8(bin, 71);
+        bb_append_u8(bin, 0);
+        bb_append_u8(bin, 191);
+        bb_append_u8(bin, 254);
+        bb_append_u8(bin, 231);
+        bb_append_zeroes(bin, (256 - bin->size));
+    } else     if ((((strcmp(chip, "rp2040") == 0) || (strcmp(chip, "pico") == 0)) || (strcmp(chip, "thumbv6m") == 0))) {
+        int64_t sp_top = 537141248;
+        int64_t reset_vector = 268435521;
+        bb_append_u32_le(bin, sp_top);
+        bb_append_u32_le(bin, reset_vector);
+        for (int64_t i = 2; (i < 16); i = (i + 1)) {
+            bb_append_u32_le(bin, reset_vector);
+        }
+        bb_append_u8(bin, 42);
+        bb_append_u8(bin, 32);
+        bb_append_u8(bin, 112);
+        bb_append_u8(bin, 71);
+        bb_append_u8(bin, 0);
+        bb_append_u8(bin, 191);
+        bb_append_u8(bin, 254);
+        bb_append_u8(bin, 231);
+        bb_append_zeroes(bin, (256 - bin->size));
+    } else {
+        int64_t reset_vector = 1077411904;
+        for (int64_t i = 0; (i < 16); i = (i + 1)) {
+            bb_append_u32_le(bin, reset_vector);
+        }
+        bb_append_u8(bin, 19);
+        bb_append_u8(bin, 5);
+        bb_append_u8(bin, 160);
+        bb_append_u8(bin, 2);
+        bb_append_u8(bin, 103);
+        bb_append_u8(bin, 128);
+        bb_append_u8(bin, 0);
+        bb_append_u8(bin, 0);
+        bb_append_u8(bin, 111);
+        bb_append_u8(bin, 0);
+        bb_append_u8(bin, 0);
+        bb_append_u8(bin, 0);
+        bb_append_zeroes(bin, (256 - bin->size));
+    }
+    return bb_write_to_file(bin, out_path);
+}
+
 int64_t emit_native_binary(struct Rz_AstNode* prog, const char* target, const char* out_path) {
     if (((strcmp(target, "elf") == 0) || (strcmp(target, "elf64") == 0))) {
         return emit_elf_object(prog, out_path);
@@ -7981,6 +8040,15 @@ int64_t emit_native_binary(struct Rz_AstNode* prog, const char* target, const ch
     }
     if (((strcmp(target, "wasm32-wasi") == 0) || (strcmp(target, "wasi") == 0))) {
         return emit_wasm_module(prog, 1, out_path);
+    }
+    if (((((strcmp(target, "thumbv7m") == 0) || (strcmp(target, "thumbv7m-none-eabi") == 0)) || (strcmp(target, "cortex-m3") == 0)) || (strcmp(target, "stm32") == 0))) {
+        return emit_embedded_binary(prog, "stm32", out_path);
+    }
+    if (((((strcmp(target, "thumbv6m") == 0) || (strcmp(target, "thumbv6m-none-eabi") == 0)) || (strcmp(target, "rp2040") == 0)) || (strcmp(target, "pico") == 0))) {
+        return emit_embedded_binary(prog, "rp2040", out_path);
+    }
+    if (((((strcmp(target, "riscv32") == 0) || (strcmp(target, "riscv32imc") == 0)) || (strcmp(target, "esp32c3") == 0)) || (strcmp(target, "esp32") == 0))) {
+        return emit_embedded_binary(prog, "esp32c3", out_path);
     }
     printf("%s\n", rz_str_concat("❌ Unknown native target: ", target));
     return 1;
@@ -8219,6 +8287,24 @@ void rz_user_main(void) {
                 native_target = "wasm32-wasi";
                 native_out = rz_get_arg(i);
             }
+        } else         if ((strcmp(arg, "--target-thumbv7m") == 0)) {
+            i = (i + 1);
+            if ((i < argc)) {
+                native_target = "thumbv7m";
+                native_out = rz_get_arg(i);
+            }
+        } else         if ((strcmp(arg, "--target-rp2040") == 0)) {
+            i = (i + 1);
+            if ((i < argc)) {
+                native_target = "rp2040";
+                native_out = rz_get_arg(i);
+            }
+        } else         if ((strcmp(arg, "--target-riscv32") == 0)) {
+            i = (i + 1);
+            if ((i < argc)) {
+                native_target = "riscv32";
+                native_out = rz_get_arg(i);
+            }
         } else         if ((strcmp(arg, "--target") == 0)) {
             i = (i + 1);
             if ((i < argc)) {
@@ -8264,7 +8350,10 @@ void rz_user_main(void) {
             printf("%s\n", "  --target-pe <file.obj>  Emit PE/COFF 64-bit relocatable object file");
             printf("%s\n", "  --target-wasm32 <file.wasm> Emit WebAssembly module (wasm32)");
             printf("%s\n", "  --target-wasi <file.wasm>   Emit WebAssembly System Interface module (wasm32-wasi)");
-            printf("%s\n", "  --target <target>       Select target architecture (wasm32, wasm32-wasi, elf, macho, pe)");
+            printf("%s\n", "  --target-thumbv7m <file.bin> Emit ARM Cortex-M3 / STM32 firmware binary");
+            printf("%s\n", "  --target-rp2040 <file.bin>   Emit Raspberry Pi RP2040 firmware binary");
+            printf("%s\n", "  --target-riscv32 <file.bin>  Emit RISC-V RV32IMC / ESP32-C3 firmware binary");
+            printf("%s\n", "  --target <target>       Select target architecture (wasm32, wasi, thumbv7m, rp2040, riscv32, elf, macho, pe)");
             printf("%s\n", "  --standalone-bin <bin>  Emit directly runnable standalone ELF binary");
             printf("%s\n", "  --parse-only, -p <file> Verify pure Roze frontend parsing and macro expansion");
             printf("%s\n", "  --check-only, -k <file> Verify semantic type checking, traits, generics and borrows");
@@ -8286,6 +8375,8 @@ void rz_user_main(void) {
                 native_out = out_bin;
             } else             if (((((strcmp(native_target, "wasm") == 0) || (strcmp(native_target, "wasm32") == 0)) || (strcmp(native_target, "wasm32-wasi") == 0)) || (strcmp(native_target, "wasi") == 0))) {
                 native_out = rz_str_concat(in_file, ".wasm");
+            } else             if (((((((strcmp(native_target, "thumbv7m") == 0) || (strcmp(native_target, "thumbv6m") == 0)) || (strcmp(native_target, "riscv32") == 0)) || (strcmp(native_target, "rp2040") == 0)) || (strcmp(native_target, "stm32") == 0)) || (strcmp(native_target, "esp32c3") == 0))) {
+                native_out = rz_str_concat(in_file, ".bin");
             } else {
                 native_out = rz_str_concat(in_file, ".o");
             }

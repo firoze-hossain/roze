@@ -29,6 +29,7 @@ cranelift-object = "=0.103.0"
 cranelift-native = "=0.103.0"
 target-lexicon = "0.12"
 roze-bindgen = { path = "../tools/roze-bindgen" }
+roze-svd = { path = "../tools/roze-svd" }
 
 [lib]
 path = "src/lib.rs"

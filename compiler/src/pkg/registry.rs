@@ -405,6 +405,57 @@ impl RegistryClient {
                 },
             ],
         );
+
+        // 10. roze-torch
+        self.register_builtin_package(
+            "roze-torch",
+            "High-performance Deep Learning & Tensor computation engine for Roze with Autograd, Neural Layers, and CUDA/BLAS FFI",
+            vec![
+                PackageVersionInfo {
+                    version: Version::parse("1.0.0").unwrap(),
+                    dependencies: HashMap::new(),
+                    description: "Deep Learning, Tensor algebra, Autograd and CUDA FFI".to_string(),
+                    checksum: None,
+                    signature: None,
+                    public_key: None,
+                    yanked: false,
+                },
+            ],
+        );
+
+        // 11. roze-game
+        self.register_builtin_package(
+            "roze-game",
+            "High-performance 2D/3D Game Engine for Roze powered by Raylib via native C-FFI",
+            vec![
+                PackageVersionInfo {
+                    version: Version::parse("1.0.0").unwrap(),
+                    dependencies: HashMap::new(),
+                    description: "2D/3D Game Engine with physics, audio, windowing, and camera via Raylib C-FFI".to_string(),
+                    checksum: None,
+                    signature: None,
+                    public_key: None,
+                    yanked: false,
+                },
+            ],
+        );
+
+        // 12. roze-ui
+        self.register_builtin_package(
+            "roze-ui",
+            "Modern Reactive Cross-Platform Desktop GUI & Declarative Component Framework for Roze",
+            vec![
+                PackageVersionInfo {
+                    version: Version::parse("1.0.0").unwrap(),
+                    dependencies: HashMap::new(),
+                    description: "Declarative Component Model, Reactive State Signals and Flexbox Layout Engine".to_string(),
+                    checksum: None,
+                    signature: None,
+                    public_key: None,
+                    yanked: false,
+                },
+            ],
+        );
     }
 
     fn register_builtin_package(&mut self, name: &str, desc: &str, versions: Vec<PackageVersionInfo>) {
@@ -628,10 +679,7 @@ impl RegistryClient {
         let temp_path = temp_build.path();
 
         // If package exists in workspace `packages/<name>`, copy real source
-        let package_source_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.join("packages").join(name));
+        let package_source_dir = find_workspace_package_dir(name);
 
         let mut copied_real_package = false;
         if let Some(ref pkg_dir) = package_source_dir {
@@ -656,10 +704,19 @@ impl RegistryClient {
                         }
                     }
                 }
+                // Ensure both lib.roze and src/lib.roze are present in package root
+                if temp_path.join("lib.roze").exists() && !temp_path.join("src/lib.roze").exists() {
+                    let _ = fs::create_dir_all(temp_path.join("src"));
+                    let _ = fs::copy(temp_path.join("lib.roze"), temp_path.join("src/lib.roze"));
+                } else if temp_path.join("src/lib.roze").exists() && !temp_path.join("lib.roze").exists() {
+                    let _ = fs::copy(temp_path.join("src/lib.roze"), temp_path.join("lib.roze"));
+                }
                 if pkg_dir.join("bsr.mfz").exists() {
                     let _ = fs::copy(pkg_dir.join("bsr.mfz"), temp_path.join("bsr.mfz"));
                 }
-                copied_real_package = true;
+                if temp_path.join("lib.roze").exists() {
+                    copied_real_package = true;
+                }
             }
         }
 
@@ -730,6 +787,42 @@ main = "lib.roze"
         }
         Ok(())
     }
+}
+
+fn find_workspace_package_dir(name: &str) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut names = vec![name.to_string()];
+    let sanitized = name.replace("::", "_");
+    if sanitized != name {
+        names.push(sanitized.clone());
+    }
+    let hyphenated = name.replace('_', "-");
+    if hyphenated != name {
+        names.push(hyphenated.clone());
+    }
+
+    for n in &names {
+        let mut candidates = vec![
+            manifest_dir.join("packages").join(n),
+            manifest_dir.join("..").join("packages").join(n),
+            manifest_dir.join("../..").join("packages").join(n),
+            PathBuf::from("packages").join(n),
+            PathBuf::from("../packages").join(n),
+            PathBuf::from("../../packages").join(n),
+        ];
+        if let Ok(cur) = std::env::current_dir() {
+            candidates.push(cur.join("packages").join(n));
+            candidates.push(cur.join("../packages").join(n));
+            candidates.push(cur.join("../../packages").join(n));
+        }
+        for cand in candidates {
+            if cand.exists() && (cand.join("src").exists() || cand.join("lib.roze").exists() || cand.join("bsr.mfz").exists()) {
+                return Some(cand);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

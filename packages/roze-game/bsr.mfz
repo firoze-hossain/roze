@@ -1,0 +1,13 @@
+# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
+[package]
+name = "roze-game"
+version = "1.0.0"
+edition = "2026"
+authors = ["Mohammad Firoze <firoze@roze.dev>"]
+license = "MIT OR Apache-2.0"
+description = "High-performance 2D/3D Game Engine for Roze powered by Raylib via native C-FFI"
+main = "src/lib.roze"
+repository = "https://github.com/firoze-hossain/roze"
+keywords = ["game", "raylib", "gamedev", "2d", "3d", "physics", "audio", "graphics"]
+
+[dependencies]

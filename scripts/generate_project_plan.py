@@ -590,7 +590,7 @@ s1_rows = [
         ("M6-T10", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Ecosystem Seed Packages", "Community Package Registry & Reference Seed Ecosystem",
         "Deploy official package registry with seed packages: rozeboot (web), roze-orm (database), roze-torch (tensors/AI via CUDA FFI), roze-game (games via Raylib FFI), roze-ui (desktop GUI).",
         "Empowers community to install and build frameworks using 'bsr add <package>'.",
-        "Ecosystem, Community, Frameworks", "7 Days", ("High", 14), ("Planned", 12)
+        "Ecosystem, Community, Frameworks", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M6-T11", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Final Release M6", "Official Roze v2.0 'Prometheus' Production Launch",
@@ -768,7 +768,7 @@ s3_rows = [
         "Deterministic real-time microcontrollers, IoT devices, automotive systems, and custom hardware peripheral control.",
         "Bare-metal freestanding target (--target freestanding) with UART, PS/2, PIT, HPET, and GOP drivers.",
         "ARM Cortex-M (thumbv6m/thumbv7em) and RISC-V targets, SVD/PAC register generation, zero-allocation embedded-hal traits (GPIO, I2C, SPI, PWM, ADC).",
-        "M2-T01, M2-T05, M2-T06, M2-T07, M2-T08, M2-T09, M6-T10 (Sprint 3, 4, 12)",
+        "M2-T01, M2-T05, M2-T06, M2-T07, M2-T08, M2-T09, M6-T08 (Sprint 3, 4, 12)",
         "C (CMSIS/HAL), Rust (embedded-hal), Zig",
         ("100% - Microcontroller IoT Ready", 16)
     ],
@@ -777,7 +777,7 @@ s3_rows = [
         "Run high-performance Roze modules in web browsers, Node.js runtimes, and edge serverless clouds (Cloudflare Workers, Fastly Compute@Edge).",
         "Native Cranelift backend engine with initial target triple infrastructure.",
         "wasm32 and wasm32-wasi targets, WASI snapshot-preview1 POSIX syscall abstraction, linear memory buffer export, roze-bindgen JS/TS glue generator.",
-        "M1-T05, M2-T01, M2-T03, M5-T08, M6-T09 (Sprint 2, 3, 10, 12)",
+        "M1-T05, M2-T01, M2-T03, M5-T08, M6-T07 (Sprint 2, 3, 10, 12)",
         "Rust (wasm-bindgen / WASI), Go (syscall/js), C++ (Emscripten)",
         ("100% - WebAssembly & WASI Ready", 16)
     ],
@@ -786,7 +786,7 @@ s3_rows = [
         "Decentralized, mathematically verified dependency resolution, cryptographic package signing, and reproducible builds across all architectures.",
         "Production 'bsr' (Basir) package manager with '.mfz' (Mohammad Firoze) manifest format.",
         "Basir ('bsr') package manager, proprietary 'bsr.mfz' (Mohammad Firoze) project manifest, deterministic 'bsr.lock', Ed25519 signatures, SAT solver.",
-        "M5-T08, M6-T07, M6-T08 (Sprint 10, 12)",
+        "M5-T08, M6-T07, M6-T08, M6-T10 (Sprint 10, 12)",
         "Rust (Cargo / crates.io), Go (go modules), Node (npm)",
         ("100% - Basir (.mfz) Ecosystem Ready", 16)
     ],

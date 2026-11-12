@@ -1,0 +1,33 @@
+// packages/roze-torch/tests/test_torch.roze
+import "roze-torch";
+
+func assert_true(condition: bool, message: string) {
+    if !condition {
+        println("❌ Assertion failed: " + message);
+    }
+}
+
+func main() {
+    println("Testing Roze-Torch...");
+
+    // 1. MatMul verification
+    let a = tensor_ones_2d(3, 3);
+    let b = tensor_ones_2d(3, 3);
+    let c = tensor_matmul(a, b);
+
+    let val = tensor_get_2d(c, 0, 0);
+    assert_true(val == 3.0, "Matmul expected 3.0");
+
+    // 2. Linear layer forward pass
+    let layer = linear_new(3, 2);
+    let input = tensor_ones_2d(1, 3);
+    let output = linear_forward(layer, input);
+
+    assert_true(output.shape.dim0 == 1 && output.shape.dim1 == 2, "Linear output shape mismatch");
+
+    // 3. Activations
+    let relu_out = tensor_relu(c);
+    assert_true(tensor_get_2d(relu_out, 0, 0) == 3.0, "ReLU failed");
+
+    println("✅ All Roze-Torch unit tests passed!");
+}

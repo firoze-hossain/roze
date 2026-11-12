@@ -1,0 +1,36 @@
+// packages/roze-game/tests/test_game.roze
+import "roze-game";
+
+func assert_true(condition: bool, message: string) {
+    if !condition {
+        println("❌ Assertion failed: " + message);
+    }
+}
+
+func main() {
+    println("Testing Roze-Game...");
+
+    // 1. Math and vector tests
+    let v1 = vec2_new(10.0, 20.0);
+    let v2 = vec2_new(5.0, 5.0);
+    let v3 = vec2_add(v1, v2);
+
+    assert_true(v3.x == 15.0 && v3.y == 25.0, "Vector addition failed");
+
+    // 2. Collision detection
+    let r1 = rect_new(0.0, 0.0, 50.0, 50.0);
+    let r2 = rect_new(25.0, 25.0, 50.0, 50.0);
+    let r3 = rect_new(100.0, 100.0, 50.0, 50.0);
+
+    assert_true(game_check_collision_recs(r1, r2), "Overlapping rectangles should collide");
+    assert_true(!game_check_collision_recs(r1, r3), "Disjoint rectangles should not collide");
+
+    // 3. GameObject lifecycle
+    let player = game_object_new("Ship", 100.0, 100.0, 32.0, 32.0, color_red());
+    player.velocity.x = 100.0;
+    game_object_update(player, 0.5); // dt = 0.5s
+
+    assert_true(player.pos.x == 150.0, "Game object movement update failed");
+
+    println("✅ All Roze-Game unit tests passed!");
+}

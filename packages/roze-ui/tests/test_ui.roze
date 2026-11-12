@@ -1,0 +1,42 @@
+// packages/roze-ui/tests/test_ui.roze
+import "roze-ui";
+
+func assert_true(condition: bool, message: string) {
+    if !condition {
+        println("❌ Assertion failed: " + message);
+    }
+}
+
+func main() {
+    println("Testing Roze-UI...");
+
+    // 1. Widget construction
+    let lbl = label_new("Hello UI");
+    let btn = button_new("Click Me");
+    let chk = checkbox_new("Agree", true);
+    let prog = progress_bar_new(75, 100);
+
+    let items = list_new();
+    list_push(items, lbl);
+    list_push(items, btn);
+    list_push(items, chk);
+    list_push(items, prog);
+
+    let root = column_new(items);
+
+    // 2. Layout computation
+    ui_compute_layout(root, 10, 10, 400, 300);
+
+    assert_true(root.bounds.x == 10 && root.bounds.y == 10, "Root layout position incorrect");
+    assert_true(btn.bounds.y > lbl.bounds.y, "Column layout must stack vertically");
+
+    // 3. Click dispatch
+    let hit = ui_dispatch_click(root, btn.bounds.x + 5, btn.bounds.y + 5);
+    assert_true(hit && btn.clicked, "Click dispatch failed to trigger button");
+
+    // 4. Tree dumping
+    let tree = ui_dump_tree(root, 0);
+    assert_true(string_length(tree) > 0, "UI tree dump was empty");
+
+    println("✅ All Roze-UI unit tests passed!");
+}

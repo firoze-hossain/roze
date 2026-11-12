@@ -232,17 +232,31 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         "crypto" | "roze::crypto" | "roze-crypto" | "roze_crypto" | "tls" | "sha" | "aes" | "chacha" | "rsa" => {
             Some("roze-crypto/src/lib.roze".to_string())
         }
+        "torch" | "roze::torch" | "roze-torch" | "roze_torch" | "tensors" | "autograd" | "neural" | "ai_torch" => {
+            Some("roze-torch/src/lib.roze".to_string())
+        }
+        "game" | "roze::game" | "roze-game" | "roze_game" | "raylib_game" | "gamedev" | "engine" => {
+            Some("roze-game/src/lib.roze".to_string())
+        }
+        "ui" | "roze::ui" | "roze-ui" | "roze_ui" | "gui" | "widgets" | "desktop_ui" => {
+            Some("roze-ui/src/lib.roze".to_string())
+        }
         _ => None,
     };
 
     let subpaths = match pkg_subpath {
-        Some(sp) => vec![sp],
+        Some(sp) => vec![
+            sp.clone(),
+            sp.replace("src/lib.roze", "lib.roze"),
+        ],
         None => {
             let sanitized = path.replace("::", "_").replace('-', "_");
             let mut list = Vec::new();
             list.push(format!("{}/src/lib.roze", path));
+            list.push(format!("{}/lib.roze", path));
             if sanitized != path {
                 list.push(format!("{}/src/lib.roze", sanitized));
+                list.push(format!("{}/lib.roze", sanitized));
             }
             list
         }

@@ -1,0 +1,13 @@
+# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
+[package]
+name = "roze-torch"
+version = "1.0.0"
+edition = "2026"
+authors = ["Mohammad Firoze <firoze@roze.dev>"]
+license = "MIT OR Apache-2.0"
+description = "High-performance Deep Learning & Tensor computation engine for Roze with Autograd, Neural Layers, and CUDA/BLAS FFI"
+main = "src/lib.roze"
+repository = "https://github.com/firoze-hossain/roze"
+keywords = ["ai", "ml", "tensors", "deep-learning", "autograd", "neural-networks", "cuda"]
+
+[dependencies]

@@ -1,0 +1,275 @@
+// ==============================================================================
+// 🌹 Roze-UI: Modern Declarative Desktop GUI & Component Framework
+// ==============================================================================
+// Modern reactive component model with Flexbox-inspired layout and state signals.
+// ==============================================================================
+
+// ==============================================================================
+// SECTION 1: Geometry & Layout Primitives
+// ==============================================================================
+
+class Bounds {
+    x: int,
+    y: int,
+    width: int,
+    height: int
+}
+
+func bounds_new(x: int, y: int, w: int, h: int) -> Bounds {
+    return new Bounds(x, y, w, h);
+}
+
+func bounds_contains(b: Bounds, px: int, py: int) -> bool {
+    if px >= b.x && px <= (b.x + b.width) && py >= b.y && py <= (b.y + b.height) {
+        return true;
+    }
+    return false;
+}
+
+class Insets {
+    top: int,
+    right: int,
+    bottom: int,
+    left: int
+}
+
+func insets_all(padding: int) -> Insets {
+    return new Insets(padding, padding, padding, padding);
+}
+
+func insets_symmetric(vertical: int, horizontal: int) -> Insets {
+    return new Insets(vertical, horizontal, vertical, horizontal);
+}
+
+// Layout directions
+func direction_row() -> int { return 0; }
+func direction_column() -> int { return 1; }
+
+// ==============================================================================
+// SECTION 2: Reactive State & Signal Engine
+// ==============================================================================
+
+class StateSignal {
+    id: int,
+    string_val: string,
+    int_val: int,
+    bool_val: bool
+}
+
+func signal_string(id: int, initial: string) -> StateSignal {
+    return new StateSignal(id, initial, 0, false);
+}
+
+func signal_int(id: int, initial: int) -> StateSignal {
+    return new StateSignal(id, "", initial, false);
+}
+
+func signal_bool(id: int, initial: bool) -> StateSignal {
+    return new StateSignal(id, "", 0, initial);
+}
+
+func signal_get_int(s: StateSignal) -> int {
+    return s.int_val;
+}
+
+func signal_set_int(s: StateSignal, v: int) {
+    s.int_val = v;
+}
+
+func signal_get_string(s: StateSignal) -> string {
+    return s.string_val;
+}
+
+func signal_set_string(s: StateSignal, v: string) {
+    s.string_val = v;
+}
+
+// ==============================================================================
+// SECTION 3: Declarative Widget Component Model
+// ==============================================================================
+
+// Widget Kinds
+func widget_kind_container() -> int { return 0; }
+func widget_kind_label() -> int { return 1; }
+func widget_kind_button() -> int { return 2; }
+func widget_kind_input() -> int { return 3; }
+func widget_kind_checkbox() -> int { return 4; }
+func widget_kind_progress() -> int { return 5; }
+
+class Widget {
+    id: string,
+    kind: int,
+    text: string,
+    bounds: Bounds,
+    padding: Insets,
+    direction: int, // row or column
+    children: list,
+    enabled: bool,
+    clicked: bool
+}
+
+func widget_new(kind: int, id: string, text: string) -> Widget {
+    let b = bounds_new(0, 0, 100, 30);
+    let p = insets_all(4);
+    let ch = list_new();
+    return new Widget(id, kind, text, b, p, direction_column(), ch, true, false);
+}
+
+func label_new(text: string) -> Widget {
+    let w = widget_new(widget_kind_label(), "lbl", text);
+    w.bounds.width = string_length(text) * 8 + 16;
+    w.bounds.height = 24;
+    return w;
+}
+
+func button_new(label: string) -> Widget {
+    let w = widget_new(widget_kind_button(), "btn", label);
+    w.bounds.width = string_length(label) * 8 + 32;
+    w.bounds.height = 36;
+    return w;
+}
+
+func text_input_new(placeholder: string) -> Widget {
+    let w = widget_new(widget_kind_input(), "inp", placeholder);
+    w.bounds.width = 160;
+    w.bounds.height = 32;
+    return w;
+}
+
+func checkbox_new(label: string, checked: bool) -> Widget {
+    let text = label;
+    if checked {
+        text = "[x] " + label;
+    } else {
+        text = "[ ] " + label;
+    }
+    let w = widget_new(widget_kind_checkbox(), "chk", text);
+    w.bounds.width = string_length(text) * 8 + 16;
+    w.bounds.height = 24;
+    return w;
+}
+
+func progress_bar_new(value: int, max_val: int) -> Widget {
+    let pct = (value * 100) / max_val;
+    let text = to_string(pct) + "%";
+    let w = widget_new(widget_kind_progress(), "prog", text);
+    w.bounds.width = 200;
+    w.bounds.height = 20;
+    return w;
+}
+
+func container_new(direction: int, children: list) -> Widget {
+    let w = widget_new(widget_kind_container(), "box", "");
+    w.direction = direction;
+    w.children = children;
+    return w;
+}
+
+func row_new(children: list) -> Widget {
+    return container_new(direction_row(), children);
+}
+
+func column_new(children: list) -> Widget {
+    return container_new(direction_column(), children);
+}
+
+// ==============================================================================
+// SECTION 4: Layout Solver & Flexbox Geometry Computation
+// ==============================================================================
+
+func ui_compute_layout(root: Widget, x: int, y: int, max_w: int, max_h: int) {
+    root.bounds.x = x;
+    root.bounds.y = y;
+
+    if root.kind != widget_kind_container() {
+        return;
+    }
+
+    let count = list_length(root.children);
+    let cur_x = x + root.padding.left;
+    let cur_y = y + root.padding.top;
+
+    let i = 0;
+    while i < count {
+        let child: Widget = list_get(root.children, i);
+        ui_compute_layout(child, cur_x, cur_y, max_w, max_h);
+
+        if root.direction == direction_row() {
+            cur_x = cur_x + child.bounds.width + root.padding.right;
+        } else {
+            cur_y = cur_y + child.bounds.height + root.padding.bottom;
+        }
+        i = i + 1;
+    }
+
+    if root.direction == direction_row() {
+        root.bounds.width = cur_x - x;
+        root.bounds.height = max_h;
+    } else {
+        root.bounds.width = max_w;
+        root.bounds.height = cur_y - y;
+    }
+}
+
+// ==============================================================================
+// SECTION 5: Event Dispatching & Hit Testing
+// ==============================================================================
+
+func ui_dispatch_click(root: Widget, click_x: int, click_y: int) -> bool {
+    if !bounds_contains(root.bounds, click_x, click_y) {
+        return false;
+    }
+
+    if root.kind == widget_kind_button() {
+        root.clicked = true;
+        return true;
+    }
+
+    let count = list_length(root.children);
+    let i = 0;
+    while i < count {
+        let child: Widget = list_get(root.children, i);
+        if ui_dispatch_click(child, click_x, click_y) {
+            return true;
+        }
+        i = i + 1;
+    }
+
+    return false;
+}
+
+// ==============================================================================
+// SECTION 6: Virtual Tree Dumper & Theme Engine
+// ==============================================================================
+
+func ui_dump_tree(w: Widget, depth: int) -> string {
+    let indent = "";
+    let d = 0;
+    while d < depth {
+        indent = indent + "  ";
+        d = d + 1;
+    }
+
+    let kind_name = "Container";
+    if w.kind == widget_kind_label() { kind_name = "Label"; }
+    if w.kind == widget_kind_button() { kind_name = "Button"; }
+    if w.kind == widget_kind_input() { kind_name = "Input"; }
+    if w.kind == widget_kind_checkbox() { kind_name = "Checkbox"; }
+    if w.kind == widget_kind_progress() { kind_name = "Progress"; }
+
+    let out = indent + "<" + kind_name + " id='" + w.id + "' text='" + w.text + "' bounds=(" + w.bounds.x + "," + w.bounds.y + " " + w.bounds.width + "x" + w.bounds.height + ")>\n";
+
+    let count = list_length(w.children);
+    let i = 0;
+    while i < count {
+        let child: Widget = list_get(w.children, i);
+        out = out + ui_dump_tree(child, depth + 1);
+        i = i + 1;
+    }
+
+    return out;
+}
+
+func ui_version() -> string {
+    return "1.0.0";
+}

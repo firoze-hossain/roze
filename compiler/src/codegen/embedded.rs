@@ -397,20 +397,20 @@ pub fn compile_embedded_target(
 
     let cross_cc = match arch {
         EmbeddedArch::CortexM3M4 | EmbeddedArch::CortexM0Plus => {
-            if which::which("arm-none-eabi-gcc").is_ok() {
+            if which::which("arm-none-eabi-gcc").is_ok() && which::which("arm-none-eabi-objcopy").is_ok() {
                 Some(("arm-none-eabi-gcc", "arm-none-eabi-objcopy", "-mcpu=cortex-m3 -mthumb"))
-            } else if which::which("clang").is_ok() {
+            } else if which::which("clang").is_ok() && which::which("llvm-objcopy").is_ok() {
                 Some(("clang", "llvm-objcopy", "--target=armv7m-none-eabi -mcpu=cortex-m3"))
             } else {
                 None
             }
         }
         EmbeddedArch::Riscv32Imc => {
-            if which::which("riscv64-unknown-elf-gcc").is_ok() {
+            if which::which("riscv64-unknown-elf-gcc").is_ok() && which::which("riscv64-unknown-elf-objcopy").is_ok() {
                 Some(("riscv64-unknown-elf-gcc", "riscv64-unknown-elf-objcopy", "-march=rv32imc -mabi=ilp32"))
-            } else if which::which("riscv32-unknown-elf-gcc").is_ok() {
+            } else if which::which("riscv32-unknown-elf-gcc").is_ok() && which::which("riscv32-unknown-elf-objcopy").is_ok() {
                 Some(("riscv32-unknown-elf-gcc", "riscv32-unknown-elf-objcopy", "-march=rv32imc -mabi=ilp32"))
-            } else if which::which("clang").is_ok() {
+            } else if which::which("clang").is_ok() && which::which("llvm-objcopy").is_ok() {
                 Some(("clang", "llvm-objcopy", "--target=riscv32 -march=rv32imc"))
             } else {
                 None
@@ -437,26 +437,35 @@ pub fn compile_embedded_target(
         let status = cmd.status();
         if let Ok(st) = status {
             if st.success() {
-                compiled_with_toolchain = true;
                 // Run objcopy for raw .bin
-                let _ = Command::new(objcopy)
+                let bin_status = Command::new(objcopy)
                     .args(["-O", "binary"])
                     .arg(&elf_path)
                     .arg(&bin_path)
                     .status();
                 // Run objcopy for .hex
-                let _ = Command::new(objcopy)
+                let hex_status = Command::new(objcopy)
                     .args(["-O", "ihex"])
                     .arg(&elf_path)
                     .arg(&hex_path)
                     .status();
+
+                if bin_status.map(|s| s.success()).unwrap_or(false)
+                    && hex_status.map(|s| s.success()).unwrap_or(false)
+                    && bin_path.exists()
+                    && hex_path.exists()
+                {
+                    compiled_with_toolchain = true;
+                }
             }
         }
     }
 
     if !compiled_with_toolchain {
         // Direct Standalone ELF Firmware Generator
-        emit_standalone_embedded_elf(&elf_path, arch, &mmap)?;
+        if !elf_path.exists() {
+            emit_standalone_embedded_elf(&elf_path, arch, &mmap)?;
+        }
 
         // Produce flat binary firmware (e.g. vector table + code)
         let _bin_bytes = fs::read(&elf_path).unwrap_or_else(|_| vec![0u8; 1024]);
@@ -480,9 +489,13 @@ pub fn compile_embedded_target(
             flash_image.extend_from_slice(&[0x13, 0x05, 0xa0, 0x02, 0x67, 0x80, 0x00, 0x00]);
         }
 
-        fs::write(&bin_path, &flash_image)?;
-        let hex_str = emit_intel_hex(&flash_image, mmap.flash_origin as u32);
-        fs::write(&hex_path, hex_str)?;
+        if !bin_path.exists() {
+            fs::write(&bin_path, &flash_image)?;
+        }
+        if !hex_path.exists() {
+            let hex_str = emit_intel_hex(&flash_image, mmap.flash_origin as u32);
+            fs::write(&hex_path, hex_str)?;
+        }
     }
 
     println!("{} Generated Embedded Artifacts:", "✅ [Embedded Firmware]".bright_green().bold());

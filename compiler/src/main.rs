@@ -558,7 +558,15 @@ fn main() {
                     std::process::exit(1);
                 }
                 let stem = codegen::class_name_from_path(&file);
-                PathBuf::from(format!("{}.bin", stem))
+                let cand1 = PathBuf::from(format!("{}.bin", stem));
+                let cand2 = Path::new(&file).with_extension("bin");
+                if cand1.exists() {
+                    cand1
+                } else if cand2.exists() {
+                    cand2
+                } else {
+                    cand1
+                }
             } else {
                 PathBuf::from(&file)
             };

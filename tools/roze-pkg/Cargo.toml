@@ -28,4 +28,3 @@ fs_extra = "1.3"
 walkdir = "2.5"
 tempfile = "3.0"
 roze-compiler = { path = "../../compiler" }
-rozedoc = { path = "../rozedoc" }

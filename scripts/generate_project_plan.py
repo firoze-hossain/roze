@@ -584,7 +584,7 @@ s1_rows = [
         ("M6-T09", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Unified Toolchain", "Monolithic 'roze' CLI Toolchain Suite",
         "Unify compiler, roze-build, roze-test, roze-fmt, roze-doc, and roze-repl into a single hyper-fast monolithic executable (roze) integrating with 'bsr'.",
         "Matches the convenience of 'cargo' and 'go' single-binary toolchain.",
-        "Developer Experience, Tooling", "6 Days", ("High", 14), ("Planned", 12)
+        "Developer Experience, Tooling", "6 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M6-T10", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Ecosystem Seed Packages", "Community Package Registry & Reference Seed Ecosystem",

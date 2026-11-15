@@ -1,18 +1,18 @@
-# ==============================================================================
-# 🌹 Official Roze Programming Language Installer for Windows (v1.0.0)
+﻿# ==============================================================================
+# 🌹 Official Roze Programming Language Installer for Windows (v2.0.0 'Prometheus')
 # Usage in PowerShell:
 #     iwr -useb https://roze-lang.org/install.ps1 | iex
 # ==============================================================================
 
 $ErrorActionPreference = "Stop"
 
-$RozeVersion = "1.0.0"
+$RozeVersion = "2.0.0"
 $InstallDir = Join-Path $env:LOCALAPPDATA "Roze"
 $BinDir = Join-Path $InstallDir "bin"
 $StdlibDir = Join-Path $InstallDir "stdlib"
 
 Write-Host "==============================================================================" -ForegroundColor Magenta
-Write-Host "🌹 Installing Roze Programming Language v$RozeVersion for Windows" -ForegroundColor Magenta
+Write-Host "🌹 Installing Roze Programming Language v$RozeVersion 'Prometheus' for Windows" -ForegroundColor Magenta
 Write-Host "==============================================================================" -ForegroundColor Magenta
 
 # Create target directories
@@ -28,16 +28,27 @@ $SourceBin = Join-Path $ScriptDir "target\release"
 if (Test-Path (Join-Path $SourceBin "roze.exe")) {
     Write-Host "📦 Copying binaries from $SourceBin..." -ForegroundColor Cyan
     Copy-Item -Path (Join-Path $SourceBin "roze*.exe") -Destination $BinDir -Force
+    if (Test-Path (Join-Path $SourceBin "bsr.exe")) {
+        Copy-Item -Path (Join-Path $SourceBin "bsr.exe") -Destination $BinDir -Force
+    }
 } else {
     Write-Host "⚡ Building Roze toolchain via Cargo..." -ForegroundColor Cyan
     cargo build --release --workspace
     Copy-Item -Path (Join-Path $SourceBin "roze*.exe") -Destination $BinDir -Force
+    if (Test-Path (Join-Path $SourceBin "bsr.exe")) {
+        Copy-Item -Path (Join-Path $SourceBin "bsr.exe") -Destination $BinDir -Force
+    }
 }
 
 # Copy standard library
-$SourceStdlib = Join-Path $ScriptDir "stdlib"
+$SourceStdlib = Join-Path $ScriptDir "stdlib\src"
 if (Test-Path $SourceStdlib) {
     Copy-Item -Path "$SourceStdlib\*" -Destination $StdlibDir -Recurse -Force
+} else {
+    $FallbackStdlib = Join-Path $ScriptDir "stdlib"
+    if (Test-Path $FallbackStdlib) {
+        Copy-Item -Path "$FallbackStdlib\*" -Destination $StdlibDir -Recurse -Force
+    }
 }
 
 # Add BinDir to User PATH environment variable
@@ -52,11 +63,12 @@ if ($UserPath -notlike "*$BinDir*") {
 
 Write-Host ""
 Write-Host "==============================================================================" -ForegroundColor Green
-Write-Host "🎉 Roze v$RozeVersion installed successfully!" -ForegroundColor Green
+Write-Host "🎉 Roze v$RozeVersion 'Prometheus' installed successfully!" -ForegroundColor Green
 Write-Host "Location: $InstallDir" -ForegroundColor Green
 Write-Host "==============================================================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Restart your PowerShell terminal, then run:" -ForegroundColor Yellow
 Write-Host "    roze --version" -ForegroundColor White
-Write-Host "    roze-pkg --version" -ForegroundColor White
+Write-Host "    bsr --version" -ForegroundColor White
+Write-Host "    roze-lsp --version" -ForegroundColor White
 Write-Host ""

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# 🌹 Official Roze Programming Language Installer (v1.0.0)
+# 🌹 Official Roze Programming Language Installer (v2.0.0 'Prometheus')
 # Usage: curl -fsSL https://roze-lang.org/install.sh | bash
 # ==============================================================================
 
 set -euo pipefail
 
-ROZE_VERSION="1.0.0"
+ROZE_VERSION="2.0.0"
 INSTALL_DIR="${HOME}/.roze"
 BIN_DIR="${INSTALL_DIR}/bin"
 STDLIB_DIR="${INSTALL_DIR}/stdlib"
 
 echo "=============================================================================="
-echo "🌹 Installing Roze Programming Language v${ROZE_VERSION}"
+echo "🌹 Installing Roze Programming Language v${ROZE_VERSION} 'Prometheus'"
 echo "=============================================================================="
 
 # Detect OS and architecture
@@ -41,26 +41,30 @@ mkdir -p "${STDLIB_DIR}"
 # Locate repo or pre-built binaries
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+BINARIES=(roze bsr roze-pkg roze-build roze-lsp roze-bindgen roze-svd rozedoc)
+
 if [ -f "${SCRIPT_DIR}/target/release/roze" ]; then
     echo "📦 Installing from local release build..."
-    cp -f "${SCRIPT_DIR}/target/release/roze" "${BIN_DIR}/"
-    [ -f "${SCRIPT_DIR}/target/release/roze-pkg" ] && cp -f "${SCRIPT_DIR}/target/release/roze-pkg" "${BIN_DIR}/"
-    [ -f "${SCRIPT_DIR}/target/release/roze-build" ] && cp -f "${SCRIPT_DIR}/target/release/roze-build" "${BIN_DIR}/"
-    [ -f "${SCRIPT_DIR}/target/release/roze-lsp" ] && cp -f "${SCRIPT_DIR}/target/release/roze-lsp" "${BIN_DIR}/"
+    for bin in "${BINARIES[@]}"; do
+        [ -f "${SCRIPT_DIR}/target/release/${bin}" ] && cp -f "${SCRIPT_DIR}/target/release/${bin}" "${BIN_DIR}/"
+    done
 elif [ -f "${SCRIPT_DIR}/target/debug/roze" ]; then
     echo "📦 Installing from local debug build..."
-    cp -f "${SCRIPT_DIR}/target/debug/roze" "${BIN_DIR}/"
-    [ -f "${SCRIPT_DIR}/target/debug/roze-pkg" ] && cp -f "${SCRIPT_DIR}/target/debug/roze-pkg" "${BIN_DIR}/"
-    [ -f "${SCRIPT_DIR}/target/debug/roze-build" ] && cp -f "${SCRIPT_DIR}/target/debug/roze-build" "${BIN_DIR}/"
-    [ -f "${SCRIPT_DIR}/target/debug/roze-lsp" ] && cp -f "${SCRIPT_DIR}/target/debug/roze-lsp" "${BIN_DIR}/"
+    for bin in "${BINARIES[@]}"; do
+        [ -f "${SCRIPT_DIR}/target/debug/${bin}" ] && cp -f "${SCRIPT_DIR}/target/debug/${bin}" "${BIN_DIR}/"
+    done
 else
     echo "⚡ Compiling Roze toolchain (v${ROZE_VERSION})..."
     cargo build --release --workspace
-    cp -f "${SCRIPT_DIR}/target/release/roze"* "${BIN_DIR}/"
+    for bin in "${BINARIES[@]}"; do
+        [ -f "${SCRIPT_DIR}/target/release/${bin}" ] && cp -f "${SCRIPT_DIR}/target/release/${bin}" "${BIN_DIR}/"
+    done
 fi
 
 # Copy standard library
-if [ -d "${SCRIPT_DIR}/stdlib" ]; then
+if [ -d "${SCRIPT_DIR}/stdlib/src" ]; then
+    cp -rf "${SCRIPT_DIR}/stdlib/src/"* "${STDLIB_DIR}/"
+elif [ -d "${SCRIPT_DIR}/stdlib" ]; then
     cp -rf "${SCRIPT_DIR}/stdlib/"* "${STDLIB_DIR}/"
 fi
 
@@ -87,7 +91,7 @@ add_to_path "${HOME}/.profile"
 
 echo ""
 echo "=============================================================================="
-echo "🎉 Roze v${ROZE_VERSION} installed successfully to ${INSTALL_DIR}!"
+echo "🎉 Roze v${ROZE_VERSION} 'Prometheus' installed successfully to ${INSTALL_DIR}!"
 echo "=============================================================================="
 echo ""
 echo "To activate Roze in your current shell session, run:"
@@ -95,5 +99,6 @@ echo "    source ~/.bashrc  (or source ~/.zshrc)"
 echo ""
 echo "Verify installation:"
 echo "    roze --version"
-echo "    roze-pkg --version"
+echo "    bsr --version"
+echo "    roze-lsp --version"
 echo ""

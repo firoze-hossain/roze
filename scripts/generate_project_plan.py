@@ -596,7 +596,7 @@ s1_rows = [
         ("M6-T11", 8), ("Month 6", 11), ("Sprint 12 (W23-W26)", 8), "Final Release M6", "Official Roze v2.0 'Prometheus' Production Launch",
         "Official launch: Finalized grammar specification, 1,000-page standard library documentation, installer packages (deb, rpm, Homebrew, MSI), and RozeHub portal.",
         "Roze v2.0 officially released as an autonomous, resourceful general-purpose programming language on par with Java 25 & Rust 1.99.1.",
-        "Global Release & Production Ecosystem", "5 Days", ("Critical", 14), ("Milestone Gate", 15)
+        "Global Release & Production Ecosystem", "5 Days", ("Critical", 14), ("Completed", 16)
     ]
 ]
 

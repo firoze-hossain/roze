@@ -1,10 +1,10 @@
 ; ==============================================================================
-; Inno Setup Script for Roze Language & Toolchain
+; Inno Setup Script for Roze Language & Toolchain (v2.0.0 'Prometheus')
 ; Builds a modern Windows installer wizard (.exe)
 ; ==============================================================================
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.0"
+  #define MyAppVersion "2.0.0"
 #endif
 
 #define MyAppName "Roze"

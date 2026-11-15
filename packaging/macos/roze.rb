@@ -2,9 +2,9 @@
 # frozen_string_literal: true
 
 class Roze < Formula
-  desc "The Roze Programming Language Toolchain"
+  desc "The Roze Programming Language Toolchain (v2.0.0 'Prometheus')"
   homepage "https://roze-lang.org"
-  url "https://github.com/firoze-hossain/roze/archive/refs/tags/v1.0.0.tar.gz"
+  url "https://github.com/firoze-hossain/roze/archive/refs/tags/v2.0.0.tar.gz"
   sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   license "MIT"
   head "https://github.com/firoze-hossain/roze.git", branch: "master"
@@ -15,11 +15,19 @@ class Roze < Formula
     system "cargo", "build", "--release", "--workspace"
 
     bin.install "target/release/roze"
+    bin.install "target/release/bsr"
     bin.install "target/release/roze-build"
     bin.install "target/release/roze-pkg"
     bin.install "target/release/roze-lsp"
+    bin.install "target/release/roze-bindgen"
+    bin.install "target/release/roze-svd"
+    bin.install "target/release/rozedoc"
 
-    (pkgshare/"stdlib").install Dir["stdlib/*"]
+    if File.directory?("stdlib/src")
+      (pkgshare/"stdlib").install Dir["stdlib/src/*"]
+    else
+      (pkgshare/"stdlib").install Dir["stdlib/*"]
+    end
   end
 
   def caveats
@@ -32,11 +40,11 @@ class Roze < Formula
   test do
     (testpath/"hello.roze").write <<~EOS
       func main() {
-          println("Hello from Roze Homebrew!");
+          println("Hello from Roze v2.0 'Prometheus' Homebrew!");
       }
     EOS
 
     system "#{bin}/roze", "build", "hello.roze", "--target", "native"
-    assert_equal "Hello from Roze Homebrew!\n", shell_output("./hello")
+    assert_equal "Hello from Roze v2.0 'Prometheus' Homebrew!\n", shell_output("./hello")
   end
 end

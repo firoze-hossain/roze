@@ -1,257 +1,403 @@
-# 🌹 The Roze Language Grammar Specification (v1.0.0)
+# 🌹 The Roze Language Grammar Specification (v2.0.0 'Prometheus')
 
-This document provides the formal **Extended Backus-Naur Form (EBNF)** grammar specification for the Roze programming language.
-
----
-
-## 1. Notation
-
-- `[ ... ]` denotes optional elements (0 or 1 time).
-- `{ ... }` denotes repetition (0 or more times).
-- `( ... )` denotes grouping.
-- `|` denotes alternation (choice).
-- `" ... "` denotes terminal tokens or characters.
+This document provides the authoritative, formal **Extended Backus-Naur Form (EBNF)** (ISO/IEC 14977) grammar specification for the **Roze Programming Language v2.0 ('Prometheus')**.
 
 ---
 
-## 2. Lexical Grammar
+## 1. Notation and Conventions
+
+| Notation | Meaning |
+| :--- | :--- |
+| `[ ... ]` | Optional element (0 or 1 time) |
+| `{ ... }` | Repetition (0 or more times) |
+| `( ... )` | Syntactic grouping |
+| `\|` | Alternation (choice) |
+| `" ... "` | Terminal literal token or character |
+| `,` | Sequential concatenation |
+| `-` | Set subtraction / exception |
+| `;` | Rule termination |
+
+---
+
+## 2. Lexical Structure
 
 ### 2.1 Whitespace and Comments
 ```ebnf
-Whitespace      = " " | "\t" | "\r" | "\n" ;
-LineComment     = "//" { AnyCharExceptNewline } ( "\n" | EOF ) ;
-BlockComment    = "/*" { AnyChar | BlockComment } "*/" ;
-Comment         = LineComment | BlockComment ;
+Whitespace        = " " | "\t" | "\r" | "\n" ;
+LineComment       = "//" , { AnyCharExceptNewline } , ( "\n" | EOF ) ;
+DocLineComment    = "///" , { AnyCharExceptNewline } , ( "\n" | EOF ) ;
+ModuleDocComment  = "//!" , { AnyCharExceptNewline } , ( "\n" | EOF ) ;
+BlockComment      = "/*" , { AnyChar | BlockComment } , "*/" ;
+Comment           = LineComment | DocLineComment | ModuleDocComment | BlockComment ;
 ```
 
-### 2.2 Keywords
+### 2.2 Reserved Keywords
 ```ebnf
-Keyword         = "func"     | "let"      | "var"      | "if"       | "else"
-                | "while"    | "for"      | "return"   | "class"    | "new"
-                | "extern"   | "import"   | "enum"     | "match"    | "trait"
-                | "impl"     | "unsafe"   | "null"     | "true"     | "false"
-                | "as"       | "in"       | "break"    | "continue" | "type"
-                | "where"    | "comptime" | "async"    | "await" ;
+Keyword           = "func"     | "let"      | "var"      | "if"       | "else"
+                  | "while"    | "for"      | "return"   | "class"    | "new"
+                  | "extern"   | "import"   | "enum"     | "match"    | "trait"
+                  | "impl"     | "unsafe"   | "null"     | "true"     | "false"
+                  | "as"       | "in"       | "break"    | "continue" | "type"
+                  | "where"    | "comptime" | "async"    | "await"    | "spawn"
+                  | "channel"  | "send"     | "recv"     | "select"   | "asm"
+                  | "yield"    | "defer"    | "nursery"  | "taskgroup" ;
 ```
 
 ### 2.3 Identifiers
 ```ebnf
-Identifier      = ( Letter | "_" ) { Letter | Digit | "_" } ;
-Letter          = "a" ... "z" | "A" ... "Z" ;
-Digit           = "0" ... "9" ;
+Identifier        = ( Letter | "_" ) , { Letter | Digit | "_" } ;
+Letter            = "a" ... "z" | "A" ... "Z" ;
+Digit             = "0" ... "9" ;
+HexDigit          = Digit | "a" ... "f" | "A" ... "F" ;
+OctDigit          = "0" ... "7" ;
+BinDigit          = "0" | "1" ;
 ```
 
 ### 2.4 Literals
 ```ebnf
-Literal         = IntegerLiteral | FloatLiteral | StringLiteral | BooleanLiteral | NullLiteral ;
+Literal           = IntegerLiteral | FloatLiteral | StringLiteral | RawStringLiteral 
+                  | CharLiteral | BooleanLiteral | NullLiteral ;
 
-IntegerLiteral  = [ "-" ] Digit { Digit } ;
-FloatLiteral    = [ "-" ] Digit { Digit } "." Digit { Digit } ;
+IntegerLiteral    = [ "-" ] , ( DecimalLiteral | HexLiteral | OctLiteral | BinLiteral ) , [ IntSuffix ] ;
+DecimalLiteral    = Digit , { Digit | "_" } ;
+HexLiteral        = "0" , ( "x" | "X" ) , HexDigit , { HexDigit | "_" } ;
+OctLiteral        = "0" , ( "o" | "O" ) , OctDigit , { OctDigit | "_" } ;
+BinLiteral        = "0" , ( "b" | "B" ) , BinDigit , { BinDigit | "_" } ;
+IntSuffix         = "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "usize" | "isize" ;
 
-StringLiteral   = "\"" { StringChar | EscapeSeq } "\"" ;
-StringChar      = AnyCharExceptQuoteOrBackslashOrNewline ;
-EscapeSeq       = "\\" ( "n" | "t" | "r" | "\\" | "\"" | "'" | "0" ) ;
+FloatLiteral      = [ "-" ] , DecimalLiteral , "." , DecimalLiteral , [ Exponent ] , [ FloatSuffix ] ;
+Exponent          = ( "e" | "E" ) , [ "+" | "-" ] , DecimalLiteral ;
+FloatSuffix       = "f32" | "f64" ;
 
-BooleanLiteral  = "true" | "false" ;
-NullLiteral     = "null" ;
+CharLiteral       = "'" , ( AnyCharExceptQuoteOrBackslash | EscapeSequence ) , "'" ;
+StringLiteral     = "\"" , { StringChar | EscapeSequence } , "\"" ;
+RawStringLiteral  = "r\"" , { AnyCharExceptQuote } , "\"" ;
+StringChar        = AnyCharExceptQuoteOrBackslashOrNewline ;
+EscapeSequence    = "\\" , ( "n" | "t" | "r" | "\\" | "\"" | "'" | "0" | "x" , HexDigit , HexDigit | "u{" , { HexDigit } , "}" ) ;
+
+BooleanLiteral    = "true" | "false" ;
+NullLiteral       = "null" ;
 ```
 
-### 2.5 Operators and Punctuation
+### 2.5 Operators and Punctuators
 ```ebnf
-Operator        = "+"  | "-"  | "*"  | "/"  | "%"
-                | "==" | "!=" | "<"  | "<=" | ">"  | ">="
-                | "&&" | "||" | "!"  | "?"
-                | "="  | "+=" | "-=" | "*=" | "/=" | "%="
-                | "->" | "=>" | ".." | "..=" ;
-
-Punctuation     = "(" | ")" | "{" | "}" | "[" | "]"
-                | ";" | "," | ":" | "." | "::" ;
+ArithmeticOp      = "+"  | "-"  | "*"  | "/"  | "%" ;
+BitwiseOp         = "&"  | "|"  | "^"  | "~"  | "<<" | ">>" ;
+ComparisonOp      = "==" | "!=" | "<"  | "<=" | ">"  | ">=" ;
+LogicalOp         = "&&" | "||" | "!" ;
+AssignmentOp      = "="  | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
+ArrowOp           = "->" | "=>" ;
+RangeOp           = ".." | "..=" ;
+NullSafetyOp      = "?"  | "?." | "??" ;
+Punctuator        = "("  | ")"  | "{"  | "}"  | "["  | "]"
+                  | ";"  | ","  | ":"  | "::" | "."  | "@" | "#" | "$" ;
 ```
 
 ---
 
-## 3. Syntactic Grammar
+## 3. Types and Type Expressions
 
-### 3.1 Program and Top-Level Declarations
 ```ebnf
-Program         = { TopLevelItem } EOF ;
+Type              = PrimitiveType
+                  | NamedType
+                  | PointerType
+                  | ReferenceType
+                  | ArrayType
+                  | TupleType
+                  | FunctionType
+                  | VectorType
+                  | SumType ;
 
-TopLevelItem    = ImportDecl
-                | FunctionDecl
-                | ClassDecl
-                | EnumDecl
-                | TraitDecl
-                | ImplDecl
-                | ExternDecl
-                | Statement ;
+PrimitiveType     = "int" | "float" | "bool" | "string" | "void"
+                  | "u8"  | "u16"   | "u32"  | "u64"    | "usize"
+                  | "i8"  | "i16"   | "i32"  | "i64"    | "isize"
+                  | "f32" | "f64"   | "char" | "rawpointer" ;
 
-ImportDecl      = "import" StringLiteral [ ";" ] ;
+NamedType         = [ ModulePath , "::" ] , Identifier , [ GenericTypeArgs ] ;
+GenericTypeArgs   = "<" , Type , { "," , Type } , ">" ;
 
-FunctionDecl    = [ "async" ] "func" Identifier [ TypeParams ] "(" [ ParameterList ] ")" [ "->" Type ] [ WhereClause ] Block ;
+PointerType       = ( "*const" | "*mut" | "*raw" ) , Type ;
+ReferenceType     = [ "&" | "&mut" ] , Type ;
+ArrayType         = "[" , Type , [ ";" , Expression ] , "]" ;
+TupleType         = "(" , [ Type , { "," , Type } ] , ")" ;
+FunctionType      = "fn" , "(" , [ Type , { "," , Type } ] , ")" , [ "->" , Type ] ;
 
-ParameterList   = Parameter { "," Parameter } ;
-Parameter       = Identifier ":" Type ;
-
-TypeParams      = "<" TypeParam { "," TypeParam } ">" ;
-TypeParam       = Identifier [ ":" TraitBoundList ] ;
-TraitBoundList  = Identifier { "+" Identifier } ;
-
-WhereClause     = "where" WherePredicate { "," WherePredicate } ;
-WherePredicate  = Identifier ":" TraitBoundList ;
-```
-
-### 3.2 Types
-```ebnf
-Type            = PrimitiveType
-                | NamedType
-                | GenericType
-                | FunctionType ;
-
-PrimitiveType   = "int" | "float" | "bool" | "string" | "void" | "u8" | "rawpointer" ;
-NamedType       = Identifier ;
-GenericType     = Identifier "<" Type { "," Type } ">" ;
-FunctionType    = "(" [ TypeList ] ")" "->" Type ;
-TypeList        = Type { "," Type } ;
-```
-
-### 3.3 Class Declarations
-```ebnf
-ClassDecl       = "class" Identifier [ TypeParams ] "{" { FieldDecl [ "," ] } "}" ;
-FieldDecl       = Identifier ":" Type ;
-```
-
-### 3.4 Enum Declarations
-```ebnf
-EnumDecl        = "enum" Identifier [ TypeParams ] "{" { EnumVariant [ "," ] } "}" ;
-EnumVariant     = Identifier [ "(" ParameterList ")" ] ;
-```
-
-### 3.5 Trait & Implementation Declarations
-```ebnf
-TraitDecl          = "trait" Identifier [ TypeParams ] "{" { TraitItem } "}" ;
-TraitItem          = TraitMethodDecl | AssociatedTypeDecl ;
-TraitMethodDecl    = "func" Identifier "(" [ ParameterList ] ")" [ "->" Type ] ";" ;
-AssociatedTypeDecl = "type" Identifier ";" ;
-
-ImplDecl           = "impl" [ TypeParams ] Identifier "for" Type "{" { ImplItem } "}" ;
-ImplItem           = FunctionDecl | AssociatedTypeDef ;
-AssociatedTypeDef  = "type" Identifier "=" Type ";" ;
-```
-
-### 3.6 Extern Declarations
-```ebnf
-ExternDecl      = "extern" StringLiteral "func" Identifier "(" [ ParameterList ] ")" [ "->" Type ] ";" ;
+VectorType        = "Vec4f" | "Vec8f" | "Vec4i" | "Vec16u8" ;
+SumType           = ( "Result" , "<" , Type , "," , Type , ">" )
+                  | ( "Option" , "<" , Type , ">" ) ;
 ```
 
 ---
 
-## 4. Statements
+## 4. Program Structure and Declarations
 
 ```ebnf
-Statement       = Block
-                | LetStatement
-                | AssignStatement
-                | IfStatement
-                | WhileStatement
-                | ForStatement
-                | MatchStatement
-                | ReturnStatement
-                | UnsafeStatement
-                | ComptimeStatement
-                | ExpressionStatement ;
+Program           = { TopLevelDeclaration } , EOF ;
 
-Block           = "{" { Statement } "}" ;
+TopLevelDeclaration = [ DocComment ] , [ AttributeList ] , 
+                    ( ImportDecl
+                    | FunctionDecl
+                    | ClassDecl
+                    | EnumDecl
+                    | TraitDecl
+                    | ImplDecl
+                    | TypeAliasDecl
+                    | ExternBlock
+                    | GlobalVarDecl
+                    | Statement ) ;
 
-LetStatement    = ( "let" | "var" ) Identifier [ ":" Type ] [ "=" Expression ] ";" ;
+AttributeList     = { "#[" , Attribute , "]" } ;
+Attribute         = Identifier , [ "(" , [ AttributeArgs ] , ")" ] ;
+AttributeArgs     = Expression , { "," , Expression } ;
 
-AssignStatement = LValue ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) Expression ";" ;
-LValue          = Identifier { MemberAccess | IndexAccess } ;
+ImportDecl        = "import" , StringLiteral , [ "as" , Identifier ] , ";" ;
 
-IfStatement     = "if" Expression Block [ "else" ( IfStatement | Block ) ] ;
+TypeAliasDecl     = "type" , Identifier , [ GenericTypeParams ] , "=" , Type , ";" ;
 
-WhileStatement  = "while" Expression Block ;
+GlobalVarDecl     = ( "let" | "var" ) , Identifier , [ ":" , Type ] , "=" , Expression , ";" ;
+```
 
-ForStatement    = "for" [ Statement ] ";" [ Expression ] ";" [ Expression ] Block ;
+### 4.1 Functions and Methods
+```ebnf
+FunctionDecl      = [ "async" ] , "func" , Identifier , [ GenericTypeParams ] ,
+                    "(" , [ ParameterList ] , ")" ,
+                    [ "->" , Type ] ,
+                    [ WhereClause ] ,
+                    ( Block | ";" ) ;
 
-MatchStatement  = "match" Expression "{" { MatchArm } "}" ;
-MatchArm        = Pattern [ "if" Expression ] "=>" ( Block | Statement | Expression [ ";" ] ) ;
-Pattern         = RangePattern
-                | EnumPattern
-                | StructPattern
-                | TuplePattern
-                | SlicePattern
-                | Literal
-                | Identifier
-                | "_" ;
+GenericTypeParams = "<" , GenericParam , { "," , GenericParam } , ">" ;
+GenericParam      = Identifier , [ ":" , TraitBound ] ;
+TraitBound        = NamedType , { "+" , NamedType } ;
 
-RangePattern    = Expression ( ".." | "..=" ) Expression ;
-EnumPattern     = [ Identifier "::" ] Identifier [ "(" [ PatternList ] ")" ] ;
-StructPattern   = Identifier "{" [ FieldPatternList ] "}" ;
-FieldPatternList = FieldPattern { "," FieldPattern } ;
-FieldPattern    = Identifier [ ":" Pattern ] ;
-TuplePattern    = "(" [ PatternList ] ")" ;
-SlicePattern    = "[" [ SlicePatternElements ] "]" ;
-SlicePatternElements = PatternList [ "," ".." [ Identifier ] [ "," PatternList ] ]
-                     | ".." [ Identifier ] [ "," PatternList ] ;
-PatternList     = Pattern { "," Pattern } ;
+WhereClause       = "where" , Type , ":" , TraitBound , { "," , Type , ":" , TraitBound } ;
 
-ReturnStatement = "return" [ Expression ] ";" ;
+ParameterList     = Parameter , { "," , Parameter } ;
+Parameter         = [ "mut" ] , Identifier , ":" , Type , [ "=" , Expression ] ;
+```
 
-UnsafeStatement = "unsafe" Block ;
+### 4.2 Classes and Data Structures
+```ebnf
+ClassDecl         = "class" , Identifier , [ GenericTypeParams ] ,
+                    [ "extends" , NamedType ] ,
+                    [ "implements" , NamedType , { "," , NamedType } ] ,
+                    "{" , { ClassMember } , "}" ;
 
-ComptimeStatement = "comptime" ( Block | Statement | Expression [ ";" ] ) ;
+ClassMember       = [ DocComment ] , [ AttributeList ] , ( FieldDecl | MethodDecl | ConstructorDecl ) ;
+FieldDecl         = [ "pub" ] , Identifier , ":" , Type , [ "=" , Expression ] , ";" ;
+ConstructorDecl   = "init" , "(" , [ ParameterList ] , ")" , Block ;
+MethodDecl        = FunctionDecl ;
+```
 
-ExpressionStatement = Expression ";" ;
+### 4.3 Enums and Algebraic Data Types (ADTs)
+```ebnf
+EnumDecl          = "enum" , Identifier , [ GenericTypeParams ] , "{" ,
+                    [ EnumVariantList ] ,
+                    "}" ;
+
+EnumVariantList   = EnumVariant , { "," , EnumVariant } , [ "," ] ;
+EnumVariant       = [ DocComment ] , Identifier , [ VariantPayload ] , [ "=" , Expression ] ;
+VariantPayload    = TuplePayload | StructPayload ;
+TuplePayload      = "(" , Type , { "," , Type } , ")" ;
+StructPayload     = "{" , FieldDecl , { FieldDecl } , "}" ;
+```
+
+### 4.4 Traits and Implementations
+```ebnf
+TraitDecl         = "trait" , Identifier , [ GenericTypeParams ] , [ ":" , TraitBound ] ,
+                    "{" , { TraitItem } , "}" ;
+
+TraitItem         = MethodSignature | AssociatedType ;
+MethodSignature   = [ DocComment ] , "func" , Identifier , [ GenericTypeParams ] ,
+                    "(" , [ ParameterList ] , ")" , [ "->" , Type ] , ( ";" | Block ) ;
+AssociatedType    = "type" , Identifier , [ ":" , TraitBound ] , ";" ;
+
+ImplDecl          = "impl" , [ GenericTypeParams ] , [ NamedType , "for" ] , Type ,
+                    [ WhereClause ] ,
+                    "{" , { ImplItem } , "}" ;
+
+ImplItem          = FunctionDecl | TypeAliasDecl ;
+```
+
+### 4.5 Foreign Function Interface (FFI) & Assembly
+```ebnf
+ExternBlock       = "extern" , [ StringLiteral ] , "{" , { ExternItem } , "}" ;
+ExternItem        = "func" , Identifier , "(" , [ ParameterList ] , ")" , [ "->" , Type ] , ";" ;
+
+InlineAsm         = "asm" , [ "volatile" ] , "{" ,
+                    StringLiteral ,
+                    [ ":" , AsmOutputs ] ,
+                    [ ":" , AsmInputs ] ,
+                    [ ":" , AsmClobbers ] ,
+                    [ ":" , AsmOptions ] ,
+                    "}" ;
 ```
 
 ---
 
-## 5. Expressions & Precedence
-
-Precedence levels are ordered from lowest (1) to highest (12):
+## 5. Statements
 
 ```ebnf
-Expression      = LogicalOr ;
+Statement         = Block
+                  | LetStatement
+                  | VarStatement
+                  | AssignmentStatement
+                  | ExpressionStatement
+                  | IfStatement
+                  | WhileStatement
+                  | ForStatement
+                  | MatchStatement
+                  | ReturnStatement
+                  | BreakStatement
+                  | ContinueStatement
+                  | DeferStatement
+                  | UnsafeStatement
+                  | ComptimeStatement
+                  | ConcurrencyStatement ;
 
-LogicalOr       = LogicalAnd { "||" LogicalAnd } ;                 (* Level 1 *)
-LogicalAnd      = Equality { "&&" Equality } ;                     (* Level 2 *)
-Equality        = Relational { ( "==" | "!=" ) Relational } ;      (* Level 3 *)
-Relational      = Bitwise { ( "<" | "<=" | ">" | ">=" ) Bitwise } ;(* Level 4 *)
-Bitwise         = Additive { ( "&" | "|" | "^" ) Additive } ;      (* Level 5 *)
-Additive        = Multiplicative { ( "+" | "-" ) Multiplicative } ;(* Level 6 *)
-Multiplicative  = Unary { ( "*" | "/" | "%" ) Unary } ;            (* Level 7 *)
+Block             = "{" , { Statement } , "}" ;
 
-Unary           = ( "-" | "!" | "*" | "&" | "await" ) Unary          (* Level 8 *)
-                | TryExpression ;
+LetStatement      = "let" , Pattern , [ ":" , Type ] , [ "=" , Expression ] , ";" ;
+VarStatement      = "var" , Pattern , [ ":" , Type ] , [ "=" , Expression ] , ";" ;
 
-TryExpression   = Postfix [ "?" ] ;                                (* Level 9 *)
+AssignmentStatement = LValue , AssignmentOp , Expression , ";" ;
 
-Postfix         = Primary { MemberAccess | IndexAccess | Call | MethodCall } ; (* Level 10 *)
+ExpressionStatement = Expression , ";" ;
 
-MemberAccess    = "." Identifier ;
-IndexAccess     = "[" Expression "]" ;
-Call            = "(" [ ArgumentList ] ")" ;
-MethodCall      = "." Identifier "(" [ ArgumentList ] ")" ;
-ArgumentList    = Expression { "," Expression } ;
+IfStatement       = "if" , ( Expression | LetPatternCondition ) , Block ,
+                    { "else" , "if" , ( Expression | LetPatternCondition ) , Block } ,
+                    [ "else" , Block ] ;
 
-Primary         = Literal                                          (* Level 11 *)
-                | Identifier
-                | NewExpression
-                | ClosureExpression
-                | ComptimeExpression
-                | ListLiteral
-                | "(" Expression ")" ;
+LetPatternCondition = "let" , Pattern , "=" , Expression ;
 
-NewExpression   = "new" Identifier [ TypeArgs ] "(" [ ArgumentList ] ")" ;
-TypeArgs        = "<" Type { "," Type } ">" ;
+WhileStatement    = "while" , ( Expression | LetPatternCondition ) , Block ;
 
-ClosureExpression = "(" [ ParameterList ] ")" [ "->" Type ] "=>" ( Block | Expression ) ;
+ForStatement      = ForInStatement | ForClassicStatement ;
+ForInStatement    = "for" , Pattern , "in" , Expression , Block ;
+ForClassicStatement = "for" , [ LetStatement | VarStatement | ExpressionStatement ] ,
+                            [ Expression ] , ";" ,
+                            [ Expression ] , Block ;
 
-ComptimeExpression = "comptime" ( Block | Expression ) ;
+MatchStatement    = "match" , Expression , "{" , { MatchArm } , "}" ;
+MatchArm          = MatchPattern , [ "if" , Expression ] , "=>" , ( Block | ( Statement ) ) ;
+MatchPattern      = Pattern , { "|" , Pattern } ;
 
-ListLiteral     = "[" [ ArgumentList ] "]" ;
+ReturnStatement   = "return" , [ Expression ] , ";" ;
+BreakStatement    = "break" , [ Expression ] , ";" ;
+ContinueStatement = "continue" , ";" ;
+DeferStatement    = "defer" , ( Block | ExpressionStatement ) ;
+UnsafeStatement   = "unsafe" , Block ;
+ComptimeStatement = "comptime" , Block ;
+```
+
+### 5.1 Structured Concurrency Statements
+```ebnf
+ConcurrencyStatement = SpawnStatement | ChannelStatement | NurseryStatement ;
+
+SpawnStatement    = "spawn" , ( Block | CallExpression ) , ";" ;
+ChannelStatement  = "channel" , Identifier , [ "<" , Type , ">" ] , [ "(" , Expression , ")" ] , ";" ;
+NurseryStatement  = ( "nursery" | "taskgroup" ) , Identifier , Block ;
 ```
 
 ---
 
-## 6. End of Grammar Specification
+## 6. Patterns and Destructuring
+
+```ebnf
+Pattern           = WildcardPattern
+                  | LiteralPattern
+                  | IdentifierPattern
+                  | TuplePattern
+                  | StructPattern
+                  | EnumPattern
+                  | ReferencePattern
+                  | SlicePattern ;
+
+WildcardPattern   = "_" ;
+LiteralPattern    = Literal ;
+IdentifierPattern = [ "mut" ] , Identifier , [ "@" , Pattern ] ;
+TuplePattern      = "(" , [ Pattern , { "," , Pattern } ] , ")" ;
+StructPattern     = NamedType , "{" , [ FieldPattern , { "," , FieldPattern } ] , "}" ;
+FieldPattern      = Identifier , [ ":" , Pattern ] ;
+EnumPattern       = [ ModulePath , "::" ] , Identifier , "::" , Identifier , [ TuplePattern | StructPattern ] ;
+ReferencePattern  = ( "&" | "&mut" ) , Pattern ;
+SlicePattern      = "[" , [ Pattern , { "," , Pattern } ] , "]" ;
+```
+
+---
+
+## 7. Expressions and Operator Precedence
+
+Precedence (from highest to lowest):
+
+1. **Primary & Postfix**: Literals, identifiers, grouping `()`, field access `.`, call `()`, indexing `[]`, try operator `?`, struct constructor.
+2. **Unary**: `!`, `-`, `~`, `*` (deref), `&` / `&mut` (borrow), `await`.
+3. **Casting**: `as`.
+4. **Multiplicative**: `*`, `/`, `%`.
+5. **Additive**: `+`, `-`.
+6. **Bit Shift**: `<<`, `>>`.
+7. **Relational**: `<`, `<=`, `>`, `>=`.
+8. **Equality**: `==`, `!=`.
+9. **Bitwise AND**: `&`.
+10. **Bitwise XOR**: `^`.
+11. **Bitwise OR**: `|`.
+12. **Logical AND**: `&&`.
+13. **Logical OR**: `||`.
+14. **Null Coalescing**: `??`.
+15. **Range**: `..`, `..=`.
+16. **Closure & Ternary / Control**: `\|x\| => expr`, `if-else` expressions.
+17. **Assignment**: `=`, `+=`, `-=`, etc.
+
+```ebnf
+Expression        = AssignmentExpr ;
+
+AssignmentExpr    = LogicalOrExpr , [ AssignmentOp , AssignmentExpr ] ;
+LogicalOrExpr     = LogicalAndExpr , { "||" , LogicalAndExpr } ;
+LogicalAndExpr    = BitwiseOrExpr , { "&&" , BitwiseOrExpr } ;
+BitwiseOrExpr     = BitwiseXorExpr , { "|" , BitwiseXorExpr } ;
+BitwiseXorExpr    = BitwiseAndExpr , { "^" , BitwiseAndExpr } ;
+BitwiseAndExpr    = EqualityExpr , { "&" , EqualityExpr } ;
+EqualityExpr      = RelationalExpr , { ( "==" | "!=" ) , RelationalExpr } ;
+RelationalExpr    = ShiftExpr , { ( "<" | "<=" | ">" | ">=" ) , ShiftExpr } ;
+ShiftExpr         = AdditiveExpr , { ( "<<" | ">>" ) , AdditiveExpr } ;
+AdditiveExpr      = MultiplicativeExpr , { ( "+" | "-" ) , MultiplicativeExpr } ;
+MultiplicativeExpr= CastExpr , { ( "*" | "/" | "%" ) , CastExpr } ;
+CastExpr          = UnaryExpr , { "as" , Type } ;
+
+UnaryExpr         = ( ( "!" | "-" | "~" | "*" | "&" | "&mut" | "await" ) , UnaryExpr )
+                  | PostfixExpr ;
+
+PostfixExpr       = PrimaryExpr , { PostfixOp } ;
+PostfixOp         = ( "(" , [ ArgumentList ] , ")" )
+                  | ( "[" , Expression , "]" )
+                  | ( "." , Identifier )
+                  | ( "?." , Identifier )
+                  | "?" ;
+
+PrimaryExpr       = Literal
+                  | Identifier
+                  | ( "(" , Expression , ")" )
+                  | TupleExpr
+                  | ArrayExpr
+                  | ClosureExpr
+                  | NewStructExpr
+                  | MatchExpr
+                  | IfExpr
+                  | InlineAsm
+                  | ComptimeExpr ;
+
+ClosureExpr       = "|" , [ ParameterList ] , "|" , [ "->" , Type ] , ( Block | Expression ) ;
+NewStructExpr     = "new" , NamedType , "(" , [ ArgumentList ] , ")" ;
+ArgumentList      = Argument , { "," , Argument } ;
+Argument          = [ Identifier , ":" ] , Expression ;
+```
+
+---
+
+## 8. Conformance & Verifier Matrix
+
+The grammar specified in this document is verified by:
+- **Lexer & Parser Implementation**: `compiler/src/lexer.rs`, `compiler/src/parser.rs`.
+- **Pure Roze Self-Hosted Parser**: `demos/self_hosted/src/parser.roze`.
+- **Semantic Verifier**: `compiler/src/semantic/mod.rs`.
+- **Formatting Formatter Engine**: `compiler/src/fmt.rs`.
+- **Automated Grammar Conformance Test Suite**: `compiler/tests/golden.rs` and `demos/self_hosted/tests/06_frontend_grammar.roze`.

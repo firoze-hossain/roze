@@ -58,7 +58,7 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=1.0.0" >> "$GITHUB_OUTPUT"
+            echo "version=2.0.0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build Roze Workspace with Cargo
@@ -81,10 +81,9 @@ jobs:
           sed -i "s/^Version:.*/Version: ${VERSION}/" dist/deb-pkg/DEBIAN/control
 
           # Copy binaries
-          cp target/release/roze dist/deb-pkg/usr/local/bin/
-          cp target/release/roze-build dist/deb-pkg/usr/local/bin/
-          cp target/release/roze-pkg dist/deb-pkg/usr/local/bin/
-          cp target/release/roze-lsp dist/deb-pkg/usr/local/bin/
+          for bin in roze bsr roze-build roze-pkg roze-lsp roze-bindgen roze-svd rozedoc; do
+            [ -f "target/release/${bin}" ] && cp "target/release/${bin}" dist/deb-pkg/usr/local/bin/
+          done
 
           # Copy standard library
           cp -r stdlib/src/* dist/deb-pkg/usr/local/lib/roze/stdlib/
@@ -102,7 +101,9 @@ jobs:
 
           # Create tar.gz archive
           mkdir -p "dist/roze-${VERSION}-linux-x64/bin" "dist/roze-${VERSION}-linux-x64/stdlib"
-          cp target/release/roze target/release/roze-build target/release/roze-pkg target/release/roze-lsp "dist/roze-${VERSION}-linux-x64/bin/"
+          for bin in roze bsr roze-build roze-pkg roze-lsp roze-bindgen roze-svd rozedoc; do
+            [ -f "target/release/${bin}" ] && cp "target/release/${bin}" "dist/roze-${VERSION}-linux-x64/bin/"
+          done
           cp -r stdlib/src/* "dist/roze-${VERSION}-linux-x64/stdlib/"
           tar -czf "dist/roze-${VERSION}-linux-x64.tar.gz" -C dist "roze-${VERSION}-linux-x64"
 
@@ -123,9 +124,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path "dist\roze-win-bin\bin", "dist\roze-win-bin\stdlib"
 
           Copy-Item "target\release\roze.exe" "dist\roze-win-bin\bin\"
-          Copy-Item "target\release\roze-build.exe" "dist\roze-win-bin\bin\"
-          Copy-Item "target\release\roze-pkg.exe" "dist\roze-win-bin\bin\"
-          Copy-Item "target\release\roze-lsp.exe" "dist\roze-win-bin\bin\"
+          Copy-Item "target\release\bsr.exe" "dist\roze-win-bin\bin\" -ErrorAction SilentlyContinue
+          Copy-Item "target\release\roze-build.exe" "dist\roze-win-bin\bin\" -ErrorAction SilentlyContinue
+          Copy-Item "target\release\roze-pkg.exe" "dist\roze-win-bin\bin\" -ErrorAction SilentlyContinue
+          Copy-Item "target\release\roze-lsp.exe" "dist\roze-win-bin\bin\" -ErrorAction SilentlyContinue
+          Copy-Item "target\release\roze-bindgen.exe" "dist\roze-win-bin\bin\" -ErrorAction SilentlyContinue
+          Copy-Item "target\release\roze-svd.exe" "dist\roze-win-bin\bin\" -ErrorAction SilentlyContinue
+          Copy-Item "target\release\rozedoc.exe" "dist\roze-win-bin\bin\" -ErrorAction SilentlyContinue
           Copy-Item -Recurse "stdlib\src\*" "dist\roze-win-bin\stdlib\"
 
           # Inno Setup .exe compilation
@@ -163,10 +168,9 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           mkdir -p dist/mac-pkg-root/bin dist/mac-pkg-root/lib/roze/stdlib
 
-          cp target/release/roze dist/mac-pkg-root/bin/
-          cp target/release/roze-build dist/mac-pkg-root/bin/
-          cp target/release/roze-pkg dist/mac-pkg-root/bin/
-          cp target/release/roze-lsp dist/mac-pkg-root/bin/
+          for bin in roze bsr roze-build roze-pkg roze-lsp roze-bindgen roze-svd rozedoc; do
+            [ -f "target/release/${bin}" ] && cp "target/release/${bin}" dist/mac-pkg-root/bin/
+          done
           cp -r stdlib/src/* dist/mac-pkg-root/lib/roze/stdlib/
 
           # Build .pkg installer
@@ -219,7 +223,7 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=1.0.0" >> "$GITHUB_OUTPUT"
+            echo "version=2.0.0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install dependencies & package VSIX

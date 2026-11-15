@@ -48,8 +48,8 @@ enum Commands {
     /// Build a Roze file or whole project package
     Build {
         /// Input file (optional, defaults to project build or src/main.roze)
-        #[arg(value_name = "FILE", default_value = "src/main.roze")]
-        file: String,
+        #[arg(value_name = "FILE")]
+        file: Option<String>,
         /// Output directory
         #[arg(short, long)]
         output: Option<String>,
@@ -84,8 +84,8 @@ enum Commands {
     /// Compile and run a Roze file or project package
     Run {
         /// Input file (optional, defaults to project run or src/main.roze)
-        #[arg(value_name = "FILE", default_value = "src/main.roze")]
-        file: String,
+        #[arg(value_name = "FILE")]
+        file: Option<String>,
         /// Extra classpath entries for javac/java
         #[arg(long)]
         classpath: Option<String>,
@@ -406,26 +406,28 @@ fn main() {
 
     let result = match cli.command {
         Commands::Build { file, output: _, classpath, target, link, linker_script, entry, no_heap, disable_float_registers, chip, release } => {
-            // Smart build: if file is default src/main.roze and bsr manifest exists, run package build
-            if file == "src/main.roze" && (Path::new("bsr.mfz").exists() || Path::new("roze.mfz").exists() || Path::new("roze.toml").exists()) {
+            let is_internal = std::env::var("ROZE_INTERNAL_BUILD").is_ok();
+            if !is_internal && file.is_none() && (Path::new("bsr.mfz").exists() || Path::new("roze.mfz").exists() || Path::new("roze.toml").exists()) {
                 pkg::cmd_build(release, false, false, false).map_err(|e| {
                     eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);
                     ()
                 })
             } else {
-                build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref(), no_heap, disable_float_registers, chip.as_deref())
+                let target_file = file.as_deref().unwrap_or("src/main.roze");
+                build_file(target_file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref(), no_heap, disable_float_registers, chip.as_deref())
             }
         }
         Commands::Run { file, classpath, target, link, linker_script, entry, no_heap, disable_float_registers, chip, args } => {
-            // Smart run: if file is default src/main.roze and bsr manifest exists, run package run
-            if file == "src/main.roze" && (Path::new("bsr.mfz").exists() || Path::new("roze.mfz").exists() || Path::new("roze.toml").exists()) {
+            let is_internal = std::env::var("ROZE_INTERNAL_RUN").is_ok();
+            if !is_internal && file.is_none() && (Path::new("bsr.mfz").exists() || Path::new("roze.mfz").exists() || Path::new("roze.toml").exists()) {
                 pkg::cmd_run(args).map_err(|e| {
                     eprintln!("{} {}", "❌ Error:".bright_red().bold(), e);
                     ()
                 })
             } else {
-                build_file(&file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref(), no_heap, disable_float_registers, chip.as_deref())
-                    .and_then(|_| run_file(&file, classpath.as_deref(), target))
+                let target_file = file.as_deref().unwrap_or("src/main.roze");
+                build_file(target_file, cli.debug, classpath.as_deref(), target, &link, linker_script.as_deref(), entry.as_deref(), no_heap, disable_float_registers, chip.as_deref())
+                    .and_then(|_| run_file(target_file, classpath.as_deref(), target))
             }
         }
         Commands::Test { path, filter, nocapture, verbose, target } => {

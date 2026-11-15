@@ -461,6 +461,7 @@ pub fn cmd_build(_release: bool, locked: bool, frozen: bool, offline: bool) -> R
     let status = Command::new(compiler_path)
         .arg("build")
         .arg(&main_file)
+        .env("ROZE_INTERNAL_BUILD", "1")
         .status()?;
 
     if status.success() {
@@ -483,6 +484,7 @@ pub fn cmd_run(args: Vec<String>) -> Result<()> {
         .arg("run")
         .arg(&main_file)
         .args(&args)
+        .env("ROZE_INTERNAL_RUN", "1")
         .status()?;
 
     if status.success() {
@@ -787,6 +789,7 @@ pub fn cmd_test() -> Result<()> {
             let status = Command::new(&compiler_path)
                 .arg("run")
                 .arg(&path)
+                .env("ROZE_INTERNAL_RUN", "1")
                 .status()?;
             if !status.success() {
                 return Err(anyhow!("Test failed: {}", path.display()));
@@ -801,6 +804,7 @@ pub fn cmd_test() -> Result<()> {
         let status = Command::new(&compiler_path)
             .arg("run")
             .arg(&main_file)
+            .env("ROZE_INTERNAL_RUN", "1")
             .status()?;
 
         if !status.success() {

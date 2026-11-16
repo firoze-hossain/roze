@@ -319,5 +319,140 @@ func main() {
     }
     println("SUITE 8 PASSED: JSR-310 Duration and Instant timeline assertions");
 
+    // --------------------------------------------------------------------------
+    // Suite 9: Clock Universal Timelines & Mocking
+    // --------------------------------------------------------------------------
+    let clk_utc = clock_system_utc();
+    if (clk_utc.get_zone().id != "UTC") {
+        println("FAIL: clock_system_utc zone != UTC");
+        return;
+    }
+    let fixed_inst = instant_of_epoch_second(1700000000, 0);
+    let clk_fixed = clock_fixed(fixed_inst, zone_id_of("Asia/Dhaka"));
+    if (clk_fixed.millis() != 1700000000000i64) {
+        println("FAIL: fixed clock millis failed");
+        return;
+    }
+    if (!clk_fixed.instant().equals(fixed_inst)) {
+        println("FAIL: fixed clock instant failed");
+        return;
+    }
+    println("SUITE 9 PASSED: Clock universal timeline and deterministic mock testing");
+
+    // --------------------------------------------------------------------------
+    // Suite 10: OffsetDateTime & OffsetTime
+    // --------------------------------------------------------------------------
+    let odt = offset_date_time_of(dt, off_dhaka);
+    if (odt.to_string() != "2026-11-16T17:45:00+06:00") {
+        println("FAIL: OffsetDateTime to_string != 2026-11-16T17:45:00+06:00, got: " + odt.to_string());
+        return;
+    }
+    let odt_parsed = offset_date_time_parse("2026-11-16T17:45:00+06:00");
+    if (!odt.equals(odt_parsed)) {
+        println("FAIL: offset_date_time_parse failed");
+        return;
+    }
+
+    let ot = offset_time_of(local_time_of_hms(17, 45, 0), off_dhaka);
+    if (ot.to_string() != "17:45:00+06:00") {
+        println("FAIL: OffsetTime to_string != 17:45:00+06:00, got: " + ot.to_string());
+        return;
+    }
+    println("SUITE 10 PASSED: OffsetDateTime and OffsetTime ISO standard serialization");
+
+    // --------------------------------------------------------------------------
+    // Suite 11: YearMonth & MonthDay
+    // --------------------------------------------------------------------------
+    let ym = year_month_of(2024, 2);
+    if (!ym.is_leap_year() || ym.length_of_month() != 29) {
+        println("FAIL: YearMonth 2024-02 leap month length != 29");
+        return;
+    }
+    let last_day_feb = ym.at_end_of_month();
+    if (last_day_feb.day != 29 || last_day_feb.year != 2024) {
+        println("FAIL: YearMonth at_end_of_month failed");
+        return;
+    }
+    let ym_next = ym.plus_months(1); // 2024-03
+    if (ym_next.to_string() != "2024-03") {
+        println("FAIL: YearMonth plus_months failed, got: " + ym_next.to_string());
+        return;
+    }
+
+    let md = month_day_of(2, 29);
+    if (!md.is_valid_year(2024)) {
+        println("FAIL: 2024 must be valid for MonthDay 02-29");
+        return;
+    }
+    if (md.is_valid_year(2025)) {
+        println("FAIL: 2025 must not be valid for MonthDay 02-29");
+        return;
+    }
+    if (md.to_string() != "--02-29") {
+        println("FAIL: MonthDay to_string != --02-29, got: " + md.to_string());
+        return;
+    }
+    println("SUITE 11 PASSED: YearMonth and MonthDay domain calendar entities");
+
+    // --------------------------------------------------------------------------
+    // Suite 12: TemporalAdjusters
+    // --------------------------------------------------------------------------
+    let date_sample = local_date_of(2026, 11, 16); // Monday
+    let fdom = temporal_adjuster_first_day_of_month(date_sample);
+    if (fdom.day != 1 || fdom.month != 11) {
+        println("FAIL: first_day_of_month failed");
+        return;
+    }
+    let ldom = temporal_adjuster_last_day_of_month(date_sample);
+    if (ldom.day != 30 || ldom.month != 11) {
+        println("FAIL: last_day_of_month failed");
+        return;
+    }
+    // Next Friday (from Monday Nov 16 -> Friday Nov 20)
+    let next_fri = temporal_adjuster_next(date_sample, time_day_friday());
+    if (next_fri.day != 20 || next_fri.day_of_week() != 5) {
+        println("FAIL: next Friday failed, got: " + next_fri.to_string());
+        return;
+    }
+    // Next Monday (from Monday Nov 16 -> should be Nov 23)
+    let next_mon = temporal_adjuster_next(date_sample, time_day_monday());
+    if (next_mon.day != 23 || next_mon.day_of_week() != 1) {
+        println("FAIL: next Monday failed, got: " + next_mon.to_string());
+        return;
+    }
+    // Next or same Monday (from Monday Nov 16 -> should be Nov 16)
+    let same_mon = temporal_adjuster_next_or_same(date_sample, time_day_monday());
+    if (same_mon.day != 16) {
+        println("FAIL: next_or_same Monday failed");
+        return;
+    }
+    println("SUITE 12 PASSED: TemporalAdjusters enterprise calendar adjustments");
+
+    // --------------------------------------------------------------------------
+    // Suite 13: ChronoUnit and Enums
+    // --------------------------------------------------------------------------
+    let d_start = local_date_of(2024, 1, 1);
+    let d_end = local_date_of(2026, 1, 1);
+    let days_diff = time_chrono_unit_days_between(d_start, d_end);
+    if (days_diff != 731) { // 2024 is leap (366) + 2025 (365) = 731
+        println("FAIL: chrono_unit_days_between != 731, got: " + to_string(days_diff));
+        return;
+    }
+    let months_diff = time_chrono_unit_months_between(d_start, d_end);
+    if (months_diff != 24) {
+        println("FAIL: chrono_unit_months_between != 24");
+        return;
+    }
+    let years_diff = time_chrono_unit_years_between(d_start, d_end);
+    if (years_diff != 2) {
+        println("FAIL: chrono_unit_years_between != 2");
+        return;
+    }
+    if (time_month_january() != 1 || time_month_december() != 12) {
+        println("FAIL: Month constants failed");
+        return;
+    }
+    println("SUITE 13 PASSED: ChronoUnit duration calculations and calendar enums");
+
     println("ALL SUITES COMPLETED: Roze JSR-310 Temporal Engine 100% OPERATIONAL");
 }

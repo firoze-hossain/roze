@@ -376,6 +376,24 @@ let custom_str = fmt.format_date_time(dt); // -> 2026-11-16 14:30:00
 let inst = instant_now();
 sleep_millis(20);
 let elapsed = inst.elapsed(); // Duration with nanosecond precision
+
+// 7. Domain Calendar Entities (YearMonth & MonthDay)
+let ym = year_month_of(2024, 2);
+let last_day_feb = ym.at_end_of_month(); // -> 2024-02-29
+let md = month_day_of(2, 29);
+let is_valid = md.is_valid_year(2024);   // -> true
+
+// 8. TemporalAdjusters (Enterprise Business Scheduling)
+let next_fri = temporal_adjuster_next(today, time_day_friday());
+let fdom = temporal_adjuster_first_day_of_month(today); // -> 2026-11-01
+let ldom = temporal_adjuster_last_day_of_month(today);  // -> 2026-11-30
+
+// 9. Clock Universal Timelines & Deterministic Mocking
+let clk_fixed = clock_fixed(inst, dhaka_zone);
+let mock_millis = clk_fixed.millis();
+
+// 10. ChronoUnit Duration Calculators
+let days_diff = time_chrono_unit_days_between(local_date_of(2024, 1, 1), local_date_of(2026, 1, 1)); // -> 731
 ```
 
 ---

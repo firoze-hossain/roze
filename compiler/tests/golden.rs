@@ -2203,6 +2203,11 @@ fn standard_temporal_jsr310_suite() {
     assert!(stdout.contains("SUITE 6 PASSED: ZonedDateTime universal timeline cross-zone conversions"));
     assert!(stdout.contains("SUITE 7 PASSED: DateTimeFormatter pattern engine and standard formats"));
     assert!(stdout.contains("SUITE 8 PASSED: JSR-310 Duration and Instant timeline assertions"));
+    assert!(stdout.contains("SUITE 9 PASSED: Clock universal timeline and deterministic mock testing"));
+    assert!(stdout.contains("SUITE 10 PASSED: OffsetDateTime and OffsetTime ISO standard serialization"));
+    assert!(stdout.contains("SUITE 11 PASSED: YearMonth and MonthDay domain calendar entities"));
+    assert!(stdout.contains("SUITE 12 PASSED: TemporalAdjusters enterprise calendar adjustments"));
+    assert!(stdout.contains("SUITE 13 PASSED: ChronoUnit duration calculations and calendar enums"));
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze JSR-310 Temporal Engine 100% OPERATIONAL"));
 }
 

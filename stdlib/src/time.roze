@@ -1930,3 +1930,487 @@ func sleep_micros(us: i64) -> void {
 func sleep_nanos(ns: i64) -> void {
     time_sleep_nanos(ns);
 }
+
+// ==============================================================================
+// 17. Clock Engine (Universal Timelines & Mock Clocks)
+// ==============================================================================
+
+class Clock {
+    zone: ZoneId,
+    fixed_instant: Instant,
+    is_fixed: bool,
+}
+
+impl Clock {
+    func instant() -> Instant {
+        if this.is_fixed {
+            return this.fixed_instant;
+        }
+        let now_sec = time_realtime_secs();
+        let now_ns = time_realtime_nanos();
+        let rem_ns = now_ns % 1000000000;
+        return instant_of_epoch_second(now_sec, rem_ns);
+    }
+
+    func millis() -> i64 {
+        return this.instant().to_epoch_milli();
+    }
+
+    func get_zone() -> ZoneId {
+        return this.zone;
+    }
+
+    func with_zone(new_zone: ZoneId) -> Clock {
+        return new Clock(new_zone, this.fixed_instant, this.is_fixed);
+    }
+}
+
+func clock_system_utc() -> Clock {
+    return new Clock(zone_id_utc(), instant_from_nanos(0), false);
+}
+
+func clock_system_default_zone() -> Clock {
+    return new Clock(zone_id_system_default(), instant_from_nanos(0), false);
+}
+
+func clock_system(zone: ZoneId) -> Clock {
+    return new Clock(zone, instant_from_nanos(0), false);
+}
+
+func clock_fixed(instant: Instant, zone: ZoneId) -> Clock {
+    return new Clock(zone, instant, true);
+}
+
+// ==============================================================================
+// 18. OffsetDateTime & OffsetTime
+// ==============================================================================
+
+class OffsetDateTime {
+    datetime: LocalDateTime,
+    offset: ZoneOffset,
+}
+
+impl OffsetDateTime {
+    func datetime() -> LocalDateTime {
+        return this.datetime;
+    }
+
+    func date() -> LocalDate {
+        return this.datetime.date;
+    }
+
+    func time() -> LocalTime {
+        return this.datetime.time;
+    }
+
+    func offset() -> ZoneOffset {
+        return this.offset;
+    }
+
+    func year() -> int {
+        return this.datetime.year();
+    }
+
+    func month() -> int {
+        return this.datetime.month();
+    }
+
+    func day() -> int {
+        return this.datetime.day();
+    }
+
+    func hour() -> int {
+        return this.datetime.hour();
+    }
+
+    func minute() -> int {
+        return this.datetime.minute();
+    }
+
+    func second() -> int {
+        return this.datetime.second();
+    }
+
+    func nano() -> int {
+        return this.datetime.nano();
+    }
+
+    func to_epoch_second() -> i64 {
+        return this.datetime.to_epoch_second(this.offset);
+    }
+
+    func to_instant() -> Instant {
+        let ep = this.to_epoch_second();
+        return instant_of_epoch_second(ep, this.datetime.nano());
+    }
+
+    func with_offset_same_instant(new_offset: ZoneOffset) -> OffsetDateTime {
+        let ep = this.to_epoch_second();
+        let new_dt = local_date_time_of_epoch_second(ep, this.datetime.nano(), new_offset);
+        return new OffsetDateTime(new_dt, new_offset);
+    }
+
+    func with_offset_same_local(new_offset: ZoneOffset) -> OffsetDateTime {
+        return new OffsetDateTime(this.datetime, new_offset);
+    }
+
+    func plus_days(d: i64) -> OffsetDateTime {
+        return new OffsetDateTime(this.datetime.plus_days(d), this.offset);
+    }
+
+    func minus_days(d: i64) -> OffsetDateTime {
+        return new OffsetDateTime(this.datetime.minus_days(d), this.offset);
+    }
+
+    func plus_hours(h: i64) -> OffsetDateTime {
+        return new OffsetDateTime(this.datetime.plus_hours(h), this.offset);
+    }
+
+    func minus_hours(h: i64) -> OffsetDateTime {
+        return new OffsetDateTime(this.datetime.minus_hours(h), this.offset);
+    }
+
+    func is_before(other: OffsetDateTime) -> bool {
+        return this.to_epoch_second() < other.to_epoch_second();
+    }
+
+    func is_after(other: OffsetDateTime) -> bool {
+        return this.to_epoch_second() > other.to_epoch_second();
+    }
+
+    func equals(other: OffsetDateTime) -> bool {
+        return this.to_epoch_second() == other.to_epoch_second() && this.datetime.nano() == other.datetime.nano();
+    }
+
+    func to_string() -> string {
+        return this.datetime.to_string() + this.offset.to_string();
+    }
+}
+
+class OffsetTime {
+    time: LocalTime,
+    offset: ZoneOffset,
+}
+
+impl OffsetTime {
+    func time() -> LocalTime {
+        return this.time;
+    }
+
+    func offset() -> ZoneOffset {
+        return this.offset;
+    }
+
+    func hour() -> int {
+        return this.time.hour;
+    }
+
+    func minute() -> int {
+        return this.time.minute;
+    }
+
+    func second() -> int {
+        return this.time.second;
+    }
+
+    func nano() -> int {
+        return this.time.nano;
+    }
+
+    func with_offset_same_instant(new_offset: ZoneOffset) -> OffsetTime {
+        let diff = new_offset.total_seconds - this.offset.total_seconds;
+        let new_time = this.time.plus_seconds(diff);
+        return new OffsetTime(new_time, new_offset);
+    }
+
+    func to_string() -> string {
+        return this.time.to_string() + this.offset.to_string();
+    }
+}
+
+func offset_date_time_of(datetime: LocalDateTime, offset: ZoneOffset) -> OffsetDateTime {
+    return new OffsetDateTime(datetime, offset);
+}
+
+func offset_date_time_of_instant(instant: Instant, offset: ZoneOffset) -> OffsetDateTime {
+    let sec = instant.epoch_second();
+    let dt = local_date_time_of_epoch_second(sec, instant.nano(), offset);
+    return new OffsetDateTime(dt, offset);
+}
+
+func offset_date_time_now() -> OffsetDateTime {
+    let sys_offset = zone_offset_of_total_seconds(int(time_local_offset_secs()));
+    let dt = local_date_time_now();
+    return new OffsetDateTime(dt, sys_offset);
+}
+
+func offset_date_time_parse(s: string) -> OffsetDateTime {
+    let dt_str = substring(s, 0, 19);
+    let dt = local_date_time_parse(dt_str);
+    let off_str = substring(s, 19, string_length(s));
+    let off = zone_offset_parse(off_str);
+    return new OffsetDateTime(dt, off);
+}
+
+func offset_time_of(time: LocalTime, offset: ZoneOffset) -> OffsetTime {
+    return new OffsetTime(time, offset);
+}
+
+func offset_time_now() -> OffsetTime {
+    let sys_offset = zone_offset_of_total_seconds(int(time_local_offset_secs()));
+    let t = local_time_now();
+    return new OffsetTime(t, sys_offset);
+}
+
+func offset_time_parse(s: string) -> OffsetTime {
+    let t_str = substring(s, 0, 8);
+    let t = local_time_parse(t_str);
+    let off_str = substring(s, 8, string_length(s));
+    let off = zone_offset_parse(off_str);
+    return new OffsetTime(t, off);
+}
+
+// ==============================================================================
+// 19. YearMonth & MonthDay (Domain Calendar Entities)
+// ==============================================================================
+
+class YearMonth {
+    year: int,
+    month: int,
+}
+
+impl YearMonth {
+    func year() -> int {
+        return this.year;
+    }
+
+    func month() -> int {
+        return this.month;
+    }
+
+    func is_leap_year() -> bool {
+        return time_is_leap_year(this.year);
+    }
+
+    func length_of_month() -> int {
+        return time_days_in_month(this.year, this.month);
+    }
+
+    func length_of_year() -> int {
+        if this.is_leap_year() {
+            return 366;
+        }
+        return 365;
+    }
+
+    func at_day(day: int) -> LocalDate {
+        return new LocalDate(this.year, this.month, day);
+    }
+
+    func at_end_of_month() -> LocalDate {
+        return new LocalDate(this.year, this.month, this.length_of_month());
+    }
+
+    func plus_months(months: i64) -> YearMonth {
+        let total_m = (this.year * 12 + (this.month - 1)) + months;
+        let new_y = total_m / 12;
+        let new_m = total_m % 12;
+        if (new_m < 0) {
+            new_m = new_m + 12;
+            new_y = new_y - 1;
+        }
+        return new YearMonth(int(new_y), int(new_m + 1));
+    }
+
+    func minus_months(months: i64) -> YearMonth {
+        return this.plus_months(-months);
+    }
+
+    func plus_years(years: i64) -> YearMonth {
+        return this.plus_months(years * 12);
+    }
+
+    func minus_years(years: i64) -> YearMonth {
+        return this.plus_years(-years);
+    }
+
+    func to_string() -> string {
+        return time_pad4(this.year) + "-" + time_pad2(this.month);
+    }
+}
+
+class MonthDay {
+    month: int,
+    day: int,
+}
+
+impl MonthDay {
+    func month() -> int {
+        return this.month;
+    }
+
+    func day() -> int {
+        return this.day;
+    }
+
+    func is_valid_year(year: int) -> bool {
+        if (this.month == 2 && this.day == 29) {
+            return time_is_leap_year(year);
+        }
+        return this.day <= time_days_in_month(year, this.month);
+    }
+
+    func at_year(year: int) -> LocalDate {
+        return new LocalDate(year, this.month, this.day);
+    }
+
+    func to_string() -> string {
+        return "--" + time_pad2(this.month) + "-" + time_pad2(this.day);
+    }
+}
+
+func year_month_of(year: int, month: int) -> YearMonth {
+    return new YearMonth(year, month);
+}
+
+func year_month_now() -> YearMonth {
+    let d = local_date_now();
+    return new YearMonth(d.year, d.month);
+}
+
+func year_month_parse(s: string) -> YearMonth {
+    let y = time_parse_int_segment(s, 0, 4);
+    let m = time_parse_int_segment(s, 5, 2);
+    return new YearMonth(y, m);
+}
+
+func month_day_of(month: int, day: int) -> MonthDay {
+    return new MonthDay(month, day);
+}
+
+func month_day_now() -> MonthDay {
+    let d = local_date_now();
+    return new MonthDay(d.month, d.day);
+}
+
+func month_day_parse(s: string) -> MonthDay {
+    let idx = 0;
+    if (string_length(s) >= 2 && string_char_at(s, 0) == 45 && string_char_at(s, 1) == 45) {
+        idx = 2;
+    }
+    let m = time_parse_int_segment(s, idx, 2);
+    let d = time_parse_int_segment(s, idx + 3, 2);
+    return new MonthDay(m, d);
+}
+
+// ==============================================================================
+// 20. TemporalAdjusters (Enterprise Calendar Adjustments)
+// ==============================================================================
+
+func temporal_adjuster_first_day_of_month(d: LocalDate) -> LocalDate {
+    return local_date_of(d.year, d.month, 1);
+}
+
+func temporal_adjuster_last_day_of_month(d: LocalDate) -> LocalDate {
+    return local_date_of(d.year, d.month, d.length_of_month());
+}
+
+func temporal_adjuster_first_day_of_next_month(d: LocalDate) -> LocalDate {
+    return local_date_of(d.year, d.month, 1).plus_months(1);
+}
+
+func temporal_adjuster_first_day_of_year(d: LocalDate) -> LocalDate {
+    return local_date_of(d.year, 1, 1);
+}
+
+func temporal_adjuster_last_day_of_year(d: LocalDate) -> LocalDate {
+    return local_date_of(d.year, 12, 31);
+}
+
+func temporal_adjuster_first_day_of_next_year(d: LocalDate) -> LocalDate {
+    return local_date_of(d.year + 1, 1, 1);
+}
+
+func temporal_adjuster_next(d: LocalDate, target_dow: int) -> LocalDate {
+    let current_dow = d.day_of_week();
+    let diff = target_dow - current_dow;
+    if (diff <= 0) {
+        diff = diff + 7;
+    }
+    return d.plus_days(diff);
+}
+
+func temporal_adjuster_previous(d: LocalDate, target_dow: int) -> LocalDate {
+    let current_dow = d.day_of_week();
+    let diff = current_dow - target_dow;
+    if (diff <= 0) {
+        diff = diff + 7;
+    }
+    return d.minus_days(diff);
+}
+
+func temporal_adjuster_next_or_same(d: LocalDate, target_dow: int) -> LocalDate {
+    let current_dow = d.day_of_week();
+    if (current_dow == target_dow) {
+        return d;
+    }
+    return temporal_adjuster_next(d, target_dow);
+}
+
+func temporal_adjuster_previous_or_same(d: LocalDate, target_dow: int) -> LocalDate {
+    let current_dow = d.day_of_week();
+    if (current_dow == target_dow) {
+        return d;
+    }
+    return temporal_adjuster_previous(d, target_dow);
+}
+
+// ==============================================================================
+// 21. ChronoUnit Duration Calculators
+// ==============================================================================
+
+func time_chrono_unit_days_between(d1: LocalDate, d2: LocalDate) -> i64 {
+    return d2.to_epoch_day() - d1.to_epoch_day();
+}
+
+func time_chrono_unit_months_between(d1: LocalDate, d2: LocalDate) -> i64 {
+    return (d2.year * 12 + d2.month) - (d1.year * 12 + d1.month);
+}
+
+func time_chrono_unit_years_between(d1: LocalDate, d2: LocalDate) -> i64 {
+    return d2.year - d1.year;
+}
+
+func time_chrono_unit_seconds_between(inst1: Instant, inst2: Instant) -> i64 {
+    return inst2.epoch_second() - inst1.epoch_second();
+}
+
+func time_chrono_unit_millis_between(inst1: Instant, inst2: Instant) -> i64 {
+    return inst2.to_epoch_milli() - inst1.to_epoch_milli();
+}
+
+// ==============================================================================
+// 22. Month & Day Constants (Java 25 Enums Parity)
+// ==============================================================================
+
+func time_month_january() -> int { return 1; }
+func time_month_february() -> int { return 2; }
+func time_month_march() -> int { return 3; }
+func time_month_april() -> int { return 4; }
+func time_month_may() -> int { return 5; }
+func time_month_june() -> int { return 6; }
+func time_month_july() -> int { return 7; }
+func time_month_august() -> int { return 8; }
+func time_month_september() -> int { return 9; }
+func time_month_october() -> int { return 10; }
+func time_month_november() -> int { return 11; }
+func time_month_december() -> int { return 12; }
+
+func time_day_monday() -> int { return 1; }
+func time_day_tuesday() -> int { return 2; }
+func time_day_wednesday() -> int { return 3; }
+func time_day_thursday() -> int { return 4; }
+func time_day_friday() -> int { return 5; }
+func time_day_saturday() -> int { return 6; }
+func time_day_sunday() -> int { return 7; }
+

@@ -13,7 +13,7 @@ The **Roze Standard Library** provides zero-overhead, memory-safe, portable syst
 4. [Concurrency & Synchronization](#4-concurrency--synchronization)
    - `concurrency` • `sync`
 5. [I/O, File System & Process Management](#5-io-file-system--process-management)
-   - `io` • `fs` • `process` • `env` • `time`
+   - `io` • `fs` • `process` • `env` • `time` • `nio`
 6. [Data Serialization, Text & Reflection](#6-data-serialization-text--reflection)
    - `serde` • `regex` • `reflect` • `data`
 7. [Enterprise Networking & Security](#7-enterprise-networking--security)
@@ -54,6 +54,7 @@ The **Roze Standard Library** provides zero-overhead, memory-safe, portable syst
 | `process` | `import "process";` | Child process spawning, exit status, pipes, signal handling |
 | `env` | `import "env";` | Command line arguments, environment variables, working directory |
 | `time` | `import "roze.time";` | JSR-310 temporal engine: `Instant`, `Duration`, `Period`, `LocalDate`, `LocalTime`, `LocalDateTime`, `ZonedDateTime`, `ZoneId`, `ZoneOffset`, `DateTimeFormatter` |
+| `nio` | `import "roze.nio";` | Zero-copy I/O: ByteBuffer (heap and direct off-heap native memory), byte order endianness switching, slicing, duplicate views, memory-mapped files (mmap with PAGE_READONLY, PAGE_READWRITE), I/O multiplexing event selectors (epoll, kqueue, IOCP), Pipes, Rust mio / tokio-core parity |
 | `regex` | `import "regex";` | Linear-time regex engine (Thompson NFA / DFA), submatch extraction |
 | `data` | `import "roze.data";` | Python 3.15 ergonomics: `itertools` (chain, repeat, cycle, product, permutations, combinations), `functools` (LRU cache, memoize), `statistics` (mean, median, mode, variance, stdev, regression), `pathlib` (`Path`), `csv` (RFC 4180), `argparse` |
 | `serde` | `import "serde";` | JSON, TOML, YAML serialization & deserialization, binary encoding |
@@ -395,6 +396,87 @@ let mock_millis = clk_fixed.millis();
 
 // 10. ChronoUnit Duration Calculators
 let days_diff = time_chrono_unit_days_between(local_date_of(2024, 1, 1), local_date_of(2026, 1, 1)); // -> 731
+```
+
+### 5.4 `nio` (`roze.nio` / Zero-Copy Buffers & Memory-Mapped Channels)
+Comprehensive Java 25 `java.nio.*` and Rust `mio` / `tokio-core` standard library parity for zero-copy binary I/O, memory-mapped files (`mmap`), non-blocking TCP/IPC channels, and multi-platform reactor event multiplexers (`epoll`, `kqueue`, `IOCP`).
+
+```roze
+import "roze.nio";
+
+// 1. Endianness & ByteOrder Switching
+let be = byte_buffer_allocate(16);
+be.order_set(byte_order_big_endian());
+be.put_int(305419896); // 0x12345678 -> bytes: [0x12, 0x34, 0x56, 0x78]
+
+// Switch order on the same buffer to Little Endian
+be.order_set(byte_order_little_endian());
+let swapped = be.get_int_at(0); // -> 0x78563412 (2018915346)
+
+// 2. Zero-Copy Heap & Direct Off-Heap Native ByteBuffers
+let buf = byte_buffer_allocate_direct(1024);
+buf.put(42);
+buf.put_short(1024);
+buf.put_int(123456);
+buf.put_long(5000000000);
+buf.put_float(3.14159);
+buf.put_double(2.718281828);
+buf.put_string("Prometheus-NIO");
+
+// Buffer State Traversal: flip, mark, reset, compact
+buf.flip();                     // Prepares for reading (limit = position, position = 0)
+let b = buf.get();              // -> 42
+let s = buf.get_short();        // -> 1024
+buf.mark();                     // Remembers current position
+let val = buf.get_int();        // -> 123456
+buf.reset();                    // Restores position to mark
+buf.compact();                  // Shifts unread bytes to index 0, position = remaining()
+
+// Zero-Copy Slices and Views (Shared Memory)
+let slice = buf.slice();        // Sub-view sharing exact memory buffer
+slice.put_at(0, 99);            // Mutation immediately visible in parent buf!
+
+// 3. Memory-Mapped Files (mmap / FileChannel)
+let channel = file_channel_open("data.bin", "rw");
+let mbb = channel.map(page_readwrite(), 0, 4096);
+mbb.load();                     // Pages in all 4KB memory frames
+mbb.put_at(0, 80);              // Direct memory mutation
+mbb.force();                    // Flushes dirty pages back to physical disk
+channel.close();
+
+// 4. I/O Multiplexing Event Selectors (epoll / kqueue / IOCP Parity)
+let selector = selector_open(); // High-performance reactor engine ("epoll" on Linux)
+
+let server = server_socket_channel_open();
+server.configure_blocking(false); // Non-blocking mode
+server.bind("127.0.0.1", 8080);
+server.register(selector, op_accept());
+
+let client = socket_channel_open();
+client.configure_blocking(false);
+client.connect("127.0.0.1", 8080);
+let client_ops = bit_or(op_connect(), bit_or(op_read(), op_write()));
+client.register(selector, client_ops);
+
+let ready_channels = selector.select_now(); // Polling without blocking
+let keys = selector.selected_keys();
+
+// 5. Unidirectional Pipes (Zero-Copy Inter-Thread Transport)
+let pipe = pipe_open();
+let msg = byte_buffer_wrap_string("ASYNC_PIPELINE");
+pipe.sink().write(msg);
+
+let read_buf = byte_buffer_allocate(64);
+let n = pipe.source().read(read_buf); // Reads "ASYNC_PIPELINE"
+
+// 6. Rust mio / tokio-core Parity (Poll & Events)
+let poll = mio_poll_new();
+let events = mio_events_new(32);
+poll.register_socket(client, 1, mio_interest_both());
+let num_events = poll.poll(events, 100);
+let event0 = events.get(0);
+let tok = event0.token();       // -> 1
+let can_write = event0.is_writable();
 ```
 
 ---

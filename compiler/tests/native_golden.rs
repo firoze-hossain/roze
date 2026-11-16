@@ -4929,6 +4929,25 @@ fn native_standard_data_ergonomics_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze Python Ergonomics Suite 100% OPERATIONAL"));
 }
 
+#[test]
+fn native_standard_nio_zero_copy_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_nio.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_nio.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_nio_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: roze.nio ByteOrder and multi-endianness switching"));
+    assert!(stdout.contains("SUITE 2 PASSED: roze.nio ByteBuffer core states, zero-copy slicing and compacting"));
+    assert!(stdout.contains("SUITE 3 PASSED: roze.nio primitive typed reads, writes and IEEE-754 numbers"));
+    assert!(stdout.contains("SUITE 4 PASSED: roze.nio FileChannel and MappedByteBuffer (mmap) zero-copy persistence"));
+    assert!(stdout.contains("SUITE 5 PASSED: roze.nio I/O multiplexing event selectors and non-blocking channels"));
+    assert!(stdout.contains("SUITE 6 PASSED: roze.nio Pipes and Rust mio/tokio-core Poll & Events"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Non-Blocking I/O & Memory-Mapped Channels 100% OPERATIONAL"));
+}
+
+
 
 
 

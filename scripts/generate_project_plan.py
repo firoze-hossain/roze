@@ -656,7 +656,7 @@ s1_rows = [
         ("M7-T05", 8), ("Month 7", 22), ("Sprint 14 (W29-W30)", 8), "Non-Blocking I/O", "Zero-Copy Buffers & Memory-Mapped Channels (roze.nio)",
         "Zero-copy I/O engine in pure Roze: ByteBuffer (heap and direct off-heap native memory), byte order endianness switching, slicing, duplicate views, memory-mapped files (mmap with PAGE_READONLY, PAGE_READWRITE), I/O multiplexing event selectors (epoll, kqueue, IOCP).",
         "Direct parity with Java 25 java.nio.* (ByteBuffers, Channels, Selectors) and Rust mio / tokio-core.",
-        "High-Performance I/O, Storage, Databases", "8 Days", ("Critical", 14), ("Planned", 12)
+        "High-Performance I/O, Storage, Databases", "8 Days", ("Critical", 14), ("Completed", 13)
     ],
     [
         ("M7-T06", 8), ("Month 7", 22), ("Sprint 14 (W29-W30)", 8), "Enterprise Concurrency", "CompletableFuture & Work-Stealing Pools (roze.concurrent)",

@@ -126,6 +126,9 @@ const MATH_DISPLAY_NAME: &str = "math (built-in)";
 const DATA_SOURCE: &str = include_str!("../../stdlib/src/data.roze");
 const DATA_DISPLAY_NAME: &str = "data (built-in)";
 
+const NIO_SOURCE: &str = include_str!("../../stdlib/src/nio.roze");
+const NIO_DISPLAY_NAME: &str = "nio (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -448,6 +451,12 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         || path == "csv" || path == "roze.csv" || path == "roze::csv"
         || path == "argparse" || path == "roze.argparse" || path == "roze::argparse" {
         return Ok((DATA_SOURCE.to_string(), DATA_DISPLAY_NAME.to_string()));
+    }
+    if path == "nio" || path == "std::nio" || path == "roze::nio" || path == "roze.nio"
+        || path == "bytebuffer" || path == "roze.bytebuffer" || path == "roze::bytebuffer"
+        || path == "channels" || path == "roze.channels" || path == "roze::channels"
+        || path == "mio" || path == "roze.mio" || path == "roze::mio" {
+        return Ok((NIO_SOURCE.to_string(), NIO_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

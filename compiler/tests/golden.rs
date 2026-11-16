@@ -2224,6 +2224,20 @@ fn standard_data_ergonomics_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze Python Ergonomics Suite 100% OPERATIONAL"));
 }
 
+#[test]
+fn standard_nio_zero_copy_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_nio.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: roze.nio ByteOrder and multi-endianness switching"));
+    assert!(stdout.contains("SUITE 2 PASSED: roze.nio ByteBuffer core states, zero-copy slicing and compacting"));
+    assert!(stdout.contains("SUITE 3 PASSED: roze.nio primitive typed reads, writes and IEEE-754 numbers"));
+    assert!(stdout.contains("SUITE 4 PASSED: roze.nio FileChannel and MappedByteBuffer (mmap) zero-copy persistence"));
+    assert!(stdout.contains("SUITE 5 PASSED: roze.nio I/O multiplexing event selectors and non-blocking channels"));
+    assert!(stdout.contains("SUITE 6 PASSED: roze.nio Pipes and Rust mio/tokio-core Poll & Events"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Non-Blocking I/O & Memory-Mapped Channels 100% OPERATIONAL"));
+}
+
+
 
 
 

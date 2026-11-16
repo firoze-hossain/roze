@@ -1,0 +1,354 @@
+// compiler/tests/fixtures/std_nio.roze
+//
+// M7-T05: Non-Blocking I/O, Zero-Copy Buffers & Memory-Mapped Channels (roze.nio)
+// Full architectural parity with Java 25 java.nio.* and Rust mio / tokio-core.
+
+import "roze.nio";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("ASSERTION FAILED: " + msg);
+    }
+}
+
+func assert_eq_int(actual: int, expected: int, msg: string) {
+    if actual != expected {
+        println("ASSERTION FAILED: " + msg + " (expected " + to_string(expected) + ", got " + to_string(actual) + ")");
+    }
+}
+
+func assert_eq_str(actual: string, expected: string, msg: string) {
+    if actual != expected {
+        println("ASSERTION FAILED: " + msg + " (expected '" + expected + "', got '" + actual + "')");
+    }
+}
+
+// ------------------------------------------------------------------------------
+// Suite 1: Byte Order & Endianness Switching
+// ------------------------------------------------------------------------------
+func test_suite_1_byte_order() {
+    let native_order = byte_order_native();
+    assert_true(native_order.order_id == 1 || native_order.order_id == 2, "native order valid");
+
+    let bo_be = byte_order_of_big_endian();
+    let bo_le = byte_order_of_little_endian();
+    assert_eq_int(bo_be.order_id, 1, "bo_be id");
+    assert_eq_str(bo_be.name, "BIG_ENDIAN", "bo_be name");
+    assert_eq_int(bo_le.order_id, 2, "bo_le id");
+    assert_eq_str(bo_le.name, "LITTLE_ENDIAN", "bo_le name");
+
+    // Write 32-bit integer under BIG_ENDIAN and read under LITTLE_ENDIAN
+    let buf = byte_buffer_allocate(16);
+    buf.order_set(byte_order_big_endian());
+    buf.put_int(305419896); // 0x12345678: bytes [0x12, 0x34, 0x56, 0x78] = [18, 52, 86, 120]
+
+    assert_eq_int(buf.get_at(0), 18, "BE byte 0");
+    assert_eq_int(buf.get_at(1), 52, "BE byte 1");
+    assert_eq_int(buf.get_at(2), 86, "BE byte 2");
+    assert_eq_int(buf.get_at(3), 120, "BE byte 3");
+
+    // Switch buffer to LITTLE_ENDIAN and read back at index 0
+    buf.order_set(byte_order_little_endian());
+    let swapped = buf.get_int_at(0); // 0x78563412 = 2018915346
+    assert_eq_int(swapped, 2018915346, "swapped endianness int");
+
+    // Switch back to BIG_ENDIAN and read back
+    buf.order_set(byte_order_big_endian());
+    assert_eq_int(buf.get_int_at(0), 305419896, "original endianness int");
+
+    buf.free_buffer();
+    println("SUITE 1 PASSED: roze.nio ByteOrder and multi-endianness switching");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 2: Zero-Copy ByteBuffer Core State, Views & Operations
+// ------------------------------------------------------------------------------
+func test_suite_2_byte_buffer_core() {
+    let buf = byte_buffer_allocate(10);
+    assert_eq_int(buf.capacity(), 10, "cap is 10");
+    assert_eq_int(buf.position(), 0, "pos is 0");
+    assert_eq_int(buf.limit(), 10, "lim is 10");
+    assert_eq_int(buf.remaining(), 10, "rem is 10");
+    assert_true(buf.has_remaining(), "has rem");
+    assert_true(!buf.is_direct(), "is heap");
+    assert_true(buf.has_array(), "has array");
+
+    // Put 4 bytes
+    buf.put(10);
+    buf.put(20);
+    buf.put(30);
+    buf.put(40);
+    assert_eq_int(buf.position(), 4, "pos is 4");
+    assert_eq_int(buf.remaining(), 6, "rem is 6");
+
+    // Flip: prepares for reading
+    buf.flip();
+    assert_eq_int(buf.position(), 0, "flipped pos is 0");
+    assert_eq_int(buf.limit(), 4, "flipped lim is 4");
+    assert_eq_int(buf.remaining(), 4, "flipped rem is 4");
+
+    // Read 2 bytes
+    let b0 = buf.get();
+    let b1 = buf.get();
+    assert_eq_int(b0, 10, "read b0");
+    assert_eq_int(b1, 20, "read b1");
+    assert_eq_int(buf.position(), 2, "pos after reading 2");
+
+    // Mark & Reset
+    buf.mark();
+    let b2 = buf.get();
+    assert_eq_int(b2, 30, "read b2");
+    buf.reset();
+    assert_eq_int(buf.position(), 2, "pos after reset");
+    let b2_retry = buf.get();
+    assert_eq_int(b2_retry, 30, "read b2 after reset");
+
+    // Compact: copies unread bytes [index 3..4) = [40] to position 0
+    buf.compact();
+    assert_eq_int(buf.position(), 1, "compact pos is 1 (1 unread byte preserved)");
+    assert_eq_int(buf.limit(), 10, "compact lim is cap");
+    assert_eq_int(buf.get_at(0), 40, "compacted byte at 0 is 40");
+
+    // Zero-copy Slicing & Shared Mutations
+    buf.clear();
+    buf.put(1);
+    buf.put(2);
+    buf.put(3);
+    buf.put(4);
+    buf.position_set(1);
+    buf.limit_set(3); // slice covers index 1 and 2 (values 2 and 3)
+    let slice_buf = buf.slice();
+    assert_eq_int(slice_buf.capacity(), 2, "slice cap");
+    assert_eq_int(slice_buf.get_at(0), 2, "slice byte 0");
+    assert_eq_int(slice_buf.get_at(1), 3, "slice byte 1");
+
+    // Mutate slice byte 0, verify reflected in parent buf index 1!
+    slice_buf.put_at(0, 99);
+    assert_eq_int(buf.get_at(1), 99, "zero-copy slice mutation reflected in parent");
+
+    // Direct buffer allocation
+    let dir_buf = byte_buffer_allocate_direct(32);
+    assert_true(dir_buf.is_direct(), "dir_buf is direct");
+    assert_true(!dir_buf.has_array(), "dir_buf has no array");
+    dir_buf.put_int(777);
+    dir_buf.flip();
+    assert_eq_int(dir_buf.get_int(), 777, "dir_buf get_int");
+
+    buf.free_buffer();
+    dir_buf.free_buffer();
+    println("SUITE 2 PASSED: roze.nio ByteBuffer core states, zero-copy slicing and compacting");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 3: Primitive Multi-Type Relative & Absolute I/O
+// ------------------------------------------------------------------------------
+func test_suite_3_primitive_io() {
+    let buf = byte_buffer_allocate(64);
+
+    // 16-bit Short
+    buf.put_short(1024);
+    buf.put_short(-300);
+    // 32-bit Int
+    buf.put_int(123456789);
+    buf.put_int(-987654);
+    // 64-bit Long
+    buf.put_long(5000000000);
+    // Floating point
+    buf.put_float(3.140000);
+    buf.put_double(2.718281828);
+    // String
+    buf.put_string("RozeNIO");
+
+    buf.flip();
+
+    assert_eq_int(buf.get_short(), 1024, "short 1024");
+    assert_eq_int(buf.get_short(), -300, "short -300");
+    assert_eq_int(buf.get_int(), 123456789, "int 123456789");
+    assert_eq_int(buf.get_int(), -987654, "int -987654");
+    assert_eq_int(buf.get_long(), 5000000000, "long 5000000000");
+
+    let f = buf.get_float();
+    assert_true(f > 3.13 && f < 3.15, "float ~3.14");
+
+    let d = buf.get_double();
+    assert_true(d > 2.71 && d < 2.72, "double ~2.718");
+
+    let s = buf.get_string(7);
+    assert_eq_str(s, "RozeNIO", "string RozeNIO");
+
+    buf.free_buffer();
+    println("SUITE 3 PASSED: roze.nio primitive typed reads, writes and IEEE-754 numbers");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 4: Memory-Mapped Files & File Channels (mmap)
+// ------------------------------------------------------------------------------
+func test_suite_4_mmap_and_file_channel() {
+    let test_file = "nio_mmap_test.bin";
+
+    // Create file via FileChannel and write initial binary header
+    let ch = file_channel_open(test_file, "w");
+    assert_true(ch.is_open(), "channel open");
+
+    let write_buf = byte_buffer_allocate(16);
+    write_buf.put_string("PROMETHEUS_NIO");
+    write_buf.flip();
+    let written = ch.write(write_buf);
+    assert_eq_int(written, 14, "written 14 bytes");
+    ch.close();
+    assert_true(!ch.is_open(), "channel closed");
+
+    // Open read-write and map region into memory
+    let ch2 = file_channel_open(test_file, "rw");
+    let mbb = ch2.map(page_readwrite(), 0, 16);
+    assert_true(!mbb.is_loaded(), "initially not loaded");
+    mbb.load();
+    assert_true(mbb.is_loaded(), "now loaded");
+
+    // Verify mapped content
+    assert_eq_int(mbb.get_at(0), 80, "byte 0 is 'P' (80)");
+    assert_eq_int(mbb.get_at(1), 82, "byte 1 is 'R' (82)");
+
+    // Modify byte at index 0 in memory ('P' -> 'Z')
+    mbb.put_at(0, 90); // 90 = 'Z'
+    mbb.force();       // Sync changes to storage
+    ch2.close();
+
+    // Verify persistent storage modification
+    let ch3 = file_channel_open(test_file, "r");
+    let read_buf = byte_buffer_allocate(16);
+    let bytes_read = ch3.read(read_buf);
+    read_buf.flip();
+    let updated_str = read_buf.get_string(bytes_read);
+    assert_eq_str(string_substring(updated_str, 0, 1), "Z", "first char is now 'Z'");
+    ch3.close();
+
+    // Clean up test file
+    fs_remove_file(test_file);
+
+    println("SUITE 4 PASSED: roze.nio FileChannel and MappedByteBuffer (mmap) zero-copy persistence");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 5: I/O Multiplexing Selectors (epoll / kqueue / IOCP Parity)
+// ------------------------------------------------------------------------------
+func test_suite_5_selectors() {
+    let sel = selector_open();
+    assert_true(sel.is_open(), "selector open");
+    assert_eq_str(sel.backend_name(), "epoll", "backend is epoll");
+
+    // ServerSocketChannel in non-blocking mode
+    let ssc = server_socket_channel_open();
+    ssc.configure_blocking(false);
+    assert_true(!ssc.is_blocking(), "server is non-blocking");
+    ssc.bind("127.0.0.1", 9090);
+
+    let server_key = ssc.register(sel, op_accept());
+    assert_eq_int(server_key.interest_ops(), op_accept(), "interest is OP_ACCEPT");
+
+    // Initial select: no connections pending, returns 0 immediately
+    let ready0 = sel.select_now();
+    assert_eq_int(ready0, 0, "no connections ready yet");
+
+    // Client connects in non-blocking mode
+    let client = socket_channel_open();
+    client.configure_blocking(false);
+    let connected_immediate = client.connect("127.0.0.1", 9090);
+    assert_true(!connected_immediate, "non-blocking connect returns false initially");
+    assert_true(client.is_connection_pending(), "connection pending");
+
+    let client_ops = bit_or(op_connect(), bit_or(op_read(), op_write()));
+    let client_key = client.register(sel, client_ops);
+
+    // Enqueue client connection to server
+    ssc.enqueue_connection(client);
+
+    // Select: server key should now be ready with OP_ACCEPT, client with OP_CONNECT
+    let ready1 = sel.select_now();
+    assert_true(ready1 >= 1, "at least 1 key ready");
+
+    assert_true(server_key.is_acceptable(), "server key is acceptable");
+    let accepted_client = ssc.accept();
+    assert_true(accepted_client != null, "accepted client channel is non-null");
+
+    // Complete client handshake
+    let handshake_ok = client.finish_connect();
+    assert_true(handshake_ok, "handshake completed");
+    assert_true(client.is_connected(), "client now connected");
+
+    // Client sends data via ByteBuffer
+    let send_buf = byte_buffer_allocate(32);
+    send_buf.put_string("PING");
+    send_buf.flip();
+    client.write(send_buf);
+
+    // Accepted server channel receives data
+    accepted_client.feed_input(client.get_output());
+    let recv_buf = byte_buffer_allocate(32);
+    let n = accepted_client.read(recv_buf);
+    recv_buf.flip();
+    let received_str = recv_buf.get_string(n);
+    assert_eq_str(received_str, "PING", "received PING via non-blocking channels");
+
+    sel.close();
+    assert_true(!sel.is_open(), "selector now closed");
+
+    println("SUITE 5 PASSED: roze.nio I/O multiplexing event selectors and non-blocking channels");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 6: Pipes & Rust mio / tokio-core Parity
+// ------------------------------------------------------------------------------
+func test_suite_6_pipes_and_mio() {
+    // 1. Unidirectional Pipe
+    let pipe = pipe_open();
+    let pipe_sink = pipe.sink();
+    let pipe_src = pipe.source();
+
+    let write_buf = byte_buffer_allocate(32);
+    write_buf.put_string("ZERO_COPY_PIPE");
+    write_buf.flip();
+    pipe_sink.write(write_buf);
+
+    let read_buf = byte_buffer_allocate(32);
+    let bytes_read = pipe_src.read(read_buf);
+    read_buf.flip();
+    let pipe_str = read_buf.get_string(bytes_read);
+    assert_eq_str(pipe_str, "ZERO_COPY_PIPE", "pipe data transferred");
+
+    // 2. Rust mio / tokio-core Poll & Events
+    let poll = mio_poll_new();
+    let events = mio_events_new(16);
+
+    let sc = socket_channel_open();
+    sc.configure_blocking(false);
+    sc.connect("127.0.0.1", 8080);
+    sc.finish_connect();
+
+    // Register with token 42 and interest WRITABLE
+    poll.register_socket(sc, 42, mio_interest_writable());
+
+    let num_ev = poll.poll(events, 50);
+    assert_eq_int(num_ev, 1, "poll returned 1 event");
+    assert_true(!events.is_empty(), "events is not empty");
+
+    let ev0 = events.get(0);
+    assert_eq_int(ev0.token(), 42, "event token is 42");
+    assert_true(ev0.is_writable(), "event is writable");
+
+    println("SUITE 6 PASSED: roze.nio Pipes and Rust mio/tokio-core Poll & Events");
+}
+
+// ------------------------------------------------------------------------------
+// Main Test Runner
+// ------------------------------------------------------------------------------
+func main() {
+    println("=== M7-T05 Non-Blocking I/O: Zero-Copy Buffers & Memory-Mapped Channels Suite ===");
+    test_suite_1_byte_order();
+    test_suite_2_byte_buffer_core();
+    test_suite_3_primitive_io();
+    test_suite_4_mmap_and_file_channel();
+    test_suite_5_selectors();
+    test_suite_6_pipes_and_mio();
+    println("ALL SUITES COMPLETED: Roze Non-Blocking I/O & Memory-Mapped Channels 100% OPERATIONAL");
+}

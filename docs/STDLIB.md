@@ -45,7 +45,7 @@ The **Roze Standard Library** provides zero-overhead, memory-safe, portable syst
 | Module | Canonical Import | Domain / Capability |
 | :--- | :--- | :--- |
 | `core` | `import "core";` | Fundamental primitives, math functions, string manipulation, conversions |
-| `collections` | `import "collections";` | `List<T>`, `Map<K, V>`, `Queue<T>`, `Set<T>`, `BTreeMap<K, V>` |
+| `collections` | `import "collections";` | `ArrayList<T>`, `LinkedList<T>`, `HashMap<K, V>`, `LinkedHashMap<K, V>`, `HashSet<T>`, `TreeSet<T>`, `TreeMap<K, V>`, `ArrayDeque<T>`, `PriorityQueue<T>`, `BitSet`, static Collections algorithms (`sort`, `binary_search`, `shuffle`, `reverse`, `rotate`, `unmodifiable_view`) |
 | `math` | `import "math";` | Arbitrary-precision `BigInt` (Karatsuba, Miller-Rabin), `BigDecimal` (7 rounding modes), `Complex`, and universal scientific mathematics |
 | `concurrency` | `import "concurrency";` | Native threads, M:N fibers, channels, async/await futures, task nurseries |
 | `sync` | `import "sync";` | Mutex, RwLock, Semaphore, Barrier, Atomic primitives (`AtomicInt`, `AtomicPtr`) |
@@ -126,29 +126,92 @@ func to_int(s: string) -> int
 func to_float(s: string) -> float
 ```
 
-### 3.2 `collections`
+### 3.2 `collections` (Enterprise Collections Framework & Algorithms)
 ```roze
 import "collections";
 
-// Dynamic Resizing Array
-let list = list_new();
-list_push(list, 42);
-let item = list_get(list, 0);
-list_set(list, 0, 100);
-let len = list_length(list);
-let removed = list_remove(list, 0);
-let empty = list_is_empty(list);
-list_clear(list);
+// 1. Resizable Array (ArrayList<T> / List<T>) - Java 25 & Rust Parity
+let list = new ArrayList<int>();
+list.add(10);
+list.add(20);
+list.add(30);
+let val = list.get(1);          // -> 20
+list.set(1, 25);
+let has = list.contains(25);    // -> true
+let idx = list.indexOf(25);     // -> 1
+let removed = list.remove(1);   // -> 25
+let sz = list.size();           // -> 2
+list.clear();
+let empty = list.isEmpty();     // -> true
 
-// High-Throughput Hash Map
-let map = map_new();
-map_put(map, "host", "127.0.0.1");
-let exists = map_has(map, "host");
-let host = map_get(map, "host");
-let keys = map_keys(map);
-let values = map_values(map);
-map_remove(map, "host");
-let size = map_size(map);
+// 2. Doubly-Linked List (LinkedList<T>) - O(1) Head & Tail
+let ll = new LinkedList<int>();
+ll.add(10);
+ll.add_first(5);
+ll.add_last(20);
+let first = ll.get_first();     // -> 5
+let last = ll.get_last();       // -> 20
+let p_first = ll.remove_first();// -> 5
+let p_last = ll.remove_last();  // -> 20
+let as_list = ll.to_list();
+
+// 3. High-Performance Hash Table (HashMap<K, V> / LinkedHashMap<K, V>)
+let map = new HashMap<string, int>();
+map.put("port", 8080);
+map.put("timeout", 30);
+let port = map.get("port");                       // -> 8080
+let def = map.get_or_default("missing", 5000);    // -> 5000
+let has_key = map.containsKey("port");            // -> true
+let keys = map.keys();
+let values = map.values();
+
+// 4. Deterministic Insertion-Order Map (LinkedHashMap<K, V>)
+let ordered = new LinkedHashMap<int, string>();
+ordered.put(1, "first");
+ordered.put(2, "second");
+let k0 = ordered.get_index_key(0);   // -> 1
+let v0 = ordered.get_index_value(0); // -> "first"
+
+// 5. Unique Set (HashSet<T> & TreeSet<T>)
+let set = new HashSet<int>();
+set.add(42);
+set.add(42); // duplicate rejected -> false
+let in_set = set.contains(42); // -> true
+
+// 6. Ordered Self-Balancing Set & Map (TreeSet<T> & TreeMap<K, V>)
+let tree = new TreeSet<int>();
+tree.add(50);
+tree.add(10);
+tree.add(30);
+let min_val = tree.first(); // -> 10 (sorted)
+let max_val = tree.last();  // -> 50
+
+// 7. Double-Ended Queue (ArrayDeque<T> / VecDeque<T>)
+let deque = new ArrayDeque<int>();
+deque.addFirst(1);
+deque.addLast(2);
+let f = deque.pollFirst(); // -> 1
+let l = deque.pollLast();  // -> 2
+
+// 8. Max-Heap Priority Queue (PriorityQueue<T> / BinaryHeap<T>)
+let pq = new PriorityQueue<int>();
+pq.add(10);
+pq.add(50);
+pq.add(30);
+let max_item = pq.poll(); // -> 50 (highest priority first)
+
+// 9. Static Algorithm Suite (Collections static algorithms)
+let data = [40, 10, 30, 50, 20];
+collections_sort(data);                   // Quicksort -> [10, 20, 30, 40, 50]
+let bs_idx = collections_binary_search(data, 30); // -> 2
+collections_reverse(data);                // -> [50, 40, 30, 20, 10]
+collections_rotate(data, 2);              // Circular rotation
+let min_elem = collections_min(data);     // -> 10
+let max_elem = collections_max(data);     // -> 50
+let freq = collections_frequency(data, 30);// -> 1
+collections_fill(data, 0);                // In-place fill
+let unmod = collections_unmodifiable_view(data);
+collections_shuffle(data);                // Fisher-Yates random shuffle
 ```
 
 ### 3.3 `ptr` & `memory`

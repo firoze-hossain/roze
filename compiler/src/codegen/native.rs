@@ -1571,6 +1571,42 @@ void __roze_bit_set_intersect(long bs, long other) { (void)bs; (void)other; }
 void __roze_bit_set_difference(long bs, long other) { (void)bs; (void)other; }
 void __roze_bit_set_clear(long bs) { (void)bs; }
 
+void __roze_list_clear(long l) { (void)l; }
+long __roze_list_contains(long l, long v) { (void)l; (void)v; return 0; }
+long __roze_list_index_of(long l, long v) { (void)l; (void)v; return -1; }
+
+long __roze_index_map_get_or_default(long m, long k, long def) { (void)m; (void)k; return def; }
+
+long __roze_linked_list_new(void) { return 0; }
+void __roze_linked_list_retain(long ll) { (void)ll; }
+void __roze_linked_list_release(long ll) { (void)ll; }
+void __roze_linked_list_add(long ll, long val) { (void)ll; (void)val; }
+void __roze_linked_list_add_first(long ll, long val) { (void)ll; (void)val; }
+void __roze_linked_list_add_last(long ll, long val) { (void)ll; (void)val; }
+long __roze_linked_list_get_first(long ll) { (void)ll; return 0; }
+long __roze_linked_list_get_last(long ll) { (void)ll; return 0; }
+long __roze_linked_list_remove_first(long ll) { (void)ll; return 0; }
+long __roze_linked_list_remove_last(long ll) { (void)ll; return 0; }
+long __roze_linked_list_get(long ll, long idx) { (void)ll; (void)idx; return 0; }
+void __roze_linked_list_set(long ll, long idx, long val) { (void)ll; (void)idx; (void)val; }
+long __roze_linked_list_len(long ll) { (void)ll; return 0; }
+long __roze_linked_list_is_empty(long ll) { (void)ll; return 1; }
+long __roze_linked_list_contains(long ll, long val) { (void)ll; (void)val; return 0; }
+void __roze_linked_list_clear(long ll) { (void)ll; }
+long __roze_linked_list_to_list(long ll) { (void)ll; return 0; }
+
+long __roze_hash_set_new(void) { return 0; }
+long __roze_hash_set_new_str(void) { return 0; }
+void __roze_hash_set_retain(long s) { (void)s; }
+void __roze_hash_set_release(long s) { (void)s; }
+long __roze_hash_set_add(long s, long val) { (void)s; (void)val; return 0; }
+long __roze_hash_set_contains(long s, long val) { (void)s; (void)val; return 0; }
+long __roze_hash_set_remove(long s, long val) { (void)s; (void)val; return 0; }
+long __roze_hash_set_len(long s) { (void)s; return 0; }
+long __roze_hash_set_is_empty(long s) { (void)s; return 1; }
+long __roze_hash_set_to_list(long s) { (void)s; return 0; }
+void __roze_hash_set_clear(long s) { (void)s; }
+
 // Pluggable Allocators & Smart Pointers Stubs (M2-T04)
 long __roze_align_to(long val, long align) { if (align <= 1) return val; return (val + align - 1) & ~(align - 1); }
 long __roze_cache_line_size(void) { return 64; }
@@ -5194,6 +5230,46 @@ pub struct CollectionsRuntime {
     pub bit_set_intersect: FuncId,
     pub bit_set_difference: FuncId,
     pub bit_set_clear: FuncId,
+
+    // LinkedList
+    pub linked_list_new: FuncId,
+    pub linked_list_retain: FuncId,
+    pub linked_list_release: FuncId,
+    pub linked_list_add: FuncId,
+    pub linked_list_add_first: FuncId,
+    pub linked_list_add_last: FuncId,
+    pub linked_list_get_first: FuncId,
+    pub linked_list_get_last: FuncId,
+    pub linked_list_remove_first: FuncId,
+    pub linked_list_remove_last: FuncId,
+    pub linked_list_get: FuncId,
+    pub linked_list_set: FuncId,
+    pub linked_list_len: FuncId,
+    pub linked_list_is_empty: FuncId,
+    pub linked_list_contains: FuncId,
+    pub linked_list_clear: FuncId,
+    pub linked_list_to_list: FuncId,
+
+    // HashSet
+    pub hash_set_new: FuncId,
+    pub hash_set_new_str: FuncId,
+    pub hash_set_retain: FuncId,
+    pub hash_set_release: FuncId,
+    pub hash_set_add: FuncId,
+    pub hash_set_contains: FuncId,
+    pub hash_set_remove: FuncId,
+    pub hash_set_len: FuncId,
+    pub hash_set_is_empty: FuncId,
+    pub hash_set_to_list: FuncId,
+    pub hash_set_clear: FuncId,
+
+    // IndexMap get_or_default
+    pub index_map_get_or_default: FuncId,
+
+    // List clear, contains, index_of
+    pub list_clear: FuncId,
+    pub list_contains: FuncId,
+    pub list_index_of: FuncId,
 }
 
 fn declare_collections_runtime(module: &mut ObjectModule) -> Result<CollectionsRuntime> {
@@ -5226,6 +5302,12 @@ fn declare_collections_runtime(module: &mut ObjectModule) -> Result<CollectionsR
     sig_i64_i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
     sig_i64_i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
     sig_i64_i64_i64_to_void.params.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_i64_i64_i64_to_i64 = module.make_signature();
+    sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
+    sig_i64_i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
 
     Ok(CollectionsRuntime {
         // VecDeque
@@ -5335,6 +5417,46 @@ fn declare_collections_runtime(module: &mut ObjectModule) -> Result<CollectionsR
         bit_set_intersect: decl!("__roze_bit_set_intersect", sig_i64_i64_to_void),
         bit_set_difference: decl!("__roze_bit_set_difference", sig_i64_i64_to_void),
         bit_set_clear: decl!("__roze_bit_set_clear", sig_i64_to_void),
+
+        // LinkedList
+        linked_list_new: decl!("__roze_linked_list_new", sig_void_to_i64),
+        linked_list_retain: decl!("__roze_linked_list_retain", sig_i64_to_void),
+        linked_list_release: decl!("__roze_linked_list_release", sig_i64_to_void),
+        linked_list_add: decl!("__roze_linked_list_add", sig_i64_i64_to_void),
+        linked_list_add_first: decl!("__roze_linked_list_add_first", sig_i64_i64_to_void),
+        linked_list_add_last: decl!("__roze_linked_list_add_last", sig_i64_i64_to_void),
+        linked_list_get_first: decl!("__roze_linked_list_get_first", sig_i64_to_i64),
+        linked_list_get_last: decl!("__roze_linked_list_get_last", sig_i64_to_i64),
+        linked_list_remove_first: decl!("__roze_linked_list_remove_first", sig_i64_to_i64),
+        linked_list_remove_last: decl!("__roze_linked_list_remove_last", sig_i64_to_i64),
+        linked_list_get: decl!("__roze_linked_list_get", sig_i64_i64_to_i64),
+        linked_list_set: decl!("__roze_linked_list_set", sig_i64_i64_i64_to_void),
+        linked_list_len: decl!("__roze_linked_list_len", sig_i64_to_i64),
+        linked_list_is_empty: decl!("__roze_linked_list_is_empty", sig_i64_to_i64),
+        linked_list_contains: decl!("__roze_linked_list_contains", sig_i64_i64_to_i64),
+        linked_list_clear: decl!("__roze_linked_list_clear", sig_i64_to_void),
+        linked_list_to_list: decl!("__roze_linked_list_to_list", sig_i64_to_i64),
+
+        // HashSet
+        hash_set_new: decl!("__roze_hash_set_new", sig_void_to_i64),
+        hash_set_new_str: decl!("__roze_hash_set_new_str", sig_void_to_i64),
+        hash_set_retain: decl!("__roze_hash_set_retain", sig_i64_to_void),
+        hash_set_release: decl!("__roze_hash_set_release", sig_i64_to_void),
+        hash_set_add: decl!("__roze_hash_set_add", sig_i64_i64_to_i64),
+        hash_set_contains: decl!("__roze_hash_set_contains", sig_i64_i64_to_i64),
+        hash_set_remove: decl!("__roze_hash_set_remove", sig_i64_i64_to_i64),
+        hash_set_len: decl!("__roze_hash_set_len", sig_i64_to_i64),
+        hash_set_is_empty: decl!("__roze_hash_set_is_empty", sig_i64_to_i64),
+        hash_set_to_list: decl!("__roze_hash_set_to_list", sig_i64_to_i64),
+        hash_set_clear: decl!("__roze_hash_set_clear", sig_i64_to_void),
+
+        // IndexMap get_or_default
+        index_map_get_or_default: decl!("__roze_index_map_get_or_default", sig_i64_i64_i64_to_i64),
+
+        // List clear, contains, index_of
+        list_clear: decl!("__roze_list_clear", sig_i64_to_void),
+        list_contains: decl!("__roze_list_contains", sig_i64_i64_to_i64),
+        list_index_of: decl!("__roze_list_index_of", sig_i64_i64_to_i64),
     })
 }
 
@@ -7359,27 +7481,38 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
             }
-            Type::Generic { base, .. } if base == "VecDeque" || base == "vec_deque" => {
+            Type::Generic { base, .. } if base == "ArrayList" || base == "array_list" => self.emit_list_retain(val),
+            Type::Generic { base, .. } if base == "LinkedList" || base == "linked_list" => {
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "HashSet" || base == "hash_set" => {
+                let func_ref = self.module.declare_func_in_func(self.collections.hash_set_retain, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "VecDeque" || base == "vec_deque" || base == "ArrayDeque" || base == "array_deque" => {
                 let func_ref = self.module.declare_func_in_func(self.collections.vec_deque_retain, self.builder.func);
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
             }
-            Type::Generic { base, .. } if base == "BTreeMap" || base == "btree_map" => {
+            Type::Generic { base, .. } if base == "BTreeMap" || base == "btree_map" || base == "TreeMap" || base == "tree_map" => {
                 let func_ref = self.module.declare_func_in_func(self.collections.btree_map_retain, self.builder.func);
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
             }
-            Type::Generic { base, .. } if base == "BTreeSet" || base == "btree_set" => {
+            Type::Generic { base, .. } if base == "BTreeSet" || base == "btree_set" || base == "TreeSet" || base == "tree_set" => {
                 let func_ref = self.module.declare_func_in_func(self.collections.btree_set_retain, self.builder.func);
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
             }
-            Type::Generic { base, .. } if base == "BinaryHeap" || base == "binary_heap" => {
+            Type::Generic { base, .. } if base == "BinaryHeap" || base == "binary_heap" || base == "PriorityQueue" || base == "priority_queue" => {
                 let func_ref = self.module.declare_func_in_func(self.collections.binary_heap_retain, self.builder.func);
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
             }
-            Type::Generic { base, .. } if base == "IndexMap" || base == "index_map" => {
+            Type::Generic { base, .. } if base == "IndexMap" || base == "index_map" || base == "LinkedHashMap" || base == "linked_hash_map" || base == "HashMap" || base == "hash_map" => {
                 let func_ref = self.module.declare_func_in_func(self.collections.index_map_retain, self.builder.func);
                 self.builder.ins().call(func_ref, &[val]);
                 Ok(())
@@ -7593,27 +7726,38 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
-            Type::Generic { base, .. } if base == "VecDeque" || base == "vec_deque" => {
+            Type::Generic { base, .. } if base == "ArrayList" || base == "array_list" => self.emit_list_release(val),
+            Type::Generic { base, .. } if base == "LinkedList" || base == "linked_list" => {
+                let release_ref = self.module.declare_func_in_func(self.collections.linked_list_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "HashSet" || base == "hash_set" => {
+                let release_ref = self.module.declare_func_in_func(self.collections.hash_set_release, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
+            Type::Generic { base, .. } if base == "VecDeque" || base == "vec_deque" || base == "ArrayDeque" || base == "array_deque" => {
                 let release_ref = self.module.declare_func_in_func(self.collections.vec_deque_release, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
-            Type::Generic { base, .. } if base == "BTreeMap" || base == "btree_map" => {
+            Type::Generic { base, .. } if base == "BTreeMap" || base == "btree_map" || base == "TreeMap" || base == "tree_map" => {
                 let release_ref = self.module.declare_func_in_func(self.collections.btree_map_release, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
-            Type::Generic { base, .. } if base == "BTreeSet" || base == "btree_set" => {
+            Type::Generic { base, .. } if base == "BTreeSet" || base == "btree_set" || base == "TreeSet" || base == "tree_set" => {
                 let release_ref = self.module.declare_func_in_func(self.collections.btree_set_release, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
-            Type::Generic { base, .. } if base == "BinaryHeap" || base == "binary_heap" => {
+            Type::Generic { base, .. } if base == "BinaryHeap" || base == "binary_heap" || base == "PriorityQueue" || base == "priority_queue" => {
                 let release_ref = self.module.declare_func_in_func(self.collections.binary_heap_release, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
             }
-            Type::Generic { base, .. } if base == "IndexMap" || base == "index_map" => {
+            Type::Generic { base, .. } if base == "IndexMap" || base == "index_map" || base == "LinkedHashMap" || base == "linked_hash_map" || base == "HashMap" || base == "hash_map" => {
                 let release_ref = self.module.declare_func_in_func(self.collections.index_map_release, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
                 Ok(())
@@ -11736,12 +11880,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             // Advanced Collections (M2-T03)
             // =========================================================================
             // VecDeque
-            "vec_deque_new" | "VecDeque_new" if arguments.is_empty() => {
+            "vec_deque_new" | "VecDeque_new" | "array_deque_new" | "ArrayDeque_new" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.collections.vec_deque_new, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.inst_results(call)[0]);
             }
-            "vec_deque_with_capacity" | "VecDeque_with_capacity" if arguments.len() == 1 => {
+            "vec_deque_with_capacity" | "VecDeque_with_capacity" | "array_deque_with_capacity" | "ArrayDeque_with_capacity" if arguments.len() == 1 => {
                 let cap = self.compile_expression(&arguments[0])?;
                 let func_ref = self.module.declare_func_in_func(self.collections.vec_deque_with_capacity, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[cap]);
@@ -11837,12 +11981,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
 
             // BTreeMap
-            "btree_map_new" | "BTreeMap_new" if arguments.is_empty() => {
+            "btree_map_new" | "BTreeMap_new" | "tree_map_new" | "TreeMap_new" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.collections.btree_map_new, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.inst_results(call)[0]);
             }
-            "btree_map_new_str" if arguments.is_empty() => {
+            "btree_map_new_str" | "tree_map_new_str" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.collections.btree_map_new_str, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.inst_results(call)[0]);
@@ -11936,12 +12080,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
 
             // BTreeSet
-            "btree_set_new" | "BTreeSet_new" if arguments.is_empty() => {
+            "btree_set_new" | "BTreeSet_new" | "tree_set_new" | "TreeSet_new" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.collections.btree_set_new, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.inst_results(call)[0]);
             }
-            "btree_set_new_str" if arguments.is_empty() => {
+            "btree_set_new_str" | "tree_set_new_str" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.collections.btree_set_new_str, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.inst_results(call)[0]);
@@ -12017,7 +12161,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
 
             // BinaryHeap
-            "binary_heap_new" | "BinaryHeap_new" if arguments.is_empty() => {
+            "binary_heap_new" | "BinaryHeap_new" | "priority_queue_new" | "PriorityQueue_new" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.collections.binary_heap_new, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.inst_results(call)[0]);
@@ -12068,12 +12212,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
 
             // IndexMap
-            "index_map_new" | "IndexMap_new" if arguments.is_empty() => {
+            "index_map_new" | "IndexMap_new" | "hash_map_new" | "HashMap_new" | "linked_hash_map_new" | "LinkedHashMap_new" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.collections.index_map_new, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.inst_results(call)[0]);
             }
-            "index_map_new_str" if arguments.is_empty() => {
+            "index_map_new_str" | "hash_map_new_str" | "linked_hash_map_new_str" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.collections.index_map_new_str, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.inst_results(call)[0]);
@@ -12349,6 +12493,269 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.builder.ins().call(func_ref, &[bs]);
                 self.release_if_fresh(&arguments[0], bs)?;
                 return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+
+            // =========================================================================
+            // Enterprise Collections Hierarchy (M7-T02)
+            // =========================================================================
+            // ArrayList
+            "array_list_new" | "ArrayList_new" if arguments.is_empty() => {
+                return self.emit_list_new();
+            }
+            "array_list_add" if arguments.len() == 2 => {
+                let list = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let result = self.emit_list_push(list, val)?;
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(result);
+            }
+            "array_list_get" if arguments.len() == 2 => {
+                let list = self.compile_expression(&arguments[0])?;
+                let index = self.compile_expression(&arguments[1])?;
+                let result = self.emit_list_get(list, index)?;
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(result);
+            }
+            "array_list_set" if arguments.len() == 3 => {
+                let list = self.compile_expression(&arguments[0])?;
+                let index = self.compile_expression(&arguments[1])?;
+                let val = self.compile_expression(&arguments[2])?;
+                let result = self.emit_list_set(list, index, val)?;
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(result);
+            }
+            "array_list_remove" if arguments.len() == 2 => {
+                let list = self.compile_expression(&arguments[0])?;
+                let index = self.compile_expression(&arguments[1])?;
+                let result = self.emit_list_remove(list, index)?;
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(result);
+            }
+            "array_list_len" if arguments.len() == 1 => {
+                let list = self.compile_expression(&arguments[0])?;
+                let result = self.emit_list_length(list)?;
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(result);
+            }
+            "array_list_is_empty" if arguments.len() == 1 => {
+                let list = self.compile_expression(&arguments[0])?;
+                let result = self.emit_list_is_empty(list)?;
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(result);
+            }
+            "array_list_to_list" if arguments.len() == 1 => {
+                let list = self.compile_expression(&arguments[0])?;
+                return Ok(list);
+            }
+            "array_list_clear" | "list_clear" if arguments.len() == 1 => {
+                let list = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.list_clear, self.builder.func);
+                self.builder.ins().call(func_ref, &[list]);
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "array_list_contains" | "list_contains" if arguments.len() == 2 => {
+                let list = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.list_contains, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[list, val]);
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "array_list_index_of" | "list_index_of" if arguments.len() == 2 => {
+                let list = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.list_index_of, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[list, val]);
+                self.release_if_fresh(&arguments[0], list)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+
+            // LinkedList
+            "linked_list_new" | "LinkedList_new" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_new, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "linked_list_add" if arguments.len() == 2 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_add, self.builder.func);
+                self.builder.ins().call(func_ref, &[ll, val]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "linked_list_add_first" if arguments.len() == 2 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_add_first, self.builder.func);
+                self.builder.ins().call(func_ref, &[ll, val]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "linked_list_add_last" if arguments.len() == 2 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_add_last, self.builder.func);
+                self.builder.ins().call(func_ref, &[ll, val]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "linked_list_get_first" if arguments.len() == 1 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_get_first, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ll]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "linked_list_get_last" if arguments.len() == 1 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_get_last, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ll]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "linked_list_remove_first" if arguments.len() == 1 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_remove_first, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ll]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "linked_list_remove_last" if arguments.len() == 1 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_remove_last, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ll]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "linked_list_get" if arguments.len() == 2 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let idx = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_get, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ll, idx]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "linked_list_set" if arguments.len() == 3 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let idx = self.compile_expression(&arguments[1])?;
+                let val = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_set, self.builder.func);
+                self.builder.ins().call(func_ref, &[ll, idx, val]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "linked_list_len" if arguments.len() == 1 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_len, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ll]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "linked_list_is_empty" if arguments.len() == 1 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_is_empty, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ll]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "linked_list_contains" if arguments.len() == 2 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_contains, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ll, val]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "linked_list_clear" if arguments.len() == 1 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_clear, self.builder.func);
+                self.builder.ins().call(func_ref, &[ll]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "linked_list_to_list" if arguments.len() == 1 => {
+                let ll = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.linked_list_to_list, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[ll]);
+                self.release_if_fresh(&arguments[0], ll)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+
+            // HashSet
+            "hash_set_new" | "HashSet_new" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.collections.hash_set_new, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "hash_set_new_str" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.collections.hash_set_new_str, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "hash_set_add" if arguments.len() == 2 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.hash_set_add, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s, val]);
+                self.release_if_fresh(&arguments[0], s)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "hash_set_contains" if arguments.len() == 2 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.hash_set_contains, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s, val]);
+                self.release_if_fresh(&arguments[0], s)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "hash_set_remove" if arguments.len() == 2 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let val = self.compile_expression(&arguments[1])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.hash_set_remove, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s, val]);
+                self.release_if_fresh(&arguments[0], s)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "hash_set_len" if arguments.len() == 1 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.hash_set_len, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s]);
+                self.release_if_fresh(&arguments[0], s)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "hash_set_is_empty" if arguments.len() == 1 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.hash_set_is_empty, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s]);
+                self.release_if_fresh(&arguments[0], s)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "hash_set_to_list" if arguments.len() == 1 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.hash_set_to_list, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[s]);
+                self.release_if_fresh(&arguments[0], s)?;
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "hash_set_clear" if arguments.len() == 1 => {
+                let s = self.compile_expression(&arguments[0])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.hash_set_clear, self.builder.func);
+                self.builder.ins().call(func_ref, &[s]);
+                self.release_if_fresh(&arguments[0], s)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+
+            // IndexMap / HashMap get_or_default
+            "index_map_get_or_default" | "hash_map_get_or_default" if arguments.len() == 3 => {
+                let m = self.compile_expression(&arguments[0])?;
+                let k = self.compile_expression(&arguments[1])?;
+                let def = self.compile_expression(&arguments[2])?;
+                let func_ref = self.module.declare_func_in_func(self.collections.index_map_get_or_default, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[m, k, def]);
+                self.release_if_fresh(&arguments[0], m)?;
+                return Ok(self.builder.inst_results(call)[0]);
             }
 
             // Pluggable Allocator API & Smart Pointers (M2-T04)

@@ -4761,6 +4761,131 @@ fn native_standard_math_bigint_and_bigdecimal_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze Universal Mathematics Engine 100% OPERATIONAL"));
 }
 
+#[test]
+fn native_standard_collections_enterprise_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_collections.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_collections.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_collections_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    let expected = "\
+--- ArrayList ---
+3
+10
+30
+25
+true
+false
+1
+-1
+25
+2
+30
+true
+--- LinkedList ---
+3
+5
+20
+10
+15
+true
+false
+5
+20
+1
+15
+1
+true
+--- HashMap ---
+3
+200
+200
+-1
+true
+false
+200
+2
+false
+true
+--- LinkedHashMap ---
+3
+10
+1000
+30
+3000
+2000
+true
+--- HashSet ---
+true
+true
+false
+2
+true
+false
+2
+true
+false
+1
+true
+--- TreeSet and TreeMap ---
+3
+20
+80
+true
+false
+50
+3
+20
+80
+500
+50
+--- ArrayDeque and PriorityQueue ---
+3
+5
+20
+5
+20
+1
+4
+50
+50
+30
+--- Factory Functions ---
+1
+1
+10
+true
+7
+99
+--- Static Collections Algorithms ---
+10
+50
+1
+0
+10
+20
+30
+40
+50
+2
+0
+4
+-3
+50
+10
+20
+10
+10
+7
+7
+5
+5
+ENTERPRISE_COLLECTIONS_ALL_PASSED";
+    assert_eq!(program_output(&stdout).trim_end(), expected);
+}
+
 
 
 

@@ -285,6 +285,15 @@ impl Type {
             "task_group" | "TaskGroup" | "nursery" | "Nursery" => Type::Generic { base: "TaskGroup".to_string(), type_args: vec![] },
             "subtask" | "Subtask" => Type::Generic { base: "Subtask".to_string(), type_args: vec![] },
             "cancellation_token" | "CancellationToken" | "cancel_token" | "CancelToken" => Type::Generic { base: "CancellationToken".to_string(), type_args: vec![] },
+            "array_list" | "ArrayList" => Type::Generic { base: "ArrayList".to_string(), type_args: vec![] },
+            "linked_list" | "LinkedList" => Type::Generic { base: "LinkedList".to_string(), type_args: vec![] },
+            "hash_map" | "HashMap" => Type::Generic { base: "HashMap".to_string(), type_args: vec![] },
+            "linked_hash_map" | "LinkedHashMap" => Type::Generic { base: "LinkedHashMap".to_string(), type_args: vec![] },
+            "hash_set" | "HashSet" => Type::Generic { base: "HashSet".to_string(), type_args: vec![] },
+            "tree_set" | "TreeSet" => Type::Generic { base: "TreeSet".to_string(), type_args: vec![] },
+            "tree_map" | "TreeMap" => Type::Generic { base: "TreeMap".to_string(), type_args: vec![] },
+            "array_deque" | "ArrayDeque" => Type::Generic { base: "ArrayDeque".to_string(), type_args: vec![] },
+            "priority_queue" | "PriorityQueue" => Type::Generic { base: "PriorityQueue".to_string(), type_args: vec![] },
             "vec_deque" | "VecDeque" => Type::Generic { base: "VecDeque".to_string(), type_args: vec![] },
             "btree_map" | "BTreeMap" => Type::Generic { base: "BTreeMap".to_string(), type_args: vec![] },
             "btree_set" | "BTreeSet" => Type::Generic { base: "BTreeSet".to_string(), type_args: vec![] },
@@ -372,16 +381,22 @@ impl Type {
                     "RozeSubtask".to_string()
                 } else if base == "CancellationToken" || base == "cancellation_token" || base == "CancelToken" || base == "cancel_token" {
                     "RozeCancellationToken".to_string()
-                } else if base == "VecDeque" || base == "vec_deque" {
+                } else if base == "VecDeque" || base == "vec_deque" || base == "ArrayDeque" || base == "array_deque" {
                     "RozeVecDeque".to_string()
-                } else if base == "BTreeMap" || base == "btree_map" {
+                } else if base == "BTreeMap" || base == "btree_map" || base == "TreeMap" || base == "tree_map" {
                     "RozeBTreeMap".to_string()
-                } else if base == "BTreeSet" || base == "btree_set" {
+                } else if base == "BTreeSet" || base == "btree_set" || base == "TreeSet" || base == "tree_set" {
                     "RozeBTreeSet".to_string()
-                } else if base == "BinaryHeap" || base == "binary_heap" {
+                } else if base == "BinaryHeap" || base == "binary_heap" || base == "PriorityQueue" || base == "priority_queue" {
                     "RozeBinaryHeap".to_string()
-                } else if base == "IndexMap" || base == "index_map" {
+                } else if base == "IndexMap" || base == "index_map" || base == "HashMap" || base == "hash_map" || base == "LinkedHashMap" || base == "linked_hash_map" {
                     "RozeIndexMap".to_string()
+                } else if base == "ArrayList" || base == "array_list" {
+                    "java.util.List".to_string()
+                } else if base == "LinkedList" || base == "linked_list" {
+                    "RozeLinkedList".to_string()
+                } else if base == "HashSet" || base == "hash_set" {
+                    "RozeHashSet".to_string()
                 } else if base == "RingBuffer" || base == "ring_buffer" {
                     "RozeRingBuffer".to_string()
                 } else if base == "BitSet" || base == "bit_set" {
@@ -482,12 +497,12 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
         (ty, Type::RawPointer(_)) if ty.is_integer() => true,
         (Type::Char, Type::Char) => true,
         (Type::Char, ty) | (ty, Type::Char) if ty.is_integer() => true,
-        // List <-> List<T>
-        (Type::List, Type::Generic { base, .. }) if base == "List" || base == "list" => true,
-        (Type::Generic { base, .. }, Type::List) if base == "List" || base == "list" => true,
-        // Map <-> Map<K, V>
-        (Type::Map, Type::Generic { base, .. }) if base == "Map" || base == "map" => true,
-        (Type::Generic { base, .. }, Type::Map) if base == "Map" || base == "map" => true,
+        // List <-> List<T> / ArrayList<T>
+        (Type::List, Type::Generic { base, .. }) if base == "List" || base == "list" || base.eq_ignore_ascii_case("ArrayList") => true,
+        (Type::Generic { base, .. }, Type::List) if base == "List" || base == "list" || base.eq_ignore_ascii_case("ArrayList") => true,
+        // Map <-> Map<K, V> / HashMap / LinkedHashMap / IndexMap
+        (Type::Map, Type::Generic { base, .. }) if base == "Map" || base == "map" || base.eq_ignore_ascii_case("HashMap") || base.eq_ignore_ascii_case("LinkedHashMap") || base.eq_ignore_ascii_case("IndexMap") => true,
+        (Type::Generic { base, .. }, Type::Map) if base == "Map" || base == "map" || base.eq_ignore_ascii_case("HashMap") || base.eq_ignore_ascii_case("LinkedHashMap") || base.eq_ignore_ascii_case("IndexMap") => true,
         // Option <-> Option<T>
         (Type::Option, Type::Generic { base, .. }) if base == "Option" || base == "option" => true,
         (Type::Generic { base, .. }, Type::Option) if base == "Option" || base == "option" => true,
@@ -535,11 +550,14 @@ fn types_compatible(expected: &Type, actual: &Type) -> bool {
             if (b1 == "CancellationToken" || b1 == "cancellation_token" || b1 == "CancelToken" || b1 == "cancel_token") && (b2 == "CancellationToken" || b2 == "cancellation_token" || b2 == "CancelToken" || b2 == "cancel_token") => true,
         // Standard Collections
         (Type::Generic { base: b1, .. }, Type::Generic { base: b2, .. })
-            if (b1.eq_ignore_ascii_case("VecDeque") && b2.eq_ignore_ascii_case("VecDeque"))
-            || (b1.eq_ignore_ascii_case("BTreeMap") && b2.eq_ignore_ascii_case("BTreeMap"))
-            || (b1.eq_ignore_ascii_case("BTreeSet") && b2.eq_ignore_ascii_case("BTreeSet"))
-            || (b1.eq_ignore_ascii_case("BinaryHeap") && b2.eq_ignore_ascii_case("BinaryHeap"))
-            || (b1.eq_ignore_ascii_case("IndexMap") && b2.eq_ignore_ascii_case("IndexMap"))
+            if ((b1.eq_ignore_ascii_case("VecDeque") || b1.eq_ignore_ascii_case("ArrayDeque")) && (b2.eq_ignore_ascii_case("VecDeque") || b2.eq_ignore_ascii_case("ArrayDeque")))
+            || ((b1.eq_ignore_ascii_case("BTreeMap") || b1.eq_ignore_ascii_case("TreeMap")) && (b2.eq_ignore_ascii_case("BTreeMap") || b2.eq_ignore_ascii_case("TreeMap")))
+            || ((b1.eq_ignore_ascii_case("BTreeSet") || b1.eq_ignore_ascii_case("TreeSet")) && (b2.eq_ignore_ascii_case("BTreeSet") || b2.eq_ignore_ascii_case("TreeSet")))
+            || ((b1.eq_ignore_ascii_case("BinaryHeap") || b1.eq_ignore_ascii_case("PriorityQueue")) && (b2.eq_ignore_ascii_case("BinaryHeap") || b2.eq_ignore_ascii_case("PriorityQueue")))
+            || ((b1.eq_ignore_ascii_case("IndexMap") || b1.eq_ignore_ascii_case("LinkedHashMap") || b1.eq_ignore_ascii_case("HashMap")) && (b2.eq_ignore_ascii_case("IndexMap") || b2.eq_ignore_ascii_case("LinkedHashMap") || b2.eq_ignore_ascii_case("HashMap")))
+            || ((b1.eq_ignore_ascii_case("ArrayList") || b1.eq_ignore_ascii_case("List")) && (b2.eq_ignore_ascii_case("ArrayList") || b2.eq_ignore_ascii_case("List")))
+            || (b1.eq_ignore_ascii_case("LinkedList") && b2.eq_ignore_ascii_case("LinkedList"))
+            || (b1.eq_ignore_ascii_case("HashSet") && b2.eq_ignore_ascii_case("HashSet"))
             || (b1.eq_ignore_ascii_case("RingBuffer") && b2.eq_ignore_ascii_case("RingBuffer"))
             || (b1.eq_ignore_ascii_case("BitSet") && b2.eq_ignore_ascii_case("BitSet")) => true,
         // Memory & Smart Pointers (M2-T04)
@@ -708,6 +726,9 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("list_remove", vec![Type::List, Type::Int], Type::Unknown),
         ("list_length", vec![Type::List], Type::Int),
         ("list_is_empty", vec![Type::List], Type::Bool),
+        ("list_clear", vec![Type::List], Type::Void),
+        ("list_contains", vec![Type::List, Type::Unknown], Type::Bool),
+        ("list_index_of", vec![Type::List, Type::Unknown], Type::Int),
 
         ("map_new", vec![], Type::Map),
         ("map_put", vec![Type::Map, Type::Unknown, Type::Unknown], Type::Unknown),
@@ -1368,6 +1389,76 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("bit_set_intersect", vec![Type::Unknown, Type::Unknown], Type::Void),
         ("bit_set_difference", vec![Type::Unknown, Type::Unknown], Type::Void),
         ("bit_set_clear", vec![Type::Unknown], Type::Void),
+
+        // ArrayList (Java 25 / Rust Parity)
+        ("array_list_new", vec![], Type::Generic { base: "ArrayList".to_string(), type_args: vec![] }),
+        ("ArrayList_new", vec![], Type::Generic { base: "ArrayList".to_string(), type_args: vec![] }),
+        ("array_list_add", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("array_list_get", vec![Type::Unknown, Type::Int], Type::Unknown),
+        ("array_list_set", vec![Type::Unknown, Type::Int, Type::Unknown], Type::Void),
+        ("array_list_remove", vec![Type::Unknown, Type::Int], Type::Unknown),
+        ("array_list_len", vec![Type::Unknown], Type::Int),
+        ("array_list_is_empty", vec![Type::Unknown], Type::Bool),
+        ("array_list_clear", vec![Type::Unknown], Type::Void),
+        ("array_list_contains", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("array_list_index_of", vec![Type::Unknown, Type::Unknown], Type::Int),
+
+        // LinkedList
+        ("linked_list_new", vec![], Type::Generic { base: "LinkedList".to_string(), type_args: vec![] }),
+        ("LinkedList_new", vec![], Type::Generic { base: "LinkedList".to_string(), type_args: vec![] }),
+        ("linked_list_add", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("linked_list_add_first", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("linked_list_add_last", vec![Type::Unknown, Type::Unknown], Type::Void),
+        ("linked_list_get_first", vec![Type::Unknown], Type::Unknown),
+        ("linked_list_get_last", vec![Type::Unknown], Type::Unknown),
+        ("linked_list_remove_first", vec![Type::Unknown], Type::Unknown),
+        ("linked_list_remove_last", vec![Type::Unknown], Type::Unknown),
+        ("linked_list_get", vec![Type::Unknown, Type::Int], Type::Unknown),
+        ("linked_list_set", vec![Type::Unknown, Type::Int, Type::Unknown], Type::Void),
+        ("linked_list_len", vec![Type::Unknown], Type::Int),
+        ("linked_list_is_empty", vec![Type::Unknown], Type::Bool),
+        ("linked_list_contains", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("linked_list_clear", vec![Type::Unknown], Type::Void),
+        ("linked_list_to_list", vec![Type::Unknown], Type::List),
+
+        // HashSet
+        ("hash_set_new", vec![], Type::Generic { base: "HashSet".to_string(), type_args: vec![] }),
+        ("HashSet_new", vec![], Type::Generic { base: "HashSet".to_string(), type_args: vec![] }),
+        ("hash_set_new_str", vec![], Type::Generic { base: "HashSet".to_string(), type_args: vec![] }),
+        ("hash_set_add", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("hash_set_contains", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("hash_set_remove", vec![Type::Unknown, Type::Unknown], Type::Bool),
+        ("hash_set_len", vec![Type::Unknown], Type::Int),
+        ("hash_set_is_empty", vec![Type::Unknown], Type::Bool),
+        ("hash_set_to_list", vec![Type::Unknown], Type::List),
+        ("hash_set_clear", vec![Type::Unknown], Type::Void),
+
+        // HashMap / LinkedHashMap
+        ("hash_map_new", vec![], Type::Generic { base: "HashMap".to_string(), type_args: vec![] }),
+        ("HashMap_new", vec![], Type::Generic { base: "HashMap".to_string(), type_args: vec![] }),
+        ("hash_map_new_str", vec![], Type::Generic { base: "HashMap".to_string(), type_args: vec![] }),
+        ("linked_hash_map_new", vec![], Type::Generic { base: "LinkedHashMap".to_string(), type_args: vec![] }),
+        ("LinkedHashMap_new", vec![], Type::Generic { base: "LinkedHashMap".to_string(), type_args: vec![] }),
+        ("linked_hash_map_new_str", vec![], Type::Generic { base: "LinkedHashMap".to_string(), type_args: vec![] }),
+        ("index_map_get_or_default", vec![Type::Unknown, Type::Unknown, Type::Unknown], Type::Unknown),
+        ("hash_map_get_or_default", vec![Type::Unknown, Type::Unknown, Type::Unknown], Type::Unknown),
+
+        // ArrayDeque
+        ("array_deque_new", vec![], Type::Generic { base: "ArrayDeque".to_string(), type_args: vec![] }),
+        ("ArrayDeque_new", vec![], Type::Generic { base: "ArrayDeque".to_string(), type_args: vec![] }),
+        ("array_deque_with_capacity", vec![Type::Int], Type::Generic { base: "ArrayDeque".to_string(), type_args: vec![] }),
+
+        // PriorityQueue
+        ("priority_queue_new", vec![], Type::Generic { base: "PriorityQueue".to_string(), type_args: vec![] }),
+        ("PriorityQueue_new", vec![], Type::Generic { base: "PriorityQueue".to_string(), type_args: vec![] }),
+
+        // TreeMap & TreeSet
+        ("tree_map_new", vec![], Type::Generic { base: "TreeMap".to_string(), type_args: vec![] }),
+        ("TreeMap_new", vec![], Type::Generic { base: "TreeMap".to_string(), type_args: vec![] }),
+        ("tree_map_new_str", vec![], Type::Generic { base: "TreeMap".to_string(), type_args: vec![] }),
+        ("tree_set_new", vec![], Type::Generic { base: "TreeSet".to_string(), type_args: vec![] }),
+        ("TreeSet_new", vec![], Type::Generic { base: "TreeSet".to_string(), type_args: vec![] }),
+        ("tree_set_new_str", vec![], Type::Generic { base: "TreeSet".to_string(), type_args: vec![] }),
 
         // Memory Architecture & Smart Pointers (M2-T04)
         ("align_to", vec![Type::Int, Type::Int], Type::Int),
@@ -4761,44 +4852,60 @@ impl TypeChecker {
                             ).into());
                         }
                         typed_arguments[0].type_.clone()
-                    } else if (name == "vec_deque_pop_front" || name == "vec_deque_pop_back" || name == "vec_deque_front" || name == "vec_deque_back") && typed_arguments.len() == 1 {
+                    } else if (name == "vec_deque_pop_front" || name == "vec_deque_pop_back" || name == "vec_deque_front" || name == "vec_deque_back"
+                        || name == "array_deque_pop_front" || name == "array_deque_pop_back" || name == "array_deque_front" || name == "array_deque_back") && typed_arguments.len() == 1 {
                         match &typed_arguments[0].type_ {
-                            Type::Generic { base, type_args } if (base == "VecDeque" || base == "vec_deque") && !type_args.is_empty() => type_args[0].clone(),
+                            Type::Generic { base, type_args } if (base.eq_ignore_ascii_case("VecDeque") || base.eq_ignore_ascii_case("ArrayDeque")) && !type_args.is_empty() => type_args[0].clone(),
                             _ => Type::Unknown,
                         }
-                    } else if name == "vec_deque_get" && typed_arguments.len() == 2 {
+                    } else if (name == "vec_deque_get" || name == "array_deque_get") && typed_arguments.len() == 2 {
                         match &typed_arguments[0].type_ {
-                            Type::Generic { base, type_args } if (base == "VecDeque" || base == "vec_deque") && !type_args.is_empty() => type_args[0].clone(),
+                            Type::Generic { base, type_args } if (base.eq_ignore_ascii_case("VecDeque") || base.eq_ignore_ascii_case("ArrayDeque")) && !type_args.is_empty() => type_args[0].clone(),
                             _ => Type::Unknown,
                         }
-                    } else if (name == "btree_map_get" || name == "btree_map_remove") && typed_arguments.len() == 2 {
+                    } else if (name == "btree_map_get" || name == "btree_map_remove" || name == "tree_map_get" || name == "tree_map_remove") && typed_arguments.len() == 2 {
                         match &typed_arguments[0].type_ {
-                            Type::Generic { base, type_args } if (base == "BTreeMap" || base == "btree_map") && type_args.len() >= 2 => type_args[1].clone(),
+                            Type::Generic { base, type_args } if (base.eq_ignore_ascii_case("BTreeMap") || base.eq_ignore_ascii_case("TreeMap")) && type_args.len() >= 2 => type_args[1].clone(),
                             _ => Type::Unknown,
                         }
-                    } else if (name == "btree_map_first_key" || name == "btree_map_last_key") && typed_arguments.len() == 1 {
+                    } else if (name == "btree_map_first_key" || name == "btree_map_last_key" || name == "tree_map_first_key" || name == "tree_map_last_key") && typed_arguments.len() == 1 {
                         match &typed_arguments[0].type_ {
-                            Type::Generic { base, type_args } if (base == "BTreeMap" || base == "btree_map") && !type_args.is_empty() => type_args[0].clone(),
+                            Type::Generic { base, type_args } if (base.eq_ignore_ascii_case("BTreeMap") || base.eq_ignore_ascii_case("TreeMap")) && !type_args.is_empty() => type_args[0].clone(),
                             _ => Type::Unknown,
                         }
-                    } else if (name == "btree_set_first" || name == "btree_set_last") && typed_arguments.len() == 1 {
+                    } else if (name == "btree_set_first" || name == "btree_set_last" || name == "tree_set_first" || name == "tree_set_last") && typed_arguments.len() == 1 {
                         match &typed_arguments[0].type_ {
-                            Type::Generic { base, type_args } if (base == "BTreeSet" || base == "btree_set") && !type_args.is_empty() => type_args[0].clone(),
+                            Type::Generic { base, type_args } if (base.eq_ignore_ascii_case("BTreeSet") || base.eq_ignore_ascii_case("TreeSet")) && !type_args.is_empty() => type_args[0].clone(),
                             _ => Type::Unknown,
                         }
-                    } else if (name == "binary_heap_pop" || name == "binary_heap_peek") && typed_arguments.len() == 1 {
+                    } else if (name == "binary_heap_pop" || name == "binary_heap_peek" || name == "priority_queue_pop" || name == "priority_queue_peek") && typed_arguments.len() == 1 {
                         match &typed_arguments[0].type_ {
-                            Type::Generic { base, type_args } if (base == "BinaryHeap" || base == "binary_heap") && !type_args.is_empty() => type_args[0].clone(),
+                            Type::Generic { base, type_args } if (base.eq_ignore_ascii_case("BinaryHeap") || base.eq_ignore_ascii_case("PriorityQueue")) && !type_args.is_empty() => type_args[0].clone(),
                             _ => Type::Unknown,
                         }
-                    } else if (name == "index_map_get" || name == "index_map_remove" || name == "index_map_get_index_value") && typed_arguments.len() >= 2 {
+                    } else if (name == "index_map_get" || name == "index_map_remove" || name == "index_map_get_index_value" || name == "hash_map_get" || name == "hash_map_remove") && typed_arguments.len() >= 2 {
                         match &typed_arguments[0].type_ {
-                            Type::Generic { base, type_args } if (base == "IndexMap" || base == "index_map") && type_args.len() >= 2 => type_args[1].clone(),
+                            Type::Generic { base, type_args } if (base.eq_ignore_ascii_case("IndexMap") || base.eq_ignore_ascii_case("HashMap") || base.eq_ignore_ascii_case("LinkedHashMap")) && type_args.len() >= 2 => type_args[1].clone(),
                             _ => Type::Unknown,
+                        }
+                    } else if (name == "index_map_get_or_default" || name == "hash_map_get_or_default") && typed_arguments.len() == 3 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base.eq_ignore_ascii_case("IndexMap") || base.eq_ignore_ascii_case("HashMap") || base.eq_ignore_ascii_case("LinkedHashMap")) && type_args.len() >= 2 => type_args[1].clone(),
+                            _ => typed_arguments[2].type_.clone(),
                         }
                     } else if name == "index_map_get_index_key" && typed_arguments.len() == 2 {
                         match &typed_arguments[0].type_ {
-                            Type::Generic { base, type_args } if (base == "IndexMap" || base == "index_map") && !type_args.is_empty() => type_args[0].clone(),
+                            Type::Generic { base, type_args } if (base.eq_ignore_ascii_case("IndexMap") || base.eq_ignore_ascii_case("HashMap") || base.eq_ignore_ascii_case("LinkedHashMap")) && !type_args.is_empty() => type_args[0].clone(),
+                            _ => Type::Unknown,
+                        }
+                    } else if (name == "array_list_get" || name == "array_list_remove") && typed_arguments.len() == 2 {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if (base.eq_ignore_ascii_case("ArrayList") || base.eq_ignore_ascii_case("List")) && !type_args.is_empty() => type_args[0].clone(),
+                            _ => Type::Unknown,
+                        }
+                    } else if name == "linked_list_get" || name == "linked_list_get_first" || name == "linked_list_get_last" || name == "linked_list_remove_first" || name == "linked_list_remove_last" {
+                        match &typed_arguments[0].type_ {
+                            Type::Generic { base, type_args } if base.eq_ignore_ascii_case("LinkedList") && !type_args.is_empty() => type_args[0].clone(),
                             _ => Type::Unknown,
                         }
                     } else if (name == "ring_buffer_pop" || name == "ring_buffer_peek") && typed_arguments.len() == 1 {
@@ -5007,9 +5114,13 @@ impl TypeChecker {
                 let is_user_class = self.classes.contains_key(class_name) || self.generic_classes.contains_key(class_name);
                 let is_builtin_col = !is_user_class && matches!(
                     class_name.as_str(),
-                    "VecDeque" | "vec_deque" | "BTreeMap" | "btree_map" | "BTreeSet" | "btree_set"
-                    | "BinaryHeap" | "binary_heap" | "IndexMap" | "index_map" | "RingBuffer" | "ring_buffer"
-                    | "BitSet" | "bit_set"
+                    "VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque"
+                    | "BTreeMap" | "btree_map" | "TreeMap" | "tree_map"
+                    | "BTreeSet" | "btree_set" | "TreeSet" | "tree_set"
+                    | "BinaryHeap" | "binary_heap" | "PriorityQueue" | "priority_queue"
+                    | "IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map"
+                    | "ArrayList" | "array_list" | "LinkedList" | "linked_list" | "HashSet" | "hash_set"
+                    | "RingBuffer" | "ring_buffer" | "BitSet" | "bit_set"
                     | "Box" | "box" | "RozeBox" | "Arc" | "arc" | "RozeArc" | "Weak" | "weak" | "RozeWeak"
                     | "Rc" | "rc" | "RozeRc" | "RcWeak" | "rc_weak" | "RozeRcWeak"
                     | "BumpAllocator" | "bump_allocator" | "ArenaAllocator" | "arena_allocator"
@@ -5025,27 +5136,45 @@ impl TypeChecker {
                         typed_args.push(self.check_expression(arg)?);
                     }
                     let (fn_name, base_name) = match class_name.as_str() {
-                        "VecDeque" | "vec_deque" => (if typed_args.is_empty() { "vec_deque_new" } else { "vec_deque_with_capacity" }, "VecDeque"),
-                        "BTreeMap" | "btree_map" => {
+                        "VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque" => (if typed_args.is_empty() { "vec_deque_new" } else { "vec_deque_with_capacity" }, if class_name.eq_ignore_ascii_case("ArrayDeque") { "ArrayDeque" } else { "VecDeque" }),
+                        "BTreeMap" | "btree_map" | "TreeMap" | "tree_map" => {
+                            let base = if class_name.eq_ignore_ascii_case("TreeMap") { "TreeMap" } else { "BTreeMap" };
                             if !concrete_args.is_empty() && concrete_args[0] == Type::String {
-                                ("btree_map_new_str", "BTreeMap")
+                                ("btree_map_new_str", base)
                             } else {
-                                ("btree_map_new", "BTreeMap")
+                                ("btree_map_new", base)
                             }
                         }
-                        "BTreeSet" | "btree_set" => {
+                        "BTreeSet" | "btree_set" | "TreeSet" | "tree_set" => {
+                            let base = if class_name.eq_ignore_ascii_case("TreeSet") { "TreeSet" } else { "BTreeSet" };
                             if !concrete_args.is_empty() && concrete_args[0] == Type::String {
-                                ("btree_set_new_str", "BTreeSet")
+                                ("btree_set_new_str", base)
                             } else {
-                                ("btree_set_new", "BTreeSet")
+                                ("btree_set_new", base)
                             }
                         }
-                        "BinaryHeap" | "binary_heap" => ("binary_heap_new", "BinaryHeap"),
-                        "IndexMap" | "index_map" => {
-                            if !concrete_args.is_empty() && concrete_args[0] == Type::String {
-                                ("index_map_new_str", "IndexMap")
+                        "BinaryHeap" | "binary_heap" | "PriorityQueue" | "priority_queue" => ("binary_heap_new", if class_name.eq_ignore_ascii_case("PriorityQueue") { "PriorityQueue" } else { "BinaryHeap" }),
+                        "IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map" => {
+                            let base = if class_name.eq_ignore_ascii_case("LinkedHashMap") {
+                                "LinkedHashMap"
+                            } else if class_name.eq_ignore_ascii_case("HashMap") {
+                                "HashMap"
                             } else {
-                                ("index_map_new", "IndexMap")
+                                "IndexMap"
+                            };
+                            if !concrete_args.is_empty() && concrete_args[0] == Type::String {
+                                ("index_map_new_str", base)
+                            } else {
+                                ("index_map_new", base)
+                            }
+                        }
+                        "ArrayList" | "array_list" => ("array_list_new", "ArrayList"),
+                        "LinkedList" | "linked_list" => ("linked_list_new", "LinkedList"),
+                        "HashSet" | "hash_set" => {
+                            if !concrete_args.is_empty() && concrete_args[0] == Type::String {
+                                ("hash_set_new_str", "HashSet")
+                            } else {
+                                ("hash_set_new", "HashSet")
                             }
                         }
                         "RingBuffer" | "ring_buffer" => ("ring_buffer_new", "RingBuffer"),
@@ -5824,63 +5953,99 @@ impl TypeChecker {
                             ("CancellationToken" | "cancellation_token" | "CancelToken" | "cancel_token", "cancel") => ("cancel_token_cancel", Type::Void),
                             ("CancellationToken" | "cancellation_token" | "CancelToken" | "cancel_token", "is_cancelled") => ("cancel_token_is_cancelled", Type::Bool),
 
-                            // VecDeque
-                            ("VecDeque" | "vec_deque", "push_back") => ("vec_deque_push_back", Type::Void),
-                            ("VecDeque" | "vec_deque", "push_front") => ("vec_deque_push_front", Type::Void),
-                            ("VecDeque" | "vec_deque", "pop_back") => ("vec_deque_pop_back", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
-                            ("VecDeque" | "vec_deque", "pop_front") => ("vec_deque_pop_front", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
-                            ("VecDeque" | "vec_deque", "front") => ("vec_deque_front", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
-                            ("VecDeque" | "vec_deque", "back") => ("vec_deque_back", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
-                            ("VecDeque" | "vec_deque", "get") => ("vec_deque_get", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
-                            ("VecDeque" | "vec_deque", "set") => ("vec_deque_set", Type::Void),
-                            ("VecDeque" | "vec_deque", "len" | "length") => ("vec_deque_len", Type::Int),
-                            ("VecDeque" | "vec_deque", "is_empty") => ("vec_deque_is_empty", Type::Bool),
-                            ("VecDeque" | "vec_deque", "clear") => ("vec_deque_clear", Type::Void),
+                            // VecDeque & ArrayDeque
+                            ("VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque", "push_back" | "add" | "addLast") => ("vec_deque_push_back", Type::Void),
+                            ("VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque", "push_front" | "addFirst") => ("vec_deque_push_front", Type::Void),
+                            ("VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque", "pop_back" | "pop" | "pollLast") => ("vec_deque_pop_back", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque", "pop_front" | "poll" | "pollFirst") => ("vec_deque_pop_front", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque", "front" | "peek" | "peekFirst") => ("vec_deque_front", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque", "back" | "peekLast") => ("vec_deque_back", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque", "get") => ("vec_deque_get", if type_args.is_empty() { Type::Unknown } else { type_args[0].clone() }),
+                            ("VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque", "set") => ("vec_deque_set", Type::Void),
+                            ("VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque", "len" | "length" | "size") => ("vec_deque_len", Type::Int),
+                            ("VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque", "is_empty" | "isEmpty") => ("vec_deque_is_empty", Type::Bool),
+                            ("VecDeque" | "vec_deque" | "ArrayDeque" | "array_deque", "clear") => ("vec_deque_clear", Type::Void),
 
-                            // BTreeMap
-                            ("BTreeMap" | "btree_map", "insert") => ("btree_map_insert", Type::Void),
-                            ("BTreeMap" | "btree_map", "get") => ("btree_map_get", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
-                            ("BTreeMap" | "btree_map", "contains_key" | "has") => ("btree_map_contains_key", Type::Bool),
-                            ("BTreeMap" | "btree_map", "remove") => ("btree_map_remove", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
-                            ("BTreeMap" | "btree_map", "len" | "size") => ("btree_map_len", Type::Int),
-                            ("BTreeMap" | "btree_map", "is_empty") => ("btree_map_is_empty", Type::Bool),
-                            ("BTreeMap" | "btree_map", "first_key") => ("btree_map_first_key", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
-                            ("BTreeMap" | "btree_map", "last_key") => ("btree_map_last_key", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
-                            ("BTreeMap" | "btree_map", "keys") => ("btree_map_keys", Type::List),
-                            ("BTreeMap" | "btree_map", "values") => ("btree_map_values", Type::List),
-                            ("BTreeMap" | "btree_map", "clear") => ("btree_map_clear", Type::Void),
+                            // BTreeMap & TreeMap
+                            ("BTreeMap" | "btree_map" | "TreeMap" | "tree_map", "insert" | "put") => ("btree_map_insert", Type::Void),
+                            ("BTreeMap" | "btree_map" | "TreeMap" | "tree_map", "get") => ("btree_map_get", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
+                            ("BTreeMap" | "btree_map" | "TreeMap" | "tree_map", "contains_key" | "containsKey" | "has") => ("btree_map_contains_key", Type::Bool),
+                            ("BTreeMap" | "btree_map" | "TreeMap" | "tree_map", "remove") => ("btree_map_remove", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
+                            ("BTreeMap" | "btree_map" | "TreeMap" | "tree_map", "len" | "size") => ("btree_map_len", Type::Int),
+                            ("BTreeMap" | "btree_map" | "TreeMap" | "tree_map", "is_empty" | "isEmpty") => ("btree_map_is_empty", Type::Bool),
+                            ("BTreeMap" | "btree_map" | "TreeMap" | "tree_map", "first_key" | "firstKey") => ("btree_map_first_key", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("BTreeMap" | "btree_map" | "TreeMap" | "tree_map", "last_key" | "lastKey") => ("btree_map_last_key", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("BTreeMap" | "btree_map" | "TreeMap" | "tree_map", "keys" | "keySet") => ("btree_map_keys", Type::List),
+                            ("BTreeMap" | "btree_map" | "TreeMap" | "tree_map", "values") => ("btree_map_values", Type::List),
+                            ("BTreeMap" | "btree_map" | "TreeMap" | "tree_map", "clear") => ("btree_map_clear", Type::Void),
 
-                            // BTreeSet
-                            ("BTreeSet" | "btree_set", "insert") => ("btree_set_insert", Type::Bool),
-                            ("BTreeSet" | "btree_set", "contains") => ("btree_set_contains", Type::Bool),
-                            ("BTreeSet" | "btree_set", "remove") => ("btree_set_remove", Type::Bool),
-                            ("BTreeSet" | "btree_set", "len" | "size") => ("btree_set_len", Type::Int),
-                            ("BTreeSet" | "btree_set", "is_empty") => ("btree_set_is_empty", Type::Bool),
-                            ("BTreeSet" | "btree_set", "first") => ("btree_set_first", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
-                            ("BTreeSet" | "btree_set", "last") => ("btree_set_last", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
-                            ("BTreeSet" | "btree_set", "to_list") => ("btree_set_to_list", Type::List),
-                            ("BTreeSet" | "btree_set", "clear") => ("btree_set_clear", Type::Void),
+                            // BTreeSet & TreeSet
+                            ("BTreeSet" | "btree_set" | "TreeSet" | "tree_set", "insert" | "add") => ("btree_set_insert", Type::Bool),
+                            ("BTreeSet" | "btree_set" | "TreeSet" | "tree_set", "contains" | "has") => ("btree_set_contains", Type::Bool),
+                            ("BTreeSet" | "btree_set" | "TreeSet" | "tree_set", "remove") => ("btree_set_remove", Type::Bool),
+                            ("BTreeSet" | "btree_set" | "TreeSet" | "tree_set", "len" | "size") => ("btree_set_len", Type::Int),
+                            ("BTreeSet" | "btree_set" | "TreeSet" | "tree_set", "is_empty" | "isEmpty") => ("btree_set_is_empty", Type::Bool),
+                            ("BTreeSet" | "btree_set" | "TreeSet" | "tree_set", "first") => ("btree_set_first", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("BTreeSet" | "btree_set" | "TreeSet" | "tree_set", "last") => ("btree_set_last", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("BTreeSet" | "btree_set" | "TreeSet" | "tree_set", "to_list") => ("btree_set_to_list", Type::List),
+                            ("BTreeSet" | "btree_set" | "TreeSet" | "tree_set", "clear") => ("btree_set_clear", Type::Void),
 
-                            // BinaryHeap
-                            ("BinaryHeap" | "binary_heap", "push") => ("binary_heap_push", Type::Void),
-                            ("BinaryHeap" | "binary_heap", "pop") => ("binary_heap_pop", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
-                            ("BinaryHeap" | "binary_heap", "peek") => ("binary_heap_peek", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
-                            ("BinaryHeap" | "binary_heap", "len" | "size") => ("binary_heap_len", Type::Int),
-                            ("BinaryHeap" | "binary_heap", "is_empty") => ("binary_heap_is_empty", Type::Bool),
-                            ("BinaryHeap" | "binary_heap", "clear") => ("binary_heap_clear", Type::Void),
+                            // BinaryHeap & PriorityQueue
+                            ("BinaryHeap" | "binary_heap" | "PriorityQueue" | "priority_queue", "push" | "add" | "offer") => ("binary_heap_push", Type::Void),
+                            ("BinaryHeap" | "binary_heap" | "PriorityQueue" | "priority_queue", "pop" | "poll") => ("binary_heap_pop", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("BinaryHeap" | "binary_heap" | "PriorityQueue" | "priority_queue", "peek") => ("binary_heap_peek", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("BinaryHeap" | "binary_heap" | "PriorityQueue" | "priority_queue", "len" | "size") => ("binary_heap_len", Type::Int),
+                            ("BinaryHeap" | "binary_heap" | "PriorityQueue" | "priority_queue", "is_empty" | "isEmpty") => ("binary_heap_is_empty", Type::Bool),
+                            ("BinaryHeap" | "binary_heap" | "PriorityQueue" | "priority_queue", "clear") => ("binary_heap_clear", Type::Void),
 
-                            // IndexMap
-                            ("IndexMap" | "index_map", "insert") => ("index_map_insert", Type::Void),
-                            ("IndexMap" | "index_map", "get") => ("index_map_get", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
-                            ("IndexMap" | "index_map", "get_index_key") => ("index_map_get_index_key", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
-                            ("IndexMap" | "index_map", "get_index_value") => ("index_map_get_index_value", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
-                            ("IndexMap" | "index_map", "contains_key" | "has") => ("index_map_contains_key", Type::Bool),
-                            ("IndexMap" | "index_map", "remove") => ("index_map_remove", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
-                            ("IndexMap" | "index_map", "len" | "size") => ("index_map_len", Type::Int),
-                            ("IndexMap" | "index_map", "is_empty") => ("index_map_is_empty", Type::Bool),
-                            ("IndexMap" | "index_map", "keys") => ("index_map_keys", Type::List),
-                            ("IndexMap" | "index_map", "values") => ("index_map_values", Type::List),
-                            ("IndexMap" | "index_map", "clear") => ("index_map_clear", Type::Void),
+                            // IndexMap & HashMap & LinkedHashMap
+                            ("IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map", "insert" | "put") => ("index_map_insert", Type::Void),
+                            ("IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map", "get") => ("index_map_get", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
+                            ("IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map", "get_or_default" | "getOrDefault") => ("index_map_get_or_default", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
+                            ("IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map", "get_index_key") => ("index_map_get_index_key", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map", "get_index_value") => ("index_map_get_index_value", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
+                            ("IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map", "contains_key" | "containsKey" | "has") => ("index_map_contains_key", Type::Bool),
+                            ("IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map", "remove") => ("index_map_remove", if type_args.len() >= 2 { type_args[1].clone() } else { Type::Unknown }),
+                            ("IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map", "len" | "size") => ("index_map_len", Type::Int),
+                            ("IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map", "is_empty" | "isEmpty") => ("index_map_is_empty", Type::Bool),
+                            ("IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map", "keys" | "keySet") => ("index_map_keys", Type::List),
+                            ("IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map", "values") => ("index_map_values", Type::List),
+                            ("IndexMap" | "index_map" | "HashMap" | "hash_map" | "LinkedHashMap" | "linked_hash_map", "clear") => ("index_map_clear", Type::Void),
+
+                            // ArrayList & List
+                            ("ArrayList" | "array_list" | "List" | "list", "add" | "push" | "append") => ("array_list_add", Type::Void),
+                            ("ArrayList" | "array_list" | "List" | "list", "get") => ("array_list_get", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("ArrayList" | "array_list" | "List" | "list", "set") => ("array_list_set", Type::Void),
+                            ("ArrayList" | "array_list" | "List" | "list", "remove") => ("array_list_remove", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("ArrayList" | "array_list" | "List" | "list", "len" | "length" | "size") => ("array_list_len", Type::Int),
+                            ("ArrayList" | "array_list" | "List" | "list", "is_empty" | "isEmpty") => ("array_list_is_empty", Type::Bool),
+                            ("ArrayList" | "array_list" | "List" | "list", "contains") => ("array_list_contains", Type::Bool),
+                            ("ArrayList" | "array_list" | "List" | "list", "index_of" | "indexOf") => ("array_list_index_of", Type::Int),
+                            ("ArrayList" | "array_list" | "List" | "list", "clear") => ("array_list_clear", Type::Void),
+
+                            // LinkedList
+                            ("LinkedList" | "linked_list", "add" | "add_last" | "addLast" | "push" | "push_back") => ("linked_list_add", Type::Void),
+                            ("LinkedList" | "linked_list", "add_first" | "addFirst" | "push_front") => ("linked_list_add_first", Type::Void),
+                            ("LinkedList" | "linked_list", "get_first" | "getFirst" | "peek" | "peek_first" | "peekFirst" | "front") => ("linked_list_get_first", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("LinkedList" | "linked_list", "get_last" | "getLast" | "peek_last" | "peekLast" | "back") => ("linked_list_get_last", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("LinkedList" | "linked_list", "remove_first" | "removeFirst" | "pop" | "pop_front" | "poll" | "pollFirst") => ("linked_list_remove_first", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("LinkedList" | "linked_list", "remove_last" | "removeLast" | "pop_back" | "pollLast") => ("linked_list_remove_last", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("LinkedList" | "linked_list", "get") => ("linked_list_get", if !type_args.is_empty() { type_args[0].clone() } else { Type::Unknown }),
+                            ("LinkedList" | "linked_list", "set") => ("linked_list_set", Type::Void),
+                            ("LinkedList" | "linked_list", "len" | "length" | "size") => ("linked_list_len", Type::Int),
+                            ("LinkedList" | "linked_list", "is_empty" | "isEmpty") => ("linked_list_is_empty", Type::Bool),
+                            ("LinkedList" | "linked_list", "contains") => ("linked_list_contains", Type::Bool),
+                            ("LinkedList" | "linked_list", "clear") => ("linked_list_clear", Type::Void),
+                            ("LinkedList" | "linked_list", "to_list") => ("linked_list_to_list", Type::List),
+
+                            // HashSet
+                            ("HashSet" | "hash_set", "add" | "insert") => ("hash_set_add", Type::Bool),
+                            ("HashSet" | "hash_set", "contains" | "has") => ("hash_set_contains", Type::Bool),
+                            ("HashSet" | "hash_set", "remove") => ("hash_set_remove", Type::Bool),
+                            ("HashSet" | "hash_set", "len" | "size") => ("hash_set_len", Type::Int),
+                            ("HashSet" | "hash_set", "is_empty" | "isEmpty") => ("hash_set_is_empty", Type::Bool),
+                            ("HashSet" | "hash_set", "to_list") => ("hash_set_to_list", Type::List),
+                            ("HashSet" | "hash_set", "clear") => ("hash_set_clear", Type::Void),
 
                             // RingBuffer
                             ("RingBuffer" | "ring_buffer", "push") => ("ring_buffer_push", Type::Bool),
@@ -6069,6 +6234,67 @@ impl TypeChecker {
                         Ok(TypedExpression {
                             kind: TypedExpressionKind::Call {
                                 function: fn_name,
+                                arguments: all_args,
+                            },
+                            type_: ret_ty,
+                            location: location.clone(),
+                        })
+                    }
+                    Type::List => {
+                        let (fn_name, ret_ty) = match method.as_str() {
+                            "add" | "push" | "append" => ("array_list_add", Type::Void),
+                            "get" => ("array_list_get", Type::Unknown),
+                            "set" => ("array_list_set", Type::Void),
+                            "remove" => ("array_list_remove", Type::Unknown),
+                            "len" | "length" | "size" => ("array_list_len", Type::Int),
+                            "is_empty" | "isEmpty" => ("array_list_is_empty", Type::Bool),
+                            "contains" => ("array_list_contains", Type::Bool),
+                            "index_of" | "indexOf" => ("array_list_index_of", Type::Int),
+                            "clear" => ("array_list_clear", Type::Void),
+                            _ => {
+                                return Err(RozeError::type_error(
+                                    format!("Cannot call method '{}' on List", method),
+                                    location.line, location.column,
+                                ).into());
+                            }
+                        };
+                        let mut all_args = Vec::with_capacity(1 + typed_args.len());
+                        all_args.push(typed_obj);
+                        all_args.extend(typed_args);
+                        Ok(TypedExpression {
+                            kind: TypedExpressionKind::Call {
+                                function: fn_name.to_string(),
+                                arguments: all_args,
+                            },
+                            type_: ret_ty,
+                            location: location.clone(),
+                        })
+                    }
+                    Type::Map => {
+                        let (fn_name, ret_ty) = match method.as_str() {
+                            "put" | "insert" => ("index_map_insert", Type::Void),
+                            "get" => ("index_map_get", Type::Unknown),
+                            "get_or_default" | "getOrDefault" => ("index_map_get_or_default", Type::Unknown),
+                            "contains_key" | "containsKey" | "has" => ("index_map_contains_key", Type::Bool),
+                            "remove" => ("index_map_remove", Type::Unknown),
+                            "len" | "size" => ("index_map_len", Type::Int),
+                            "is_empty" | "isEmpty" => ("index_map_is_empty", Type::Bool),
+                            "keys" | "keySet" => ("index_map_keys", Type::List),
+                            "values" => ("index_map_values", Type::List),
+                            "clear" => ("index_map_clear", Type::Void),
+                            _ => {
+                                return Err(RozeError::type_error(
+                                    format!("Cannot call method '{}' on Map", method),
+                                    location.line, location.column,
+                                ).into());
+                            }
+                        };
+                        let mut all_args = Vec::with_capacity(1 + typed_args.len());
+                        all_args.push(typed_obj);
+                        all_args.extend(typed_args);
+                        Ok(TypedExpression {
+                            kind: TypedExpressionKind::Call {
+                                function: fn_name.to_string(),
                                 arguments: all_args,
                             },
                             type_: ret_ty,

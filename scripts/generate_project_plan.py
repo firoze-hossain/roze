@@ -638,7 +638,7 @@ s1_rows = [
         ("M7-T02", 8), ("Month 7", 22), ("Sprint 13 (W27-W28)", 8), "Enterprise Collections", "Complete Java 25 Collections Hierarchy (roze.util)",
         "Comprehensive enterprise collections in pure Roze: ArrayList<T>, LinkedList<T>, HashMap<K,V>, LinkedHashMap<K,V>, HashSet<T>, TreeSet<T>, TreeMap<K,V>, ArrayDeque<T>, PriorityQueue<T>, BitSet. Built-in Collections static algorithm suite: sort, binary_search, shuffle, reverse, unmodifiable_view.",
         "1:1 parity with Java 25 java.util.* Collections Framework and Rust 1.99 std::collections.",
-        "All Domains, Data Structures, Algorithms", "8 Days", ("Critical", 14), ("Planned", 12)
+        "All Domains, Data Structures, Algorithms", "8 Days", ("Critical", 14), ("Completed", 13)
     ],
     [
         ("M7-T03", 8), ("Month 7", 22), ("Sprint 13 (W27-W28)", 8), "Temporal Engine", "JSR-310 Temporal Engine & High-Precision Clocks (roze.time)",

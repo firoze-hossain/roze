@@ -1,0 +1,248 @@
+import "collections";
+
+func test_array_list() {
+    println("--- ArrayList ---");
+    let list = new ArrayList<int>();
+    list.add(10);
+    list.add(20);
+    list.add(30);
+    println(list.len());
+    println(list.get(0));
+    println(list.get(2));
+    list.set(1, 25);
+    println(list.get(1));
+    println(list.contains(25));
+    println(list.contains(99));
+    println(list.indexOf(25));
+    println(list.indexOf(99));
+    let removed: int = list.remove(1);
+    println(removed);
+    println(list.len());
+    println(list.get(1));
+    list.clear();
+    println(list.is_empty());
+}
+
+func test_linked_list() {
+    println("--- LinkedList ---");
+    let ll = new LinkedList<int>();
+    ll.add(10);
+    ll.add_first(5);
+    ll.add_last(20);
+    println(ll.len());
+    println(ll.get_first());
+    println(ll.get_last());
+    println(ll.get(1));
+    ll.set(1, 15);
+    println(ll.get(1));
+    println(ll.contains(15));
+    println(ll.contains(99));
+    let first: int = ll.remove_first();
+    println(first);
+    let last: int = ll.remove_last();
+    println(last);
+    println(ll.len());
+    println(ll.get_first());
+    let as_list = ll.to_list();
+    println(as_list.len());
+    ll.clear();
+    println(ll.is_empty());
+}
+
+func test_hash_map() {
+    println("--- HashMap ---");
+    let map = new HashMap<int, int>();
+    map.put(1, 100);
+    map.put(2, 200);
+    map.put(3, 300);
+    println(map.size());
+    println(map.get(2));
+    println(map.get_or_default(2, -1));
+    println(map.get_or_default(99, -1));
+    println(map.containsKey(3));
+    println(map.containsKey(99));
+    let rem: int = map.remove(2);
+    println(rem);
+    println(map.size());
+    println(map.containsKey(2));
+    map.clear();
+    println(map.isEmpty());
+}
+
+func test_linked_hash_map() {
+    println("--- LinkedHashMap ---");
+    let lhm = new LinkedHashMap<int, int>();
+    lhm.put(10, 1000);
+    lhm.put(20, 2000);
+    lhm.put(30, 3000);
+    println(lhm.len());
+    println(lhm.get_index_key(0));
+    println(lhm.get_index_value(0));
+    println(lhm.get_index_key(2));
+    println(lhm.get_index_value(2));
+    println(lhm.get(20));
+    lhm.clear();
+    println(lhm.is_empty());
+}
+
+func test_hash_set() {
+    println("--- HashSet ---");
+    let hs = new HashSet<int>();
+    println(hs.add(10));
+    println(hs.add(20));
+    println(hs.add(10)); // duplicate
+    println(hs.len());
+    println(hs.contains(10));
+    println(hs.contains(99));
+    let as_list = hs.to_list();
+    println(as_list.len());
+    println(hs.remove(10));
+    println(hs.contains(10));
+    println(hs.len());
+    hs.clear();
+    println(hs.is_empty());
+}
+
+func test_tree_map_and_set() {
+    println("--- TreeSet and TreeMap ---");
+    let ts = new TreeSet<int>();
+    ts.add(50);
+    ts.add(20);
+    ts.add(80);
+    println(ts.len());
+    println(ts.first());
+    println(ts.last());
+    println(ts.contains(20));
+    println(ts.contains(99));
+    ts.remove(20);
+    println(ts.first());
+
+    let tm = new TreeMap<int, int>();
+    tm.put(50, 500);
+    tm.put(20, 200);
+    tm.put(80, 800);
+    println(tm.len());
+    println(tm.first_key());
+    println(tm.last_key());
+    println(tm.get(50));
+    tm.remove(20);
+    println(tm.first_key());
+}
+
+func test_array_deque_and_priority_queue() {
+    println("--- ArrayDeque and PriorityQueue ---");
+    let ad = new ArrayDeque<int>();
+    ad.addLast(10);
+    ad.addLast(20);
+    ad.addFirst(5);
+    println(ad.len());
+    println(ad.peekFirst());
+    println(ad.peekLast());
+    let p1: int = ad.pollFirst();
+    println(p1);
+    let p2: int = ad.pollLast();
+    println(p2);
+    println(ad.len());
+
+    let pq = new PriorityQueue<int>();
+    pq.add(30);
+    pq.add(10);
+    pq.add(50);
+    pq.add(20);
+    println(pq.len());
+    println(pq.peek());
+    let pop1: int = pq.poll();
+    println(pop1);
+    println(pq.peek());
+}
+
+func test_factory_functions() {
+    println("--- Factory Functions ---");
+    let al = new_array_list<int>();
+    al.add(1);
+    println(al.len());
+
+    let ll = new_linked_list<int>();
+    ll.add(2);
+    println(ll.len());
+
+    let hm = new_hash_map<int, int>();
+    hm.put(1, 10);
+    println(hm.get(1));
+
+    let hs = new_hash_set<int>();
+    hs.add(42);
+    println(hs.contains(42));
+
+    let ad = new_array_deque<int>();
+    ad.add(7);
+    println(ad.peek());
+
+    let pq = new_priority_queue<int>();
+    pq.add(99);
+    println(pq.peek());
+}
+
+func test_static_algorithms() {
+    println("--- Static Collections Algorithms ---");
+    let list = [40, 10, 30, 50, 20];
+    println(collections_min(list));
+    println(collections_max(list));
+    println(collections_frequency(list, 30));
+    println(collections_frequency(list, 99));
+
+    // Sort
+    collections_sort(list);
+    println(list.get(0));
+    println(list.get(1));
+    println(list.get(2));
+    println(list.get(3));
+    println(list.get(4));
+
+    // Binary search
+    println(collections_binary_search(list, 30));
+    println(collections_binary_search(list, 10));
+    println(collections_binary_search(list, 50));
+    println(collections_binary_search(list, 25)); // negative insertion point
+
+    // Reverse
+    collections_reverse(list);
+    println(list.get(0));
+    println(list.get(4));
+
+    // Rotate
+    collections_rotate(list, 2);
+    println(list.get(0));
+    println(list.get(1));
+
+    // Copy
+    let dest = [0, 0, 0, 0, 0];
+    collections_copy(dest, list);
+    println(collections_min(dest));
+
+    // Fill
+    collections_fill(dest, 7);
+    println(dest.get(0));
+    println(dest.get(4));
+
+    // Unmodifiable view
+    let view = collections_unmodifiable_view(list);
+    println(view.len());
+
+    // Seeded shuffle
+    collections_shuffle_seeded(list, 42);
+    println(list.len());
+}
+
+func main() {
+    test_array_list();
+    test_linked_list();
+    test_hash_map();
+    test_linked_hash_map();
+    test_hash_set();
+    test_tree_map_and_set();
+    test_array_deque_and_priority_queue();
+    test_factory_functions();
+    test_static_algorithms();
+    println("ENTERPRISE_COLLECTIONS_ALL_PASSED");
+}

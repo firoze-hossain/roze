@@ -371,7 +371,7 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "ai" {
         return Ok((AI_SOURCE.to_string(), AI_DISPLAY_NAME.to_string()));
     }
-    if path == "collections" {
+    if path == "collections" || path == "std::collections" || path == "roze::collections" || path == "roze.collections" || path == "util" || path == "roze::util" || path == "roze.util" {
         return Ok((COLLECTIONS_SOURCE.to_string(), COLLECTIONS_DISPLAY_NAME.to_string()));
     }
     if path == "memory" {

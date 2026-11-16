@@ -4541,6 +4541,13 @@ int64_t __roze_index_map_get(int64_t m_val, int64_t key) {
     return (idx != -1) ? m->entries[idx].value : 0;
 }
 
+int64_t __roze_index_map_get_or_default(int64_t m_val, int64_t key, int64_t def_val) {
+    if (!m_val) return def_val;
+    RozeIndexMap* m = (RozeIndexMap*)m_val;
+    int64_t idx = index_map_find(m, key);
+    return (idx != -1) ? m->entries[idx].value : def_val;
+}
+
 int64_t __roze_index_map_get_index_key(int64_t m_val, int64_t idx) {
     if (!m_val) return 0;
     RozeIndexMap* m = (RozeIndexMap*)m_val;
@@ -4881,6 +4888,332 @@ void __roze_bit_set_clear(int64_t bs_val) {
     if (!bs_val) return;
     RozeBitSet* bs = (RozeBitSet*)bs_val;
     memset(bs->words, 0, sizeof(uint64_t) * bs->num_words);
+}
+
+// -------------------------------------------------------------
+// 8. List Extension Functions (ArrayList Parity)
+// -------------------------------------------------------------
+
+typedef struct {
+    int64_t refcount;
+    int64_t length;
+    int64_t capacity;
+    int64_t* data;
+} RozeNativeListInternal;
+
+void __roze_list_clear(int64_t list_val) {
+    if (!list_val) return;
+    RozeNativeListInternal* l = (RozeNativeListInternal*)list_val;
+    l->length = 0;
+}
+
+int64_t __roze_list_contains(int64_t list_val, int64_t val) {
+    if (!list_val) return 0;
+    RozeNativeListInternal* l = (RozeNativeListInternal*)list_val;
+    for (int64_t i = 0; i < l->length; i++) {
+        if (l->data[i] == val) return 1;
+    }
+    return 0;
+}
+
+int64_t __roze_list_index_of(int64_t list_val, int64_t val) {
+    if (!list_val) return -1;
+    RozeNativeListInternal* l = (RozeNativeListInternal*)list_val;
+    for (int64_t i = 0; i < l->length; i++) {
+        if (l->data[i] == val) return i;
+    }
+    return -1;
+}
+
+// -------------------------------------------------------------
+// 9. LinkedList (Doubly-Linked List with O(1) ends)
+// -------------------------------------------------------------
+
+typedef struct RozeListNode {
+    int64_t val;
+    struct RozeListNode* prev;
+    struct RozeListNode* next;
+} RozeListNode;
+
+typedef struct {
+    int64_t refcount;
+    RozeListNode* head;
+    RozeListNode* tail;
+    int64_t count;
+} RozeLinkedList;
+
+int64_t __roze_linked_list_new(void) {
+    RozeLinkedList* ll = (RozeLinkedList*)malloc(sizeof(RozeLinkedList));
+    ll->refcount = 1;
+    ll->head = NULL;
+    ll->tail = NULL;
+    ll->count = 0;
+    return (int64_t)ll;
+}
+
+void __roze_linked_list_retain(int64_t ll_val) {
+    if (!ll_val) return;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    __atomic_fetch_add(&ll->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_linked_list_release(int64_t ll_val) {
+    if (!ll_val) return;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    if (__atomic_fetch_sub(&ll->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        RozeListNode* curr = ll->head;
+        while (curr) {
+            RozeListNode* next = curr->next;
+            free(curr);
+            curr = next;
+        }
+        free(ll);
+    }
+}
+
+void __roze_linked_list_add(int64_t ll_val, int64_t val) {
+    if (!ll_val) return;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    RozeListNode* node = (RozeListNode*)malloc(sizeof(RozeListNode));
+    node->val = val;
+    node->next = NULL;
+    node->prev = ll->tail;
+    if (ll->tail) {
+        ll->tail->next = node;
+    } else {
+        ll->head = node;
+    }
+    ll->tail = node;
+    ll->count++;
+}
+
+void __roze_linked_list_add_first(int64_t ll_val, int64_t val) {
+    if (!ll_val) return;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    RozeListNode* node = (RozeListNode*)malloc(sizeof(RozeListNode));
+    node->val = val;
+    node->prev = NULL;
+    node->next = ll->head;
+    if (ll->head) {
+        ll->head->prev = node;
+    } else {
+        ll->tail = node;
+    }
+    ll->head = node;
+    ll->count++;
+}
+
+void __roze_linked_list_add_last(int64_t ll_val, int64_t val) {
+    __roze_linked_list_add(ll_val, val);
+}
+
+int64_t __roze_linked_list_get_first(int64_t ll_val) {
+    if (!ll_val) return 0;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    return ll->head ? ll->head->val : 0;
+}
+
+int64_t __roze_linked_list_get_last(int64_t ll_val) {
+    if (!ll_val) return 0;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    return ll->tail ? ll->tail->val : 0;
+}
+
+int64_t __roze_linked_list_remove_first(int64_t ll_val) {
+    if (!ll_val) return 0;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    if (!ll->head) return 0;
+    RozeListNode* node = ll->head;
+    int64_t v = node->val;
+    ll->head = node->next;
+    if (ll->head) {
+        ll->head->prev = NULL;
+    } else {
+        ll->tail = NULL;
+    }
+    free(node);
+    ll->count--;
+    return v;
+}
+
+int64_t __roze_linked_list_remove_last(int64_t ll_val) {
+    if (!ll_val) return 0;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    if (!ll->tail) return 0;
+    RozeListNode* node = ll->tail;
+    int64_t v = node->val;
+    ll->tail = node->prev;
+    if (ll->tail) {
+        ll->tail->next = NULL;
+    } else {
+        ll->head = NULL;
+    }
+    free(node);
+    ll->count--;
+    return v;
+}
+
+int64_t __roze_linked_list_get(int64_t ll_val, int64_t idx) {
+    if (!ll_val || idx < 0) return 0;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    if (idx >= ll->count) return 0;
+    RozeListNode* curr;
+    if (idx < ll->count / 2) {
+        curr = ll->head;
+        for (int64_t i = 0; i < idx && curr; i++) curr = curr->next;
+    } else {
+        curr = ll->tail;
+        for (int64_t i = ll->count - 1; i > idx && curr; i--) curr = curr->prev;
+    }
+    return curr ? curr->val : 0;
+}
+
+void __roze_linked_list_set(int64_t ll_val, int64_t idx, int64_t val) {
+    if (!ll_val || idx < 0) return;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    if (idx >= ll->count) return;
+    RozeListNode* curr;
+    if (idx < ll->count / 2) {
+        curr = ll->head;
+        for (int64_t i = 0; i < idx && curr; i++) curr = curr->next;
+    } else {
+        curr = ll->tail;
+        for (int64_t i = ll->count - 1; i > idx && curr; i--) curr = curr->prev;
+    }
+    if (curr) curr->val = val;
+}
+
+int64_t __roze_linked_list_len(int64_t ll_val) {
+    if (!ll_val) return 0;
+    return ((RozeLinkedList*)ll_val)->count;
+}
+
+int64_t __roze_linked_list_is_empty(int64_t ll_val) {
+    if (!ll_val) return 1;
+    return ((RozeLinkedList*)ll_val)->count == 0;
+}
+
+int64_t __roze_linked_list_contains(int64_t ll_val, int64_t val) {
+    if (!ll_val) return 0;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    RozeListNode* curr = ll->head;
+    while (curr) {
+        if (curr->val == val) return 1;
+        curr = curr->next;
+    }
+    return 0;
+}
+
+void __roze_linked_list_clear(int64_t ll_val) {
+    if (!ll_val) return;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    RozeListNode* curr = ll->head;
+    while (curr) {
+        RozeListNode* next = curr->next;
+        free(curr);
+        curr = next;
+    }
+    ll->head = NULL;
+    ll->tail = NULL;
+    ll->count = 0;
+}
+
+int64_t __roze_linked_list_to_list(int64_t ll_val) {
+    int64_t list = __roze_list_new();
+    if (!ll_val) return list;
+    RozeLinkedList* ll = (RozeLinkedList*)ll_val;
+    RozeListNode* curr = ll->head;
+    while (curr) {
+        __roze_list_push(list, curr->val);
+        curr = curr->next;
+    }
+    return list;
+}
+
+// -------------------------------------------------------------
+// 10. HashSet (Unique Set Backed by Hash Map)
+// -------------------------------------------------------------
+
+typedef struct {
+    int64_t refcount;
+    RozeIndexMap* map;
+} RozeHashSet;
+
+int64_t __roze_hash_set_new(void) {
+    RozeHashSet* s = (RozeHashSet*)malloc(sizeof(RozeHashSet));
+    s->refcount = 1;
+    s->map = (RozeIndexMap*)__roze_index_map_new();
+    return (int64_t)s;
+}
+
+int64_t __roze_hash_set_new_str(void) {
+    RozeHashSet* s = (RozeHashSet*)malloc(sizeof(RozeHashSet));
+    s->refcount = 1;
+    s->map = (RozeIndexMap*)__roze_index_map_new_str();
+    return (int64_t)s;
+}
+
+void __roze_hash_set_retain(int64_t s_val) {
+    if (!s_val) return;
+    RozeHashSet* s = (RozeHashSet*)s_val;
+    __atomic_fetch_add(&s->refcount, 1, __ATOMIC_SEQ_CST);
+}
+
+void __roze_hash_set_release(int64_t s_val) {
+    if (!s_val) return;
+    RozeHashSet* s = (RozeHashSet*)s_val;
+    if (__atomic_fetch_sub(&s->refcount, 1, __ATOMIC_SEQ_CST) == 1) {
+        if (s->map) __roze_index_map_release((int64_t)s->map);
+        free(s);
+    }
+}
+
+int64_t __roze_hash_set_add(int64_t s_val, int64_t val) {
+    if (!s_val) return 0;
+    RozeHashSet* s = (RozeHashSet*)s_val;
+    if (__roze_index_map_contains_key((int64_t)s->map, val)) {
+        return 0;
+    }
+    __roze_index_map_insert((int64_t)s->map, val, 1);
+    return 1;
+}
+
+int64_t __roze_hash_set_contains(int64_t s_val, int64_t val) {
+    if (!s_val) return 0;
+    RozeHashSet* s = (RozeHashSet*)s_val;
+    return __roze_index_map_contains_key((int64_t)s->map, val);
+}
+
+int64_t __roze_hash_set_remove(int64_t s_val, int64_t val) {
+    if (!s_val) return 0;
+    RozeHashSet* s = (RozeHashSet*)s_val;
+    if (!__roze_index_map_contains_key((int64_t)s->map, val)) {
+        return 0;
+    }
+    __roze_index_map_remove((int64_t)s->map, val);
+    return 1;
+}
+
+int64_t __roze_hash_set_len(int64_t s_val) {
+    if (!s_val) return 0;
+    return __roze_index_map_len((int64_t)((RozeHashSet*)s_val)->map);
+}
+
+int64_t __roze_hash_set_is_empty(int64_t s_val) {
+    if (!s_val) return 1;
+    return __roze_index_map_is_empty((int64_t)((RozeHashSet*)s_val)->map);
+}
+
+int64_t __roze_hash_set_to_list(int64_t s_val) {
+    if (!s_val) return __roze_list_new();
+    RozeHashSet* s = (RozeHashSet*)s_val;
+    return __roze_index_map_keys((int64_t)s->map);
+}
+
+void __roze_hash_set_clear(int64_t s_val) {
+    if (!s_val) return;
+    RozeHashSet* s = (RozeHashSet*)s_val;
+    __roze_index_map_clear((int64_t)s->map);
 }
 
 // =============================================================

@@ -1,0 +1,1485 @@
+// stdlib/src/data.roze
+//
+// Roze Python-Class Functional Data Manipulation & Ergonomics Suite (M7-T04)
+// Direct functional & mathematical parity with Python 3.15 standard libraries:
+// 1. roze.itertools: Advanced combinatorial and streaming iterators
+// 2. roze.functools: Higher-order functions, LRU cache & memoization
+// 3. roze.statistics: Complete mathematical statistics & linear regression
+// 4. roze.pathlib: Object-oriented filesystem path navigation
+// 5. roze.csv: RFC 4180 tabular data reader, writer & dictionary mapping
+// 6. roze.argparse: Production CLI argument parser and help generator
+
+// ==============================================================================
+// Common Dynamic Value Container Helpers
+// ==============================================================================
+
+func data_push(l: List, v: Unknown) -> void {
+    list_push(l, v);
+}
+
+func data_set(l: List, idx: int, v: Unknown) -> void {
+    list_set(l, idx, v);
+}
+
+func data_map_put(m: Map, k: Unknown, v: Unknown) -> void {
+    map_put(m, k, v);
+}
+
+func data_map_get(m: Map, k: Unknown) -> Unknown {
+    return map_get(m, k);
+}
+
+func data_map_has(m: Map, k: Unknown) -> bool {
+    return map_has(m, k);
+}
+
+func data_map_remove(m: Map, k: Unknown) -> void {
+    map_remove(m, k);
+}
+
+// ==============================================================================
+// 1. roze.itertools (Combinatorial & Streaming Data Utilities)
+// ==============================================================================
+
+func itertools_chain(lists: List) -> List {
+    let res = list_new();
+    let num_lists = list_length(lists);
+    let i = 0;
+    while i < num_lists {
+        let sub = list_get(lists, i);
+        let sub_len = list_length(sub);
+        let j = 0;
+        while j < sub_len {
+            data_push(res, list_get(sub, j));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return res;
+}
+
+func itertools_chain2(a: List, b: List) -> List {
+    let res = list_new();
+    let na = list_length(a);
+    let i = 0;
+    while i < na {
+        data_push(res, list_get(a, i));
+        i = i + 1;
+    }
+    let nb = list_length(b);
+    let j = 0;
+    while j < nb {
+        data_push(res, list_get(b, j));
+        j = j + 1;
+    }
+    return res;
+}
+
+func itertools_repeat(val: Unknown, n: int) -> List {
+    let res = list_new();
+    let i = 0;
+    while i < n {
+        data_push(res, val);
+        i = i + 1;
+    }
+    return res;
+}
+
+func itertools_cycle(items: List, n_times: int) -> List {
+    let res = list_new();
+    let n = list_length(items);
+    if (n == 0) {
+        return res;
+    }
+    let i = 0;
+    while i < n_times {
+        let j = 0;
+        while j < n {
+            data_push(res, list_get(items, j));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return res;
+}
+
+func itertools_accumulate_sum(items: List) -> List {
+    let res = list_new();
+    let n = list_length(items);
+    if (n == 0) {
+        return res;
+    }
+    let total = int(list_get(items, 0));
+    data_push(res, total);
+    let i = 1;
+    while i < n {
+        total = total + int(list_get(items, i));
+        data_push(res, total);
+        i = i + 1;
+    }
+    return res;
+}
+
+func itertools_pairwise(items: List) -> List {
+    let res = list_new();
+    let n = list_length(items);
+    if (n < 2) {
+        return res;
+    }
+    let i = 0;
+    while i < n - 1 {
+        let pair = list_new();
+        data_push(pair, list_get(items, i));
+        data_push(pair, list_get(items, i + 1));
+        data_push(res, pair);
+        i = i + 1;
+    }
+    return res;
+}
+
+func itertools_compress(data: List, selectors: List) -> List {
+    let res = list_new();
+    let n = list_length(data);
+    let m = list_length(selectors);
+    let count = n;
+    if (m < count) {
+        count = m;
+    }
+    let i = 0;
+    while i < count {
+        let sel = list_get(selectors, i);
+        if (sel == true) {
+            data_push(res, list_get(data, i));
+        }
+        i = i + 1;
+    }
+    return res;
+}
+
+func itertools_islice(items: List, start: int, stop: int, step: int) -> List {
+    let res = list_new();
+    let n = list_length(items);
+    let st = step;
+    if (st <= 0) {
+        st = 1;
+    }
+    let end = stop;
+    if (end > n) {
+        end = n;
+    }
+    let i = start;
+    while i < end {
+        data_push(res, list_get(items, i));
+        i = i + st;
+    }
+    return res;
+}
+
+func itertools_zip_longest(a: List, b: List, fill_val: Unknown) -> List {
+    let res = list_new();
+    let na = list_length(a);
+    let nb = list_length(b);
+    let max_len = na;
+    if (nb > max_len) {
+        max_len = nb;
+    }
+    let i = 0;
+    while i < max_len {
+        let pair = list_new();
+        if (i < na) {
+            data_push(pair, list_get(a, i));
+        } else {
+            data_push(pair, fill_val);
+        }
+        if (i < nb) {
+            data_push(pair, list_get(b, i));
+        } else {
+            data_push(pair, fill_val);
+        }
+        data_push(res, pair);
+        i = i + 1;
+    }
+    return res;
+}
+
+func itertools_product(a: List, b: List) -> List {
+    let res = list_new();
+    let na = list_length(a);
+    let nb = list_length(b);
+    let i = 0;
+    while i < na {
+        let val_a = list_get(a, i);
+        let j = 0;
+        while j < nb {
+            let pair = list_new();
+            data_push(pair, val_a);
+            data_push(pair, list_get(b, j));
+            data_push(res, pair);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return res;
+}
+
+func itertools_perm_helper(items: List, r: int, current: List, used: List, result: List) -> void {
+    if (list_length(current) == r) {
+        let copy = list_new();
+        let i = 0;
+        while i < r {
+            data_push(copy, list_get(current, i));
+            i = i + 1;
+        }
+        data_push(result, copy);
+        return;
+    }
+    let n = list_length(items);
+    let i = 0;
+    while i < n {
+        let is_used = list_get(used, i);
+        if (is_used == false) {
+            list_set(used, i, true);
+            data_push(current, list_get(items, i));
+            itertools_perm_helper(items, r, current, used, result);
+            list_remove(current, list_length(current) - 1);
+            list_set(used, i, false);
+        }
+        i = i + 1;
+    }
+}
+
+func itertools_permutations(items: List, r: int) -> List {
+    let result = list_new();
+    let n = list_length(items);
+    if (r <= 0 || r > n) {
+        return result;
+    }
+    let current = list_new();
+    let used = list_new();
+    let i = 0;
+    while i < n {
+        data_push(used, false);
+        i = i + 1;
+    }
+    itertools_perm_helper(items, r, current, used, result);
+    return result;
+}
+
+func itertools_comb_helper(items: List, r: int, start_idx: int, current: List, result: List) -> void {
+    if (list_length(current) == r) {
+        let copy = list_new();
+        let i = 0;
+        while i < r {
+            data_push(copy, list_get(current, i));
+            i = i + 1;
+        }
+        data_push(result, copy);
+        return;
+    }
+    let n = list_length(items);
+    let i = start_idx;
+    while i < n {
+        data_push(current, list_get(items, i));
+        itertools_comb_helper(items, r, i + 1, current, result);
+        list_remove(current, list_length(current) - 1);
+        i = i + 1;
+    }
+}
+
+func itertools_combinations(items: List, r: int) -> List {
+    let result = list_new();
+    let n = list_length(items);
+    if (r <= 0 || r > n) {
+        return result;
+    }
+    let current = list_new();
+    itertools_comb_helper(items, r, 0, current, result);
+    return result;
+}
+
+func itertools_comb_rep_helper(items: List, r: int, start_idx: int, current: List, result: List) -> void {
+    if (list_length(current) == r) {
+        let copy = list_new();
+        let i = 0;
+        while i < r {
+            data_push(copy, list_get(current, i));
+            i = i + 1;
+        }
+        data_push(result, copy);
+        return;
+    }
+    let n = list_length(items);
+    let i = start_idx;
+    while i < n {
+        data_push(current, list_get(items, i));
+        itertools_comb_rep_helper(items, r, i, current, result);
+        list_remove(current, list_length(current) - 1);
+        i = i + 1;
+    }
+}
+
+func itertools_combinations_with_replacement(items: List, r: int) -> List {
+    let result = list_new();
+    let n = list_length(items);
+    if (r <= 0 || n == 0) {
+        return result;
+    }
+    let current = list_new();
+    itertools_comb_rep_helper(items, r, 0, current, result);
+    return result;
+}
+
+func itertools_groupby_adjacent(items: List) -> List {
+    let result = list_new();
+    let n = list_length(items);
+    if (n == 0) {
+        return result;
+    }
+    let current_val = list_get(items, 0);
+    let group = list_new();
+    data_push(group, current_val);
+    let i = 1;
+    while i < n {
+        let val = list_get(items, i);
+        if (val == current_val) {
+            data_push(group, val);
+        } else {
+            let entry = list_new();
+            data_push(entry, current_val);
+            data_push(entry, group);
+            data_push(result, entry);
+            current_val = val;
+            group = list_new();
+            data_push(group, current_val);
+        }
+        i = i + 1;
+    }
+    let final_entry = list_new();
+    data_push(final_entry, current_val);
+    data_push(final_entry, group);
+    data_push(result, final_entry);
+    return result;
+}
+
+// ==============================================================================
+// 2. roze.functools (Higher-Order Functional Utilities & Caching)
+// ==============================================================================
+
+func data_list_index_of(l: List, key: string) -> int {
+    let n = list_length(l);
+    let i = 0;
+    while i < n {
+        let item: string = list_get(l, i);
+        if (item == key) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+class LruCache {
+    capacity: int,
+    keys: List,
+    values: List,
+    hit_count: int,
+    miss_count: int,
+}
+
+impl LruCache {
+    func get(key: string) -> string {
+        let idx = data_list_index_of(this.keys, key);
+        if (idx >= 0) {
+            this.hit_count = this.hit_count + 1;
+            let val: string = list_get(this.values, idx);
+            list_remove(this.keys, idx);
+            list_remove(this.values, idx);
+            data_push(this.keys, key);
+            data_push(this.values, val);
+            return val;
+        }
+        this.miss_count = this.miss_count + 1;
+        return "";
+    }
+
+    func put(key: string, val: string) -> void {
+        let idx = data_list_index_of(this.keys, key);
+        if (idx >= 0) {
+            list_remove(this.keys, idx);
+            list_remove(this.values, idx);
+        } else if (list_length(this.keys) >= this.capacity) {
+            list_remove(this.keys, 0);
+            list_remove(this.values, 0);
+        }
+        data_push(this.keys, key);
+        data_push(this.values, val);
+    }
+
+    func has(key: string) -> bool {
+        return data_list_index_of(this.keys, key) >= 0;
+    }
+
+    func hits() -> int {
+        return this.hit_count;
+    }
+
+    func misses() -> int {
+        return this.miss_count;
+    }
+
+    func size() -> int {
+        return list_length(this.keys);
+    }
+
+    func clear() -> void {
+        this.keys = list_new();
+        this.values = list_new();
+        this.hit_count = 0;
+        this.miss_count = 0;
+    }
+}
+
+func lru_cache_new(capacity: int) -> LruCache {
+    let keys = list_new();
+    let values = list_new();
+    return new LruCache(capacity, keys, values, 0, 0);
+}
+
+class Memoize {
+    keys: List,
+    values: List,
+}
+
+impl Memoize {
+    func get(key: string) -> int {
+        let idx = data_list_index_of(this.keys, key);
+        if (idx >= 0) {
+            return int(list_get(this.values, idx));
+        }
+        return 0;
+    }
+
+    func put(key: string, val: int) -> void {
+        let idx = data_list_index_of(this.keys, key);
+        if (idx >= 0) {
+            data_set(this.values, idx, val);
+        } else {
+            data_push(this.keys, key);
+            data_push(this.values, val);
+        }
+    }
+
+    func has(key: string) -> bool {
+        return data_list_index_of(this.keys, key) >= 0;
+    }
+
+    func clear() -> void {
+        this.keys = list_new();
+        this.values = list_new();
+    }
+}
+
+func memoize_new() -> Memoize {
+    return new Memoize(list_new(), list_new());
+}
+
+func data_num_to_float(v: Unknown) -> float {
+    return float(int(v));
+}
+
+func functools_reduce_add(items: List, initial: float) -> float {
+    let acc = initial;
+    let n = list_length(items);
+    let i = 0;
+    while i < n {
+        acc = acc + data_num_to_float(list_get(items, i));
+        i = i + 1;
+    }
+    return acc;
+}
+
+func functools_reduce_mul(items: List, initial: float) -> float {
+    let acc = initial;
+    let n = list_length(items);
+    let i = 0;
+    while i < n {
+        acc = acc * data_num_to_float(list_get(items, i));
+        i = i + 1;
+    }
+    return acc;
+}
+
+func functools_reduce_max(items: List) -> float {
+    let n = list_length(items);
+    if (n == 0) {
+        return 0.0;
+    }
+    let mx = data_num_to_float(list_get(items, 0));
+    let i = 1;
+    while i < n {
+        let v = data_num_to_float(list_get(items, i));
+        if (v > mx) {
+            mx = v;
+        }
+        i = i + 1;
+    }
+    return mx;
+}
+
+func functools_reduce_min(items: List) -> float {
+    let n = list_length(items);
+    if (n == 0) {
+        return 0.0;
+    }
+    let mn = data_num_to_float(list_get(items, 0));
+    let i = 1;
+    while i < n {
+        let v = data_num_to_float(list_get(items, i));
+        if (v < mn) {
+            mn = v;
+        }
+        i = i + 1;
+    }
+    return mn;
+}
+
+// ==============================================================================
+// 3. roze.statistics (Numerical Analysis & Linear Regression)
+// ==============================================================================
+
+func stats_sqrt(x: float) -> float {
+    if (x <= 0.0) {
+        return 0.0;
+    }
+    let guess = x;
+    if (x > 1.0) {
+        guess = x / 2.0;
+    }
+    let i = 0;
+    while i < 25 {
+        guess = 0.5 * (guess + x / guess);
+        i = i + 1;
+    }
+    return guess;
+}
+
+func stats_mean(data: List) -> float {
+    let n = list_length(data);
+    if (n == 0) {
+        return 0.0;
+    }
+    let sum = 0.0;
+    let i = 0;
+    while i < n {
+        sum = sum + data_num_to_float(list_get(data, i));
+        i = i + 1;
+    }
+    return sum / float(n);
+}
+
+func stats_fmean(data: List) -> float {
+    return stats_mean(data);
+}
+
+func stats_geometric_mean(data: List) -> float {
+    let n = list_length(data);
+    if (n == 0) {
+        return 0.0;
+    }
+    let prod = 1.0;
+    let i = 0;
+    while i < n {
+        prod = prod * data_num_to_float(list_get(data, i));
+        i = i + 1;
+    }
+    // Calculate prod^(1/n) via nth root approximation
+    let root = prod;
+    if (prod > 1.0) {
+        root = prod / float(n);
+    }
+    let iter = 0;
+    let flt_n = float(n);
+    while iter < 30 {
+        // x_{k+1} = (1/n) * ((n-1)*x_k + prod / (x_k^(n-1)))
+        let p = 1.0;
+        let j = 0;
+        while j < n - 1 {
+            p = p * root;
+            j = j + 1;
+        }
+        if (p != 0.0) {
+            root = ((flt_n - 1.0) * root + prod / p) / flt_n;
+        }
+        iter = iter + 1;
+    }
+    return root;
+}
+
+func stats_harmonic_mean(data: List) -> float {
+    let n = list_length(data);
+    if (n == 0) {
+        return 0.0;
+    }
+    let sum_reciprocal = 0.0;
+    let i = 0;
+    while i < n {
+        let v = data_num_to_float(list_get(data, i));
+        if (v != 0.0) {
+            sum_reciprocal = sum_reciprocal + 1.0 / v;
+        }
+        i = i + 1;
+    }
+    if (sum_reciprocal == 0.0) {
+        return 0.0;
+    }
+    return float(n) / sum_reciprocal;
+}
+
+func stats_sort(data: List) -> List {
+    let copy = list_new();
+    let n = list_length(data);
+    let i = 0;
+    while i < n {
+        data_push(copy, list_get(data, i));
+        i = i + 1;
+    }
+    let j = 1;
+    while j < n {
+        let key = list_get(copy, j);
+        let key_int = int(key);
+        let k = j - 1;
+        while k >= 0 && int(list_get(copy, k)) > key_int {
+            list_set(copy, k + 1, list_get(copy, k));
+            k = k - 1;
+        }
+        list_set(copy, k + 1, key);
+        j = j + 1;
+    }
+    return copy;
+}
+
+func stats_median(data: List) -> float {
+    let n = list_length(data);
+    if (n == 0) {
+        return 0.0;
+    }
+    let sorted = stats_sort(data);
+    if (n % 2 == 1) {
+        return data_num_to_float(list_get(sorted, n / 2));
+    }
+    let mid1 = data_num_to_float(list_get(sorted, n / 2 - 1));
+    let mid2 = data_num_to_float(list_get(sorted, n / 2));
+    return (mid1 + mid2) / 2.0;
+}
+
+func stats_median_low(data: List) -> float {
+    let n = list_length(data);
+    if (n == 0) {
+        return 0.0;
+    }
+    let sorted = stats_sort(data);
+    if (n % 2 == 1) {
+        return data_num_to_float(list_get(sorted, n / 2));
+    }
+    return data_num_to_float(list_get(sorted, n / 2 - 1));
+}
+
+func stats_median_high(data: List) -> float {
+    let n = list_length(data);
+    if (n == 0) {
+        return 0.0;
+    }
+    let sorted = stats_sort(data);
+    return data_num_to_float(list_get(sorted, n / 2));
+}
+
+func stats_mode(data: List) -> float {
+    let n = list_length(data);
+    if (n == 0) {
+        return 0.0;
+    }
+    let max_count = 0;
+    let mode_val = data_num_to_float(list_get(data, 0));
+    let i = 0;
+    while i < n {
+        let target = data_num_to_float(list_get(data, i));
+        let count = 0;
+        let j = 0;
+        while j < n {
+            if (data_num_to_float(list_get(data, j)) == target) {
+                count = count + 1;
+            }
+            j = j + 1;
+        }
+        if (count > max_count) {
+            max_count = count;
+            mode_val = target;
+        }
+        i = i + 1;
+    }
+    return mode_val;
+}
+
+func stats_pvariance(data: List) -> float {
+    let n = list_length(data);
+    if (n == 0) {
+        return 0.0;
+    }
+    let mu = stats_mean(data);
+    let sum_sq_diff = 0.0;
+    let i = 0;
+    while i < n {
+        let diff = data_num_to_float(list_get(data, i)) - mu;
+        sum_sq_diff = sum_sq_diff + diff * diff;
+        i = i + 1;
+    }
+    return sum_sq_diff / float(n);
+}
+
+func stats_pstdev(data: List) -> float {
+    return stats_sqrt(stats_pvariance(data));
+}
+
+func stats_variance(data: List) -> float {
+    let n = list_length(data);
+    if (n < 2) {
+        return 0.0;
+    }
+    let mu = stats_mean(data);
+    let sum_sq_diff = 0.0;
+    let i = 0;
+    while i < n {
+        let diff = data_num_to_float(list_get(data, i)) - mu;
+        sum_sq_diff = sum_sq_diff + diff * diff;
+        i = i + 1;
+    }
+    return sum_sq_diff / float(n - 1);
+}
+
+func stats_stdev(data: List) -> float {
+    return stats_sqrt(stats_variance(data));
+}
+
+func stats_covariance(x: List, y: List) -> float {
+    let n = list_length(x);
+    if (n < 2 || n != list_length(y)) {
+        return 0.0;
+    }
+    let mean_x = stats_mean(x);
+    let mean_y = stats_mean(y);
+    let sum_cov = 0.0;
+    let i = 0;
+    while i < n {
+        let dx = data_num_to_float(list_get(x, i)) - mean_x;
+        let dy = data_num_to_float(list_get(y, i)) - mean_y;
+        sum_cov = sum_cov + dx * dy;
+        i = i + 1;
+    }
+    return sum_cov / float(n - 1);
+}
+
+func stats_correlation(x: List, y: List) -> float {
+    let sx = stats_stdev(x);
+    let sy = stats_stdev(y);
+    if (sx == 0.0 || sy == 0.0) {
+        return 0.0;
+    }
+    let cov = stats_covariance(x, y);
+    return cov / (sx * sy);
+}
+
+class LinearRegressionResult {
+    slope: float,
+    intercept: float,
+}
+
+impl LinearRegressionResult {
+    func predict(x: float) -> float {
+        return this.slope * x + this.intercept;
+    }
+}
+
+func stats_linear_regression(x: List, y: List) -> LinearRegressionResult {
+    let n = list_length(x);
+    if (n < 2 || n != list_length(y)) {
+        return new LinearRegressionResult(0.0, 0.0);
+    }
+    let mean_x = stats_mean(x);
+    let mean_y = stats_mean(y);
+    let num = 0.0;
+    let den = 0.0;
+    let i = 0;
+    while i < n {
+        let dx = data_num_to_float(list_get(x, i)) - mean_x;
+        let dy = data_num_to_float(list_get(y, i)) - mean_y;
+        num = num + dx * dy;
+        den = den + dx * dx;
+        i = i + 1;
+    }
+    let slope = 0.0;
+    if (den != 0.0) {
+        slope = num / den;
+    }
+    let intercept = mean_y - slope * mean_x;
+    return new LinearRegressionResult(slope, intercept);
+}
+
+func stats_quantiles(data: List, n: int) -> List {
+    let res = list_new();
+    let count = list_length(data);
+    if (count < 2 || n < 2) {
+        return res;
+    }
+    let sorted = stats_sort(data);
+    let i = 1;
+    while i < n {
+        let pos = (float(count - 1) * float(i)) / float(n);
+        let idx = int(pos);
+        let rem = pos - float(idx);
+        let q_val = data_num_to_float(list_get(sorted, idx));
+        if (rem > 0.0 && idx + 1 < count) {
+            let next_val = data_num_to_float(list_get(sorted, idx + 1));
+            q_val = q_val + rem * (next_val - q_val);
+        }
+        data_push(res, int(q_val));
+        i = i + 1;
+    }
+    return res;
+}
+
+// ==============================================================================
+// 4. roze.pathlib (Object-Oriented Filesystem Path Manipulation)
+// ==============================================================================
+
+func data_read_file(path_str: string) -> string {
+    let handle = fs_open(path_str, "r");
+    if (handle <= 0) {
+        return "";
+    }
+    let s = fs_read_all(handle);
+    fs_close(handle);
+    return s;
+}
+
+func data_write_file(path_str: string, content: string) -> void {
+    let handle = fs_open(path_str, "w");
+    if (handle <= 0) {
+        return;
+    }
+    fs_write(handle, content);
+    fs_close(handle);
+}
+
+class Path {
+    path_str: string,
+}
+
+impl Path {
+    func to_string() -> string {
+        return this.path_str;
+    }
+
+    func is_absolute() -> bool {
+        let n = string_length(this.path_str);
+        if (n == 0) {
+            return false;
+        }
+        if (string_char_at(this.path_str, 0) == 47) { // '/'
+            return true;
+        }
+        // Windows drive: e.g. "C:\"
+        if (n >= 3 && string_char_at(this.path_str, 1) == 58 && (string_char_at(this.path_str, 2) == 92 || string_char_at(this.path_str, 2) == 47)) {
+            return true;
+        }
+        return false;
+    }
+
+    func joinpath(other: string) -> Path {
+        let n = string_length(this.path_str);
+        if (n == 0) {
+            return new Path(other);
+        }
+        let last_ch = string_char_at(this.path_str, n - 1);
+        if (last_ch == 47 || last_ch == 92) {
+            return new Path(this.path_str + other);
+        }
+        return new Path(this.path_str + "/" + other);
+    }
+
+    func parent() -> Path {
+        let n = string_length(this.path_str);
+        let last_slash = -1;
+        let i = n - 1;
+        while i >= 0 {
+            let ch = string_char_at(this.path_str, i);
+            if (ch == 47 || ch == 92) {
+                last_slash = i;
+                i = -1; // break
+            }
+            i = i - 1;
+        }
+        if (last_slash == 0) {
+            return new Path("/");
+        }
+        if (last_slash > 0) {
+            return new Path(substring(this.path_str, 0, last_slash));
+        }
+        return new Path(".");
+    }
+
+    func name() -> string {
+        let n = string_length(this.path_str);
+        let last_slash = -1;
+        let i = n - 1;
+        while i >= 0 {
+            let ch = string_char_at(this.path_str, i);
+            if (ch == 47 || ch == 92) {
+                last_slash = i;
+                i = -1; // break
+            }
+            i = i - 1;
+        }
+        if (last_slash >= 0 && last_slash < n - 1) {
+            return substring(this.path_str, last_slash + 1, n);
+        }
+        return this.path_str;
+    }
+
+    func suffix() -> string {
+        let nm = this.name();
+        let n = string_length(nm);
+        let dot_idx = -1;
+        let i = n - 1;
+        while i >= 0 {
+            if (string_char_at(nm, i) == 46) { // '.'
+                dot_idx = i;
+                i = -1; // break
+            }
+            i = i - 1;
+        }
+        if (dot_idx > 0) {
+            return substring(nm, dot_idx, n);
+        }
+        return "";
+    }
+
+    func stem() -> string {
+        let nm = this.name();
+        let n = string_length(nm);
+        let dot_idx = -1;
+        let i = n - 1;
+        while i >= 0 {
+            if (string_char_at(nm, i) == 46) { // '.'
+                dot_idx = i;
+                i = -1; // break
+            }
+            i = i - 1;
+        }
+        if (dot_idx > 0) {
+            return substring(nm, 0, dot_idx);
+        }
+        return nm;
+    }
+
+    func with_name(new_name: string) -> Path {
+        let p = this.parent();
+        if (p.to_string() == ".") {
+            return new Path(new_name);
+        }
+        return p.joinpath(new_name);
+    }
+
+    func with_suffix(new_suffix: string) -> Path {
+        let st = this.stem();
+        return this.with_name(st + new_suffix);
+    }
+
+    func with_stem(new_stem: string) -> Path {
+        let suf = this.suffix();
+        return this.with_name(new_stem + suf);
+    }
+
+    func exists() -> bool {
+        return fs_exists(this.path_str);
+    }
+
+    func is_file() -> bool {
+        return fs_is_file(this.path_str);
+    }
+
+    func is_dir() -> bool {
+        return fs_is_dir(this.path_str);
+    }
+
+    func file_size() -> int {
+        return fs_file_size(this.path_str);
+    }
+
+    func read_text() -> string {
+        return data_read_file(this.path_str);
+    }
+
+    func write_text(content: string) -> bool {
+        data_write_file(this.path_str, content);
+        return true;
+    }
+
+    func resolve() -> Path {
+        return new Path(fs_canonicalize(this.path_str));
+    }
+}
+
+func path_new(path_str: string) -> Path {
+    return new Path(path_str);
+}
+
+func pathlib_path(path_str: string) -> Path {
+    return new Path(path_str);
+}
+
+// ==============================================================================
+// 5. roze.csv (RFC 4180 Tabular Data Engine)
+// ==============================================================================
+
+func csv_parse_line(line: string, delim: string) -> List {
+    let res = list_new();
+    let n = string_length(line);
+    let delim_ch = 44; // ','
+    if (string_length(delim) > 0) {
+        delim_ch = string_char_at(delim, 0);
+    }
+    let in_quotes = false;
+    let field = "";
+    let i = 0;
+    while i < n {
+        let ch = string_char_at(line, i);
+        if (ch == 34) { // '"'
+            if (in_quotes && i + 1 < n && string_char_at(line, i + 1) == 34) {
+                // Escaped double quote '""'
+                field = field + "\"";
+                i = i + 1;
+            } else {
+                in_quotes = !in_quotes;
+            }
+        } else if (ch == delim_ch && !in_quotes) {
+            data_push(res, field);
+            field = "";
+        } else {
+            field = field + substring(line, i, i + 1);
+        }
+        i = i + 1;
+    }
+    data_push(res, field);
+    return res;
+}
+
+func csv_format_field(f: string, delim: string) -> string {
+    let needs_quotes = false;
+    let n = string_length(f);
+    let delim_ch = 44;
+    if (string_length(delim) > 0) {
+        delim_ch = string_char_at(delim, 0);
+    }
+    let i = 0;
+    while i < n {
+        let ch = string_char_at(f, i);
+        if (ch == delim_ch || ch == 34 || ch == 10 || ch == 13) {
+            needs_quotes = true;
+            i = n; // break
+        }
+        i = i + 1;
+    }
+    if (!needs_quotes) {
+        return f;
+    }
+    let res = "\"";
+    i = 0;
+    while i < n {
+        let ch = string_char_at(f, i);
+        if (ch == 34) {
+            res = res + "\"\"";
+        } else {
+            res = res + substring(f, i, i + 1);
+        }
+        i = i + 1;
+    }
+    return res + "\"";
+}
+
+func csv_format_line(fields: List, delim: string) -> string {
+    let res = "";
+    let n = list_length(fields);
+    let i = 0;
+    while i < n {
+        let f: string = list_get(fields, i);
+        res = res + csv_format_field(f, delim);
+        if (i < n - 1) {
+            res = res + delim;
+        }
+        i = i + 1;
+    }
+    return res;
+}
+
+class CsvReader {
+    lines: List,
+    pos: int,
+    delim: string,
+}
+
+impl CsvReader {
+    func has_next() -> bool {
+        return this.pos < list_length(this.lines);
+    }
+
+    func next_row() -> List {
+        if (!this.has_next()) {
+            return list_new();
+        }
+        let line: string = list_get(this.lines, this.pos);
+        this.pos = this.pos + 1;
+        return csv_parse_line(line, this.delim);
+    }
+
+    func read_all() -> List {
+        let res = list_new();
+        while this.has_next() {
+            data_push(res, this.next_row());
+        }
+        return res;
+    }
+}
+
+func csv_split_lines(content: string) -> List {
+    let res = list_new();
+    let n = string_length(content);
+    let line = "";
+    let i = 0;
+    while i < n {
+        let ch = string_char_at(content, i);
+        if (ch == 10) { // '\n'
+            data_push(res, line);
+            line = "";
+        } else if (ch != 13) { // skip '\r'
+            line = line + substring(content, i, i + 1);
+        }
+        i = i + 1;
+    }
+    if (string_length(line) > 0) {
+        data_push(res, line);
+    }
+    return res;
+}
+
+func csv_reader_new(content: string, delim: string) -> CsvReader {
+    let lines = csv_split_lines(content);
+    return new CsvReader(lines, 0, delim);
+}
+
+class CsvWriter {
+    rows: List,
+    delim: string,
+}
+
+impl CsvWriter {
+    func write_row(row: List) -> void {
+        data_push(this.rows, csv_format_line(row, this.delim));
+    }
+
+    func write_rows(rows_list: List) -> void {
+        let n = list_length(rows_list);
+        let i = 0;
+        while i < n {
+            let r: List = list_get(rows_list, i);
+            this.write_row(r);
+            i = i + 1;
+        }
+    }
+
+    func to_string() -> string {
+        let res = "";
+        let n = list_length(this.rows);
+        let i = 0;
+        while i < n {
+            let r: string = list_get(this.rows, i);
+            res = res + r + "\n";
+            i = i + 1;
+        }
+        return res;
+    }
+}
+
+func csv_writer_new(delim: string) -> CsvWriter {
+    return new CsvWriter(list_new(), delim);
+}
+
+class Dict {
+    keys: List,
+    values: List,
+}
+
+impl Dict {
+    func get(key: string) -> string {
+        let idx = data_list_index_of(this.keys, key);
+        if (idx >= 0 && idx < list_length(this.values)) {
+            let s: string = list_get(this.values, idx);
+            return s;
+        }
+        return "";
+    }
+
+    func put(key: string, val: string) -> void {
+        let idx = data_list_index_of(this.keys, key);
+        if (idx >= 0) {
+            data_set(this.values, idx, val);
+        } else {
+            data_push(this.keys, key);
+            data_push(this.values, val);
+        }
+    }
+
+    func has(key: string) -> bool {
+        return data_list_index_of(this.keys, key) >= 0;
+    }
+
+    func keys_list() -> List {
+        return this.keys;
+    }
+}
+
+func dict_new() -> Dict {
+    return new Dict(list_new(), list_new());
+}
+
+class CsvDictReader {
+    headers: List,
+    reader: CsvReader,
+}
+
+impl CsvDictReader {
+    func fieldnames() -> List {
+        return this.headers;
+    }
+
+    func has_next() -> bool {
+        return this.reader.has_next();
+    }
+
+    func next_row() -> Dict {
+        let d = dict_new();
+        if (!this.has_next()) {
+            return d;
+        }
+        let row = this.reader.next_row();
+        let num_h = list_length(this.headers);
+        let num_f = list_length(row);
+        let i = 0;
+        while i < num_h {
+            let h: string = list_get(this.headers, i);
+            let val = "";
+            if (i < num_f) {
+                let v_str: string = list_get(row, i);
+                val = v_str;
+            }
+            d.put(h, val);
+            i = i + 1;
+        }
+        return d;
+    }
+
+    func read_all() -> List {
+        let res = list_new();
+        while this.has_next() {
+            data_push(res, this.next_row());
+        }
+        return res;
+    }
+}
+
+func csv_dict_reader_new(content: string, delim: string) -> CsvDictReader {
+    let r = csv_reader_new(content, delim);
+    let headers = list_new();
+    if (r.has_next()) {
+        headers = r.next_row();
+    }
+    return new CsvDictReader(headers, r);
+}
+
+class CsvDictWriter {
+    headers: List,
+    writer: CsvWriter,
+}
+
+impl CsvDictWriter {
+    func write_header() -> void {
+        this.writer.write_row(this.headers);
+    }
+
+    func write_row(row_dict: Dict) -> void {
+        let row = list_new();
+        let n = list_length(this.headers);
+        let i = 0;
+        while i < n {
+            let h: string = list_get(this.headers, i);
+            let val = "";
+            if (row_dict.has(h)) {
+                val = row_dict.get(h);
+            }
+            data_push(row, val);
+            i = i + 1;
+        }
+        this.writer.write_row(row);
+    }
+
+    func to_string() -> string {
+        return this.writer.to_string();
+    }
+}
+
+func csv_dict_writer_new(headers: List, delim: string) -> CsvDictWriter {
+    return new CsvDictWriter(headers, csv_writer_new(delim));
+}
+
+// ==============================================================================
+// 6. roze.argparse (Command-Line Argument Parsing & Help Engine)
+// ==============================================================================
+
+func data_parse_int(s: string) -> int {
+    let n = string_length(s);
+    if (n == 0) {
+        return 0;
+    }
+    let sign = 1;
+    let start = 0;
+    let first = string_char_at(s, 0);
+    if (first == 45) { // '-'
+        sign = -1;
+        start = 1;
+    } else if (first == 43) { // '+'
+        start = 1;
+    }
+    let res = 0;
+    let i = start;
+    while i < n {
+        let ch = string_char_at(s, i);
+        if (ch >= 48 && ch <= 57) {
+            res = res * 10 + (ch - 48);
+        } else {
+            i = n; // break
+        }
+        i = i + 1;
+    }
+    return res * sign;
+}
+
+class Argument {
+    name: string,
+    short_name: string,
+    help: string,
+    default_val: string,
+    is_flag: bool,
+}
+
+class ArgumentParser {
+    prog: string,
+    description: string,
+    arguments: List,
+}
+
+impl ArgumentParser {
+    func add_argument(name: string, short_name: string, help: string, default_val: string, is_flag: bool) -> void {
+        data_push(this.arguments, new Argument(name, short_name, help, default_val, is_flag));
+    }
+
+    func parse_args(args: List) -> Dict {
+        let result = dict_new();
+        // Initialize defaults
+        let n_args = list_length(this.arguments);
+        let i = 0;
+        while i < n_args {
+            let arg: Argument = list_get(this.arguments, i);
+            if (arg.is_flag) {
+                result.put(arg.name, "false");
+            } else {
+                result.put(arg.name, arg.default_val);
+            }
+            i = i + 1;
+        }
+        // Parse CLI args
+        let n_cli = list_length(args);
+        let cli_idx = 0;
+        while cli_idx < n_cli {
+            let token: string = list_get(args, cli_idx);
+            let matched = false;
+            let j = 0;
+            while j < n_args {
+                let arg: Argument = list_get(this.arguments, j);
+                if (token == arg.name || (string_length(arg.short_name) > 0 && token == arg.short_name)) {
+                    matched = true;
+                    if (arg.is_flag) {
+                        result.put(arg.name, "true");
+                    } else if (cli_idx + 1 < n_cli) {
+                        cli_idx = cli_idx + 1;
+                        let val: string = list_get(args, cli_idx);
+                        result.put(arg.name, val);
+                    }
+                    j = n_args; // break
+                }
+                j = j + 1;
+            }
+            if (!matched && string_length(token) > 0 && string_char_at(token, 0) != 45) {
+                // Positional argument match
+                let k = 0;
+                while k < n_args {
+                    let pos_arg: Argument = list_get(this.arguments, k);
+                    if (string_char_at(pos_arg.name, 0) != 45) {
+                        let cur_val: string = result.get(pos_arg.name);
+                        if (cur_val == pos_arg.default_val) {
+                            result.put(pos_arg.name, token);
+                            k = n_args; // break
+                        }
+                    }
+                    k = k + 1;
+                }
+            }
+            cli_idx = cli_idx + 1;
+        }
+        return result;
+    }
+
+    func get_string(parsed: Dict, name: string) -> string {
+        return parsed.get(name);
+    }
+
+    func get_int(parsed: Dict, name: string) -> int {
+        return data_parse_int(parsed.get(name));
+    }
+
+    func get_bool(parsed: Dict, name: string) -> bool {
+        return parsed.get(name) == "true";
+    }
+
+    func format_help() -> string {
+        let res = "usage: " + this.prog + " [options]\n\n" + this.description + "\n\noptions:\n";
+        let n = list_length(this.arguments);
+        let i = 0;
+        while i < n {
+            let arg: Argument = list_get(this.arguments, i);
+            let line = "  ";
+            if (string_length(arg.short_name) > 0) {
+                line = line + arg.short_name + ", ";
+            }
+            line = line + arg.name + "\t" + arg.help;
+            if (string_length(arg.default_val) > 0) {
+                line = line + " (default: " + arg.default_val + ")";
+            }
+            res = res + line + "\n";
+            i = i + 1;
+        }
+        return res;
+    }
+}
+
+func argparse_new(prog: string, description: string) -> ArgumentParser {
+    return new ArgumentParser(prog, description, list_new());
+}

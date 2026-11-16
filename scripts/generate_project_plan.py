@@ -650,7 +650,7 @@ s1_rows = [
         ("M7-T04", 8), ("Month 7", 22), ("Sprint 14 (W29-W30)", 8), "Python Ergonomics", "Functional Itertools, Statistics & Pathlib (roze.data)",
         "Python-class functional data manipulation in pure Roze: roze.itertools (permutations, combinations, product, cycle, repeat, chain, groupby), roze.functools (reduce, partial, lru_cache, memoize), roze.statistics (mean, median, mode, variance, stdev, linear_regression), roze.pathlib (Path), roze.csv, roze.argparse.",
         "Direct functional parity with Python 3.15 itertools, functools, statistics, pathlib, and argparse standard libraries.",
-        "Data Science, Numerical Analysis, Scripting", "8 Days", ("High", 14), ("Planned", 12)
+        "Data Science, Numerical Analysis, Scripting", "8 Days", ("High", 14), ("Completed", 13)
     ],
     [
         ("M7-T05", 8), ("Month 7", 22), ("Sprint 14 (W29-W30)", 8), "Non-Blocking I/O", "Zero-Copy Buffers & Memory-Mapped Channels (roze.nio)",

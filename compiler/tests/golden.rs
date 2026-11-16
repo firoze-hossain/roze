@@ -2211,6 +2211,20 @@ fn standard_temporal_jsr310_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze JSR-310 Temporal Engine 100% OPERATIONAL"));
 }
 
+#[test]
+fn standard_data_ergonomics_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_data.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: roze.itertools functional and combinatorial algorithms"));
+    assert!(stdout.contains("SUITE 2 PASSED: roze.functools LRU cache, memoization and reductions"));
+    assert!(stdout.contains("SUITE 3 PASSED: roze.statistics mathematical and regression analysis"));
+    assert!(stdout.contains("SUITE 4 PASSED: roze.pathlib object-oriented path manipulation"));
+    assert!(stdout.contains("SUITE 5 PASSED: roze.csv RFC 4180 parsing, serializing and dict readers"));
+    assert!(stdout.contains("SUITE 6 PASSED: roze.argparse command-line parsing, options and help formatting"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Python Ergonomics Suite 100% OPERATIONAL"));
+}
+
+
 
 
 

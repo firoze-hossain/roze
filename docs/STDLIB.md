@@ -15,7 +15,7 @@ The **Roze Standard Library** provides zero-overhead, memory-safe, portable syst
 5. [I/O, File System & Process Management](#5-io-file-system--process-management)
    - `io` • `fs` • `process` • `env` • `time`
 6. [Data Serialization, Text & Reflection](#6-data-serialization-text--reflection)
-   - `serde` • `regex` • `reflect`
+   - `serde` • `regex` • `reflect` • `data`
 7. [Enterprise Networking & Security](#7-enterprise-networking--security)
    - `web` • `enterprise_web` • `raw_net` • `crypto` • `cloud_security` • `binary` • `forensics`
 8. [Database & Persistence](#8-database--persistence)
@@ -55,6 +55,7 @@ The **Roze Standard Library** provides zero-overhead, memory-safe, portable syst
 | `env` | `import "env";` | Command line arguments, environment variables, working directory |
 | `time` | `import "roze.time";` | JSR-310 temporal engine: `Instant`, `Duration`, `Period`, `LocalDate`, `LocalTime`, `LocalDateTime`, `ZonedDateTime`, `ZoneId`, `ZoneOffset`, `DateTimeFormatter` |
 | `regex` | `import "regex";` | Linear-time regex engine (Thompson NFA / DFA), submatch extraction |
+| `data` | `import "roze.data";` | Python 3.15 ergonomics: `itertools` (chain, repeat, cycle, product, permutations, combinations), `functools` (LRU cache, memoize), `statistics` (mean, median, mode, variance, stdev, regression), `pathlib` (`Path`), `csv` (RFC 4180), `argparse` |
 | `serde` | `import "serde";` | JSON, TOML, YAML serialization & deserialization, binary encoding |
 | `reflect` | `import "reflect";` | Dynamic type introspection, struct field inspection, method invocation |
 | `crypto` | `import "crypto";` | SHA-256/512, AES-256-GCM, ChaCha20, Ed25519 signatures, TLS 1.3 |
@@ -418,6 +419,91 @@ import "regex";
 
 let re = regex_compile("^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$");
 let is_valid = regex_is_match(re, "user@roze-lang.org");
+```
+
+### 6.3 `data` (`roze.data` / Python 3.15 Ergonomics)
+Comprehensive Python 3.15 parity for functional iteration, caching, statistics, path manipulation, CSV serialization, and CLI argument parsing. Canonical imports: `import "roze.data";` or submodules `import "roze.itertools";`, `import "roze.functools";`, `import "roze.statistics";`, `import "roze.pathlib";`, `import "roze.csv";`, `import "roze.argparse";`.
+
+```roze
+import "roze.data";
+
+// 1. roze.itertools: Functional Generators & Combinatorics
+let c = itertools_chain([1, 2], [3, 4]);                      // -> [1, 2, 3, 4]
+let rep = itertools_repeat(7, 3);                             // -> [7, 7, 7]
+let cyc = itertools_cycle([1, 2], 5);                         // -> [1, 2, 1, 2, 1]
+let acc = itertools_accumulate_sum([1, 2, 3, 4]);             // -> [1, 3, 6, 10]
+let pw = itertools_pairwise([1, 2, 3, 4]);                    // -> [[1, 2], [2, 3], [3, 4]]
+let comp = itertools_compress(["a", "b", "c"], [1, 0, 1]);     // -> ["a", "c"]
+let prod = itertools_product([1, 2], [10, 20]);               // Cartesian product -> [[1, 10], [1, 20], [2, 10], [2, 20]]
+let perms = itertools_permutations([1, 2, 3], 2);             // -> [[1, 2], [1, 3], [2, 1], [2, 3], [3, 1], [3, 2]]
+let combs = itertools_combinations([1, 2, 3], 2);             // -> [[1, 2], [1, 3], [2, 3]]
+let groups = itertools_groupby_adjacent([1, 1, 2, 3, 3, 3]);   // Run-length grouping
+
+// 2. roze.functools: LRU Cache, Memoization & Reductions
+let cache = new LruCache(2);
+cache.put("user_1", "Alice");
+cache.put("user_2", "Bob");
+let val = cache.get("user_1");                                // Cache hit -> "Alice"
+cache.put("user_3", "Charlie");                               // Evicts least-recently-used "user_2"
+let hits = cache.hits();                                      // -> 1
+let misses = cache.misses();                                  // -> 0
+
+let memo = new Memoize();
+memo.put("fib_10", 55);
+let cached_fib = memo.get("fib_10");                          // -> 55
+
+let sum_val = functools_reduce_add([1, 2, 3, 4, 5], 0);       // -> 15
+let prod_val = functools_reduce_mul([1, 2, 3, 4, 5], 1);      // -> 120
+
+// 3. roze.statistics: Mathematical, Statistical & Regression Analysis
+let data = [10.0, 20.0, 20.0, 40.0, 50.0];
+let avg = stats_mean(data);                                   // -> 28.0
+let med = stats_median(data);                                 // -> 20.0
+let mod = stats_mode(data);                                   // -> 20.0
+let pvar = stats_pvariance(data);                             // Population variance
+let pstdev = stats_pstdev(data);                              // Population standard deviation
+let s_var = stats_variance(data);                             // Sample variance
+let s_std = stats_stdev(data);                                // Sample standard deviation
+let q = stats_quantiles(data, 4);                             // Quartiles [Q1, Q2, Q3]
+
+// Linear Regression: y = slope * x + intercept
+let xs = [1.0, 2.0, 3.0, 4.0, 5.0];
+let ys = [2.0, 4.0, 6.0, 8.0, 10.0];
+let reg = stats_linear_regression(xs, ys);
+let predicted = reg.predict(6.0);                             // -> 12.0 (slope = 2.0, intercept = 0.0)
+
+// 4. roze.pathlib: Object-Oriented Path Traversal & File I/O
+let p = pathlib_path("/var/log/roze/sys.log");
+let p_name = p.name();                                        // -> "sys.log"
+let p_stem = p.stem();                                        // -> "sys"
+let p_ext = p.suffix();                                       // -> ".log"
+let p_parent = p.parent().to_string();                        // -> "/var/log/roze"
+let p_child = p.parent().joinpath("audit.log");               // -> "/var/log/roze/audit.log"
+let is_abs = p.is_absolute();                                 // -> true
+p.write_text("Engine boot complete\n");
+let content = p.read_text();
+
+// 5. roze.csv: RFC 4180 Parsing, Serializing & Tabular Readers
+let raw_csv = "id,name,role\n1,Alice,Admin\n2,\"Bob, Jr.\",Dev\n";
+let reader = new CsvDictReader(raw_csv);
+let row0 = reader.next_row();
+let alice_name = row0.get("name");                            // -> "Alice"
+
+let writer = new CsvWriter();
+writer.write_row(["id", "name", "role"]);
+writer.write_row(["3", "Charlie", "Security"]);
+let output_csv = writer.to_string();
+
+// 6. roze.argparse: Command-Line Option & Flag Parsing
+let parser = new ArgumentParser("roze-cli", "Enterprise compiler CLI");
+parser.add_argument("--port", "-p", "8080", false, "Server port");
+parser.add_argument("--verbose", "-v", "false", true, "Enable verbose logging");
+parser.add_argument("input", "", "input.roze", false, "Source file input");
+
+let args = parser.parse_args(["--port", "9090", "--verbose", "main.roze"]);
+let port_num = args.get_int("port");                          // -> 9090
+let is_v = args.get_bool("verbose");                          // -> true
+let input_file = args.get_string("input");                    // -> "main.roze"
 ```
 
 ---

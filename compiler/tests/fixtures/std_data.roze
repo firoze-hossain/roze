@@ -1,0 +1,542 @@
+// compiler/tests/fixtures/std_data.roze
+//
+// Verification of Roze Python Ergonomics Suite (M7-T04)
+// Direct parity with Python 3.15 itertools, functools, statistics, pathlib, csv, argparse.
+
+import "roze.data";
+
+func main() {
+    println("=== M7-T04 Python Ergonomics: Itertools, Statistics & Pathlib Suite ===");
+
+    // --------------------------------------------------------------------------
+    // Suite 1: roze.itertools
+    // --------------------------------------------------------------------------
+    let l1 = list_new();
+    data_push(l1, 1);
+    data_push(l1, 2);
+    let l2 = list_new();
+    data_push(l2, 3);
+    data_push(l2, 4);
+
+    let chained2 = itertools_chain2(l1, l2);
+    if (list_length(chained2) != 4 || int(list_get(chained2, 0)) != 1 || int(list_get(chained2, 3)) != 4) {
+        println("FAIL: itertools_chain2 failed");
+        return;
+    }
+
+    let all_lists = list_new();
+    data_push(all_lists, l1);
+    data_push(all_lists, l2);
+    let chained = itertools_chain(all_lists);
+    if (list_length(chained) != 4) {
+        println("FAIL: itertools_chain failed");
+        return;
+    }
+
+    let rep = itertools_repeat("z", 3);
+    let rep0: string = list_get(rep, 0);
+    let rep2: string = list_get(rep, 2);
+    if (list_length(rep) != 3 || rep0 != "z" || rep2 != "z") {
+        println("FAIL: itertools_repeat failed");
+        return;
+    }
+
+    let cyc = itertools_cycle(l1, 3); // [1, 2, 1, 2, 1, 2]
+    if (list_length(cyc) != 6 || int(list_get(cyc, 4)) != 1 || int(list_get(cyc, 5)) != 2) {
+        println("FAIL: itertools_cycle failed");
+        return;
+    }
+
+    let acc_in = list_new();
+    data_push(acc_in, 1);
+    data_push(acc_in, 2);
+    data_push(acc_in, 3);
+    data_push(acc_in, 4);
+    let acc = itertools_accumulate_sum(acc_in); // [1, 3, 6, 10]
+    if (list_length(acc) != 4 || int(list_get(acc, 0)) != 1 || int(list_get(acc, 3)) != 10) {
+        println("FAIL: itertools_accumulate_sum failed");
+        return;
+    }
+
+    let pairs = itertools_pairwise(acc_in); // [[1, 2], [2, 3], [3, 4]]
+    if (list_length(pairs) != 3) {
+        println("FAIL: itertools_pairwise failed");
+        return;
+    }
+    let p0: List = list_get(pairs, 0);
+    if (int(list_get(p0, 0)) != 1 || int(list_get(p0, 1)) != 2) {
+        println("FAIL: itertools_pairwise pair 0 failed");
+        return;
+    }
+
+    let comp_data = list_new();
+    data_push(comp_data, "A");
+    data_push(comp_data, "B");
+    data_push(comp_data, "C");
+    data_push(comp_data, "D");
+    let comp_sel = list_new();
+    data_push(comp_sel, true);
+    data_push(comp_sel, false);
+    data_push(comp_sel, true);
+    data_push(comp_sel, false);
+    let compressed = itertools_compress(comp_data, comp_sel); // ["A", "C"]
+    let comp0: string = list_get(compressed, 0);
+    let comp1: string = list_get(compressed, 1);
+    if (list_length(compressed) != 2 || comp0 != "A" || comp1 != "C") {
+        println("FAIL: itertools_compress failed");
+        return;
+    }
+
+    let islice_in = list_new();
+    let idx = 0;
+    while idx < 10 {
+        data_push(islice_in, idx);
+        idx = idx + 1;
+    }
+    let sliced = itertools_islice(islice_in, 2, 8, 2); // [2, 4, 6]
+    if (list_length(sliced) != 3 || int(list_get(sliced, 0)) != 2 || int(list_get(sliced, 2)) != 6) {
+        println("FAIL: itertools_islice failed");
+        return;
+    }
+
+    let zl_a = list_new();
+    data_push(zl_a, 1);
+    data_push(zl_a, 2);
+    data_push(zl_a, 3);
+    let zl_b = list_new();
+    data_push(zl_b, "X");
+    let zipped = itertools_zip_longest(zl_a, zl_b, "-");
+    if (list_length(zipped) != 3) {
+        println("FAIL: itertools_zip_longest length failed");
+        return;
+    }
+    let z2: List = list_get(zipped, 2);
+    let z2_1: string = list_get(z2, 1);
+    if (z2_1 != "-") {
+        println("FAIL: itertools_zip_longest fill failed");
+        return;
+    }
+
+    let prod = itertools_product(l1, l2); // 2x2 = 4 pairs
+    if (list_length(prod) != 4) {
+        println("FAIL: itertools_product length failed");
+        return;
+    }
+
+    let perm_in = list_new();
+    data_push(perm_in, 1);
+    data_push(perm_in, 2);
+    data_push(perm_in, 3);
+    let perms = itertools_permutations(perm_in, 2); // 3P2 = 6
+    if (list_length(perms) != 6) {
+        println("FAIL: itertools_permutations length failed");
+        return;
+    }
+
+    let combs = itertools_combinations(perm_in, 2); // 3C2 = 3
+    if (list_length(combs) != 3) {
+        println("FAIL: itertools_combinations length failed");
+        return;
+    }
+
+    let comb_rep = itertools_combinations_with_replacement(l1, 2); // [1,1], [1,2], [2,2] = 3
+    if (list_length(comb_rep) != 3) {
+        println("FAIL: itertools_combinations_with_replacement length failed");
+        return;
+    }
+
+    let grp_in = list_new();
+    data_push(grp_in, 10);
+    data_push(grp_in, 10);
+    data_push(grp_in, 20);
+    data_push(grp_in, 30);
+    data_push(grp_in, 30);
+    data_push(grp_in, 30);
+    let groups = itertools_groupby_adjacent(grp_in);
+    if (list_length(groups) != 3) {
+        println("FAIL: itertools_groupby_adjacent failed");
+        return;
+    }
+    println("SUITE 1 PASSED: roze.itertools functional and combinatorial algorithms");
+
+    // --------------------------------------------------------------------------
+    // Suite 2: roze.functools
+    // --------------------------------------------------------------------------
+    let cache = lru_cache_new(2);
+    cache.put("k1", "v1");
+    cache.put("k2", "v2");
+    let hit1: string = cache.get("k1");
+    if (hit1 != "v1" || cache.hits() != 1) {
+        println("FAIL: LruCache get k1 failed");
+        return;
+    }
+    // k2 is LRU, put k3 should evict k2
+    cache.put("k3", "v3");
+    if (cache.has("k2")) {
+        println("FAIL: LruCache did not evict LRU key k2");
+        return;
+    }
+    if (!cache.has("k1") || !cache.has("k3")) {
+        println("FAIL: LruCache keys corrupted after eviction");
+        return;
+    }
+    let miss1 = cache.get("nonexistent");
+    if (cache.misses() != 1) {
+        println("FAIL: LruCache misses count failed");
+        return;
+    }
+    if (cache.size() != 2) {
+        println("FAIL: LruCache size != 2");
+        return;
+    }
+    cache.clear();
+    if (cache.size() != 0 || cache.hits() != 0) {
+        println("FAIL: LruCache clear failed");
+        return;
+    }
+
+    let mem = memoize_new();
+    mem.put("fib(5)", 8);
+    if (!mem.has("fib(5)") || int(mem.get("fib(5)")) != 8) {
+        println("FAIL: Memoize put/get failed");
+        return;
+    }
+    mem.clear();
+    if (mem.has("fib(5)")) {
+        println("FAIL: Memoize clear failed");
+        return;
+    }
+
+    let red_items = list_new();
+    data_push(red_items, 1);
+    data_push(red_items, 2);
+    data_push(red_items, 3);
+    data_push(red_items, 4);
+    if (functools_reduce_add(red_items, 0.0) != 10.0) {
+        println("FAIL: functools_reduce_add failed");
+        return;
+    }
+    if (functools_reduce_mul(red_items, 1.0) != 24.0) {
+        println("FAIL: functools_reduce_mul failed");
+        return;
+    }
+    if (functools_reduce_max(red_items) != 4.0) {
+        println("FAIL: functools_reduce_max failed");
+        return;
+    }
+    if (functools_reduce_min(red_items) != 1.0) {
+        println("FAIL: functools_reduce_min failed");
+        return;
+    }
+    println("SUITE 2 PASSED: roze.functools LRU cache, memoization and reductions");
+
+    // --------------------------------------------------------------------------
+    // Suite 3: roze.statistics
+    // --------------------------------------------------------------------------
+    let stat_data = list_new();
+    data_push(stat_data, 1);
+    data_push(stat_data, 2);
+    data_push(stat_data, 3);
+    data_push(stat_data, 4);
+    data_push(stat_data, 5);
+
+    let mean_val = stats_mean(stat_data);
+    if (mean_val != 3.0) {
+        println("FAIL: stats_mean != 3.0");
+        return;
+    }
+
+    let fmean_val = stats_fmean(stat_data);
+    if (fmean_val != 3.0) {
+        println("FAIL: stats_fmean != 3.0");
+        return;
+    }
+
+    let geo_data = list_new();
+    data_push(geo_data, 2);
+    data_push(geo_data, 8);
+    let geo_mean = stats_geometric_mean(geo_data);
+    if (geo_mean < 3.99 || geo_mean > 4.01) {
+        println("FAIL: stats_geometric_mean != 4.0, got: " + to_string(geo_mean));
+        return;
+    }
+
+    let med_odd = stats_median(stat_data);
+    if (med_odd != 3.0) {
+        println("FAIL: stats_median odd != 3.0");
+        return;
+    }
+
+    let even_data = list_new();
+    data_push(even_data, 1);
+    data_push(even_data, 3);
+    data_push(even_data, 5);
+    data_push(even_data, 7);
+    let med_even = stats_median(even_data);
+    if (med_even != 4.0) {
+        println("FAIL: stats_median even != 4.0");
+        return;
+    }
+    if (stats_median_low(even_data) != 3.0 || stats_median_high(even_data) != 5.0) {
+        println("FAIL: stats_median_low / high failed");
+        return;
+    }
+
+    let mode_data = list_new();
+    data_push(mode_data, 1);
+    data_push(mode_data, 2);
+    data_push(mode_data, 2);
+    data_push(mode_data, 3);
+    if (stats_mode(mode_data) != 2.0) {
+        println("FAIL: stats_mode != 2.0");
+        return;
+    }
+
+    let pvar = stats_pvariance(stat_data);
+    if (pvar != 2.0) {
+        println("FAIL: stats_pvariance != 2.0");
+        return;
+    }
+    let pstdev = stats_pstdev(stat_data);
+    if (pstdev < 1.41 || pstdev > 1.42) {
+        println("FAIL: stats_pstdev failed");
+        return;
+    }
+
+    let s_var = stats_variance(stat_data);
+    if (s_var != 2.5) {
+        println("FAIL: stats_variance != 2.5");
+        return;
+    }
+
+    let reg_x = list_new();
+    data_push(reg_x, 1);
+    data_push(reg_x, 2);
+    data_push(reg_x, 3);
+    data_push(reg_x, 4);
+    data_push(reg_x, 5);
+    let reg_y = list_new();
+    data_push(reg_y, 2);
+    data_push(reg_y, 4);
+    data_push(reg_y, 6);
+    data_push(reg_y, 8);
+    data_push(reg_y, 10);
+
+    let covar = stats_covariance(reg_x, reg_y);
+    if (covar != 5.0) {
+        println("FAIL: stats_covariance != 5.0, got: " + to_string(covar));
+        return;
+    }
+
+    let corr = stats_correlation(reg_x, reg_y);
+    if (corr < 0.99 || corr > 1.01) {
+        println("FAIL: stats_correlation != 1.0");
+        return;
+    }
+
+    let lr = stats_linear_regression(reg_x, reg_y);
+    if (lr.slope < 1.99 || lr.slope > 2.01 || lr.intercept < -0.01 || lr.intercept > 0.01) {
+        println("FAIL: stats_linear_regression slope/intercept failed");
+        return;
+    }
+    let pred = lr.predict(7.0);
+    if (pred < 13.99 || pred > 14.01) {
+        println("FAIL: LinearRegressionResult.predict(7.0) != 14.0");
+        return;
+    }
+
+    let q_data = list_new();
+    let q_i = 1;
+    while q_i <= 9 {
+        data_push(q_data, q_i);
+        q_i = q_i + 1;
+    }
+    let quartiles = stats_quantiles(q_data, 4);
+    if (list_length(quartiles) != 3) {
+        println("FAIL: stats_quantiles length != 3");
+        return;
+    }
+    println("SUITE 3 PASSED: roze.statistics mathematical and regression analysis");
+
+    // --------------------------------------------------------------------------
+    // Suite 4: roze.pathlib
+    // --------------------------------------------------------------------------
+    let p = pathlib_path("/home/user/project/file.txt");
+    if (p.to_string() != "/home/user/project/file.txt") {
+        println("FAIL: Path to_string failed");
+        return;
+    }
+    if (!p.is_absolute()) {
+        println("FAIL: Path is_absolute failed");
+        return;
+    }
+    if (p.name() != "file.txt") {
+        println("FAIL: Path name != file.txt, got: " + p.name());
+        return;
+    }
+    if (p.stem() != "file") {
+        println("FAIL: Path stem != file, got: " + p.stem());
+        return;
+    }
+    if (p.suffix() != ".txt") {
+        println("FAIL: Path suffix != .txt, got: " + p.suffix());
+        return;
+    }
+    if (p.parent().to_string() != "/home/user/project") {
+        println("FAIL: Path parent failed");
+        return;
+    }
+    if (p.with_name("main.roze").to_string() != "/home/user/project/main.roze") {
+        println("FAIL: Path with_name failed");
+        return;
+    }
+    if (p.with_suffix(".csv").to_string() != "/home/user/project/file.csv") {
+        println("FAIL: Path with_suffix failed");
+        return;
+    }
+    if (p.with_stem("report").to_string() != "/home/user/project/report.txt") {
+        println("FAIL: Path with_stem failed");
+        return;
+    }
+
+    let rel_p = pathlib_path("src/data.roze");
+    if (rel_p.is_absolute()) {
+        println("FAIL: Relative path reported as absolute");
+        return;
+    }
+    let joined = rel_p.joinpath("sub");
+    if (joined.to_string() != "src/data.roze/sub") {
+        println("FAIL: Path joinpath failed");
+        return;
+    }
+
+    let test_file = pathlib_path("/tmp/roze_pathlib_test.txt");
+    let write_ok = test_file.write_text("Roze Data Engine 1.0");
+    if (!write_ok || !test_file.exists() || !test_file.is_file()) {
+        println("FAIL: Path file write or exists failed");
+        return;
+    }
+    if (test_file.read_text() != "Roze Data Engine 1.0") {
+        println("FAIL: Path read_text failed");
+        return;
+    }
+    if (test_file.file_size() != 20) {
+        println("FAIL: Path file_size != 20, got: " + to_string(test_file.file_size()));
+        return;
+    }
+    println("SUITE 4 PASSED: roze.pathlib object-oriented path manipulation");
+
+    // --------------------------------------------------------------------------
+    // Suite 5: roze.csv
+    // --------------------------------------------------------------------------
+    let sample_csv_line = "id,name,role,\"notes, with comma\",\"has \"\"escaped\"\" quotes\"";
+    let parsed_line = csv_parse_line(sample_csv_line, ",");
+    if (list_length(parsed_line) != 5) {
+        println("FAIL: csv_parse_line length failed");
+        return;
+    }
+    let pl0: string = list_get(parsed_line, 0);
+    let pl1: string = list_get(parsed_line, 1);
+    let pl3: string = list_get(parsed_line, 3);
+    let pl4: string = list_get(parsed_line, 4);
+    if (pl0 != "id" || pl1 != "name") {
+        println("FAIL: csv_parse_line fields failed");
+        return;
+    }
+    if (pl3 != "notes, with comma") {
+        println("FAIL: csv_parse_line quoted comma field failed, got: " + pl3);
+        return;
+    }
+    if (pl4 != "has \"escaped\" quotes") {
+        println("FAIL: csv_parse_line escaped quote failed, got: " + pl4);
+        return;
+    }
+
+    let formatted_line = csv_format_line(parsed_line, ",");
+    if (string_length(formatted_line) == 0) {
+        println("FAIL: csv_format_line empty");
+        return;
+    }
+
+    let csv_content = "name,score,active\nAlice,95,true\nBob,88,false\n";
+    let reader = csv_reader_new(csv_content, ",");
+    let all_rows = reader.read_all();
+    if (list_length(all_rows) != 3) {
+        println("FAIL: CsvReader read_all length failed");
+        return;
+    }
+    let r1: List = list_get(all_rows, 1);
+    let r1_0: string = list_get(r1, 0);
+    let r1_1: string = list_get(r1, 1);
+    if (r1_0 != "Alice" || r1_1 != "95") {
+        println("FAIL: CsvReader row 1 data failed");
+        return;
+    }
+
+    let d_reader = csv_dict_reader_new(csv_content, ",");
+    let d_rows = d_reader.read_all();
+    if (list_length(d_rows) != 2) {
+        println("FAIL: CsvDictReader read_all length failed");
+        return;
+    }
+    let m0: Dict = list_get(d_rows, 0);
+    let m0_name: string = m0.get("name");
+    let m0_score: string = m0.get("score");
+    if (m0_name != "Alice" || m0_score != "95") {
+        println("FAIL: CsvDictReader map data failed");
+        return;
+    }
+
+    let hdrs = list_new();
+    data_push(hdrs, "symbol");
+    data_push(hdrs, "price");
+    let d_writer = csv_dict_writer_new(hdrs, ",");
+    d_writer.write_header();
+    let row_item = dict_new();
+    row_item.put("symbol", "AAPL");
+    row_item.put("price", "180");
+    d_writer.write_row(row_item);
+    let written_csv = d_writer.to_string();
+    if (string_length(written_csv) == 0) {
+        println("FAIL: CsvDictWriter to_string empty");
+        return;
+    }
+    println("SUITE 5 PASSED: roze.csv RFC 4180 parsing, serializing and dict readers");
+
+    // --------------------------------------------------------------------------
+    // Suite 6: roze.argparse
+    // --------------------------------------------------------------------------
+    let parser = argparse_new("roze-cli", "Roze Enterprise CLI Suite");
+    parser.add_argument("--port", "-p", "Network port", "8080", false);
+    parser.add_argument("--verbose", "-v", "Verbose logging", "false", true);
+    parser.add_argument("filename", "", "Target file name", "", false);
+
+    let cli_args = list_new();
+    data_push(cli_args, "-v");
+    data_push(cli_args, "--port");
+    data_push(cli_args, "9090");
+    data_push(cli_args, "server.roze");
+
+    let parsed_args = parser.parse_args(cli_args);
+    if (!parser.get_bool(parsed_args, "--verbose")) {
+        println("FAIL: ArgumentParser get_bool --verbose failed");
+        return;
+    }
+    if (parser.get_int(parsed_args, "--port") != 9090) {
+        println("FAIL: ArgumentParser get_int --port != 9090");
+        return;
+    }
+    if (parser.get_string(parsed_args, "filename") != "server.roze") {
+        println("FAIL: ArgumentParser get_string filename != server.roze");
+        return;
+    }
+
+    let help = parser.format_help();
+    if (string_length(help) == 0) {
+        println("FAIL: ArgumentParser format_help empty");
+        return;
+    }
+    println("SUITE 6 PASSED: roze.argparse command-line parsing, options and help formatting");
+
+    println("ALL SUITES COMPLETED: Roze Python Ergonomics Suite 100% OPERATIONAL");
+}

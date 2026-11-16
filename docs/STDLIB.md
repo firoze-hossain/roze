@@ -9,7 +9,7 @@ The **Roze Standard Library** provides zero-overhead, memory-safe, portable syst
 1. [Architecture & Design Principles](#1-architecture--design-principles)
 2. [Module Index](#2-module-index)
 3. [Language Core & Algorithms](#3-language-core--algorithms)
-   - `core` • `collections` • `ptr` • `memory` • `libc`
+   - `core` • `collections` • `math` • `ptr` • `memory` • `libc`
 4. [Concurrency & Synchronization](#4-concurrency--synchronization)
    - `concurrency` • `sync`
 5. [I/O, File System & Process Management](#5-io-file-system--process-management)
@@ -46,6 +46,7 @@ The **Roze Standard Library** provides zero-overhead, memory-safe, portable syst
 | :--- | :--- | :--- |
 | `core` | `import "core";` | Fundamental primitives, math functions, string manipulation, conversions |
 | `collections` | `import "collections";` | `List<T>`, `Map<K, V>`, `Queue<T>`, `Set<T>`, `BTreeMap<K, V>` |
+| `math` | `import "math";` | Arbitrary-precision `BigInt` (Karatsuba, Miller-Rabin), `BigDecimal` (7 rounding modes), `Complex`, and universal scientific mathematics |
 | `concurrency` | `import "concurrency";` | Native threads, M:N fibers, channels, async/await futures, task nurseries |
 | `sync` | `import "sync";` | Mutex, RwLock, Semaphore, Barrier, Atomic primitives (`AtomicInt`, `AtomicPtr`) |
 | `fs` | `import "fs";` | File metadata, directory walkers, path manipulation, permissions |
@@ -162,6 +163,39 @@ unsafe {
     ptr_copy(buf, buf + 512, 64);
     mem_free(buf);
 }
+```
+
+### 3.4 `math` — Universal Arbitrary-Precision Math Engine (BigInt, BigDecimal, Complex)
+```roze
+import "math";
+
+// 1. Arbitrary-Precision BigInt (Karatsuba multiplication & Miller-Rabin primality)
+let a = bigint_from_string("123456789012345678901234567890");
+let b = bigint_from_string("987654321098765432109876543210");
+let prod = a.mul(b); // O(n^1.585) Karatsuba multiplication
+let div_rem = prod.div_rem(a); // [quotient, remainder]
+let is_prime = bigint_from_string("2147483647").is_prob_prime(10); // Miller-Rabin test -> true
+let gcd_val = bigint_from_int(48).gcd(bigint_from_int(18)); // -> 6
+let lcm_val = bigint_from_int(12).lcm(bigint_from_int(15)); // -> 60
+
+// 2. Arbitrary-Precision Fixed-Point BigDecimal & 7 Industry Rounding Modes
+let price = bigdecimal_from_string("123.4567");
+let tax = bigdecimal_from_string("0.0825");
+let total = price.add(price.mul(tax));
+// Banker's Rounding (ROUND_HALF_EVEN - Java 25 & Python 3.15 parity):
+let rounded_total = total.set_scale(2, round_mode_half_even()); // -> 133.64
+
+// 3. Complex Numbers & Polar / Cartesian Math
+let c1 = complex_new(3.0, 4.0);
+let c2 = complex_new(1.0, -2.0);
+let c_prod = c1.mul(c2); // -> 11.0 - 2.0i
+let c_abs = c1.abs_sq(); // -> 25.0
+
+// 4. Universal Number-Theoretic & Scientific Utilities
+let f20 = math_factorial(20); // -> 2432902008176640000
+let fib50 = math_fibonacci(50); // -> 12586269025
+let pi = math_pi(); // -> 3.141592653589793
+let e = math_e();   // -> 2.718281828459045
 ```
 
 ---

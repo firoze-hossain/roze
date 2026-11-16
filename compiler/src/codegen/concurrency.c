@@ -6024,6 +6024,12 @@ const char* __roze_to_string_i64(int64_t val) {
     return __roze_make_string_with_len(buf, (int64_t)n);
 }
 
+const char* __roze_to_string_f64(double val) {
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "%g", val);
+    return __roze_make_string_with_len(buf, (int64_t)n);
+}
+
 const char* __roze_to_string_bool(int64_t val) {
     if (val) {
         return __roze_make_string_with_len("true", 4);

@@ -632,7 +632,7 @@ s1_rows = [
         ("M7-T01", 8), ("Month 7", 22), ("Sprint 13 (W27-W28)", 8), "Universal Math", "Arbitrary-Precision BigInt & BigDecimal Engine (roze.math)",
         "Pure Roze implementation of arbitrary precision integers (BigInt with Karatsuba multiplication, modular exponentiation, Miller-Rabin prime test) and arbitrary precision fixed-point decimals (BigDecimal with precision & rounding modes: HALF_UP, HALF_EVEN, FLOOR, CEILING).",
         "Direct mathematical parity with Java 25 java.math.BigInteger / java.math.BigDecimal and Python 3.15 decimal.Decimal.",
-        "Fintech, Cryptography, Scientific Computing", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Fintech, Cryptography, Scientific Computing", "8 Days", ("Critical", 14), ("Completed", 13)
     ],
     [
         ("M7-T02", 8), ("Month 7", 22), ("Sprint 13 (W27-W28)", 8), "Enterprise Collections", "Complete Java 25 Collections Hierarchy (roze.util)",

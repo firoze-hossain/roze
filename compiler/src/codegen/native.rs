@@ -1711,6 +1711,7 @@ long __roze_string_ends_with(const char *s, const char *p) { (void)s; (void)p; r
 long __roze_string_contains(const char *s, const char *p) { (void)s; (void)p; return 0; }
 const char *__roze_string_substring(const char *s, long start, long end) { (void)s; (void)start; (void)end; return ""; }
 const char *__roze_to_string_i64(long val) { (void)val; return ""; }
+const char *__roze_to_string_f64(double val) { (void)val; return ""; }
 const char *__roze_to_string_bool(long val) { (void)val; return ""; }
 
 long __roze_proc_spawn(const char *cmd, long args, long env_keys, long env_vals, const char *cwd, long in_mode, long out_mode, long err_mode) {
@@ -5653,6 +5654,7 @@ pub struct FsRuntime {
     pub string_contains: FuncId,
     pub string_substring: FuncId,
     pub to_string_i64: FuncId,
+    pub to_string_f64: FuncId,
     pub to_string_bool: FuncId,
 }
 
@@ -5685,6 +5687,10 @@ fn declare_fs_runtime(module: &mut ObjectModule) -> Result<FsRuntime> {
     sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
     sig_i64_i64_i64_to_i64.params.push(AbiParam::new(VALUE_TYPE));
     sig_i64_i64_i64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
+
+    let mut sig_f64_to_i64 = module.make_signature();
+    sig_f64_to_i64.params.push(AbiParam::new(types::F64));
+    sig_f64_to_i64.returns.push(AbiParam::new(VALUE_TYPE));
 
     Ok(FsRuntime {
         fs_open: decl!("__roze_fs_open", sig_i64_i64_to_i64),
@@ -5722,6 +5728,7 @@ fn declare_fs_runtime(module: &mut ObjectModule) -> Result<FsRuntime> {
         string_contains: decl!("__roze_string_contains", sig_i64_i64_to_i64),
         string_substring: decl!("__roze_string_substring", sig_i64_i64_i64_to_i64),
         to_string_i64: decl!("__roze_to_string_i64", sig_i64_to_i64),
+        to_string_f64: decl!("__roze_to_string_f64", sig_f64_to_i64),
         to_string_bool: decl!("__roze_to_string_bool", sig_i64_to_i64),
     })
 }
@@ -13305,6 +13312,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 }
                 let func_id = if arguments[0].type_ == Type::Bool {
                     self.fs.to_string_bool
+                } else if arguments[0].type_.is_float() {
+                    self.fs.to_string_f64
                 } else {
                     self.fs.to_string_i64
                 };

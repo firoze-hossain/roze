@@ -2056,6 +2056,21 @@ fn milestone_gate_m5_package_ecosystem_gate() {
     assert!(stdout.contains("SUCCESS: ALL MILESTONE GATE M5 VERIFICATION SUITES PASSED!"));
 }
 
+#[test]
+fn standard_math_bigint_and_bigdecimal_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_math.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== M7-T01 Universal Math: BigInt & BigDecimal Engine ==="));
+    assert!(stdout.contains("SUITE 1 PASSED: BigInt construction, parsing, and basic arithmetic verified"));
+    assert!(stdout.contains("SUITE 2 PASSED: Karatsuba multiplication, division, and powers verified"));
+    assert!(stdout.contains("SUITE 3 PASSED: Modular exponentiation, Miller-Rabin test, and GCD/LCM verified"));
+    assert!(stdout.contains("SUITE 4 PASSED: BigDecimal construction, scaling, and decimal formatting verified"));
+    assert!(stdout.contains("SUITE 5 PASSED: BigDecimal addition, subtraction, and multiplication verified"));
+    assert!(stdout.contains("SUITE 6 PASSED: BigDecimal division and all 7 rounding modes verified"));
+    assert!(stdout.contains("SUITE 7 PASSED: Complex numbers, factorials, Fibonacci, and constants verified"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Universal Mathematics Engine 100% OPERATIONAL"));
+}
+
 
 
 

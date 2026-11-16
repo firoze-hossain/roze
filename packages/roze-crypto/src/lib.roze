@@ -1901,11 +1901,12 @@ func ed25519_verify(public_key: List, message: List, signature: List) -> bool {
 // ==============================================================================
 
 class BigInt {
-    limbs: List, // base 65536 limbs (16-bit words)
+    sign: int,
+    limbs: List,
 }
 
 func bigint_new() -> BigInt {
-    return new BigInt(list_new());
+    return new BigInt(1, list_new());
 }
 
 func bigint_from_int(val: int) -> BigInt {

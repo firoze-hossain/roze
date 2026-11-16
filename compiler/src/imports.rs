@@ -120,6 +120,9 @@ const SQLITE_DISPLAY_NAME: &str = "sqlite (built-in)";
 const EMBEDDED_HAL_SOURCE: &str = include_str!("../../stdlib/src/embedded_hal.roze");
 const EMBEDDED_HAL_DISPLAY_NAME: &str = "embedded_hal (built-in)";
 
+const MATH_SOURCE: &str = include_str!("../../stdlib/src/math.roze");
+const MATH_DISPLAY_NAME: &str = "math (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -431,6 +434,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "embedded_hal" || path == "embedded-hal" || path == "embedded" || path == "hal" || path == "roze::embedded_hal" {
         return Ok((EMBEDDED_HAL_SOURCE.to_string(), EMBEDDED_HAL_DISPLAY_NAME.to_string()));
     }
+    if path == "math" || path == "std::math" || path == "roze::math" || path == "roze.math" || path == "bigint" || path == "bigdecimal" {
+        return Ok((MATH_SOURCE.to_string(), MATH_DISPLAY_NAME.to_string()));
+    }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {
         base_dir.join(path)
@@ -482,7 +488,7 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         location.line,
         location.column,
     )
-    .with_hint("built-in modules: \"core\", \"concurrency\", \"sync\", \"web\", \"fs\", \"io\", \"process\", \"time\", \"serde\", \"reflect\" -- modular packages: \"rozeboot\", \"roze-orm\", \"roze-net\", \"roze-crypto\", \"packages/<pkg>\", or \"libs/<pkg>/lib.roze\"")
+    .with_hint("built-in modules: \"core\", \"math\", \"concurrency\", \"sync\", \"web\", \"fs\", \"io\", \"process\", \"time\", \"serde\", \"reflect\" -- modular packages: \"rozeboot\", \"roze-orm\", \"roze-net\", \"roze-crypto\", \"packages/<pkg>\", or \"libs/<pkg>/lib.roze\"")
     .into())
 }
 

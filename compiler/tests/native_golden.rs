@@ -4741,6 +4741,26 @@ fn native_milestone_gate_m5_package_ecosystem_gate() {
     assert!(stdout.contains("SUCCESS: ALL MILESTONE GATE M5 VERIFICATION SUITES PASSED!"));
 }
 
+#[test]
+fn native_standard_math_bigint_and_bigdecimal_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_math.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_math.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_math_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== M7-T01 Universal Math: BigInt & BigDecimal Engine ==="));
+    assert!(stdout.contains("SUITE 1 PASSED: BigInt construction, parsing, and basic arithmetic verified"));
+    assert!(stdout.contains("SUITE 2 PASSED: Karatsuba multiplication, division, and powers verified"));
+    assert!(stdout.contains("SUITE 3 PASSED: Modular exponentiation, Miller-Rabin test, and GCD/LCM verified"));
+    assert!(stdout.contains("SUITE 4 PASSED: BigDecimal construction, scaling, and decimal formatting verified"));
+    assert!(stdout.contains("SUITE 5 PASSED: BigDecimal addition, subtraction, and multiplication verified"));
+    assert!(stdout.contains("SUITE 6 PASSED: BigDecimal division and all 7 rounding modes verified"));
+    assert!(stdout.contains("SUITE 7 PASSED: Complex numbers, factorials, Fibonacci, and constants verified"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Universal Mathematics Engine 100% OPERATIONAL"));
+}
+
 
 
 

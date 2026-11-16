@@ -1781,6 +1781,7 @@ long __roze_time_monotonic_millis(void) { return 0; }
 long __roze_time_realtime_secs(void) { return 0; }
 long __roze_time_realtime_millis(void) { return 0; }
 long __roze_time_realtime_nanos(void) { return 0; }
+long __roze_time_local_offset_secs(void) { return 0; }
 void __roze_time_sleep_nanos(long ns) { (void)ns; }
 void __roze_time_sleep_micros(long us) { (void)us; }
 void __roze_time_sleep_millis(long ms) { (void)ms; }
@@ -5945,6 +5946,7 @@ pub struct TimeRuntime {
     pub time_realtime_secs: FuncId,
     pub time_realtime_millis: FuncId,
     pub time_realtime_nanos: FuncId,
+    pub time_local_offset_secs: FuncId,
     pub time_sleep_nanos: FuncId,
     pub time_sleep_micros: FuncId,
     pub time_sleep_millis: FuncId,
@@ -5970,6 +5972,7 @@ fn declare_time_runtime(module: &mut ObjectModule) -> Result<TimeRuntime> {
         time_realtime_secs: decl!("__roze_time_realtime_secs", sig_void_to_i64),
         time_realtime_millis: decl!("__roze_time_realtime_millis", sig_void_to_i64),
         time_realtime_nanos: decl!("__roze_time_realtime_nanos", sig_void_to_i64),
+        time_local_offset_secs: decl!("__roze_time_local_offset_secs", sig_void_to_i64),
         time_sleep_nanos: decl!("__roze_time_sleep_nanos", sig_i64_to_void),
         time_sleep_micros: decl!("__roze_time_sleep_micros", sig_i64_to_void),
         time_sleep_millis: decl!("__roze_time_sleep_millis", sig_i64_to_void),
@@ -13932,6 +13935,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             "time_realtime_nanos" if arguments.is_empty() => {
                 let func_ref = self.module.declare_func_in_func(self.time.time_realtime_nanos, self.builder.func);
+                let call = self.builder.ins().call(func_ref, &[]);
+                return Ok(self.builder.inst_results(call)[0]);
+            }
+            "time_local_offset_secs" if arguments.is_empty() => {
+                let func_ref = self.module.declare_func_in_func(self.time.time_local_offset_secs, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[]);
                 return Ok(self.builder.inst_results(call)[0]);
             }

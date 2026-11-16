@@ -6079,6 +6079,10 @@ const TIME_HELPER_METHODS: &str = r#"
         return inst.getEpochSecond() * 1000000000L + (long) inst.getNano();
     }
 
+    public static long time_local_offset_secs() {
+        return (long) java.time.OffsetDateTime.now().getOffset().getTotalSeconds();
+    }
+
     public static void time_sleep_nanos(long ns) {
         if (ns <= 0) return;
         long ms = ns / 1000000L;
@@ -6683,9 +6687,10 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "proc_is_running" | "proc_kill" | "proc_signal" | "sys_env_has" | "sys_env_set_cwd" => Some("boolean"),
         "sys_env_args" | "sys_env_vars" => Some("java.util.List"),
 
-        // High-Precision Time & Monotonic Reactor (M4-T06)
+        // High-Precision Time & Monotonic Reactor (M4-T06, M7-T03)
         "time_monotonic_nanos" | "time_monotonic_micros" | "time_monotonic_millis"
-        | "time_realtime_secs" | "time_realtime_millis" | "time_realtime_nanos" => Some("long"),
+        | "time_realtime_secs" | "time_realtime_millis" | "time_realtime_nanos"
+        | "time_local_offset_secs" => Some("long"),
         "time_sleep_nanos" | "time_sleep_micros" | "time_sleep_millis" => Some("void"),
 
         // Linear-Time Regex Engine (M4-T07)

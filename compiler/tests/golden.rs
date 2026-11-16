@@ -2191,6 +2191,21 @@ ENTERPRISE_COLLECTIONS_ALL_PASSED";
     assert_eq!(program_output(&stdout).trim_end(), expected);
 }
 
+#[test]
+fn standard_temporal_jsr310_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_temporal.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Period date-based math and ISO-8601 formatting"));
+    assert!(stdout.contains("SUITE 2 PASSED: LocalDate civil calendar math and epoch bijections"));
+    assert!(stdout.contains("SUITE 3 PASSED: LocalTime nanosecond precision and midnight wrapping"));
+    assert!(stdout.contains("SUITE 4 PASSED: LocalDateTime date-time composition and boundary transitions"));
+    assert!(stdout.contains("SUITE 5 PASSED: ZoneOffset and ZoneId worldwide timezone registry"));
+    assert!(stdout.contains("SUITE 6 PASSED: ZonedDateTime universal timeline cross-zone conversions"));
+    assert!(stdout.contains("SUITE 7 PASSED: DateTimeFormatter pattern engine and standard formats"));
+    assert!(stdout.contains("SUITE 8 PASSED: JSR-310 Duration and Instant timeline assertions"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze JSR-310 Temporal Engine 100% OPERATIONAL"));
+}
+
 
 
 

@@ -1628,6 +1628,7 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("time_realtime_secs", vec![], Type::I64),
         ("time_realtime_millis", vec![], Type::I64),
         ("time_realtime_nanos", vec![], Type::I64),
+        ("time_local_offset_secs", vec![], Type::I64),
         ("time_sleep_nanos", vec![Type::I64], Type::Void),
         ("time_sleep_micros", vec![Type::I64], Type::Void),
         ("time_sleep_millis", vec![Type::I64], Type::Void),

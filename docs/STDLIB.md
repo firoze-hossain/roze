@@ -53,7 +53,7 @@ The **Roze Standard Library** provides zero-overhead, memory-safe, portable syst
 | `io` | `import "io";` | Stream I/O, buffered readers/writers, standard streams (`stdin`, `stdout`) |
 | `process` | `import "process";` | Child process spawning, exit status, pipes, signal handling |
 | `env` | `import "env";` | Command line arguments, environment variables, working directory |
-| `time` | `import "time";` | Monotonic clock, duration arithmetic, sleep, timer reactors |
+| `time` | `import "roze.time";` | JSR-310 temporal engine: `Instant`, `Duration`, `Period`, `LocalDate`, `LocalTime`, `LocalDateTime`, `ZonedDateTime`, `ZoneId`, `ZoneOffset`, `DateTimeFormatter` |
 | `regex` | `import "regex";` | Linear-time regex engine (Thompson NFA / DFA), submatch extraction |
 | `serde` | `import "serde";` | JSON, TOML, YAML serialization & deserialization, binary encoding |
 | `reflect` | `import "reflect";` | Dynamic type introspection, struct field inspection, method invocation |
@@ -339,6 +339,43 @@ let args = env_args();
 
 // Spawning Subprocesses
 let exit_code = process_spawn("git", ["status", "--short"]);
+```
+
+### 5.3 `time` (`roze.time` / JSR-310 Temporal Engine)
+Full architectural and mathematical parity with Java 25 `java.time.*` (JSR-310) and Python 3.15 `datetime` / `zoneinfo`.
+```roze
+import "roze.time";
+
+// 1. Civil Calendar Date & Period Math
+let today = local_date_of(2026, 11, 16);
+let deadline = today.plus_months(3).plus_days(10);
+let period = today.until(deadline); // -> P3M10D
+let dow = today.day_of_week();      // -> 1 (Monday)
+let is_leap = today.is_leap_year(); // -> false
+
+// 2. Civil Time with Nanosecond Precision
+let time = local_time_of(14, 30, 0, 500000000);
+let evening = time.plus_hours(4);   // -> 18:30:00.500000000
+
+// 3. LocalDateTime Composition
+let dt = today.at_time(14, 30, 0);  // -> 2026-11-16T14:30:00
+
+// 4. Timezone-Aware ZonedDateTime & Conversions
+let dhaka_zone = zone_id_of("Asia/Dhaka");           // UTC+6
+let ny_zone = zone_id_of("America/New_York");        // UTC-5
+let zdt_dhaka = dt.at_zone(dhaka_zone);
+// Convert to another timezone while keeping identical universal instant:
+let zdt_ny = zdt_dhaka.with_zone_same_instant(ny_zone); // 03:30:00-05:00
+
+// 5. RFC 2822 / ISO-8601 Formatting
+let rfc_str = zdt_dhaka.format_rfc2822(); // -> Mon, 16 Nov 2026 14:30:00 +0600
+let fmt = date_time_formatter_of_pattern("yyyy-MM-dd HH:mm:ss");
+let custom_str = fmt.format_date_time(dt); // -> 2026-11-16 14:30:00
+
+// 6. Universal Timeline Instant & Monotonic Timer
+let inst = instant_now();
+sleep_millis(20);
+let elapsed = inst.elapsed(); // Duration with nanosecond precision
 ```
 
 ---

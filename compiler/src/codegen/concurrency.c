@@ -7327,6 +7327,16 @@ int64_t __roze_time_realtime_nanos(void) {
     return (int64_t)time(NULL) * 1000000000LL;
 }
 
+int64_t __roze_time_local_offset_secs(void) {
+    time_t t = time(NULL);
+    struct tm loc;
+    memset(&loc, 0, sizeof(struct tm));
+    if (localtime_r(&t, &loc) != NULL) {
+        return (int64_t)loc.tm_gmtoff;
+    }
+    return 0LL;
+}
+
 void __roze_time_sleep_nanos(int64_t ns) {
     if (ns <= 0) return;
     struct timespec req, rem;

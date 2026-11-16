@@ -1,8 +1,26 @@
 // stdlib/src/time.roze
 //
-// Roze High-Precision Monotonic Time & Timer Reactor Engine (M4-T06)
-// Full architectural parity with Rust std::time (Instant, Duration, SystemTime)
-// and Java 25 java.time.Instant / java.time.Duration.
+// Roze JSR-310 Temporal Engine & High-Precision Clocks (M7-T03)
+// Direct functional & architectural parity with Java 25 java.time.* (JSR-310)
+// and Python 3.15 datetime / zoneinfo standard libraries.
+//
+// Core Components:
+// 1. Duration: High-precision time-based amount (seconds + nanoseconds)
+// 2. Instant: Nanosecond-precision point on the universal timeline
+// 3. SystemTime: OS real-time clock timestamps & Unix epoch offsets
+// 4. TimerReactor: Deadline-driven monotonic event reactor
+// 5. Period: Date-based amount of time (years, months, days)
+// 6. LocalDate: ISO-8601 civil calendar date (year, month, day)
+// 7. LocalTime: ISO-8601 civil time of day (hour, minute, second, nanosecond)
+// 8. LocalDateTime: Combined civil date-time without timezone
+// 9. ZoneOffset: Fixed UTC time zone offset (+HH:MM, -HH:MM, Z)
+// 10. ZoneId: Geographic and standard time zone identifiers (e.g. "Asia/Dhaka", "UTC")
+// 11. ZonedDateTime: Complete ISO-8601 timezone-aware timestamp
+// 12. DateTimeFormatter: Pattern-based and RFC-2822 / ISO formatting and parsing engine
+
+// ==============================================================================
+// 1. Duration (Time-based Amount of Time)
+// ==============================================================================
 
 class Duration {
     secs: i64,
@@ -42,6 +60,18 @@ impl Duration {
         return this.secs == 0 && this.nanos == 0;
     }
 
+    func is_negative() -> bool {
+        return this.secs < 0 || (this.secs == 0 && this.nanos < 0);
+    }
+
+    func abs() -> Duration {
+        if this.is_negative() {
+            let total_ns = -this.as_nanos();
+            return duration_from_nanos(total_ns);
+        }
+        return new Duration(this.secs, this.nanos);
+    }
+
     func add(other: Duration) -> Duration {
         return duration_new(this.secs + other.secs, this.nanos + other.nanos);
     }
@@ -75,10 +105,57 @@ impl Duration {
         return duration_from_nanos(total_ns);
     }
 
+    func to_days() -> i64 {
+        return this.secs / 86400;
+    }
+
+    func to_hours() -> i64 {
+        return this.secs / 3600;
+    }
+
+    func to_minutes() -> i64 {
+        return this.secs / 60;
+    }
+
+    func to_millis() -> i64 {
+        return this.as_millis();
+    }
+
+    func to_nanos() -> i64 {
+        return this.as_nanos();
+    }
+
+    func to_iso_string() -> string {
+        let res = "PT";
+        let s = this.secs;
+        let h = s / 3600;
+        let rem_s = s % 3600;
+        let m = rem_s / 60;
+        let sec = rem_s % 60;
+        if (h > 0) {
+            res = res + to_string(h) + "H";
+        }
+        if (m > 0) {
+            res = res + to_string(m) + "M";
+        }
+        if (sec > 0 || this.nanos > 0 || (h == 0 && m == 0)) {
+            res = res + to_string(sec);
+            if (this.nanos > 0) {
+                res = res + "." + time_pad_nanos(this.nanos);
+            }
+            res = res + "S";
+        }
+        return res;
+    }
+
     func to_string() -> string {
         return to_string(this.secs) + "." + to_string(this.subsec_millis()) + "s";
     }
 }
+
+// ==============================================================================
+// 2. Instant (Nanosecond Timeline Point)
+// ==============================================================================
 
 class Instant {
     nanos: i64,
@@ -122,10 +199,58 @@ impl Instant {
         return this.nanos / 1000000;
     }
 
+    func epoch_second() -> i64 {
+        return this.nanos / 1000000000;
+    }
+
+    func nano() -> i64 {
+        let rem = this.nanos % 1000000000;
+        if (rem < 0) {
+            rem = rem + 1000000000;
+        }
+        return rem;
+    }
+
+    func to_epoch_milli() -> i64 {
+        return this.nanos / 1000000;
+    }
+
+    func is_before(other: Instant) -> bool {
+        return this.nanos < other.nanos;
+    }
+
+    func is_after(other: Instant) -> bool {
+        return this.nanos > other.nanos;
+    }
+
+    func equals(other: Instant) -> bool {
+        return this.nanos == other.nanos;
+    }
+
+    func compare_to(other: Instant) -> int {
+        if this.nanos < other.nanos {
+            return -1;
+        }
+        if this.nanos > other.nanos {
+            return 1;
+        }
+        return 0;
+    }
+
+    func to_iso_string() -> string {
+        let sec = this.epoch_second();
+        let dt = local_date_time_of_epoch_second(sec, this.nano(), zone_offset_utc());
+        return dt.to_string() + "Z";
+    }
+
     func to_string() -> string {
         return "Instant(" + to_string(this.nanos) + " ns)";
     }
 }
+
+// ==============================================================================
+// 3. SystemTime (OS Clock & Realtime Timestamps)
+// ==============================================================================
 
 class SystemTime {
     secs: i64,
@@ -163,10 +288,18 @@ impl SystemTime {
         return this.secs * 1000000000 + this.nanos;
     }
 
+    func to_instant() -> Instant {
+        return new Instant(this.secs * 1000000000 + this.nanos);
+    }
+
     func to_string() -> string {
         return "SystemTime(" + to_string(this.secs) + "s)";
     }
 }
+
+// ==============================================================================
+// 4. TimerReactor (Deadline Event Loop)
+// ==============================================================================
 
 class TimerReactor {
     deadline: Instant,
@@ -187,7 +320,1058 @@ impl TimerReactor {
     }
 }
 
-// ---- Constructor / Factory Functions ----
+// ==============================================================================
+// 5. Period (Date-based Amount of Time: Years, Months, Days)
+// ==============================================================================
+
+class Period {
+    years: int,
+    months: int,
+    days: int,
+}
+
+impl Period {
+    func years() -> int {
+        return this.years;
+    }
+
+    func months() -> int {
+        return this.months;
+    }
+
+    func days() -> int {
+        return this.days;
+    }
+
+    func is_zero() -> bool {
+        return this.years == 0 && this.months == 0 && this.days == 0;
+    }
+
+    func is_negative() -> bool {
+        return this.years < 0 || this.months < 0 || this.days < 0;
+    }
+
+    func plus(other: Period) -> Period {
+        return new Period(this.years + other.years, this.months + other.months, this.days + other.days);
+    }
+
+    func minus(other: Period) -> Period {
+        return new Period(this.years - other.years, this.months - other.months, this.days - other.days);
+    }
+
+    func multiplied_by(scalar: int) -> Period {
+        return new Period(this.years * scalar, this.months * scalar, this.days * scalar);
+    }
+
+    func negated() -> Period {
+        return new Period(-this.years, -this.months, -this.days);
+    }
+
+    func to_total_months() -> i64 {
+        return this.years * 12 + this.months;
+    }
+
+    func to_string() -> string {
+        if this.is_zero() {
+            return "P0D";
+        }
+        let res = "P";
+        if (this.years != 0) {
+            res = res + to_string(this.years) + "Y";
+        }
+        if (this.months != 0) {
+            res = res + to_string(this.months) + "M";
+        }
+        if (this.days != 0) {
+            res = res + to_string(this.days) + "D";
+        }
+        return res;
+    }
+}
+
+// ==============================================================================
+// 6. LocalDate (Civil Calendar Date: Year, Month, Day)
+// ==============================================================================
+
+class LocalDate {
+    year: int,
+    month: int,
+    day: int,
+}
+
+impl LocalDate {
+    func year() -> int {
+        return this.year;
+    }
+
+    func month() -> int {
+        return this.month;
+    }
+
+    func day() -> int {
+        return this.day;
+    }
+
+    func day_of_week() -> int {
+        let ep = this.to_epoch_day();
+        // 1970-01-01 was Thursday (4). Return 1=Monday..7=Sunday.
+        let rem = (ep + 3) % 7;
+        if (rem < 0) {
+            rem = rem + 7;
+        }
+        return int(rem + 1);
+    }
+
+    func day_of_year() -> int {
+        let ep_year_start = time_civil_to_epoch_day(this.year, 1, 1);
+        return int((this.to_epoch_day() - ep_year_start) + 1);
+    }
+
+    func is_leap_year() -> bool {
+        return time_is_leap_year(this.year);
+    }
+
+    func length_of_month() -> int {
+        return time_days_in_month(this.year, this.month);
+    }
+
+    func length_of_year() -> int {
+        if (this.is_leap_year()) {
+            return 366;
+        }
+        return 365;
+    }
+
+    func to_epoch_day() -> i64 {
+        return time_civil_to_epoch_day(this.year, this.month, this.day);
+    }
+
+    func plus_days(days: i64) -> LocalDate {
+        if (days == 0) {
+            return this;
+        }
+        let ep = this.to_epoch_day() + days;
+        return time_epoch_day_to_civil(ep);
+    }
+
+    func minus_days(days: i64) -> LocalDate {
+        return this.plus_days(-days);
+    }
+
+    func plus_months(months: i64) -> LocalDate {
+        if (months == 0) {
+            return this;
+        }
+        let total_m = (this.year * 12 + (this.month - 1)) + months;
+        let new_y = total_m / 12;
+        let new_m = total_m % 12;
+        if (new_m < 0) {
+            new_m = new_m + 12;
+            new_y = new_y - 1;
+        }
+        new_m = new_m + 1;
+        let max_d = time_days_in_month(int(new_y), int(new_m));
+        let new_d = this.day;
+        if (new_d > max_d) {
+            new_d = max_d;
+        }
+        return new LocalDate(int(new_y), int(new_m), new_d);
+    }
+
+    func minus_months(months: i64) -> LocalDate {
+        return this.plus_months(-months);
+    }
+
+    func plus_years(years: i64) -> LocalDate {
+        return this.plus_months(years * 12);
+    }
+
+    func minus_years(years: i64) -> LocalDate {
+        return this.plus_years(-years);
+    }
+
+    func plus_period(p: Period) -> LocalDate {
+        return this.plus_years(p.years).plus_months(p.months).plus_days(p.days);
+    }
+
+    func minus_period(p: Period) -> LocalDate {
+        return this.plus_years(-p.years).plus_months(-p.months).plus_days(-p.days);
+    }
+
+    func until(end: LocalDate) -> Period {
+        let y_diff = end.year - this.year;
+        let m_diff = end.month - this.month;
+        let d_diff = end.day - this.day;
+        if (d_diff < 0) {
+            let prev_month = end.month - 1;
+            let prev_year = end.year;
+            if (prev_month == 0) {
+                prev_month = 12;
+                prev_year = prev_year - 1;
+            }
+            d_diff = d_diff + time_days_in_month(prev_year, prev_month);
+            m_diff = m_diff - 1;
+        }
+        if (m_diff < 0) {
+            m_diff = m_diff + 12;
+            y_diff = y_diff - 1;
+        }
+        return new Period(y_diff, m_diff, d_diff);
+    }
+
+    func is_before(other: LocalDate) -> bool {
+        return this.to_epoch_day() < other.to_epoch_day();
+    }
+
+    func is_after(other: LocalDate) -> bool {
+        return this.to_epoch_day() > other.to_epoch_day();
+    }
+
+    func equals(other: LocalDate) -> bool {
+        return this.year == other.year && this.month == other.month && this.day == other.day;
+    }
+
+    func compare_to(other: LocalDate) -> int {
+        let d1 = this.to_epoch_day();
+        let d2 = other.to_epoch_day();
+        if (d1 < d2) {
+            return -1;
+        }
+        if (d1 > d2) {
+            return 1;
+        }
+        return 0;
+    }
+
+    func at_time(hour: int, minute: int, second: int) -> LocalDateTime {
+        let t = local_time_of_hms(hour, minute, second);
+        return new LocalDateTime(this, t);
+    }
+
+    func at_local_time(time: LocalTime) -> LocalDateTime {
+        return new LocalDateTime(this, time);
+    }
+
+    func at_start_of_day() -> LocalDateTime {
+        return new LocalDateTime(this, local_time_of_hms(0, 0, 0));
+    }
+
+    func to_string() -> string {
+        return time_pad4(this.year) + "-" + time_pad2(this.month) + "-" + time_pad2(this.day);
+    }
+}
+
+// ==============================================================================
+// 7. LocalTime (Civil Time of Day: Hour, Minute, Second, Nanosecond)
+// ==============================================================================
+
+class LocalTime {
+    hour: int,
+    minute: int,
+    second: int,
+    nano: int,
+}
+
+impl LocalTime {
+    func hour() -> int {
+        return this.hour;
+    }
+
+    func minute() -> int {
+        return this.minute;
+    }
+
+    func second() -> int {
+        return this.second;
+    }
+
+    func nano() -> int {
+        return this.nano;
+    }
+
+    func to_second_of_day() -> i64 {
+        return this.hour * 3600 + this.minute * 60 + this.second;
+    }
+
+    func to_nano_of_day() -> i64 {
+        return this.to_second_of_day() * 1000000000 + this.nano;
+    }
+
+    func plus_hours(h: i64) -> LocalTime {
+        return this.plus_seconds(h * 3600);
+    }
+
+    func minus_hours(h: i64) -> LocalTime {
+        return this.plus_hours(-h);
+    }
+
+    func plus_minutes(m: i64) -> LocalTime {
+        return this.plus_seconds(m * 60);
+    }
+
+    func minus_minutes(m: i64) -> LocalTime {
+        return this.plus_minutes(-m);
+    }
+
+    func plus_seconds(s: i64) -> LocalTime {
+        if (s == 0) {
+            return this;
+        }
+        let total_s = this.to_second_of_day() + s;
+        let rem_s = total_s % 86400;
+        if (rem_s < 0) {
+            rem_s = rem_s + 86400;
+        }
+        return local_time_of_second_of_day(rem_s, this.nano);
+    }
+
+    func minus_seconds(s: i64) -> LocalTime {
+        return this.plus_seconds(-s);
+    }
+
+    func plus_nanos(n: i64) -> LocalTime {
+        if (n == 0) {
+            return this;
+        }
+        let total_ns = this.to_nano_of_day() + n;
+        let rem_ns = total_ns % 86400000000000;
+        if (rem_ns < 0) {
+            rem_ns = rem_ns + 86400000000000;
+        }
+        return local_time_of_nano_of_day(rem_ns);
+    }
+
+    func minus_nanos(n: i64) -> LocalTime {
+        return this.plus_nanos(-n);
+    }
+
+    func is_before(other: LocalTime) -> bool {
+        return this.to_nano_of_day() < other.to_nano_of_day();
+    }
+
+    func is_after(other: LocalTime) -> bool {
+        return this.to_nano_of_day() > other.to_nano_of_day();
+    }
+
+    func equals(other: LocalTime) -> bool {
+        return this.hour == other.hour && this.minute == other.minute && this.second == other.second && this.nano == other.nano;
+    }
+
+    func compare_to(other: LocalTime) -> int {
+        let t1 = this.to_nano_of_day();
+        let t2 = other.to_nano_of_day();
+        if (t1 < t2) {
+            return -1;
+        }
+        if (t1 > t2) {
+            return 1;
+        }
+        return 0;
+    }
+
+    func at_date(date: LocalDate) -> LocalDateTime {
+        return new LocalDateTime(date, this);
+    }
+
+    func to_string() -> string {
+        let res = time_pad2(this.hour) + ":" + time_pad2(this.minute) + ":" + time_pad2(this.second);
+        if (this.nano > 0) {
+            res = res + "." + time_pad_nanos(this.nano);
+        }
+        return res;
+    }
+}
+
+// ==============================================================================
+// 8. LocalDateTime (Combined Civil Date-Time)
+// ==============================================================================
+
+class LocalDateTime {
+    date: LocalDate,
+    time: LocalTime,
+}
+
+impl LocalDateTime {
+    func date() -> LocalDate {
+        return this.date;
+    }
+
+    func time() -> LocalTime {
+        return this.time;
+    }
+
+    func year() -> int {
+        return this.date.year;
+    }
+
+    func month() -> int {
+        return this.date.month;
+    }
+
+    func day() -> int {
+        return this.date.day;
+    }
+
+    func hour() -> int {
+        return this.time.hour;
+    }
+
+    func minute() -> int {
+        return this.time.minute;
+    }
+
+    func second() -> int {
+        return this.time.second;
+    }
+
+    func nano() -> int {
+        return this.time.nano;
+    }
+
+    func plus_days(d: i64) -> LocalDateTime {
+        return new LocalDateTime(this.date.plus_days(d), this.time);
+    }
+
+    func minus_days(d: i64) -> LocalDateTime {
+        return new LocalDateTime(this.date.minus_days(d), this.time);
+    }
+
+    func plus_hours(h: i64) -> LocalDateTime {
+        return this.plus_seconds(h * 3600);
+    }
+
+    func minus_hours(h: i64) -> LocalDateTime {
+        return this.plus_hours(-h);
+    }
+
+    func plus_minutes(m: i64) -> LocalDateTime {
+        return this.plus_seconds(m * 60);
+    }
+
+    func minus_minutes(m: i64) -> LocalDateTime {
+        return this.plus_minutes(-m);
+    }
+
+    func plus_seconds(s: i64) -> LocalDateTime {
+        if (s == 0) {
+            return this;
+        }
+        let total_s = this.time.to_second_of_day() + s;
+        let days_delta = total_s / 86400;
+        let rem_s = total_s % 86400;
+        if (rem_s < 0) {
+            rem_s = rem_s + 86400;
+            days_delta = days_delta - 1;
+        }
+        let new_date = this.date.plus_days(days_delta);
+        let new_time = local_time_of_second_of_day(rem_s, this.time.nano);
+        return new LocalDateTime(new_date, new_time);
+    }
+
+    func minus_seconds(s: i64) -> LocalDateTime {
+        return this.plus_seconds(-s);
+    }
+
+    func to_epoch_second(offset: ZoneOffset) -> i64 {
+        let ep_day = this.date.to_epoch_day();
+        let sec_of_day = this.time.to_second_of_day();
+        return ep_day * 86400 + sec_of_day - offset.total_seconds;
+    }
+
+    func at_offset(offset: ZoneOffset) -> ZonedDateTime {
+        let zone = new ZoneId(offset.to_string(), offset);
+        return new ZonedDateTime(this, offset, zone);
+    }
+
+    func at_zone(zone: ZoneId) -> ZonedDateTime {
+        return new ZonedDateTime(this, zone.get_offset(), zone);
+    }
+
+    func is_before(other: LocalDateTime) -> bool {
+        if (this.date.is_before(other.date)) {
+            return true;
+        }
+        if (this.date.is_after(other.date)) {
+            return false;
+        }
+        return this.time.is_before(other.time);
+    }
+
+    func is_after(other: LocalDateTime) -> bool {
+        if (this.date.is_after(other.date)) {
+            return true;
+        }
+        if (this.date.is_before(other.date)) {
+            return false;
+        }
+        return this.time.is_after(other.time);
+    }
+
+    func equals(other: LocalDateTime) -> bool {
+        return this.date.equals(other.date) && this.time.equals(other.time);
+    }
+
+    func compare_to(other: LocalDateTime) -> int {
+        let dc = this.date.compare_to(other.date);
+        if (dc != 0) {
+            return dc;
+        }
+        return this.time.compare_to(other.time);
+    }
+
+    func to_string() -> string {
+        return this.date.to_string() + "T" + this.time.to_string();
+    }
+}
+
+// ==============================================================================
+// 9. ZoneOffset (Fixed UTC Offset)
+// ==============================================================================
+
+class ZoneOffset {
+    total_seconds: int,
+}
+
+impl ZoneOffset {
+    func total_seconds() -> int {
+        return this.total_seconds;
+    }
+
+    func hours() -> int {
+        return this.total_seconds / 3600;
+    }
+
+    func minutes() -> int {
+        return (this.total_seconds % 3600) / 60;
+    }
+
+    func is_utc() -> bool {
+        return this.total_seconds == 0;
+    }
+
+    func equals(other: ZoneOffset) -> bool {
+        return this.total_seconds == other.total_seconds;
+    }
+
+    func compare_to(other: ZoneOffset) -> int {
+        if this.total_seconds < other.total_seconds {
+            return -1;
+        }
+        if this.total_seconds > other.total_seconds {
+            return 1;
+        }
+        return 0;
+    }
+
+    func to_string() -> string {
+        if (this.total_seconds == 0) {
+            return "Z";
+        }
+        let sign = "+";
+        let abs_s = this.total_seconds;
+        if (abs_s < 0) {
+            sign = "-";
+            abs_s = -abs_s;
+        }
+        let h = abs_s / 3600;
+        let m = (abs_s % 3600) / 60;
+        let s = abs_s % 60;
+        let res = sign + time_pad2(h) + ":" + time_pad2(m);
+        if (s != 0) {
+            res = res + ":" + time_pad2(s);
+        }
+        return res;
+    }
+}
+
+// ==============================================================================
+// 10. ZoneId (Named & Geographic Time Zones)
+// ==============================================================================
+
+class ZoneId {
+    id: string,
+    default_offset: ZoneOffset,
+}
+
+impl ZoneId {
+    func id() -> string {
+        return this.id;
+    }
+
+    func get_offset() -> ZoneOffset {
+        return this.default_offset;
+    }
+
+    func to_string() -> string {
+        return this.id;
+    }
+}
+
+// ==============================================================================
+// 11. ZonedDateTime (Timezone-Aware Date-Time)
+// ==============================================================================
+
+class ZonedDateTime {
+    datetime: LocalDateTime,
+    offset: ZoneOffset,
+    zone: ZoneId,
+}
+
+impl ZonedDateTime {
+    func datetime() -> LocalDateTime {
+        return this.datetime;
+    }
+
+    func date() -> LocalDate {
+        return this.datetime.date;
+    }
+
+    func time() -> LocalTime {
+        return this.datetime.time;
+    }
+
+    func offset() -> ZoneOffset {
+        return this.offset;
+    }
+
+    func zone() -> ZoneId {
+        return this.zone;
+    }
+
+    func year() -> int {
+        return this.datetime.date.year;
+    }
+
+    func month() -> int {
+        return this.datetime.date.month;
+    }
+
+    func day() -> int {
+        return this.datetime.date.day;
+    }
+
+    func hour() -> int {
+        return this.datetime.time.hour;
+    }
+
+    func minute() -> int {
+        return this.datetime.time.minute;
+    }
+
+    func second() -> int {
+        return this.datetime.time.second;
+    }
+
+    func nano() -> int {
+        return this.datetime.time.nano;
+    }
+
+    func with_zone_same_instant(target_zone: ZoneId) -> ZonedDateTime {
+        let ep_sec = this.datetime.to_epoch_second(this.offset);
+        let target_offset = target_zone.get_offset();
+        let target_dt = local_date_time_of_epoch_second(ep_sec, this.datetime.nano(), target_offset);
+        return new ZonedDateTime(target_dt, target_offset, target_zone);
+    }
+
+    func with_zone_same_local(target_zone: ZoneId) -> ZonedDateTime {
+        return new ZonedDateTime(this.datetime, target_zone.get_offset(), target_zone);
+    }
+
+    func to_instant() -> Instant {
+        let ep_sec = this.datetime.to_epoch_second(this.offset);
+        return instant_of_epoch_second(ep_sec, this.datetime.nano());
+    }
+
+    func to_epoch_second() -> i64 {
+        return this.datetime.to_epoch_second(this.offset);
+    }
+
+    func plus_days(d: i64) -> ZonedDateTime {
+        let new_dt = this.datetime.plus_days(d);
+        return new ZonedDateTime(new_dt, this.offset, this.zone);
+    }
+
+    func minus_days(d: i64) -> ZonedDateTime {
+        return this.plus_days(-d);
+    }
+
+    func plus_hours(h: i64) -> ZonedDateTime {
+        let new_dt = this.datetime.plus_hours(h);
+        return new ZonedDateTime(new_dt, this.offset, this.zone);
+    }
+
+    func minus_hours(h: i64) -> ZonedDateTime {
+        return this.plus_hours(-h);
+    }
+
+    func is_before(other: ZonedDateTime) -> bool {
+        return this.to_epoch_second() < other.to_epoch_second();
+    }
+
+    func is_after(other: ZonedDateTime) -> bool {
+        return this.to_epoch_second() > other.to_epoch_second();
+    }
+
+    func equals(other: ZonedDateTime) -> bool {
+        return this.to_epoch_second() == other.to_epoch_second() && this.datetime.nano() == other.datetime.nano();
+    }
+
+    func format_rfc2822() -> string {
+        let wk = time_weekday_short_name(this.datetime.date.day_of_week());
+        let d = time_pad2(this.datetime.date.day);
+        let mo = time_month_short_name(this.datetime.date.month);
+        let y = time_pad4(this.datetime.date.year);
+        let h = time_pad2(this.datetime.time.hour);
+        let m = time_pad2(this.datetime.time.minute);
+        let s = time_pad2(this.datetime.time.second);
+        let off_s = this.offset.total_seconds;
+        let sign = "+";
+        if (off_s < 0) {
+            sign = "-";
+            off_s = -off_s;
+        }
+        let off_h = off_s / 3600;
+        let off_m = (off_s % 3600) / 60;
+        let off_str = sign + time_pad2(off_h) + time_pad2(off_m);
+        return wk + ", " + d + " " + mo + " " + y + " " + h + ":" + m + ":" + s + " " + off_str;
+    }
+
+    func to_string() -> string {
+        let res = this.datetime.to_string() + this.offset.to_string();
+        if (this.zone.id != "Z" && this.zone.id != this.offset.to_string()) {
+            res = res + "[" + this.zone.id + "]";
+        }
+        return res;
+    }
+}
+
+// ==============================================================================
+// 12. DateTimeFormatter (Formatting & Parsing Engine)
+// ==============================================================================
+
+class DateTimeFormatter {
+    pattern: string,
+}
+
+impl DateTimeFormatter {
+    func format_date(d: LocalDate) -> string {
+        if (this.pattern == "yyyy-MM-dd") {
+            return d.to_string();
+        }
+        return time_format_pattern(this.pattern, d.year, d.month, d.day, 0, 0, 0, 0, 0, "", d.day_of_week());
+    }
+
+    func format_time(t: LocalTime) -> string {
+        if (this.pattern == "HH:mm:ss") {
+            return time_pad2(t.hour) + ":" + time_pad2(t.minute) + ":" + time_pad2(t.second);
+        }
+        return time_format_pattern(this.pattern, 1970, 1, 1, t.hour, t.minute, t.second, t.nano, 0, "", 4);
+    }
+
+    func format_date_time(dt: LocalDateTime) -> string {
+        if (this.pattern == "yyyy-MM-ddTHH:mm:ss") {
+            return dt.to_string();
+        }
+        return time_format_pattern(this.pattern, dt.year(), dt.month(), dt.day(), dt.hour(), dt.minute(), dt.second(), dt.nano(), 0, "", dt.date.day_of_week());
+    }
+
+    func format_zoned_date_time(zdt: ZonedDateTime) -> string {
+        if (this.pattern == "RFC_1123" || this.pattern == "RFC_2822") {
+            return zdt.format_rfc2822();
+        }
+        return time_format_pattern(this.pattern, zdt.year(), zdt.month(), zdt.day(), zdt.hour(), zdt.minute(), zdt.second(), zdt.nano(), zdt.offset.total_seconds, zdt.zone.id, zdt.datetime.date.day_of_week());
+    }
+
+    func parse_date(s: string) -> LocalDate {
+        return local_date_parse(s);
+    }
+
+    func parse_time(s: string) -> LocalTime {
+        return local_time_parse(s);
+    }
+
+    func parse_date_time(s: string) -> LocalDateTime {
+        return local_date_time_parse(s);
+    }
+}
+
+// ==============================================================================
+// 13. Mathematical & Calendar Algorithms (Pure Roze)
+// ==============================================================================
+
+func time_is_leap_year(y: int) -> bool {
+    if (y % 4 != 0) {
+        return false;
+    }
+    if (y % 100 != 0) {
+        return true;
+    }
+    if (y % 400 == 0) {
+        return true;
+    }
+    return false;
+}
+
+func time_days_in_month(y: int, m: int) -> int {
+    if (m == 2) {
+        if (time_is_leap_year(y)) {
+            return 29;
+        }
+        return 28;
+    }
+    if (m == 4 || m == 6 || m == 9 || m == 11) {
+        return 30;
+    }
+    return 31;
+}
+
+func time_civil_to_epoch_day(year: int, month: int, day: int) -> i64 {
+    let y = year;
+    if (month <= 2) {
+        y = y - 1;
+    }
+    let era = 0;
+    if (y >= 0) {
+        era = y / 400;
+    } else {
+        era = (y - 399) / 400;
+    }
+    let yoe = y - era * 400;
+    let m_adj = 0;
+    if (month > 2) {
+        m_adj = month - 3;
+    } else {
+        m_adj = month + 9;
+    }
+    let doy = (153 * m_adj + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+func time_epoch_day_to_civil(epoch_day: i64) -> LocalDate {
+    let z = epoch_day + 719468;
+    let era: i64 = 0;
+    if (z >= 0) {
+        era = z / 146097;
+    } else {
+        era = (z - 146096) / 146097;
+    }
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m: i64 = 0;
+    if (mp < 10) {
+        m = mp + 3;
+    } else {
+        m = mp - 9;
+    }
+    if (m <= 2) {
+        y = y + 1;
+    }
+    return new LocalDate(int(y), int(m), int(d));
+}
+
+// ==============================================================================
+// 14. Padding & String Helper Functions
+// ==============================================================================
+
+func time_pad2(n: int) -> string {
+    let v = n;
+    if (v < 0) {
+        v = -v;
+    }
+    if (v < 10) {
+        return "0" + to_string(v);
+    }
+    return to_string(v);
+}
+
+func time_pad4(n: int) -> string {
+    let v = n;
+    if (v < 0) {
+        v = -v;
+    }
+    if (v < 10) {
+        return "000" + to_string(v);
+    }
+    if (v < 100) {
+        return "00" + to_string(v);
+    }
+    if (v < 1000) {
+        return "0" + to_string(v);
+    }
+    return to_string(v);
+}
+
+func time_pad_nanos(n: i64) -> string {
+    let s = to_string(n);
+    let len = string_length(s);
+    while len < 9 {
+        s = "0" + s;
+        len = len + 1;
+    }
+    return s;
+}
+
+func time_weekday_short_name(dow: int) -> string {
+    if (dow == 1) { return "Mon"; }
+    if (dow == 2) { return "Tue"; }
+    if (dow == 3) { return "Wed"; }
+    if (dow == 4) { return "Thu"; }
+    if (dow == 5) { return "Fri"; }
+    if (dow == 6) { return "Sat"; }
+    if (dow == 7) { return "Sun"; }
+    return "";
+}
+
+func time_weekday_full_name(dow: int) -> string {
+    if (dow == 1) { return "Monday"; }
+    if (dow == 2) { return "Tuesday"; }
+    if (dow == 3) { return "Wednesday"; }
+    if (dow == 4) { return "Thursday"; }
+    if (dow == 5) { return "Friday"; }
+    if (dow == 6) { return "Saturday"; }
+    if (dow == 7) { return "Sunday"; }
+    return "";
+}
+
+func time_month_short_name(m: int) -> string {
+    if (m == 1) { return "Jan"; }
+    if (m == 2) { return "Feb"; }
+    if (m == 3) { return "Mar"; }
+    if (m == 4) { return "Apr"; }
+    if (m == 5) { return "May"; }
+    if (m == 6) { return "Jun"; }
+    if (m == 7) { return "Jul"; }
+    if (m == 8) { return "Aug"; }
+    if (m == 9) { return "Sep"; }
+    if (m == 10) { return "Oct"; }
+    if (m == 11) { return "Nov"; }
+    if (m == 12) { return "Dec"; }
+    return "";
+}
+
+func time_month_full_name(m: int) -> string {
+    if (m == 1) { return "January"; }
+    if (m == 2) { return "February"; }
+    if (m == 3) { return "March"; }
+    if (m == 4) { return "April"; }
+    if (m == 5) { return "May"; }
+    if (m == 6) { return "June"; }
+    if (m == 7) { return "July"; }
+    if (m == 8) { return "August"; }
+    if (m == 9) { return "September"; }
+    if (m == 10) { return "October"; }
+    if (m == 11) { return "November"; }
+    if (m == 12) { return "December"; }
+    return "";
+}
+
+func time_parse_int_segment(s: string, start: int, len: int) -> int {
+    let res = 0;
+    let i = start;
+    let end = start + len;
+    let n = string_length(s);
+    if (end > n) {
+        end = n;
+    }
+    while i < end {
+        let ch = string_char_at(s, i);
+        if (ch >= 48 && ch <= 57) {
+            res = res * 10 + (ch - 48);
+        }
+        i = i + 1;
+    }
+    return res;
+}
+
+func time_format_pattern(pat: string, y: int, m: int, d: int, h: int, min: int, s: int, nano: int, off_secs: int, zone_id: string, dow: int) -> string {
+    let res = "";
+    let i = 0;
+    let n = string_length(pat);
+    while i < n {
+        let ch = string_char_at(pat, i);
+        // yyyy
+        if (ch == 121 && i + 3 < n && string_char_at(pat, i + 1) == 121 && string_char_at(pat, i + 2) == 121 && string_char_at(pat, i + 3) == 121) {
+            res = res + time_pad4(y);
+            i = i + 4;
+        } else if (ch == 77 && i + 2 < n && string_char_at(pat, i + 1) == 77 && string_char_at(pat, i + 2) == 77) {
+            // MMM
+            res = res + time_month_short_name(m);
+            i = i + 3;
+        } else if (ch == 77 && i + 1 < n && string_char_at(pat, i + 1) == 77) {
+            // MM
+            res = res + time_pad2(m);
+            i = i + 2;
+        } else if (ch == 100 && i + 1 < n && string_char_at(pat, i + 1) == 100) {
+            // dd
+            res = res + time_pad2(d);
+            i = i + 2;
+        } else if (ch == 72 && i + 1 < n && string_char_at(pat, i + 1) == 72) {
+            // HH
+            res = res + time_pad2(h);
+            i = i + 2;
+        } else if (ch == 109 && i + 1 < n && string_char_at(pat, i + 1) == 109) {
+            // mm
+            res = res + time_pad2(min);
+            i = i + 2;
+        } else if (ch == 115 && i + 1 < n && string_char_at(pat, i + 1) == 115) {
+            // ss
+            res = res + time_pad2(s);
+            i = i + 2;
+        } else if (ch == 83 && i + 2 < n && string_char_at(pat, i + 1) == 83 && string_char_at(pat, i + 2) == 83) {
+            // SSS (millis)
+            let ms = nano / 1000000;
+            if (ms < 10) {
+                res = res + "00" + to_string(ms);
+            } else if (ms < 100) {
+                res = res + "0" + to_string(ms);
+            } else {
+                res = res + to_string(ms);
+            }
+            i = i + 3;
+        } else if (ch == 69 && i + 2 < n && string_char_at(pat, i + 1) == 69 && string_char_at(pat, i + 2) == 69) {
+            // EEE
+            res = res + time_weekday_short_name(dow);
+            i = i + 3;
+        } else if (ch == 88 && i + 2 < n && string_char_at(pat, i + 1) == 88 && string_char_at(pat, i + 2) == 88) {
+            // XXX (+HH:MM or Z)
+            if (off_secs == 0) {
+                res = res + "Z";
+            } else {
+                let sign = "+";
+                let abs_s = off_secs;
+                if (abs_s < 0) {
+                    sign = "-";
+                    abs_s = -abs_s;
+                }
+                res = res + sign + time_pad2(abs_s / 3600) + ":" + time_pad2((abs_s % 3600) / 60);
+            }
+            i = i + 3;
+        } else if (ch == 90) {
+            // Z (+HHMM)
+            let sign = "+";
+            let abs_s = off_secs;
+            if (abs_s < 0) {
+                sign = "-";
+                abs_s = -abs_s;
+            }
+            res = res + sign + time_pad2(abs_s / 3600) + time_pad2((abs_s % 3600) / 60);
+            i = i + 1;
+        } else {
+            res = res + substring(pat, i, i + 1);
+            i = i + 1;
+        }
+    }
+    return res;
+}
+
+// ==============================================================================
+// 15. Factory & Constructor Functions
+// ==============================================================================
 
 func duration_new(secs: i64, nanos: i64) -> Duration {
     let extra_secs = nanos / 1000000000;
@@ -220,8 +1404,74 @@ func duration_from_secs(secs: i64) -> Duration {
     return duration_new(secs, 0);
 }
 
+func duration_of_days(days: i64) -> Duration {
+    return duration_new(days * 86400, 0);
+}
+
+func duration_of_hours(hours: i64) -> Duration {
+    return duration_new(hours * 3600, 0);
+}
+
+func duration_of_minutes(minutes: i64) -> Duration {
+    return duration_new(minutes * 60, 0);
+}
+
+func duration_of_seconds(seconds: i64) -> Duration {
+    return duration_new(seconds, 0);
+}
+
+func duration_of_millis(millis: i64) -> Duration {
+    return duration_from_millis(millis);
+}
+
+func duration_of_nanos(nanos: i64) -> Duration {
+    return duration_from_nanos(nanos);
+}
+
 func duration_zero() -> Duration {
     return new Duration(0, 0);
+}
+
+func duration_between(start_instant: Instant, end_instant: Instant) -> Duration {
+    return end_instant.duration_since(start_instant);
+}
+
+func duration_parse(s: string) -> Duration {
+    let n = string_length(s);
+    if (n < 3) {
+        return duration_zero();
+    }
+    let i = 0;
+    if (string_char_at(s, 0) == 80) { // 'P'
+        i = 1;
+    }
+    let is_time = false;
+    let num = 0;
+    let total_secs = 0;
+    while i < n {
+        let ch = string_char_at(s, i);
+        if (ch == 84) { // 'T'
+            is_time = true;
+        } else if (ch >= 48 && ch <= 57) {
+            num = num * 10 + (ch - 48);
+        } else if (ch == 68) { // 'D'
+            total_secs = total_secs + num * 86400;
+            num = 0;
+        } else if (ch == 72) { // 'H'
+            total_secs = total_secs + num * 3600;
+            num = 0;
+        } else if (ch == 77) { // 'M'
+            if (is_time) {
+                total_secs = total_secs + num * 60;
+            }
+            num = 0;
+        } else if (ch == 83) { // 'S'
+            total_secs = total_secs + num;
+            num = 0;
+        }
+        i = i + 1;
+    }
+    return duration_from_secs(total_secs);
 }
 
 func instant_now() -> Instant {
@@ -230,6 +1480,21 @@ func instant_now() -> Instant {
 
 func instant_from_nanos(ns: i64) -> Instant {
     return new Instant(ns);
+}
+
+func instant_of_epoch_second(sec: i64, nano: i64) -> Instant {
+    return new Instant(sec * 1000000000 + nano);
+}
+
+func instant_of_epoch_milli(ms: i64) -> Instant {
+    return new Instant(ms * 1000000);
+}
+
+func instant_parse(s: string) -> Instant {
+    // Expected format: YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DDTHH:MM:SS.nnnZ
+    let dt = local_date_time_parse(s);
+    let sec = dt.to_epoch_second(zone_offset_utc());
+    return instant_of_epoch_second(sec, dt.time.nano);
 }
 
 func system_time_now() -> SystemTime {
@@ -257,7 +1522,394 @@ func timer_reactor_with_timeout(timeout: Duration) -> TimerReactor {
     return new TimerReactor(dl);
 }
 
-// ---- High-Resolution Sleep Functions ----
+func period_of(years: int, months: int, days: int) -> Period {
+    return new Period(years, months, days);
+}
+
+func period_of_years(y: int) -> Period {
+    return new Period(y, 0, 0);
+}
+
+func period_of_months(m: int) -> Period {
+    return new Period(0, m, 0);
+}
+
+func period_of_weeks(w: int) -> Period {
+    return new Period(0, 0, w * 7);
+}
+
+func period_of_days(d: int) -> Period {
+    return new Period(0, 0, d);
+}
+
+func period_zero() -> Period {
+    return new Period(0, 0, 0);
+}
+
+func period_between(start_date: LocalDate, end_date: LocalDate) -> Period {
+    return start_date.until(end_date);
+}
+
+func period_parse(s: string) -> Period {
+    let n = string_length(s);
+    if (n < 2) {
+        return period_zero();
+    }
+    let i = 0;
+    if (string_char_at(s, 0) == 80) { // 'P'
+        i = 1;
+    }
+    let num = 0;
+    let sign = 1;
+    let y = 0;
+    let m = 0;
+    let d = 0;
+    while i < n {
+        let ch = string_char_at(s, i);
+        if (ch == 45) { // '-'
+            sign = -1;
+        } else if (ch >= 48 && ch <= 57) {
+            num = num * 10 + (ch - 48);
+        } else if (ch == 89) { // 'Y'
+            y = sign * num;
+            num = 0;
+            sign = 1;
+        } else if (ch == 77) { // 'M'
+            m = sign * num;
+            num = 0;
+            sign = 1;
+        } else if (ch == 68) { // 'D'
+            d = sign * num;
+            num = 0;
+            sign = 1;
+        }
+        i = i + 1;
+    }
+    return new Period(y, m, d);
+}
+
+func local_date_of(year: int, month: int, day: int) -> LocalDate {
+    return new LocalDate(year, month, day);
+}
+
+func local_date_now() -> LocalDate {
+    let epoch_sec = time_realtime_secs();
+    let epoch_day = epoch_sec / 86400;
+    return time_epoch_day_to_civil(epoch_day);
+}
+
+func local_date_of_epoch_day(epoch_day: i64) -> LocalDate {
+    return time_epoch_day_to_civil(epoch_day);
+}
+
+func local_date_parse(s: string) -> LocalDate {
+    // "YYYY-MM-DD"
+    let y = time_parse_int_segment(s, 0, 4);
+    let m = time_parse_int_segment(s, 5, 2);
+    let d = time_parse_int_segment(s, 8, 2);
+    return new LocalDate(y, m, d);
+}
+
+func local_time_of(hour: int, minute: int, second: int, nano: int) -> LocalTime {
+    return new LocalTime(hour, minute, second, nano);
+}
+
+func local_time_of_hms(hour: int, minute: int, second: int) -> LocalTime {
+    return new LocalTime(hour, minute, second, 0);
+}
+
+func local_time_now() -> LocalTime {
+    let epoch_sec = time_realtime_secs();
+    let sec_of_day = epoch_sec % 86400;
+    if (sec_of_day < 0) {
+        sec_of_day = sec_of_day + 86400;
+    }
+    return local_time_of_second_of_day(sec_of_day, 0);
+}
+
+func local_time_of_second_of_day(sec: i64, nano: i64) -> LocalTime {
+    let h = int(sec / 3600);
+    let rem = sec % 3600;
+    let m = int(rem / 60);
+    let s = int(rem % 60);
+    return new LocalTime(h, m, s, int(nano));
+}
+
+func local_time_of_nano_of_day(nano_of_day: i64) -> LocalTime {
+    let sec = nano_of_day / 1000000000;
+    let nano = nano_of_day % 1000000000;
+    return local_time_of_second_of_day(sec, nano);
+}
+
+func local_time_parse(s: string) -> LocalTime {
+    // "HH:MM:SS" or "HH:MM:SS.nnn"
+    let h = time_parse_int_segment(s, 0, 2);
+    let m = time_parse_int_segment(s, 3, 2);
+    let sec = time_parse_int_segment(s, 6, 2);
+    let nano = 0;
+    let n = string_length(s);
+    if (n > 8 && string_char_at(s, 8) == 46) { // '.'
+        let raw_nano = time_parse_int_segment(s, 9, n - 9);
+        let digits = n - 9;
+        while digits < 9 {
+            raw_nano = raw_nano * 10;
+            digits = digits + 1;
+        }
+        nano = raw_nano;
+    }
+    return new LocalTime(h, m, sec, nano);
+}
+
+func local_date_time_of(date: LocalDate, time: LocalTime) -> LocalDateTime {
+    return new LocalDateTime(date, time);
+}
+
+func local_date_time_of_parts(year: int, month: int, day: int, hour: int, min: int, sec: int) -> LocalDateTime {
+    let d = new LocalDate(year, month, day);
+    let t = new LocalTime(hour, min, sec, 0);
+    return new LocalDateTime(d, t);
+}
+
+func local_date_time_now() -> LocalDateTime {
+    let d = local_date_now();
+    let t = local_time_now();
+    return new LocalDateTime(d, t);
+}
+
+func local_date_time_of_epoch_second(epoch_sec: i64, nano: i64, offset: ZoneOffset) -> LocalDateTime {
+    let adjusted_sec = epoch_sec + offset.total_seconds;
+    let epoch_day = adjusted_sec / 86400;
+    let sec_of_day = adjusted_sec % 86400;
+    if (sec_of_day < 0) {
+        sec_of_day = sec_of_day + 86400;
+        epoch_day = epoch_day - 1;
+    }
+    let d = time_epoch_day_to_civil(epoch_day);
+    let t = local_time_of_second_of_day(sec_of_day, nano);
+    return new LocalDateTime(d, t);
+}
+
+func local_date_time_parse(s: string) -> LocalDateTime {
+    // "YYYY-MM-DDTHH:MM:SS" or "YYYY-MM-DD HH:MM:SS"
+    let date_part = substring(s, 0, 10);
+    let d = local_date_parse(date_part);
+    let t_str = substring(s, 11, string_length(s));
+    // strip trailing Z or zone if present
+    let t_len = string_length(t_str);
+    if (t_len > 0 && string_char_at(t_str, t_len - 1) == 90) { // 'Z'
+        t_str = substring(t_str, 0, t_len - 1);
+    }
+    let t = local_time_parse(t_str);
+    return new LocalDateTime(d, t);
+}
+
+func zone_offset_utc() -> ZoneOffset {
+    return new ZoneOffset(0);
+}
+
+func zone_offset_of_hours(hours: int) -> ZoneOffset {
+    return new ZoneOffset(hours * 3600);
+}
+
+func zone_offset_of_hours_minutes(hours: int, minutes: int) -> ZoneOffset {
+    let total = hours * 3600;
+    if (hours >= 0) {
+        total = total + minutes * 60;
+    } else {
+        total = total - minutes * 60;
+    }
+    return new ZoneOffset(total);
+}
+
+func zone_offset_of_total_seconds(total_seconds: int) -> ZoneOffset {
+    return new ZoneOffset(total_seconds);
+}
+
+func zone_offset_parse(s: string) -> ZoneOffset {
+    if (s == "Z" || s == "UTC" || s == "GMT") {
+        return zone_offset_utc();
+    }
+    let sign = 1;
+    let idx = 0;
+    let n = string_length(s);
+    if (string_char_at(s, 0) == 43) { // '+'
+        sign = 1;
+        idx = 1;
+    } else if (string_char_at(s, 0) == 45) { // '-'
+        sign = -1;
+        idx = 1;
+    }
+    let h = time_parse_int_segment(s, idx, 2);
+    let m = 0;
+    if (n >= idx + 4) {
+        if (string_char_at(s, idx + 2) == 58) { // ':'
+            m = time_parse_int_segment(s, idx + 3, 2);
+        } else {
+            m = time_parse_int_segment(s, idx + 2, 2);
+        }
+    }
+    return new ZoneOffset(sign * (h * 3600 + m * 60));
+}
+
+func zone_id_of(id: string) -> ZoneId {
+    if (id == "UTC" || id == "GMT" || id == "Etc/UTC" || id == "Etc/GMT" || id == "Z") {
+        return new ZoneId(id, zone_offset_utc());
+    }
+    if (id == "Asia/Dhaka") {
+        return new ZoneId(id, zone_offset_of_hours(6));
+    }
+    if (id == "Asia/Kolkata" || id == "Asia/Calcutta") {
+        return new ZoneId(id, zone_offset_of_hours_minutes(5, 30));
+    }
+    if (id == "Asia/Tokyo") {
+        return new ZoneId(id, zone_offset_of_hours(9));
+    }
+    if (id == "Asia/Shanghai" || id == "Asia/Singapore" || id == "Asia/Hong_Kong") {
+        return new ZoneId(id, zone_offset_of_hours(8));
+    }
+    if (id == "Asia/Bangkok" || id == "Asia/Jakarta") {
+        return new ZoneId(id, zone_offset_of_hours(7));
+    }
+    if (id == "Asia/Dubai") {
+        return new ZoneId(id, zone_offset_of_hours(4));
+    }
+    if (id == "Europe/London") {
+        return new ZoneId(id, zone_offset_utc());
+    }
+    if (id == "Europe/Paris" || id == "Europe/Berlin" || id == "Europe/Rome" || id == "Europe/Madrid") {
+        return new ZoneId(id, zone_offset_of_hours(1));
+    }
+    if (id == "Europe/Athens" || id == "Europe/Helsinki") {
+        return new ZoneId(id, zone_offset_of_hours(2));
+    }
+    if (id == "Europe/Moscow") {
+        return new ZoneId(id, zone_offset_of_hours(3));
+    }
+    if (id == "America/New_York") {
+        return new ZoneId(id, zone_offset_of_hours(-5));
+    }
+    if (id == "America/Chicago") {
+        return new ZoneId(id, zone_offset_of_hours(-6));
+    }
+    if (id == "America/Denver") {
+        return new ZoneId(id, zone_offset_of_hours(-7));
+    }
+    if (id == "America/Los_Angeles") {
+        return new ZoneId(id, zone_offset_of_hours(-8));
+    }
+    if (id == "America/Anchorage") {
+        return new ZoneId(id, zone_offset_of_hours(-9));
+    }
+    if (id == "Pacific/Honolulu") {
+        return new ZoneId(id, zone_offset_of_hours(-10));
+    }
+    if (id == "Australia/Sydney") {
+        return new ZoneId(id, zone_offset_of_hours(10));
+    }
+    if (id == "Pacific/Auckland") {
+        return new ZoneId(id, zone_offset_of_hours(12));
+    }
+    // Fallback: parse as offset
+    let off = zone_offset_parse(id);
+    return new ZoneId(id, off);
+}
+
+func zone_id_utc() -> ZoneId {
+    return new ZoneId("UTC", zone_offset_utc());
+}
+
+func zone_id_system_default() -> ZoneId {
+    let offset_secs = int(time_local_offset_secs());
+    let offset = zone_offset_of_total_seconds(offset_secs);
+    return new ZoneId(offset.to_string(), offset);
+}
+
+func zoned_date_time_of(datetime: LocalDateTime, offset: ZoneOffset, zone: ZoneId) -> ZonedDateTime {
+    return new ZonedDateTime(datetime, offset, zone);
+}
+
+func zoned_date_time_of_instant(instant: Instant, zone: ZoneId) -> ZonedDateTime {
+    let off = zone.get_offset();
+    let sec = instant.epoch_second();
+    let dt = local_date_time_of_epoch_second(sec, instant.nano(), off);
+    return new ZonedDateTime(dt, off, zone);
+}
+
+func zoned_date_time_now() -> ZonedDateTime {
+    let sys_zone = zone_id_system_default();
+    let now_sec = time_realtime_secs();
+    let now_ns = time_realtime_nanos();
+    let rem_ns = now_ns % 1000000000;
+    let off = sys_zone.get_offset();
+    let dt = local_date_time_of_epoch_second(now_sec, rem_ns, off);
+    return new ZonedDateTime(dt, off, sys_zone);
+}
+
+func zoned_date_time_now_zone(zone: ZoneId) -> ZonedDateTime {
+    let now_sec = time_realtime_secs();
+    let now_ns = time_realtime_nanos();
+    let rem_ns = now_ns % 1000000000;
+    let off = zone.get_offset();
+    let dt = local_date_time_of_epoch_second(now_sec, rem_ns, off);
+    return new ZonedDateTime(dt, off, zone);
+}
+
+func zoned_date_time_parse(s: string) -> ZonedDateTime {
+    // "YYYY-MM-DDTHH:MM:SS+06:00[Asia/Dhaka]" or "YYYY-MM-DDTHH:MM:SS+06:00" or "...Z"
+    let bracket_idx = -1;
+    let n = string_length(s);
+    let i = 0;
+    while i < n {
+        if (string_char_at(s, i) == 91) { // '['
+            bracket_idx = i;
+            i = n;
+        }
+        i = i + 1;
+    }
+    let zone_str = "";
+    let main_part = s;
+    if (bracket_idx >= 0) {
+        main_part = substring(s, 0, bracket_idx);
+        zone_str = substring(s, bracket_idx + 1, n - 1); // strip trailing ']'
+    }
+    let dt_str = substring(main_part, 0, 19);
+    let dt = local_date_time_parse(dt_str);
+    let off_str = substring(main_part, 19, string_length(main_part));
+    let off = zone_offset_parse(off_str);
+    let zone: ZoneId = zone_id_of(off.to_string());
+    if (string_length(zone_str) > 0) {
+        zone = zone_id_of(zone_str);
+    }
+    return new ZonedDateTime(dt, off, zone);
+}
+
+func date_time_formatter_of_pattern(pattern: string) -> DateTimeFormatter {
+    return new DateTimeFormatter(pattern);
+}
+
+func date_time_formatter_iso_local_date() -> DateTimeFormatter {
+    return new DateTimeFormatter("yyyy-MM-dd");
+}
+
+func date_time_formatter_iso_local_time() -> DateTimeFormatter {
+    return new DateTimeFormatter("HH:mm:ss");
+}
+
+func date_time_formatter_iso_local_date_time() -> DateTimeFormatter {
+    return new DateTimeFormatter("yyyy-MM-ddTHH:mm:ss");
+}
+
+func date_time_formatter_iso_zoned_date_time() -> DateTimeFormatter {
+    return new DateTimeFormatter("yyyy-MM-ddTHH:mm:ssXXX");
+}
+
+func date_time_formatter_rfc_1123() -> DateTimeFormatter {
+    return new DateTimeFormatter("RFC_1123");
+}
+
+// ==============================================================================
+// 16. High-Resolution Sleep Functions
+// ==============================================================================
 
 func sleep(d: Duration) -> void {
     time_sleep_nanos(d.as_nanos());

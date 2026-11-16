@@ -1,0 +1,323 @@
+// compiler/tests/fixtures/std_temporal.roze
+//
+// Verification of Roze JSR-310 Temporal Engine & High-Precision Clocks (M7-T03)
+// Direct parity with Java 25 java.time.* and Python 3.15 datetime / zoneinfo.
+
+import "roze.time";
+
+func main() {
+    println("=== M7-T03 JSR-310 Temporal Engine & High-Precision Clocks ===");
+
+    // --------------------------------------------------------------------------
+    // Suite 1: Period Date-based Amount
+    // --------------------------------------------------------------------------
+    let p1 = period_of(2, 3, 10);
+    if (p1.years() != 2 || p1.months() != 3 || p1.days() != 10) {
+        println("FAIL: Period getters failed");
+        return;
+    }
+    if (p1.to_total_months() != 27) {
+        println("FAIL: Period to_total_months failed");
+        return;
+    }
+    if (p1.to_string() != "P2Y3M10D") {
+        println("FAIL: Period to_string != P2Y3M10D, got: " + p1.to_string());
+        return;
+    }
+
+    let p2 = period_of_years(1).plus(period_of_months(2)).plus(period_of_days(5));
+    let p_sum = p1.plus(p2); // 3Y 5M 15D
+    if (p_sum.years() != 3 || p_sum.months() != 5 || p_sum.days() != 15) {
+        println("FAIL: Period plus failed");
+        return;
+    }
+
+    let p_mul = p2.multiplied_by(2); // 2Y 4M 10D
+    if (p_mul.years() != 2 || p_mul.months() != 4 || p_mul.days() != 10) {
+        println("FAIL: Period multiplied_by failed");
+        return;
+    }
+
+    let p_parsed = period_parse("P1Y6M15D");
+    if (p_parsed.years() != 1 || p_parsed.months() != 6 || p_parsed.days() != 15) {
+        println("FAIL: period_parse failed");
+        return;
+    }
+    println("SUITE 1 PASSED: Period date-based math and ISO-8601 formatting");
+
+    // --------------------------------------------------------------------------
+    // Suite 2: LocalDate Civil Calendar Math
+    // --------------------------------------------------------------------------
+    let d1 = local_date_of(2026, 11, 16);
+    if (d1.year() != 2026 || d1.month() != 11 || d1.day() != 16) {
+        println("FAIL: LocalDate fields failed");
+        return;
+    }
+    if (d1.to_string() != "2026-11-16") {
+        println("FAIL: LocalDate to_string != 2026-11-16, got: " + d1.to_string());
+        return;
+    }
+    if (d1.day_of_week() != 1) { // Monday = 1
+        println("FAIL: LocalDate day_of_week != 1 (Monday), got: " + to_string(d1.day_of_week()));
+        return;
+    }
+    if (d1.is_leap_year()) {
+        println("FAIL: 2026 is not a leap year");
+        return;
+    }
+    if (d1.length_of_month() != 30) {
+        println("FAIL: November length != 30");
+        return;
+    }
+
+    // Leap year test (2024 is leap, 2000 is leap, 1900 is not leap)
+    let d_leap = local_date_of(2024, 2, 28);
+    if (!d_leap.is_leap_year() || d_leap.length_of_month() != 29) {
+        println("FAIL: 2024 February must have 29 days");
+        return;
+    }
+    let d_leap_next = d_leap.plus_days(1);
+    if (d_leap_next.day() != 29 || d_leap_next.month() != 2) {
+        println("FAIL: 2024-02-28 + 1 day != 2024-02-29");
+        return;
+    }
+
+    // Civil to Epoch Day & Back
+    let epoch_day = d1.to_epoch_day();
+    let d1_recon = local_date_of_epoch_day(epoch_day);
+    if (!d1.equals(d1_recon)) {
+        println("FAIL: epoch_day roundtrip failed for 2026-11-16");
+        return;
+    }
+
+    // Plus/minus days across month/year boundaries
+    let d_new_year = local_date_of(2025, 12, 31).plus_days(1);
+    if (d_new_year.year() != 2026 || d_new_year.month() != 1 || d_new_year.day() != 1) {
+        println("FAIL: 2025-12-31 + 1 day != 2026-01-01, got: " + d_new_year.to_string());
+        return;
+    }
+
+    // Plus months and years
+    let d_plus_m = d1.plus_months(2); // 2027-01-16
+    if (d_plus_m.year() != 2027 || d_plus_m.month() != 1 || d_plus_m.day() != 16) {
+        println("FAIL: 2026-11-16 + 2 months failed, got: " + d_plus_m.to_string());
+        return;
+    }
+
+    // Date difference (until)
+    let start_date = local_date_of(2024, 1, 1);
+    let end_date = local_date_of(2026, 3, 15);
+    let diff_period = start_date.until(end_date);
+    if (diff_period.years() != 2 || diff_period.months() != 2 || diff_period.days() != 14) {
+        println("FAIL: start_date.until(end_date) failed, got: " + diff_period.to_string());
+        return;
+    }
+
+    let parsed_date = local_date_parse("2030-08-25");
+    if (parsed_date.year() != 2030 || parsed_date.month() != 8 || parsed_date.day() != 25) {
+        println("FAIL: local_date_parse failed");
+        return;
+    }
+    println("SUITE 2 PASSED: LocalDate civil calendar math and epoch bijections");
+
+    // --------------------------------------------------------------------------
+    // Suite 3: LocalTime Clock & Sub-second Math
+    // --------------------------------------------------------------------------
+    let t1 = local_time_of(14, 30, 45, 500000000);
+    if (t1.hour() != 14 || t1.minute() != 30 || t1.second() != 45 || t1.nano() != 500000000) {
+        println("FAIL: LocalTime getters failed");
+        return;
+    }
+    if (t1.to_second_of_day() != 52245) { // 14*3600 + 30*60 + 45 = 50400 + 1800 + 45
+        println("FAIL: LocalTime to_second_of_day failed");
+        return;
+    }
+
+    let t_plus = t1.plus_hours(2).plus_minutes(15); // 16:45:45
+    if (t_plus.hour() != 16 || t_plus.minute() != 45 || t_plus.second() != 45) {
+        println("FAIL: LocalTime plus_hours/minutes failed");
+        return;
+    }
+
+    // Wrap around midnight: 23:50:00 + 20 minutes = 00:10:00
+    let t_midnight = local_time_of(23, 50, 0, 0).plus_minutes(20);
+    if (t_midnight.hour() != 0 || t_midnight.minute() != 10) {
+        println("FAIL: LocalTime midnight wrap failed, got: " + t_midnight.to_string());
+        return;
+    }
+
+    let t_parsed = local_time_parse("17:45:30");
+    if (t_parsed.hour() != 17 || t_parsed.minute() != 45 || t_parsed.second() != 30) {
+        println("FAIL: local_time_parse failed");
+        return;
+    }
+    println("SUITE 3 PASSED: LocalTime nanosecond precision and midnight wrapping");
+
+    // --------------------------------------------------------------------------
+    // Suite 4: LocalDateTime Combined Civil Date-Time
+    // --------------------------------------------------------------------------
+    let dt = d1.at_time(17, 45, 0);
+    if (dt.to_string() != "2026-11-16T17:45:00") {
+        println("FAIL: LocalDateTime to_string != 2026-11-16T17:45:00, got: " + dt.to_string());
+        return;
+    }
+
+    // Adding 8 hours across midnight: 17:45 + 8h = next day 01:45
+    let dt_next_day = dt.plus_hours(8);
+    if (dt_next_day.day() != 17 || dt_next_day.hour() != 1 || dt_next_day.minute() != 45) {
+        println("FAIL: LocalDateTime plus_hours across day failed, got: " + dt_next_day.to_string());
+        return;
+    }
+
+    let dt_parsed = local_date_time_parse("2026-11-16T17:45:00");
+    if (!dt.equals(dt_parsed)) {
+        println("FAIL: local_date_time_parse equals failed");
+        return;
+    }
+    println("SUITE 4 PASSED: LocalDateTime date-time composition and boundary transitions");
+
+    // --------------------------------------------------------------------------
+    // Suite 5: ZoneOffset & ZoneId
+    // --------------------------------------------------------------------------
+    let off_utc = zone_offset_utc();
+    if (!off_utc.is_utc() || off_utc.to_string() != "Z") {
+        println("FAIL: zone_offset_utc failed");
+        return;
+    }
+
+    let off_dhaka = zone_offset_of_hours(6);
+    if (off_dhaka.total_seconds() != 21600 || off_dhaka.to_string() != "+06:00") {
+        println("FAIL: zone_offset_of_hours(6) failed, got: " + off_dhaka.to_string());
+        return;
+    }
+
+    let off_ny = zone_offset_of_hours(-5);
+    if (off_ny.total_seconds() != -18000 || off_ny.to_string() != "-05:00") {
+        println("FAIL: zone_offset_of_hours(-5) failed, got: " + off_ny.to_string());
+        return;
+    }
+
+    let zone_dhaka = zone_id_of("Asia/Dhaka");
+    if (zone_dhaka.get_offset().total_seconds() != 21600) {
+        println("FAIL: zone_id_of(Asia/Dhaka) offset != +06:00");
+        return;
+    }
+
+    let zone_ny = zone_id_of("America/New_York");
+    if (zone_ny.get_offset().total_seconds() != -18000) {
+        println("FAIL: zone_id_of(America/New_York) offset != -05:00");
+        return;
+    }
+
+    let zone_tokyo = zone_id_of("Asia/Tokyo");
+    if (zone_tokyo.get_offset().total_seconds() != 32400) {
+        println("FAIL: zone_id_of(Asia/Tokyo) offset != +09:00");
+        return;
+    }
+    println("SUITE 5 PASSED: ZoneOffset and ZoneId worldwide timezone registry");
+
+    // --------------------------------------------------------------------------
+    // Suite 6: ZonedDateTime Universal Timeline Conversions
+    // --------------------------------------------------------------------------
+    // 2026-11-16 12:00:00 UTC
+    let dt_utc = local_date_time_of_parts(2026, 11, 16, 12, 0, 0);
+    let zdt_utc = dt_utc.at_offset(off_utc);
+
+    // Convert same instant to Asia/Dhaka (+06:00) -> should be 18:00:00
+    let zdt_dhaka = zdt_utc.with_zone_same_instant(zone_dhaka);
+    if (zdt_dhaka.hour() != 18 || zdt_dhaka.day() != 16) {
+        println("FAIL: with_zone_same_instant to Dhaka failed, got: " + zdt_dhaka.to_string());
+        return;
+    }
+
+    // Convert same instant to America/New_York (-05:00) -> should be 07:00:00
+    let zdt_ny = zdt_utc.with_zone_same_instant(zone_ny);
+    if (zdt_ny.hour() != 7 || zdt_ny.day() != 16) {
+        println("FAIL: with_zone_same_instant to NY failed, got: " + zdt_ny.to_string());
+        return;
+    }
+
+    // All three must have the EXACT SAME epoch second!
+    let ep_utc = zdt_utc.to_epoch_second();
+    let ep_dhaka = zdt_dhaka.to_epoch_second();
+    let ep_ny = zdt_ny.to_epoch_second();
+    if (ep_utc != ep_dhaka || ep_utc != ep_ny) {
+        println("FAIL: Instant equivalence across timezones violated!");
+        return;
+    }
+
+    // RFC 2822 / RFC 1123 formatting test
+    let rfc_str = zdt_dhaka.format_rfc2822();
+    if (rfc_str != "Mon, 16 Nov 2026 18:00:00 +0600") {
+        println("FAIL: format_rfc2822 != Mon, 16 Nov 2026 18:00:00 +0600, got: " + rfc_str);
+        return;
+    }
+    println("SUITE 6 PASSED: ZonedDateTime universal timeline cross-zone conversions");
+
+    // --------------------------------------------------------------------------
+    // Suite 7: DateTimeFormatter Pattern Engine
+    // --------------------------------------------------------------------------
+    let fmt_custom = date_time_formatter_of_pattern("yyyy/MM/dd HH:mm:ss");
+    let formatted_custom = fmt_custom.format_date_time(dt_utc);
+    if (formatted_custom != "2026/11/16 12:00:00") {
+        println("FAIL: custom pattern format failed, got: " + formatted_custom);
+        return;
+    }
+
+    let fmt_iso_date = date_time_formatter_iso_local_date();
+    if (fmt_iso_date.format_date(d1) != "2026-11-16") {
+        println("FAIL: fmt_iso_date failed");
+        return;
+    }
+
+    let fmt_iso_dt = date_time_formatter_iso_local_date_time();
+    if (fmt_iso_dt.format_date_time(dt_utc) != "2026-11-16T12:00:00") {
+        println("FAIL: fmt_iso_dt failed");
+        return;
+    }
+
+    let fmt_rfc = date_time_formatter_rfc_1123();
+    if (fmt_rfc.format_zoned_date_time(zdt_dhaka) != "Mon, 16 Nov 2026 18:00:00 +0600") {
+        println("FAIL: fmt_rfc failed");
+        return;
+    }
+    println("SUITE 7 PASSED: DateTimeFormatter pattern engine and standard formats");
+
+    // --------------------------------------------------------------------------
+    // Suite 8: Duration & Instant JSR-310 Parity
+    // --------------------------------------------------------------------------
+    let dur_hours = duration_of_hours(3);
+    if (dur_hours.to_minutes() != 180 || dur_hours.to_hours() != 3) {
+        println("FAIL: duration_of_hours failed");
+        return;
+    }
+    if (dur_hours.to_iso_string() != "PT3H") {
+        println("FAIL: duration to_iso_string != PT3H, got: " + dur_hours.to_iso_string());
+        return;
+    }
+
+    let dur_parsed = duration_parse("PT2H30M");
+    if (dur_parsed.as_secs() != 9000) { // 2*3600 + 30*60 = 7200 + 1800 = 9000
+        println("FAIL: duration_parse PT2H30M != 9000s, got: " + to_string(dur_parsed.as_secs()));
+        return;
+    }
+
+    let inst1 = instant_of_epoch_second(1700000000, 500000000);
+    if (inst1.epoch_second() != 1700000000 || inst1.nano() != 500000000) {
+        println("FAIL: Instant epoch_second/nano getters failed");
+        return;
+    }
+    let inst2 = instant_of_epoch_second(1700000010, 500000000);
+    let dur_diff = duration_between(inst1, inst2);
+    if (dur_diff.as_secs() != 10) {
+        println("FAIL: duration_between Instants failed");
+        return;
+    }
+    if (!inst1.is_before(inst2) || !inst2.is_after(inst1)) {
+        println("FAIL: Instant before/after comparison failed");
+        return;
+    }
+    println("SUITE 8 PASSED: JSR-310 Duration and Instant timeline assertions");
+
+    println("ALL SUITES COMPLETED: Roze JSR-310 Temporal Engine 100% OPERATIONAL");
+}

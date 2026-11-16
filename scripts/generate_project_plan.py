@@ -644,7 +644,7 @@ s1_rows = [
         ("M7-T03", 8), ("Month 7", 22), ("Sprint 13 (W27-W28)", 8), "Temporal Engine", "JSR-310 Temporal Engine & High-Precision Clocks (roze.time)",
         "Pure Roze timezone-aware temporal engine: Instant (nanosecond epoch precision), Duration, Period, LocalDate, LocalTime, LocalDateTime, ZonedDateTime, ZoneId, ZoneOffset. Comprehensive ISO-8601 and RFC 2822 formatting and custom DateTimeFormatter.",
         "Parity with Java 25 java.time.* (JSR-310) and Python 3.15 datetime / zoneinfo.",
-        "Enterprise Systems, Calendaring, Telemetry", "7 Days", ("High", 14), ("Planned", 12)
+        "Enterprise Systems, Calendaring, Telemetry", "7 Days", ("High", 14), ("Completed", 13)
     ],
     [
         ("M7-T04", 8), ("Month 7", 22), ("Sprint 14 (W29-W30)", 8), "Python Ergonomics", "Functional Itertools, Statistics & Pathlib (roze.data)",

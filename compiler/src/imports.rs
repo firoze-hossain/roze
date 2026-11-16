@@ -413,7 +413,7 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "env" || path == "std::env" || path == "roze::env" || path == "os" || path == "std::os" {
         return Ok((ENV_SOURCE.to_string(), ENV_DISPLAY_NAME.to_string()));
     }
-    if path == "time" || path == "std::time" || path == "roze::time" || path == "clock" || path == "instant" || path == "duration" {
+    if path == "time" || path == "std::time" || path == "roze::time" || path == "roze.time" || path == "clock" || path == "instant" || path == "duration" {
         return Ok((TIME_SOURCE.to_string(), TIME_DISPLAY_NAME.to_string()));
     }
     if path == "regex" || path == "std::regex" || path == "roze::regex" || path == "text::regex" || path == "re" {

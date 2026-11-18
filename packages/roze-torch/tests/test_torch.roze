@@ -471,9 +471,306 @@ func test_neural_network() {
     println("✓ Neural network activations and layers tests passed!");
 }
 
+// -----------------------------------------------------------------------------
+// Test 10: Autograd Tape Recording & GradFn Inspection (M8-T02)
+// -----------------------------------------------------------------------------
+func test_autograd_tape_and_grad_fn() {
+    println("--- Test 10: Autograd Tape Recording & GradFn Inspection ---");
+
+    let a = tensor_scalar(2.0, dtype_float32());
+    let b = tensor_scalar(3.0, dtype_float32());
+    a.set_requires_grad(true);
+    b.set_requires_grad(true);
+
+    assert_true(a.get_is_leaf(), "a must be leaf");
+    assert_true(b.get_is_leaf(), "b must be leaf");
+    assert_true(a.get_grad_fn() == null, "Leaf tensor has null grad_fn");
+
+    // Add
+    let c = tensor_add(a, b);
+    assert_true(c.requires_grad, "c must require grad");
+    assert_true(!c.get_is_leaf(), "c must not be leaf");
+    assert_true(c.get_grad_fn() != null, "c must have grad_fn");
+    assert_true(c.get_grad_fn().name() == "<AddBackward0>", "c grad_fn must be <AddBackward0>");
+
+    // Mul
+    let d = tensor_mul(a, b);
+    assert_true(d.get_grad_fn().name() == "<MulBackward0>", "d grad_fn must be <MulBackward0>");
+
+    // Sub & Div
+    let e = tensor_sub(a, b);
+    assert_true(e.get_grad_fn().name() == "<SubBackward0>", "e grad_fn must be <SubBackward0>");
+    let f = tensor_div(a, b);
+    assert_true(f.get_grad_fn().name() == "<DivBackward0>", "f grad_fn must be <DivBackward0>");
+
+    // Scale
+    let g = tensor_scale(a, 4.0);
+    assert_true(g.get_grad_fn().name() == "<ScaleBackward0>", "g grad_fn must be <ScaleBackward0>");
+
+    // Activations
+    let r = tensor_relu(a);
+    assert_true(r.get_grad_fn().name() == "<ReluBackward0>", "r grad_fn must be <ReluBackward0>");
+    let sig = tensor_sigmoid(a);
+    assert_true(sig.get_grad_fn().name() == "<SigmoidBackward0>", "sig grad_fn must be <SigmoidBackward0>");
+    let th = tensor_tanh(a);
+    assert_true(th.get_grad_fn().name() == "<TanhBackward0>", "th grad_fn must be <TanhBackward0>");
+
+    // Pow & Sum
+    let p = tensor_pow(a, 3.0);
+    assert_true(p.get_grad_fn().name() == "<PowBackward0>", "p grad_fn must be <PowBackward0>");
+    let s = tensor_sum_tensor(a);
+    assert_true(s.get_grad_fn().name() == "<SumBackward0>", "s grad_fn must be <SumBackward0>");
+
+    println("✓ Autograd tape recording & grad_fn tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 11: Reverse-Mode Scalar & Vector Backpropagation (M8-T02)
+// -----------------------------------------------------------------------------
+func test_autograd_scalar_and_vector_backprop() {
+    println("--- Test 11: Reverse-Mode Scalar & Vector Backpropagation ---");
+
+    // 1. Scalar derivative: y = x^2, dy/dx = 2x. At x = 3, dy/dx = 6
+    let x = tensor_scalar(3.0, dtype_float32());
+    x.set_requires_grad(true);
+    let y = tensor_mul(x, x);
+    y.backward();
+    assert_true(x.get_grad() != null, "x must have gradient");
+    assert_true(approx_eq(x.get_grad().item(), 6.0, 0.001), "dy/dx for x^2 at 3 must be 6.0");
+
+    // 2. Polynomial derivative: y = 2*x^2 + 5*x - 3. At x = 2: dy/dx = 4x + 5 = 13
+    let x2 = tensor_scalar(2.0, dtype_float32());
+    x2.set_requires_grad(true);
+    let term1 = tensor_scale(tensor_mul(x2, x2), 2.0); // 2*x^2
+    let term2 = tensor_scale(x2, 5.0);                 // 5*x
+    let poly = tensor_sub(tensor_add(term1, term2), tensor_scalar(3.0, dtype_float32()));
+    poly.backward();
+    assert_true(approx_eq(x2.get_grad().item(), 13.0, 0.001), "dy/dx for 2x^2+5x-3 at 2 must be 13.0");
+
+    // 3. Vector arithmetic: v = [1.0, 2.0, 3.0], out = 2.0 * v + 1.0, loss = sum(out)
+    // d(loss)/dv_i = 2.0
+    let v = tensor_zeros_1d(3);
+    v.set_1d(0, 1.0); v.set_1d(1, 2.0); v.set_1d(2, 3.0);
+    v.set_requires_grad(true);
+
+    let scaled = tensor_scale(v, 2.0);
+    let shifted = tensor_add(scaled, tensor_ones_1d(3));
+    let loss = tensor_sum_tensor(shifted);
+    loss.backward();
+
+    assert_true(v.get_grad() != null, "Vector v must have gradient");
+    assert_true(approx_eq(v.get_grad().get_1d(0), 2.0, 0.001), "v.grad[0] must be 2.0");
+    assert_true(approx_eq(v.get_grad().get_1d(1), 2.0, 0.001), "v.grad[1] must be 2.0");
+    assert_true(approx_eq(v.get_grad().get_1d(2), 2.0, 0.001), "v.grad[2] must be 2.0");
+
+    println("✓ Reverse-mode scalar and vector backpropagation tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 12: Branched DAG Gradient Accumulation & zero_grad (M8-T02)
+// -----------------------------------------------------------------------------
+func test_autograd_branching_and_accumulation() {
+    println("--- Test 12: Branched DAG Accumulation & zero_grad ---");
+
+    // y = x^2 + 3*x. At x = 4, y' = 2x + 3 = 11
+    let x = tensor_scalar(4.0, dtype_float32());
+    x.set_requires_grad(true);
+
+    let branch1 = tensor_mul(x, x);
+    let branch2 = tensor_scale(x, 3.0);
+    let y = tensor_add(branch1, branch2);
+    y.backward();
+
+    assert_true(approx_eq(x.get_grad().item(), 11.0, 0.001), "Branching gradient must accumulate to 11.0");
+
+    // In-place accumulation across multiple backward calls
+    // Without zero_grad, next backward adds another 11.0 -> 22.0
+    let y2 = tensor_add(tensor_mul(x, x), tensor_scale(x, 3.0));
+    y2.backward();
+    assert_true(approx_eq(x.get_grad().item(), 22.0, 0.001), "Gradients must accumulate across backward calls without zero_grad");
+
+    // zero_grad resets
+    x.zero_grad();
+    assert_true(x.get_grad() == null, "zero_grad must clear grad to null");
+
+    let y3 = tensor_add(tensor_mul(x, x), tensor_scale(x, 3.0));
+    y3.backward();
+    assert_true(approx_eq(x.get_grad().item(), 11.0, 0.001), "After zero_grad, gradient must be fresh 11.0");
+
+    println("✓ Branched DAG gradient accumulation & zero_grad tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 13: Matrix GEMM Backpropagation (M8-T02)
+// -----------------------------------------------------------------------------
+func test_autograd_matrix_gemm_backprop() {
+    println("--- Test 13: Matrix GEMM Backpropagation ---");
+
+    let x = tensor_zeros_2d(1, 2);
+    x.set_2d(0, 0, 1.0); x.set_2d(0, 1, 2.0);
+    x.set_requires_grad(true);
+
+    let w = tensor_zeros_2d(2, 2);
+    w.set_2d(0, 0, 1.0); w.set_2d(0, 1, 3.0);
+    w.set_2d(1, 0, 2.0); w.set_2d(1, 1, 4.0);
+    w.set_requires_grad(true);
+
+    let y = tensor_matmul(x, w);
+    let loss = tensor_sum_tensor(y);
+    loss.backward();
+
+    assert_true(x.get_grad() != null, "X must have gradient");
+    assert_true(w.get_grad() != null, "W must have gradient");
+
+    assert_true(approx_eq(x.get_grad().get_2d(0, 0), 4.0, 0.001), "dL/dX[0,0] must be 4.0");
+    assert_true(approx_eq(x.get_grad().get_2d(0, 1), 6.0, 0.001), "dL/dX[0,1] must be 6.0");
+
+    assert_true(approx_eq(w.get_grad().get_2d(0, 0), 1.0, 0.001), "dL/dW[0,0] must be 1.0");
+    assert_true(approx_eq(w.get_grad().get_2d(0, 1), 1.0, 0.001), "dL/dW[0,1] must be 1.0");
+    assert_true(approx_eq(w.get_grad().get_2d(1, 0), 2.0, 0.001), "dL/dW[1,0] must be 2.0");
+    assert_true(approx_eq(w.get_grad().get_2d(1, 1), 2.0, 0.001), "dL/dW[1,1] must be 2.0");
+
+    println("✓ Matrix GEMM backpropagation tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 14: End-to-End Neural Network Training with Real SGD (M8-T02)
+// -----------------------------------------------------------------------------
+func test_autograd_mlp_training_loop() {
+    println("--- Test 14: End-to-End Neural Network Training Loop ---");
+
+    let layer = linear_new(2, 1);
+    let x = tensor_zeros_2d(1, 2);
+    x.set_2d(0, 0, 1.0); x.set_2d(0, 1, 2.0);
+
+    let target = tensor_zeros_2d(1, 1);
+    target.set_2d(0, 0, 5.0);
+
+    // Initial forward
+    let pred_init = linear_forward(layer, x);
+    let loss_init = tensor_mse_loss(pred_init, target);
+    let init_loss_val = loss_init.item();
+
+    let iter = 0;
+    let prev_loss = init_loss_val;
+    while iter < 10 {
+        linear_zero_grad(layer);
+        let pred = linear_forward(layer, x);
+        let loss = tensor_mse_loss(pred, target);
+        loss.backward();
+
+        sgd_step(layer, 0.05);
+        prev_loss = loss.item();
+        iter = iter + 1;
+    }
+
+    let pred_final = linear_forward(layer, x);
+    let final_loss = tensor_mse_loss(pred_final, target).item();
+
+    assert_true(final_loss < init_loss_val, "Neural network loss must decrease with SGD training");
+
+    println("✓ End-to-end neural network training loop tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 15: no_grad() Execution Scope (M8-T02)
+// -----------------------------------------------------------------------------
+func test_autograd_no_grad_scope() {
+    println("--- Test 15: no_grad() Execution Scope ---");
+
+    let a = tensor_scalar(5.0, dtype_float32());
+    let b = tensor_scalar(3.0, dtype_float32());
+    a.set_requires_grad(true);
+    b.set_requires_grad(true);
+
+    // Inside no_grad scope
+    let prev = no_grad_scope_begin();
+    assert_true(!autograd_is_grad_enabled(), "Grad must be disabled inside no_grad");
+
+    let c = tensor_add(a, b);
+    assert_true(!c.requires_grad, "c must NOT require grad in no_grad scope");
+    assert_true(c.get_grad_fn() == null, "c must NOT have grad_fn in no_grad scope");
+
+    let mm = tensor_matmul(tensor_ones_2d(2, 2), tensor_ones_2d(2, 2));
+    assert_true(!mm.requires_grad, "mm must NOT require grad in no_grad scope");
+    assert_true(mm.get_grad_fn() == null, "mm must NOT have grad_fn in no_grad scope");
+
+    no_grad_scope_end(prev);
+    assert_true(autograd_is_grad_enabled(), "Grad must be re-enabled after no_grad scope");
+
+    let d = tensor_add(a, b);
+    assert_true(d.requires_grad, "d must require grad once scope exited");
+    assert_true(d.get_grad_fn() != null, "d must have grad_fn once scope exited");
+
+    println("✓ no_grad() execution scope tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 16: Custom Autograd Functions (M8-T02)
+// -----------------------------------------------------------------------------
+func test_autograd_custom_functions() {
+    println("--- Test 16: Custom Autograd Functions ---");
+
+    // Custom cubic function: f(x) = x^3, f'(x) = 3x^2. At x = 2.0: f'(2) = 12.0
+    let x = tensor_scalar(2.0, dtype_float32());
+    x.set_requires_grad(true);
+
+    let y = autograd_custom_forward(1, x, null);
+    assert_true(approx_eq(y.item(), 8.0, 0.001), "Custom cube forward must be 8.0");
+    assert_true(y.get_grad_fn().name() == "<CustomCubeBackward>", "Custom grad_fn must match");
+
+    y.backward();
+    assert_true(approx_eq(x.get_grad().item(), 12.0, 0.001), "Custom cube derivative at 2.0 must be 12.0");
+
+    // Custom affine function: f(x) = 2x + 5, f'(x) = 2.0
+    x.zero_grad();
+    let y2 = autograd_custom_forward(2, x, null);
+    assert_true(approx_eq(y2.item(), 9.0, 0.001), "Custom affine forward must be 9.0");
+    y2.backward();
+    assert_true(approx_eq(x.get_grad().item(), 2.0, 0.001), "Custom affine derivative must be 2.0");
+
+    println("✓ Custom autograd functions tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 17: Numerical Gradient Checking (Finite Differences) (M8-T02)
+// -----------------------------------------------------------------------------
+func test_autograd_numerical_gradcheck() {
+    println("--- Test 17: Universal Numerical Gradient Checking ---");
+
+    let x = tensor_zeros_1d(3);
+    x.set_1d(0, 0.5); x.set_1d(1, 1.2); x.set_1d(2, 2.1);
+
+    let eps = 0.0001;
+    let atol = 0.01;
+
+    let check_sigmoid = autograd_gradcheck(op_sigmoid(), x, eps, atol);
+    assert_true(check_sigmoid, "Gradcheck for Sigmoid must pass");
+
+    let check_tanh = autograd_gradcheck(op_tanh(), x, eps, atol);
+    assert_true(check_tanh, "Gradcheck for Tanh must pass");
+
+    let check_relu = autograd_gradcheck(op_relu(), x, eps, atol);
+    assert_true(check_relu, "Gradcheck for ReLU must pass");
+
+    let check_gelu = autograd_gradcheck(op_gelu(), x, eps, atol);
+    assert_true(check_gelu, "Gradcheck for GELU must pass");
+
+    let check_silu = autograd_gradcheck(op_silu(), x, eps, atol);
+    assert_true(check_silu, "Gradcheck for SiLU must pass");
+
+    let check_pow = autograd_gradcheck(op_pow(), x, eps, atol);
+    assert_true(check_pow, "Gradcheck for Pow(x, 2) must pass");
+
+    let check_exp = autograd_gradcheck(op_exp(), x, eps, atol);
+    assert_true(check_exp, "Gradcheck for Exp must pass");
+
+    println("✓ Numerical gradient checking against finite differences passed!");
+}
+
 func main() {
     println("=================================================");
-    println("      Roze-Torch M8-T01 Verification Suite       ");
+    println("   Roze-Torch M8-T01 & M8-T02 Verification Suite ");
     println("=================================================");
 
     test_shapes_and_strides();
@@ -486,7 +783,17 @@ func main() {
     test_reductions();
     test_neural_network();
 
+    // M8-T02 Autograd Tests
+    test_autograd_tape_and_grad_fn();
+    test_autograd_scalar_and_vector_backprop();
+    test_autograd_branching_and_accumulation();
+    test_autograd_matrix_gemm_backprop();
+    test_autograd_mlp_training_loop();
+    test_autograd_no_grad_scope();
+    test_autograd_custom_functions();
+    test_autograd_numerical_gradcheck();
+
     println("=================================================");
-    println("✅ 100% Roze-Torch M8-T01 Test Suites Passed! 🎉");
+    println("✅ 100% Roze-Torch M8-T01 & M8-T02 Passed! 🎉    ");
     println("=================================================");
 }

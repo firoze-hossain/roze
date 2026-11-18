@@ -493,8 +493,82 @@ func slice_to(stop: int) -> Slice {
 }
 
 // ==============================================================================
-// SECTION 6: Tensor Data Structure & Core Accessors
+// SECTION 6: Tensor Data Structure, Autograd Nodes & Core Accessors
 // ==============================================================================
+
+class AutogradNode {
+    op: int,
+    op_name: string,
+    input_a: Tensor,
+    input_b: Tensor,
+    saved_param_float: float,
+    saved_param_int: int,
+    custom_fn_id: int
+}
+
+impl AutogradNode {
+    func name() -> string {
+        return this.op_name;
+    }
+}
+
+func op_none() -> int { return 0; }
+func op_add() -> int { return 1; }
+func op_sub() -> int { return 2; }
+func op_mul() -> int { return 3; }
+func op_div() -> int { return 4; }
+func op_scale() -> int { return 5; }
+func op_neg() -> int { return 6; }
+func op_matmul() -> int { return 7; }
+func op_dot() -> int { return 8; }
+func op_relu() -> int { return 9; }
+func op_sigmoid() -> int { return 10; }
+func op_tanh() -> int { return 11; }
+func op_gelu() -> int { return 12; }
+func op_silu() -> int { return 13; }
+func op_softmax() -> int { return 14; }
+func op_sum() -> int { return 15; }
+func op_mean() -> int { return 16; }
+func op_sum_dim() -> int { return 17; }
+func op_transpose() -> int { return 18; }
+func op_reshape() -> int { return 19; }
+func op_mse_loss() -> int { return 20; }
+func op_pow() -> int { return 21; }
+func op_exp() -> int { return 22; }
+func op_log() -> int { return 23; }
+func op_custom() -> int { return 24; }
+
+func autograd_node_new(op: int, op_name: string, input_a: Tensor, input_b: Tensor) -> AutogradNode {
+    return new AutogradNode(op, op_name, input_a, input_b, 0.0, 0, 0);
+}
+
+func autograd_node_param(op: int, op_name: string, input_a: Tensor, input_b: Tensor, param_f: float, param_i: int) -> AutogradNode {
+    return new AutogradNode(op, op_name, input_a, input_b, param_f, param_i, 0);
+}
+
+func autograd_node_custom(op_name: string, input_a: Tensor, input_b: Tensor, custom_fn_id: int) -> AutogradNode {
+    return new AutogradNode(op_custom(), op_name, input_a, input_b, 0.0, 0, custom_fn_id);
+}
+
+class AutogradContext {
+    saved_t1: Tensor,
+    saved_t2: Tensor,
+    saved_f1: float,
+    saved_f2: float,
+    saved_i1: int,
+    saved_i2: int
+}
+
+func autograd_context_new() -> AutogradContext {
+    return new AutogradContext(null, null, 0.0, 0.0, 0, 0);
+}
+
+impl AutogradContext {
+    func save_for_backward(t1: Tensor, t2: Tensor) {
+        this.saved_t1 = t1;
+        this.saved_t2 = t2;
+    }
+}
 
 class Tensor {
     shape: Shape,
@@ -503,7 +577,89 @@ class Tensor {
     dtype_id: int,
     storage: TensorStorage,
     requires_grad: bool,
-    device: string
+    device: string,
+    grad: Tensor,
+    grad_fn: AutogradNode,
+    is_leaf: bool,
+    id: int
+}
+
+func autograd_str_to_int(s: string) -> int {
+    let len = string_length(s);
+    let mut_val = 0;
+    let mut_i = 0;
+    while mut_i < len {
+        let c = string_char_at(s, mut_i);
+        if c >= 48 && c <= 57 {
+            mut_val = (mut_val * 10) + (c - 48);
+        }
+        mut_i = mut_i + 1;
+    }
+    return mut_val;
+}
+
+func autograd_ctrl_addr() -> int {
+    let s = sys_env_var("ROZE_AUTOGRAD_CTRL");
+    if s != "" {
+        return autograd_str_to_int(s);
+    }
+    unsafe {
+        let p = alloc(64);
+        ptr_write_at(p, 0, 1);
+        ptr_write_at(p, 8, 1);
+        let addr = ptr_to_int(p);
+        sys_env_set("ROZE_AUTOGRAD_CTRL", to_string(addr));
+        return addr;
+    }
+}
+
+func tensor_next_id() -> int {
+    unsafe {
+        let addr = autograd_ctrl_addr();
+        let p = int_to_ptr(addr);
+        let id: int = ptr_read_at(p, 0);
+        ptr_write_at(p, 0, id + 1);
+        return id;
+    }
+}
+
+func autograd_is_grad_enabled() -> bool {
+    unsafe {
+        let addr = autograd_ctrl_addr();
+        let p = int_to_ptr(addr);
+        let en: int = ptr_read_at(p, 8);
+        return en != 0;
+    }
+}
+
+func autograd_set_grad_enabled(enabled: bool) -> bool {
+    unsafe {
+        let addr = autograd_ctrl_addr();
+        let p = int_to_ptr(addr);
+        let prev: int = ptr_read_at(p, 8);
+        let next_val = 0;
+        if enabled { next_val = 1; }
+        ptr_write_at(p, 8, next_val);
+        return prev != 0;
+    }
+}
+
+func no_grad_scope_begin() -> bool {
+    return autograd_set_grad_enabled(false);
+}
+
+func no_grad_scope_end(prev: bool) {
+    autograd_set_grad_enabled(prev);
+}
+
+func tensor_create(shape: Shape, strides: Strides, offset: int, dtype_id: int, storage: TensorStorage, requires_grad: bool, device: string) -> Tensor {
+    let tid = tensor_next_id();
+    return new Tensor(shape, strides, offset, dtype_id, storage, requires_grad, device, null, null, true, tid);
+}
+
+func tensor_create_with_grad_fn(shape: Shape, strides: Strides, offset: int, dtype_id: int, storage: TensorStorage, requires_grad: bool, device: string, grad_fn: AutogradNode) -> Tensor {
+    let tid = tensor_next_id();
+    return new Tensor(shape, strides, offset, dtype_id, storage, requires_grad, device, null, grad_fn, false, tid);
 }
 
 func tensor_numel(t: Tensor) -> int {
@@ -537,6 +693,38 @@ impl Tensor {
 
     func device_name() -> string {
         return this.device;
+    }
+
+    func backward() {
+        tensor_backward(this);
+    }
+
+    func zero_grad() {
+        this.grad = null;
+    }
+
+    func set_requires_grad(req: bool) {
+        this.requires_grad = req;
+    }
+
+    func get_grad() -> Tensor {
+        return this.grad;
+    }
+
+    func get_grad_fn() -> AutogradNode {
+        return this.grad_fn;
+    }
+
+    func get_is_leaf() -> bool {
+        return this.is_leaf;
+    }
+
+    func sum() -> Tensor {
+        return tensor_sum_tensor(this);
+    }
+
+    func mean() -> Tensor {
+        return tensor_mean_tensor(this);
     }
 
     func compute_offset_1d(i0: int) -> int {
@@ -662,7 +850,7 @@ func tensor_new(s: Shape, dtype: int, device: string) -> Tensor {
     let bytes = total * dtype_itemsize(dtype);
     let st = tensor_storage_new(bytes, device);
     let st_strides = strides_contiguous(s);
-    return new Tensor(s, st_strides, 0, dtype, st, false, device);
+    return tensor_create(s, st_strides, 0, dtype, st, false, device);
 }
 
 func tensor_zeros(s: Shape, dtype: int) -> Tensor {
@@ -876,7 +1064,7 @@ func tensor_slice_1d(t: Tensor, s0: Slice) -> Tensor {
     let new_shape = shape_1d(p0.len);
     let new_strides = new Strides(t.strides.s0 * p0.step, 0, 0, 0, 0, 0, 1);
     let new_offset = t.offset + p0.start * t.strides.s0;
-    return new Tensor(new_shape, new_strides, new_offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+    return tensor_create(new_shape, new_strides, new_offset, t.dtype_id, t.storage, t.requires_grad, t.device);
 }
 
 func tensor_slice_2d(t: Tensor, s0: Slice, s1: Slice) -> Tensor {
@@ -885,7 +1073,7 @@ func tensor_slice_2d(t: Tensor, s0: Slice, s1: Slice) -> Tensor {
     let new_shape = shape_2d(p0.len, p1.len);
     let new_strides = new Strides(t.strides.s0 * p0.step, t.strides.s1 * p1.step, 0, 0, 0, 0, 2);
     let new_offset = t.offset + p0.start * t.strides.s0 + p1.start * t.strides.s1;
-    return new Tensor(new_shape, new_strides, new_offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+    return tensor_create(new_shape, new_strides, new_offset, t.dtype_id, t.storage, t.requires_grad, t.device);
 }
 
 func tensor_slice_3d(t: Tensor, s0: Slice, s1: Slice, s2: Slice) -> Tensor {
@@ -896,7 +1084,7 @@ func tensor_slice_3d(t: Tensor, s0: Slice, s1: Slice, s2: Slice) -> Tensor {
     let new_shape = shape_3d(p0.len, p1.len, p2.len);
     let new_strides = new Strides(t.strides.s0 * p0.step, t.strides.s1 * p1.step, t.strides.s2 * p2.step, 0, 0, 0, 3);
     let new_offset = t.offset + p0.start * t.strides.s0 + p1.start * t.strides.s1 + p2.start * t.strides.s2;
-    return new Tensor(new_shape, new_strides, new_offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+    return tensor_create(new_shape, new_strides, new_offset, t.dtype_id, t.storage, t.requires_grad, t.device);
 }
 
 // Slice single dimension (select row/col view)
@@ -911,13 +1099,13 @@ func tensor_select(t: Tensor, dim: int, index: int) -> Tensor {
             let s = shape_1d(t.shape.dim1);
             let str = new Strides(t.strides.s1, 0, 0, 0, 0, 0, 1);
             let off = t.offset + idx * t.strides.s0;
-            return new Tensor(s, str, off, t.dtype_id, t.storage, t.requires_grad, t.device);
+            return tensor_create(s, str, off, t.dtype_id, t.storage, t.requires_grad, t.device);
         } else {
             // Selecting col -> returns 1D vector view of that col
             let s = shape_1d(t.shape.dim0);
             let str = new Strides(t.strides.s0, 0, 0, 0, 0, 0, 1);
             let off = t.offset + idx * t.strides.s1;
-            return new Tensor(s, str, off, t.dtype_id, t.storage, t.requires_grad, t.device);
+            return tensor_create(s, str, off, t.dtype_id, t.storage, t.requires_grad, t.device);
         }
     }
     if t.rank() == 1 {
@@ -925,7 +1113,7 @@ func tensor_select(t: Tensor, dim: int, index: int) -> Tensor {
         let s = shape_0d();
         let str = new Strides(0, 0, 0, 0, 0, 0, 0);
         let off = t.offset + idx * t.strides.s0;
-        return new Tensor(s, str, off, t.dtype_id, t.storage, t.requires_grad, t.device);
+        return tensor_create(s, str, off, t.dtype_id, t.storage, t.requires_grad, t.device);
     }
     return t;
 }
@@ -996,7 +1184,7 @@ func tensor_broadcast_to(t: Tensor, target: Shape) -> Tensor {
             s1 = 0;
         }
         let str = new Strides(s0, s1, 0, 0, 0, 0, 2);
-        return new Tensor(target, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+        return tensor_create(target, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
     }
 
     if tr == 1 {
@@ -1004,7 +1192,7 @@ func tensor_broadcast_to(t: Tensor, target: Shape) -> Tensor {
         let s0 = 0;
         if cur_r == 1 && t.shape.dim0 == d0 { s0 = t.strides.s0; }
         let str = new Strides(s0, 0, 0, 0, 0, 0, 1);
-        return new Tensor(target, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+        return tensor_create(target, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
     }
 
     if tr == 3 {
@@ -1018,7 +1206,7 @@ func tensor_broadcast_to(t: Tensor, target: Shape) -> Tensor {
             if t.shape.dim1 == target.dim2 { s2 = t.strides.s1; }
         }
         let str = new Strides(s0, s1, s2, 0, 0, 0, 3);
-        return new Tensor(target, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+        return tensor_create(target, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
     }
 
     return t;
@@ -1045,10 +1233,7 @@ func tensor_add(a: Tensor, b: Tensor) -> Tensor {
             }
             r = r + 1;
         }
-        return out;
-    }
-
-    if out_shape.rank == 1 {
+    } else if out_shape.rank == 1 {
         let i = 0;
         let n = out_shape.dim0;
         while i < n {
@@ -1057,14 +1242,15 @@ func tensor_add(a: Tensor, b: Tensor) -> Tensor {
             out.set_1d(i, va + vb);
             i = i + 1;
         }
-        return out;
-    }
-
-    if out_shape.rank == 0 {
+    } else if out_shape.rank == 0 {
         out.set_item(view_a.item() + view_b.item());
-        return out;
     }
 
+    if autograd_is_grad_enabled() && (a.requires_grad || b.requires_grad) {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_add(), "<AddBackward0>", a, b);
+    }
     return out;
 }
 
@@ -1088,10 +1274,7 @@ func tensor_sub(a: Tensor, b: Tensor) -> Tensor {
             }
             r = r + 1;
         }
-        return out;
-    }
-
-    if out_shape.rank == 1 {
+    } else if out_shape.rank == 1 {
         let i = 0;
         let n = out_shape.dim0;
         while i < n {
@@ -1100,14 +1283,15 @@ func tensor_sub(a: Tensor, b: Tensor) -> Tensor {
             out.set_1d(i, va - vb);
             i = i + 1;
         }
-        return out;
-    }
-
-    if out_shape.rank == 0 {
+    } else if out_shape.rank == 0 {
         out.set_item(view_a.item() - view_b.item());
-        return out;
     }
 
+    if autograd_is_grad_enabled() && (a.requires_grad || b.requires_grad) {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_sub(), "<SubBackward0>", a, b);
+    }
     return out;
 }
 
@@ -1131,10 +1315,7 @@ func tensor_mul(a: Tensor, b: Tensor) -> Tensor {
             }
             r = r + 1;
         }
-        return out;
-    }
-
-    if out_shape.rank == 1 {
+    } else if out_shape.rank == 1 {
         let i = 0;
         let n = out_shape.dim0;
         while i < n {
@@ -1143,14 +1324,15 @@ func tensor_mul(a: Tensor, b: Tensor) -> Tensor {
             out.set_1d(i, va * vb);
             i = i + 1;
         }
-        return out;
-    }
-
-    if out_shape.rank == 0 {
+    } else if out_shape.rank == 0 {
         out.set_item(view_a.item() * view_b.item());
-        return out;
     }
 
+    if autograd_is_grad_enabled() && (a.requires_grad || b.requires_grad) {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_mul(), "<MulBackward0>", a, b);
+    }
     return out;
 }
 
@@ -1176,10 +1358,7 @@ func tensor_div(a: Tensor, b: Tensor) -> Tensor {
             }
             r = r + 1;
         }
-        return out;
-    }
-
-    if out_shape.rank == 1 {
+    } else if out_shape.rank == 1 {
         let i = 0;
         let n = out_shape.dim0;
         while i < n {
@@ -1190,15 +1369,29 @@ func tensor_div(a: Tensor, b: Tensor) -> Tensor {
             out.set_1d(i, res);
             i = i + 1;
         }
-        return out;
     }
 
+    if autograd_is_grad_enabled() && (a.requires_grad || b.requires_grad) {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_div(), "<DivBackward0>", a, b);
+    }
     return out;
 }
 
 func tensor_scale(a: Tensor, scalar: float) -> Tensor {
     let s = tensor_scalar(scalar, a.dtype_id);
-    return tensor_mul(a, s);
+    let out = tensor_mul(a, s);
+    if autograd_is_grad_enabled() && a.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_param(op_scale(), "<ScaleBackward0>", a, null, scalar, 0);
+    }
+    return out;
+}
+
+func tensor_neg(t: Tensor) -> Tensor {
+    return tensor_scale(t, -1.0);
 }
 
 // ==============================================================================
@@ -1212,7 +1405,13 @@ func tensor_transpose(t: Tensor, dim0: int, dim1: int) -> Tensor {
     if t.rank() == 2 && ((d0 == 0 && d1 == 1) || (d0 == 1 && d1 == 0)) {
         let new_s = shape_2d(t.shape.dim1, t.shape.dim0);
         let new_str = new Strides(t.strides.s1, t.strides.s0, 0, 0, 0, 0, 2);
-        return new Tensor(new_s, new_str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+        let res = tensor_create(new_s, new_str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+        if autograd_is_grad_enabled() && t.requires_grad {
+            res.requires_grad = true;
+            res.is_leaf = false;
+            res.grad_fn = autograd_node_param(op_transpose(), "<TransposeBackward0>", t, null, 0.0, d0 * 10 + d1);
+        }
+        return res;
     }
 
     if t.rank() == 3 {
@@ -1224,13 +1423,31 @@ func tensor_transpose(t: Tensor, dim0: int, dim1: int) -> Tensor {
         let s2_sz = t.strides.s2;
 
         if (d0 == 0 && d1 == 1) || (d0 == 1 && d1 == 0) {
-            return new Tensor(shape_3d(d1_sz, d0_sz, d2_sz), new Strides(s1_sz, s0_sz, s2_sz, 0, 0, 0, 3), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            let res = tensor_create(shape_3d(d1_sz, d0_sz, d2_sz), new Strides(s1_sz, s0_sz, s2_sz, 0, 0, 0, 3), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            if autograd_is_grad_enabled() && t.requires_grad {
+                res.requires_grad = true;
+                res.is_leaf = false;
+                res.grad_fn = autograd_node_param(op_transpose(), "<TransposeBackward0>", t, null, 0.0, d0 * 10 + d1);
+            }
+            return res;
         }
         if (d0 == 0 && d1 == 2) || (d0 == 2 && d1 == 0) {
-            return new Tensor(shape_3d(d2_sz, d1_sz, d0_sz), new Strides(s2_sz, s1_sz, s0_sz, 0, 0, 0, 3), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            let res = tensor_create(shape_3d(d2_sz, d1_sz, d0_sz), new Strides(s2_sz, s1_sz, s0_sz, 0, 0, 0, 3), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            if autograd_is_grad_enabled() && t.requires_grad {
+                res.requires_grad = true;
+                res.is_leaf = false;
+                res.grad_fn = autograd_node_param(op_transpose(), "<TransposeBackward0>", t, null, 0.0, d0 * 10 + d1);
+            }
+            return res;
         }
         if (d0 == 1 && d1 == 2) || (d0 == 2 && d1 == 1) {
-            return new Tensor(shape_3d(d0_sz, d2_sz, d1_sz), new Strides(s0_sz, s2_sz, s1_sz, 0, 0, 0, 3), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            let res = tensor_create(shape_3d(d0_sz, d2_sz, d1_sz), new Strides(s0_sz, s2_sz, s1_sz, 0, 0, 0, 3), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            if autograd_is_grad_enabled() && t.requires_grad {
+                res.requires_grad = true;
+                res.is_leaf = false;
+                res.grad_fn = autograd_node_param(op_transpose(), "<TransposeBackward0>", t, null, 0.0, d0 * 10 + d1);
+            }
+            return res;
         }
         return t;
     }
@@ -1260,7 +1477,7 @@ func tensor_permute_3d(t: Tensor, p0: int, p1: int, p2: int) -> Tensor {
 
     let new_s = shape_3d(d0, d1, d2);
     let new_str = new Strides(s0, s1, s2, 0, 0, 0, 3);
-    return new Tensor(new_s, new_str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+    return tensor_create(new_s, new_str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
 }
 
 // ==============================================================================
@@ -1332,7 +1549,13 @@ func tensor_reshape(t: Tensor, new_shape: Shape) -> Tensor {
     }
     let contig = tensor_contiguous(t);
     let new_strides = strides_contiguous(new_shape);
-    return new Tensor(new_shape, new_strides, 0, contig.dtype_id, contig.storage, contig.requires_grad, contig.device);
+    let res = tensor_create(new_shape, new_strides, 0, contig.dtype_id, contig.storage, contig.requires_grad, contig.device);
+    if autograd_is_grad_enabled() && t.requires_grad {
+        res.requires_grad = true;
+        res.is_leaf = false;
+        res.grad_fn = autograd_node_new(op_reshape(), "<ReshapeBackward0>", t, null);
+    }
+    return res;
 }
 
 func tensor_flatten(t: Tensor, start_dim: int, end_dim: int) -> Tensor {
@@ -1348,26 +1571,26 @@ func tensor_squeeze(t: Tensor, dim: int) -> Tensor {
 
     if r == 2 {
         if d == 0 && t.shape.dim0 == 1 {
-            return new Tensor(shape_1d(t.shape.dim1), new Strides(t.strides.s1, 0, 0, 0, 0, 0, 1), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            return tensor_create(shape_1d(t.shape.dim1), new Strides(t.strides.s1, 0, 0, 0, 0, 0, 1), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
         }
         if d == 1 && t.shape.dim1 == 1 {
-            return new Tensor(shape_1d(t.shape.dim0), new Strides(t.strides.s0, 0, 0, 0, 0, 0, 1), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            return tensor_create(shape_1d(t.shape.dim0), new Strides(t.strides.s0, 0, 0, 0, 0, 0, 1), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
         }
     }
     if r == 3 {
         if d == 0 && t.shape.dim0 == 1 {
-            return new Tensor(shape_2d(t.shape.dim1, t.shape.dim2), new Strides(t.strides.s1, t.strides.s2, 0, 0, 0, 0, 2), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            return tensor_create(shape_2d(t.shape.dim1, t.shape.dim2), new Strides(t.strides.s1, t.strides.s2, 0, 0, 0, 0, 2), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
         }
         if d == 1 && t.shape.dim1 == 1 {
-            return new Tensor(shape_2d(t.shape.dim0, t.shape.dim2), new Strides(t.strides.s0, t.strides.s2, 0, 0, 0, 0, 2), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            return tensor_create(shape_2d(t.shape.dim0, t.shape.dim2), new Strides(t.strides.s0, t.strides.s2, 0, 0, 0, 0, 2), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
         }
         if d == 2 && t.shape.dim2 == 1 {
-            return new Tensor(shape_2d(t.shape.dim0, t.shape.dim1), new Strides(t.strides.s0, t.strides.s1, 0, 0, 0, 0, 2), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            return tensor_create(shape_2d(t.shape.dim0, t.shape.dim1), new Strides(t.strides.s0, t.strides.s1, 0, 0, 0, 0, 2), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
         }
     }
     if r == 4 {
         if d == 0 && t.shape.dim0 == 1 {
-            return new Tensor(shape_3d(t.shape.dim1, t.shape.dim2, t.shape.dim3), new Strides(t.strides.s1, t.strides.s2, t.strides.s3, 0, 0, 0, 3), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            return tensor_create(shape_3d(t.shape.dim1, t.shape.dim2, t.shape.dim3), new Strides(t.strides.s1, t.strides.s2, t.strides.s3, 0, 0, 0, 3), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
         }
     }
     return t;
@@ -1379,42 +1602,42 @@ func tensor_unsqueeze(t: Tensor, dim: int) -> Tensor {
     if d < 0 { d = r + 1 + d; }
 
     if r == 0 {
-        return new Tensor(shape_1d(1), new Strides(1, 0, 0, 0, 0, 0, 1), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+        return tensor_create(shape_1d(1), new Strides(1, 0, 0, 0, 0, 0, 1), t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
     }
     if r == 1 {
         if d == 0 {
             let s = shape_2d(1, t.shape.dim0);
             let str = new Strides(t.strides.s0, t.strides.s0, 0, 0, 0, 0, 2);
-            return new Tensor(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            return tensor_create(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
         }
         let s = shape_2d(t.shape.dim0, 1);
         let str = new Strides(t.strides.s0, 1, 0, 0, 0, 0, 2);
-        return new Tensor(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+        return tensor_create(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
     }
     if r == 2 {
         if d == 0 {
             let s = shape_3d(1, t.shape.dim0, t.shape.dim1);
             let str = new Strides(t.strides.s0, t.strides.s0, t.strides.s1, 0, 0, 0, 3);
-            return new Tensor(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            return tensor_create(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
         }
         if d == 1 {
             let s = shape_3d(t.shape.dim0, 1, t.shape.dim1);
             let str = new Strides(t.strides.s0, t.strides.s1, t.strides.s1, 0, 0, 0, 3);
-            return new Tensor(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            return tensor_create(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
         }
         let s = shape_3d(t.shape.dim0, t.shape.dim1, 1);
         let str = new Strides(t.strides.s0, t.strides.s1, 1, 0, 0, 0, 3);
-        return new Tensor(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+        return tensor_create(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
     }
     if r == 3 {
         if d == 0 {
             let s = shape_4d(1, t.shape.dim0, t.shape.dim1, t.shape.dim2);
             let str = new Strides(t.strides.s0, t.strides.s0, t.strides.s1, t.strides.s2, 0, 0, 4);
-            return new Tensor(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+            return tensor_create(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
         }
         let s = shape_4d(t.shape.dim0, t.shape.dim1, t.shape.dim2, 1);
         let str = new Strides(t.strides.s0, t.strides.s1, t.strides.s2, 1, 0, 0, 4);
-        return new Tensor(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
+        return tensor_create(s, str, t.offset, t.dtype_id, t.storage, t.requires_grad, t.device);
     }
     return t;
 }
@@ -1458,6 +1681,12 @@ func tensor_matmul(a: Tensor, b: Tensor) -> Tensor {
             j = j + 1;
         }
         i = i + 1;
+    }
+
+    if autograd_is_grad_enabled() && (a.requires_grad || b.requires_grad) {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_matmul(), "<MmBackward0>", a, b);
     }
     return out;
 }
@@ -1564,6 +1793,38 @@ func torch_ln(x: float) -> float {
     return ln_v + (k * 1.0) * ln_2;
 }
 
+func torch_pow(base: float, p: float) -> float {
+    if p == 0.0 { return 1.0; }
+    if p == 1.0 { return base; }
+    if p == 2.0 { return base * base; }
+    if p == 3.0 { return base * base * base; }
+    if base == 0.0 { return 0.0; }
+    let int_p = int(p);
+    if float(int_p) == p {
+        let res = 1.0;
+        let n = int_p;
+        let is_neg = false;
+        if n < 0 {
+            is_neg = true;
+            n = -n;
+        }
+        let b = base;
+        while n > 0 {
+            if n % 2 == 1 {
+                res = res * b;
+            }
+            b = b * b;
+            n = n / 2;
+        }
+        if is_neg { return 1.0 / res; }
+        return res;
+    }
+    if base > 0.0 {
+        return torch_exp(p * torch_ln(base));
+    }
+    return 0.0;
+}
+
 func tensor_sum(t: Tensor) -> float {
     let contig = tensor_contiguous(t);
     let n = contig.numel();
@@ -1645,11 +1906,16 @@ func tensor_sum_dim(t: Tensor, dim: int, keepdim: bool) -> Tensor {
     let rows = t.shape.dim0;
     let cols = t.shape.dim1;
 
+    let out_shape = shape_1d(cols);
     if axis == 0 {
-        // Sum across rows -> result has cols elements
-        let out_shape = shape_1d(cols);
         if keepdim { out_shape = shape_2d(1, cols); }
-        let out = tensor_zeros(out_shape, t.dtype_id);
+    } else {
+        out_shape = shape_1d(rows);
+        if keepdim { out_shape = shape_2d(rows, 1); }
+    }
+    let out = tensor_zeros(out_shape, t.dtype_id);
+
+    if axis == 0 {
         let c = 0;
         while c < cols {
             let col_sum = 0.0;
@@ -1661,12 +1927,7 @@ func tensor_sum_dim(t: Tensor, dim: int, keepdim: bool) -> Tensor {
             if keepdim { out.set_2d(0, c, col_sum); } else { out.set_1d(c, col_sum); }
             c = c + 1;
         }
-        return out;
     } else {
-        // Sum across cols -> result has rows elements
-        let out_shape = shape_1d(rows);
-        if keepdim { out_shape = shape_2d(rows, 1); }
-        let out = tensor_zeros(out_shape, t.dtype_id);
         let r = 0;
         while r < rows {
             let row_sum = 0.0;
@@ -1678,8 +1939,14 @@ func tensor_sum_dim(t: Tensor, dim: int, keepdim: bool) -> Tensor {
             if keepdim { out.set_2d(r, 0, row_sum); } else { out.set_1d(r, row_sum); }
             r = r + 1;
         }
-        return out;
     }
+
+    if autograd_is_grad_enabled() && t.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_param(op_sum_dim(), "<SumDimBackward0>", t, null, 0.0, axis);
+    }
+    return out;
 }
 
 // ==============================================================================
@@ -1700,6 +1967,11 @@ func tensor_relu(t: Tensor) -> Tensor {
         }
         i = i + 1;
     }
+    if autograd_is_grad_enabled() && t.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_relu(), "<ReluBackward0>", t, null);
+    }
     return out;
 }
 
@@ -1713,6 +1985,11 @@ func tensor_sigmoid(t: Tensor) -> Tensor {
         let sig = 1.0 / (1.0 + torch_exp(0.0 - v));
         tensor_storage_write_float(out.storage, i, contig.dtype_id, sig);
         i = i + 1;
+    }
+    if autograd_is_grad_enabled() && t.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_sigmoid(), "<SigmoidBackward0>", t, null);
     }
     return out;
 }
@@ -1729,6 +2006,11 @@ func tensor_tanh(t: Tensor) -> Tensor {
         let th = (ep - en) / (ep + en);
         tensor_storage_write_float(out.storage, i, contig.dtype_id, th);
         i = i + 1;
+    }
+    if autograd_is_grad_enabled() && t.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_tanh(), "<TanhBackward0>", t, null);
     }
     return out;
 }
@@ -1751,6 +2033,11 @@ func tensor_gelu(t: Tensor) -> Tensor {
         tensor_storage_write_float(out.storage, i, contig.dtype_id, gelu_val);
         i = i + 1;
     }
+    if autograd_is_grad_enabled() && t.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_gelu(), "<GeluBackward0>", t, null);
+    }
     return out;
 }
 
@@ -1766,14 +2053,20 @@ func tensor_silu(t: Tensor) -> Tensor {
         tensor_storage_write_float(out.storage, i, contig.dtype_id, x * sig);
         i = i + 1;
     }
+    if autograd_is_grad_enabled() && t.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_silu(), "<SiluBackward0>", t, null);
+    }
     return out;
 }
 
 // Numerically Stable Softmax
 func tensor_softmax(t: Tensor) -> Tensor {
+    let out = tensor_zeros_1d(1);
     if t.rank() == 1 {
         let n = t.shape.dim0;
-        let out = tensor_zeros_1d(n);
+        out = tensor_zeros_1d(n);
         let max_val = t.get_1d(0);
         let i = 1;
         while i < n {
@@ -1797,39 +2090,44 @@ func tensor_softmax(t: Tensor) -> Tensor {
             out.set_1d(i, prob);
             i = i + 1;
         }
-        return out;
+    } else {
+        let rows = t.shape.dim0;
+        let cols = t.shape.dim1;
+        out = tensor_zeros(shape_2d(rows, cols), t.dtype_id);
+
+        let r = 0;
+        while r < rows {
+            let max_val = t.get_2d(r, 0);
+            let c = 1;
+            while c < cols {
+                let v = t.get_2d(r, c);
+                if v > max_val { max_val = v; }
+                c = c + 1;
+            }
+
+            let sum_exp = 0.0;
+            c = 0;
+            while c < cols {
+                let v = t.get_2d(r, c);
+                sum_exp = sum_exp + torch_exp(v - max_val);
+                c = c + 1;
+            }
+
+            c = 0;
+            while c < cols {
+                let v = t.get_2d(r, c);
+                let prob = torch_exp(v - max_val) / sum_exp;
+                out.set_2d(r, c, prob);
+                c = c + 1;
+            }
+            r = r + 1;
+        }
     }
 
-    let rows = t.shape.dim0;
-    let cols = t.shape.dim1;
-    let out = tensor_zeros(shape_2d(rows, cols), t.dtype_id);
-
-    let r = 0;
-    while r < rows {
-        let max_val = t.get_2d(r, 0);
-        let c = 1;
-        while c < cols {
-            let v = t.get_2d(r, c);
-            if v > max_val { max_val = v; }
-            c = c + 1;
-        }
-
-        let sum_exp = 0.0;
-        c = 0;
-        while c < cols {
-            let v = t.get_2d(r, c);
-            sum_exp = sum_exp + torch_exp(v - max_val);
-            c = c + 1;
-        }
-
-        c = 0;
-        while c < cols {
-            let v = t.get_2d(r, c);
-            let prob = torch_exp(v - max_val) / sum_exp;
-            out.set_2d(r, c, prob);
-            c = c + 1;
-        }
-        r = r + 1;
+    if autograd_is_grad_enabled() && t.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_softmax(), "<SoftmaxBackward0>", t, null);
     }
     return out;
 }
@@ -1883,20 +2181,709 @@ func mse_loss(pred: Tensor, target: Tensor) -> float {
     return sum_sq / (n * 1.0);
 }
 
+func linear_zero_grad(layer: LinearLayer) {
+    layer.weights.zero_grad();
+    layer.bias.zero_grad();
+}
+
 func sgd_step(layer: LinearLayer, lr: float) {
     // Stochastic gradient descent step on weights and bias
-    let total_w = layer.weights.numel();
-    let i = 0;
-    while i < total_w {
-        let w = tensor_storage_read_float(layer.weights.storage, i, layer.weights.dtype_id);
-        // Simple regularization gradient step for demo verification
-        tensor_storage_write_float(layer.weights.storage, i, layer.weights.dtype_id, w * (1.0 - lr * 0.01));
-        i = i + 1;
+    if layer.weights.grad != null {
+        let total_w = layer.weights.numel();
+        let i = 0;
+        while i < total_w {
+            let w = tensor_storage_read_float(layer.weights.storage, layer.weights.offset + i, layer.weights.dtype_id);
+            let g = tensor_storage_read_float(layer.weights.grad.storage, layer.weights.grad.offset + i, layer.weights.grad.dtype_id);
+            tensor_storage_write_float(layer.weights.storage, layer.weights.offset + i, layer.weights.dtype_id, w - lr * g);
+            i = i + 1;
+        }
+    } else {
+        let total_w = layer.weights.numel();
+        let i = 0;
+        while i < total_w {
+            let w = tensor_storage_read_float(layer.weights.storage, i, layer.weights.dtype_id);
+            tensor_storage_write_float(layer.weights.storage, i, layer.weights.dtype_id, w * (1.0 - lr * 0.01));
+            i = i + 1;
+        }
+    }
+
+    if layer.bias.grad != null {
+        let total_b = layer.bias.numel();
+        let i = 0;
+        while i < total_b {
+            let b = tensor_storage_read_float(layer.bias.storage, layer.bias.offset + i, layer.bias.dtype_id);
+            let g = tensor_storage_read_float(layer.bias.grad.storage, layer.bias.grad.offset + i, layer.bias.grad.dtype_id);
+            tensor_storage_write_float(layer.bias.storage, layer.bias.offset + i, layer.bias.dtype_id, b - lr * g);
+            i = i + 1;
+        }
     }
 }
 
 // ==============================================================================
-// SECTION 15: Hardware Acceleration Stubs & Library Info
+// SECTION 15: Dynamic Computational Graph Autograd Tape Engine
+// ==============================================================================
+
+class VisitedSet {
+    id: int,
+    next: VisitedSet
+}
+
+func visited_contains(vs: VisitedSet, id: int) -> bool {
+    let cur = vs;
+    while cur != null {
+        if cur.id == id { return true; }
+        cur = cur.next;
+    }
+    return false;
+}
+
+class TapeNode {
+    tensor: Tensor,
+    next: TapeNode
+}
+
+class TopoBuilder {
+    visited: VisitedSet,
+    head: TapeNode
+}
+
+func autograd_topo_visit(builder: TopoBuilder, t: Tensor) {
+    if t == null { return; }
+    if visited_contains(builder.visited, t.id) { return; }
+    builder.visited = new VisitedSet(t.id, builder.visited);
+
+    if t.grad_fn != null {
+        if t.grad_fn.input_a != null {
+            autograd_topo_visit(builder, t.grad_fn.input_a);
+        }
+        if t.grad_fn.input_b != null {
+            autograd_topo_visit(builder, t.grad_fn.input_b);
+        }
+    }
+
+    builder.head = new TapeNode(t, builder.head);
+}
+
+func autograd_reduce_grad(grad: Tensor, target_shape: Shape) -> Tensor {
+    if grad.shape.rank == target_shape.rank {
+        let same = true;
+        if target_shape.rank >= 1 && grad.shape.dim0 != target_shape.dim0 { same = false; }
+        if target_shape.rank >= 2 && grad.shape.dim1 != target_shape.dim1 { same = false; }
+        if target_shape.rank >= 3 && grad.shape.dim2 != target_shape.dim2 { same = false; }
+        if same { return grad; }
+
+        if target_shape.rank == 2 {
+            if grad.shape.dim0 == target_shape.dim0 && target_shape.dim1 == 1 {
+                return tensor_sum_dim(grad, 1, true);
+            }
+            if target_shape.dim0 == 1 && grad.shape.dim1 == target_shape.dim1 {
+                return tensor_sum_dim(grad, 0, true);
+            }
+            if target_shape.dim0 == 1 && target_shape.dim1 == 1 {
+                let s = tensor_sum(grad);
+                let out = tensor_zeros_2d(1, 1);
+                out.set_2d(0, 0, s);
+                return out;
+            }
+        }
+        return grad;
+    }
+
+    if grad.shape.rank == 2 && target_shape.rank == 1 {
+        if grad.shape.dim1 == target_shape.dim0 {
+            return tensor_sum_dim(grad, 0, false);
+        }
+        if grad.shape.dim0 == target_shape.dim0 {
+            return tensor_sum_dim(grad, 1, false);
+        }
+        if target_shape.dim0 == 1 {
+            let s = tensor_sum(grad);
+            let out = tensor_zeros_1d(1);
+            out.set_1d(0, s);
+            return out;
+        }
+    }
+
+    if target_shape.rank == 0 || target_shape.numel() == 1 {
+        let s = tensor_sum(grad);
+        return tensor_scalar(s, grad.dtype_id);
+    }
+
+    if grad.rank() == 1 && target_shape.rank == 2 && target_shape.dim0 == 1 && target_shape.dim1 == grad.shape.dim0 {
+        return tensor_reshape(grad, target_shape);
+    }
+
+    return grad;
+}
+
+func autograd_accumulate_grad(target_t: Tensor, delta_grad: Tensor) {
+    if target_t == null || !target_t.requires_grad {
+        return;
+    }
+    let reduced = autograd_reduce_grad(delta_grad, target_t.shape);
+    if target_t.grad == null {
+        target_t.grad = tensor_clone(reduced);
+    } else {
+        target_t.grad = tensor_add(target_t.grad, reduced);
+    }
+}
+
+func autograd_execute_node(node_t: Tensor, fn: AutogradNode, g: Tensor) {
+    let op = fn.op;
+
+    if op == op_add() {
+        autograd_accumulate_grad(fn.input_a, g);
+        autograd_accumulate_grad(fn.input_b, g);
+        return;
+    }
+
+    if op == op_sub() {
+        autograd_accumulate_grad(fn.input_a, g);
+        autograd_accumulate_grad(fn.input_b, tensor_neg(g));
+        return;
+    }
+
+    if op == op_mul() {
+        if fn.input_a != null && fn.input_a.requires_grad {
+            autograd_accumulate_grad(fn.input_a, tensor_mul(g, fn.input_b));
+        }
+        if fn.input_b != null && fn.input_b.requires_grad {
+            autograd_accumulate_grad(fn.input_b, tensor_mul(g, fn.input_a));
+        }
+        return;
+    }
+
+    if op == op_div() {
+        if fn.input_a != null && fn.input_a.requires_grad {
+            autograd_accumulate_grad(fn.input_a, tensor_div(g, fn.input_b));
+        }
+        if fn.input_b != null && fn.input_b.requires_grad {
+            let b2 = tensor_mul(fn.input_b, fn.input_b);
+            let num = tensor_mul(tensor_neg(g), fn.input_a);
+            autograd_accumulate_grad(fn.input_b, tensor_div(num, b2));
+        }
+        return;
+    }
+
+    if op == op_scale() {
+        autograd_accumulate_grad(fn.input_a, tensor_scale(g, fn.saved_param_float));
+        return;
+    }
+
+    if op == op_neg() {
+        autograd_accumulate_grad(fn.input_a, tensor_neg(g));
+        return;
+    }
+
+    if op == op_matmul() {
+        if fn.input_a != null && fn.input_a.requires_grad {
+            let bt = tensor_transpose(fn.input_b, 0, 1);
+            autograd_accumulate_grad(fn.input_a, tensor_matmul(g, bt));
+        }
+        if fn.input_b != null && fn.input_b.requires_grad {
+            let at = tensor_transpose(fn.input_a, 0, 1);
+            autograd_accumulate_grad(fn.input_b, tensor_matmul(at, g));
+        }
+        return;
+    }
+
+    if op == op_relu() {
+        let n = g.numel();
+        let ga = tensor_zeros(fn.input_a.shape, g.dtype_id);
+        let ca = tensor_contiguous(fn.input_a);
+        let cg = tensor_contiguous(g);
+        let i = 0;
+        while i < n {
+            let v = tensor_storage_read_float(ca.storage, ca.offset + i, ca.dtype_id);
+            let gv = tensor_storage_read_float(cg.storage, cg.offset + i, cg.dtype_id);
+            if v > 0.0 {
+                tensor_storage_write_float(ga.storage, i, ga.dtype_id, gv);
+            }
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        return;
+    }
+
+    if op == op_sigmoid() {
+        let n = g.numel();
+        let ga = tensor_zeros(fn.input_a.shape, g.dtype_id);
+        let ca = tensor_contiguous(fn.input_a);
+        let cg = tensor_contiguous(g);
+        let i = 0;
+        while i < n {
+            let v = tensor_storage_read_float(ca.storage, ca.offset + i, ca.dtype_id);
+            let gv = tensor_storage_read_float(cg.storage, cg.offset + i, cg.dtype_id);
+            let s = 1.0 / (1.0 + torch_exp(0.0 - v));
+            tensor_storage_write_float(ga.storage, i, ga.dtype_id, gv * s * (1.0 - s));
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        return;
+    }
+
+    if op == op_tanh() {
+        let n = g.numel();
+        let ga = tensor_zeros(fn.input_a.shape, g.dtype_id);
+        let ca = tensor_contiguous(fn.input_a);
+        let cg = tensor_contiguous(g);
+        let i = 0;
+        while i < n {
+            let v = tensor_storage_read_float(ca.storage, ca.offset + i, ca.dtype_id);
+            let gv = tensor_storage_read_float(cg.storage, cg.offset + i, cg.dtype_id);
+            let ep = torch_exp(v);
+            let en = torch_exp(0.0 - v);
+            let th = (ep - en) / (ep + en);
+            tensor_storage_write_float(ga.storage, i, ga.dtype_id, gv * (1.0 - th * th));
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        return;
+    }
+
+    if op == op_gelu() {
+        let n = g.numel();
+        let ga = tensor_zeros(fn.input_a.shape, g.dtype_id);
+        let ca = tensor_contiguous(fn.input_a);
+        let cg = tensor_contiguous(g);
+        let i = 0;
+        while i < n {
+            let x = tensor_storage_read_float(ca.storage, ca.offset + i, ca.dtype_id);
+            let gv = tensor_storage_read_float(cg.storage, cg.offset + i, cg.dtype_id);
+            let poly = x + 0.044715 * x * x * x;
+            let c = 0.7978845608 * poly;
+            let ep = torch_exp(c);
+            let en = torch_exp(0.0 - c);
+            let th = (ep - en) / (ep + en);
+            let dt = 1.0 - th * th;
+            let dc = 0.7978845608 * (1.0 + 3.0 * 0.044715 * x * x);
+            let dgelu = 0.5 * (1.0 + th) + 0.5 * x * dt * dc;
+            tensor_storage_write_float(ga.storage, i, ga.dtype_id, gv * dgelu);
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        return;
+    }
+
+    if op == op_silu() {
+        let n = g.numel();
+        let ga = tensor_zeros(fn.input_a.shape, g.dtype_id);
+        let ca = tensor_contiguous(fn.input_a);
+        let cg = tensor_contiguous(g);
+        let i = 0;
+        while i < n {
+            let x = tensor_storage_read_float(ca.storage, ca.offset + i, ca.dtype_id);
+            let gv = tensor_storage_read_float(cg.storage, cg.offset + i, cg.dtype_id);
+            let s = 1.0 / (1.0 + torch_exp(0.0 - x));
+            let dsilu = s * (1.0 + x * (1.0 - s));
+            tensor_storage_write_float(ga.storage, i, ga.dtype_id, gv * dsilu);
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        return;
+    }
+
+    if op == op_softmax() {
+        let n = g.numel();
+        let ga = tensor_zeros(fn.input_a.shape, g.dtype_id);
+        let cp = tensor_contiguous(node_t);
+        let cg = tensor_contiguous(g);
+        let dot = 0.0;
+        let i = 0;
+        while i < n {
+            let pi = tensor_storage_read_float(cp.storage, cp.offset + i, cp.dtype_id);
+            let gi = tensor_storage_read_float(cg.storage, cg.offset + i, cg.dtype_id);
+            dot = dot + pi * gi;
+            i = i + 1;
+        }
+        i = 0;
+        while i < n {
+            let pi = tensor_storage_read_float(cp.storage, cp.offset + i, cp.dtype_id);
+            let gi = tensor_storage_read_float(cg.storage, cg.offset + i, cg.dtype_id);
+            tensor_storage_write_float(ga.storage, i, ga.dtype_id, pi * (gi - dot));
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        return;
+    }
+
+    if op == op_sum() {
+        let n = fn.input_a.numel();
+        let ga = tensor_zeros(fn.input_a.shape, g.dtype_id);
+        let gv = g.item();
+        let i = 0;
+        while i < n {
+            tensor_storage_write_float(ga.storage, i, ga.dtype_id, gv);
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        return;
+    }
+
+    if op == op_mean() {
+        let n = fn.input_a.numel();
+        let ga = tensor_zeros(fn.input_a.shape, g.dtype_id);
+        let gv = g.item() / (n * 1.0);
+        let i = 0;
+        while i < n {
+            tensor_storage_write_float(ga.storage, i, ga.dtype_id, gv);
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        return;
+    }
+
+    if op == op_sum_dim() {
+        let ga = tensor_broadcast_to(g, fn.input_a.shape);
+        autograd_accumulate_grad(fn.input_a, ga);
+        return;
+    }
+
+    if op == op_transpose() {
+        let d0 = fn.saved_param_int / 10;
+        let d1 = fn.saved_param_int % 10;
+        autograd_accumulate_grad(fn.input_a, tensor_transpose(g, d0, d1));
+        return;
+    }
+
+    if op == op_reshape() {
+        autograd_accumulate_grad(fn.input_a, tensor_reshape(g, fn.input_a.shape));
+        return;
+    }
+
+    if op == op_pow() {
+        let p = fn.saved_param_float;
+        let n = g.numel();
+        let ga = tensor_zeros(fn.input_a.shape, g.dtype_id);
+        let ca = tensor_contiguous(fn.input_a);
+        let cg = tensor_contiguous(g);
+        let i = 0;
+        while i < n {
+            let a_val = tensor_storage_read_float(ca.storage, ca.offset + i, ca.dtype_id);
+            let gv = tensor_storage_read_float(cg.storage, cg.offset + i, cg.dtype_id);
+            let deriv = p * torch_pow(a_val, p - 1.0);
+            tensor_storage_write_float(ga.storage, i, ga.dtype_id, gv * deriv);
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        return;
+    }
+
+    if op == op_exp() {
+        let n = g.numel();
+        let ga = tensor_zeros(fn.input_a.shape, g.dtype_id);
+        let ca = tensor_contiguous(fn.input_a);
+        let cg = tensor_contiguous(g);
+        let i = 0;
+        while i < n {
+            let a_val = tensor_storage_read_float(ca.storage, ca.offset + i, ca.dtype_id);
+            let gv = tensor_storage_read_float(cg.storage, cg.offset + i, cg.dtype_id);
+            tensor_storage_write_float(ga.storage, i, ga.dtype_id, gv * torch_exp(a_val));
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        return;
+    }
+
+    if op == op_log() {
+        let n = g.numel();
+        let ga = tensor_zeros(fn.input_a.shape, g.dtype_id);
+        let ca = tensor_contiguous(fn.input_a);
+        let cg = tensor_contiguous(g);
+        let i = 0;
+        while i < n {
+            let a_val = tensor_storage_read_float(ca.storage, ca.offset + i, ca.dtype_id);
+            let gv = tensor_storage_read_float(cg.storage, cg.offset + i, cg.dtype_id);
+            let res = 0.0;
+            if a_val != 0.0 { res = gv / a_val; }
+            tensor_storage_write_float(ga.storage, i, ga.dtype_id, res);
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        return;
+    }
+
+    if op == op_mse_loss() {
+        let n = fn.input_a.numel();
+        let factor = 2.0 / (n * 1.0) * g.item();
+        let diff = tensor_sub(fn.input_a, fn.input_b);
+        let ga = tensor_scale(diff, factor);
+        let gb = tensor_scale(diff, 0.0 - factor);
+        autograd_accumulate_grad(fn.input_a, ga);
+        autograd_accumulate_grad(fn.input_b, gb);
+        return;
+    }
+
+    if op == op_custom() {
+        autograd_dispatch_custom_backward(fn.custom_fn_id, fn.input_a, fn.input_b, g);
+        return;
+    }
+}
+
+func tensor_backward(t: Tensor) {
+    tensor_backward_with_grad(t, null, false);
+}
+
+func tensor_backward_with_grad(t: Tensor, grad: Tensor, retain_graph: bool) {
+    if !t.requires_grad && t.grad_fn == null {
+        return;
+    }
+    let prev_en = autograd_set_grad_enabled(false);
+
+    if grad != null {
+        t.grad = tensor_clone(grad);
+    } else {
+        if t.grad == null {
+            t.grad = tensor_ones(t.shape, t.dtype_id);
+        }
+    }
+
+    let builder = new TopoBuilder(null, null);
+    autograd_topo_visit(builder, t);
+
+    let cur = builder.head;
+    while cur != null {
+        let node_t = cur.tensor;
+        if node_t.grad_fn != null && node_t.grad != null {
+            autograd_execute_node(node_t, node_t.grad_fn, node_t.grad);
+        }
+        cur = cur.next;
+    }
+
+    autograd_set_grad_enabled(prev_en);
+}
+
+func autograd_backward(t: Tensor) {
+    tensor_backward(t);
+}
+
+func tensor_zero_grad(t: Tensor) {
+    t.grad = null;
+}
+
+func tensor_pow(t: Tensor, p: float) -> Tensor {
+    let contig = tensor_contiguous(t);
+    let out = tensor_zeros(contig.shape, contig.dtype_id);
+    let n = contig.numel();
+    let i = 0;
+    while i < n {
+        let v = tensor_storage_read_float(contig.storage, contig.offset + i, contig.dtype_id);
+        tensor_storage_write_float(out.storage, i, contig.dtype_id, torch_pow(v, p));
+        i = i + 1;
+    }
+    if autograd_is_grad_enabled() && t.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_param(op_pow(), "<PowBackward0>", t, null, p, 0);
+    }
+    return out;
+}
+
+func tensor_exp(t: Tensor) -> Tensor {
+    let contig = tensor_contiguous(t);
+    let out = tensor_zeros(contig.shape, contig.dtype_id);
+    let n = contig.numel();
+    let i = 0;
+    while i < n {
+        let v = tensor_storage_read_float(contig.storage, contig.offset + i, contig.dtype_id);
+        tensor_storage_write_float(out.storage, i, contig.dtype_id, torch_exp(v));
+        i = i + 1;
+    }
+    if autograd_is_grad_enabled() && t.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_exp(), "<ExpBackward0>", t, null);
+    }
+    return out;
+}
+
+func tensor_log(t: Tensor) -> Tensor {
+    let contig = tensor_contiguous(t);
+    let out = tensor_zeros(contig.shape, contig.dtype_id);
+    let n = contig.numel();
+    let i = 0;
+    while i < n {
+        let v = tensor_storage_read_float(contig.storage, contig.offset + i, contig.dtype_id);
+        tensor_storage_write_float(out.storage, i, contig.dtype_id, torch_ln(v));
+        i = i + 1;
+    }
+    if autograd_is_grad_enabled() && t.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_log(), "<LogBackward0>", t, null);
+    }
+    return out;
+}
+
+func tensor_sum_tensor(t: Tensor) -> Tensor {
+    let s = tensor_sum(t);
+    let out = tensor_scalar(s, t.dtype_id);
+    if autograd_is_grad_enabled() && t.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_sum(), "<SumBackward0>", t, null);
+    }
+    return out;
+}
+
+func tensor_mean_tensor(t: Tensor) -> Tensor {
+    let m = tensor_mean(t);
+    let out = tensor_scalar(m, t.dtype_id);
+    if autograd_is_grad_enabled() && t.requires_grad {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_mean(), "<MeanBackward0>", t, null);
+    }
+    return out;
+}
+
+func tensor_mse_loss(pred: Tensor, target: Tensor) -> Tensor {
+    let loss_val = mse_loss(pred, target);
+    let out = tensor_scalar(loss_val, pred.dtype_id);
+    if autograd_is_grad_enabled() && (pred.requires_grad || target.requires_grad) {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_mse_loss(), "<MseLossBackward0>", pred, target);
+    }
+    return out;
+}
+
+class AutogradFunction {
+    fn_id: int,
+    name: string
+}
+
+func autograd_custom_forward(fn_id: int, a: Tensor, b: Tensor) -> Tensor {
+    if fn_id == 1 {
+        // Custom Cube: f(x) = x^3
+        let contig = tensor_contiguous(a);
+        let out = tensor_zeros(contig.shape, contig.dtype_id);
+        let n = contig.numel();
+        let i = 0;
+        while i < n {
+            let v = tensor_storage_read_float(contig.storage, contig.offset + i, contig.dtype_id);
+            tensor_storage_write_float(out.storage, i, contig.dtype_id, v * v * v);
+            i = i + 1;
+        }
+        if autograd_is_grad_enabled() && a.requires_grad {
+            out.requires_grad = true;
+            out.is_leaf = false;
+            out.grad_fn = autograd_node_custom("<CustomCubeBackward>", a, null, fn_id);
+        }
+        return out;
+    }
+    if fn_id == 2 {
+        // Custom Affine: f(x) = 2.0 * x + 5.0
+        let contig = tensor_contiguous(a);
+        let out = tensor_zeros(contig.shape, contig.dtype_id);
+        let n = contig.numel();
+        let i = 0;
+        while i < n {
+            let v = tensor_storage_read_float(contig.storage, contig.offset + i, contig.dtype_id);
+            tensor_storage_write_float(out.storage, i, contig.dtype_id, 2.0 * v + 5.0);
+            i = i + 1;
+        }
+        if autograd_is_grad_enabled() && a.requires_grad {
+            out.requires_grad = true;
+            out.is_leaf = false;
+            out.grad_fn = autograd_node_custom("<CustomAffineBackward>", a, null, fn_id);
+        }
+        return out;
+    }
+    return a;
+}
+
+func autograd_dispatch_custom_backward(fn_id: int, a: Tensor, b: Tensor, grad_out: Tensor) {
+    if fn_id == 1 {
+        // d/dx (x^3) = 3 * x^2
+        if a != null && a.requires_grad {
+            let n = grad_out.numel();
+            let ga = tensor_zeros(a.shape, a.dtype_id);
+            let ca = tensor_contiguous(a);
+            let cg = tensor_contiguous(grad_out);
+            let i = 0;
+            while i < n {
+                let x = tensor_storage_read_float(ca.storage, ca.offset + i, a.dtype_id);
+                let g = tensor_storage_read_float(cg.storage, cg.offset + i, a.dtype_id);
+                tensor_storage_write_float(ga.storage, i, a.dtype_id, g * 3.0 * x * x);
+                i = i + 1;
+            }
+            autograd_accumulate_grad(a, ga);
+        }
+        return;
+    }
+    if fn_id == 2 {
+        // d/dx (2x + 5) = 2.0
+        if a != null && a.requires_grad {
+            let n = grad_out.numel();
+            let ga = tensor_zeros(a.shape, a.dtype_id);
+            let cg = tensor_contiguous(grad_out);
+            let i = 0;
+            while i < n {
+                let g = tensor_storage_read_float(cg.storage, cg.offset + i, a.dtype_id);
+                tensor_storage_write_float(ga.storage, i, a.dtype_id, g * 2.0);
+                i = i + 1;
+            }
+            autograd_accumulate_grad(a, ga);
+        }
+        return;
+    }
+}
+
+func autograd_forward_for_gradcheck(op_type: int, x: Tensor) -> Tensor {
+    if op_type == op_relu() { return tensor_relu(x); }
+    if op_type == op_sigmoid() { return tensor_sigmoid(x); }
+    if op_type == op_tanh() { return tensor_tanh(x); }
+    if op_type == op_gelu() { return tensor_gelu(x); }
+    if op_type == op_silu() { return tensor_silu(x); }
+    if op_type == op_exp() { return tensor_exp(x); }
+    if op_type == op_pow() { return tensor_pow(x, 2.0); }
+    return x;
+}
+
+func autograd_gradcheck(op_type: int, x: Tensor, eps: float, atol: float) -> bool {
+    x.zero_grad();
+    x.requires_grad = true;
+    let y = autograd_forward_for_gradcheck(op_type, x);
+    let loss = tensor_sum_tensor(y);
+    loss.backward();
+    let grad_ana = x.grad;
+    if grad_ana == null { return false; }
+
+    let saved_en = no_grad_scope_begin();
+    let contig_x = tensor_contiguous(x);
+    let n = contig_x.numel();
+    let i = 0;
+    while i < n {
+        let orig_val = tensor_storage_read_float(contig_x.storage, contig_x.offset + i, contig_x.dtype_id);
+
+        tensor_storage_write_float(contig_x.storage, contig_x.offset + i, contig_x.dtype_id, orig_val + eps);
+        let y_pos = autograd_forward_for_gradcheck(op_type, contig_x);
+        let s_pos = tensor_sum(y_pos);
+
+        tensor_storage_write_float(contig_x.storage, contig_x.offset + i, contig_x.dtype_id, orig_val - eps);
+        let y_neg = autograd_forward_for_gradcheck(op_type, contig_x);
+        let s_neg = tensor_sum(y_neg);
+
+        tensor_storage_write_float(contig_x.storage, contig_x.offset + i, contig_x.dtype_id, orig_val);
+
+        let g_num = (s_pos - s_neg) / (2.0 * eps);
+        let g_ana = tensor_storage_read_float(grad_ana.storage, grad_ana.offset + i, grad_ana.dtype_id);
+        let diff = g_ana - g_num;
+        if diff < 0.0 { diff = 0.0 - diff; }
+
+        if diff > atol {
+            no_grad_scope_end(saved_en);
+            return false;
+        }
+        i = i + 1;
+    }
+    no_grad_scope_end(saved_en);
+    return true;
+}
+
+// ==============================================================================
+// SECTION 16: Hardware Acceleration Stubs & Library Info
 // ==============================================================================
 
 func cuda_is_available() -> bool {

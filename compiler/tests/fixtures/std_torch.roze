@@ -402,9 +402,262 @@ func test_suite_9_neural_network() {
     println("SUITE 9 PASSED: roze-torch neural activations, linear layer and SGD optimizer");
 }
 
+// -----------------------------------------------------------------------------
+// Suite 10: Dynamic Autograd Tape Recording & GradFn Inspection (M8-T02)
+// -----------------------------------------------------------------------------
+func test_suite_10_autograd_tape_and_grad_fn() {
+    let a = tensor_scalar(2.0, dtype_float32());
+    let b = tensor_scalar(3.0, dtype_float32());
+    a.set_requires_grad(true);
+    b.set_requires_grad(true);
+
+    assert_true(a.get_is_leaf(), "a must be leaf");
+    assert_true(b.get_is_leaf(), "b must be leaf");
+    assert_true(a.get_grad_fn() == null, "Leaf tensor has null grad_fn");
+
+    let c = tensor_add(a, b);
+    assert_true(c.requires_grad, "c requires grad");
+    assert_true(!c.get_is_leaf(), "c not leaf");
+    assert_true(c.get_grad_fn() != null, "c has grad_fn");
+    assert_true(c.get_grad_fn().name() == "<AddBackward0>", "c grad_fn <AddBackward0>");
+
+    let d = tensor_mul(a, b);
+    assert_true(d.get_grad_fn().name() == "<MulBackward0>", "d grad_fn <MulBackward0>");
+
+    let e = tensor_sub(a, b);
+    assert_true(e.get_grad_fn().name() == "<SubBackward0>", "e grad_fn <SubBackward0>");
+    let f = tensor_div(a, b);
+    assert_true(f.get_grad_fn().name() == "<DivBackward0>", "f grad_fn <DivBackward0>");
+
+    let g = tensor_scale(a, 4.0);
+    assert_true(g.get_grad_fn().name() == "<ScaleBackward0>", "g grad_fn <ScaleBackward0>");
+
+    let r = tensor_relu(a);
+    assert_true(r.get_grad_fn().name() == "<ReluBackward0>", "r grad_fn <ReluBackward0>");
+    let sig = tensor_sigmoid(a);
+    assert_true(sig.get_grad_fn().name() == "<SigmoidBackward0>", "sig grad_fn <SigmoidBackward0>");
+    let th = tensor_tanh(a);
+    assert_true(th.get_grad_fn().name() == "<TanhBackward0>", "th grad_fn <TanhBackward0>");
+
+    let p = tensor_pow(a, 3.0);
+    assert_true(p.get_grad_fn().name() == "<PowBackward0>", "p grad_fn <PowBackward0>");
+    let s = tensor_sum_tensor(a);
+    assert_true(s.get_grad_fn().name() == "<SumBackward0>", "s grad_fn <SumBackward0>");
+
+    println("SUITE 10 PASSED: roze-torch dynamic autograd tape recording and grad_fn inspection");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 11: Reverse-Mode Scalar & Vector Automatic Differentiation (M8-T02)
+// -----------------------------------------------------------------------------
+func test_suite_11_scalar_and_vector_backprop() {
+    // 1. Scalar derivative: y = x^2, dy/dx = 2x. At x = 3, dy/dx = 6
+    let x = tensor_scalar(3.0, dtype_float32());
+    x.set_requires_grad(true);
+    let y = tensor_mul(x, x);
+    y.backward();
+    assert_true(x.get_grad() != null, "x has grad");
+    assert_true(approx_eq(x.get_grad().item(), 6.0, 0.001), "dy/dx for x^2 at 3 == 6.0");
+
+    // 2. Polynomial: y = 2*x^2 + 5*x - 3. At x = 2: dy/dx = 4x + 5 = 13
+    let x2 = tensor_scalar(2.0, dtype_float32());
+    x2.set_requires_grad(true);
+    let term1 = tensor_scale(tensor_mul(x2, x2), 2.0);
+    let term2 = tensor_scale(x2, 5.0);
+    let poly = tensor_sub(tensor_add(term1, term2), tensor_scalar(3.0, dtype_float32()));
+    poly.backward();
+    assert_true(approx_eq(x2.get_grad().item(), 13.0, 0.001), "dy/dx for 2x^2+5x-3 at 2 == 13.0");
+
+    // 3. Vector arithmetic: v = [1.0, 2.0, 3.0], out = 2.0 * v + 1.0, loss = sum(out)
+    let v = tensor_zeros_1d(3);
+    v.set_1d(0, 1.0); v.set_1d(1, 2.0); v.set_1d(2, 3.0);
+    v.set_requires_grad(true);
+
+    let scaled = tensor_scale(v, 2.0);
+    let shifted = tensor_add(scaled, tensor_ones_1d(3));
+    let loss = tensor_sum_tensor(shifted);
+    loss.backward();
+
+    assert_true(v.get_grad() != null, "Vector v has grad");
+    assert_true(approx_eq(v.get_grad().get_1d(0), 2.0, 0.001), "v.grad[0] == 2.0");
+    assert_true(approx_eq(v.get_grad().get_1d(1), 2.0, 0.001), "v.grad[1] == 2.0");
+    assert_true(approx_eq(v.get_grad().get_1d(2), 2.0, 0.001), "v.grad[2] == 2.0");
+
+    println("SUITE 11 PASSED: roze-torch reverse-mode scalar and vector automatic differentiation");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 12: Branched DAG Gradient Accumulation & zero_grad (M8-T02)
+// -----------------------------------------------------------------------------
+func test_suite_12_branching_and_accumulation() {
+    let x = tensor_scalar(4.0, dtype_float32());
+    x.set_requires_grad(true);
+
+    let branch1 = tensor_mul(x, x);
+    let branch2 = tensor_scale(x, 3.0);
+    let y = tensor_add(branch1, branch2);
+    y.backward();
+
+    assert_true(approx_eq(x.get_grad().item(), 11.0, 0.001), "Branching gradient == 11.0");
+
+    let y2 = tensor_add(tensor_mul(x, x), tensor_scale(x, 3.0));
+    y2.backward();
+    assert_true(approx_eq(x.get_grad().item(), 22.0, 0.001), "Accumulates without zero_grad == 22.0");
+
+    x.zero_grad();
+    assert_true(x.get_grad() == null, "zero_grad resets grad");
+
+    let y3 = tensor_add(tensor_mul(x, x), tensor_scale(x, 3.0));
+    y3.backward();
+    assert_true(approx_eq(x.get_grad().item(), 11.0, 0.001), "Fresh gradient == 11.0");
+
+    println("SUITE 12 PASSED: roze-torch branched DAG gradient accumulation and zero_grad");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 13: Matrix GEMM Backpropagation (M8-T02)
+// -----------------------------------------------------------------------------
+func test_suite_13_matrix_gemm_backprop() {
+    let x = tensor_zeros_2d(1, 2);
+    x.set_2d(0, 0, 1.0); x.set_2d(0, 1, 2.0);
+    x.set_requires_grad(true);
+
+    let w = tensor_zeros_2d(2, 2);
+    w.set_2d(0, 0, 1.0); w.set_2d(0, 1, 3.0);
+    w.set_2d(1, 0, 2.0); w.set_2d(1, 1, 4.0);
+    w.set_requires_grad(true);
+
+    let y = tensor_matmul(x, w);
+    let loss = tensor_sum_tensor(y);
+    loss.backward();
+
+    assert_true(approx_eq(x.get_grad().get_2d(0, 0), 4.0, 0.001), "dL/dX[0,0] == 4.0");
+    assert_true(approx_eq(x.get_grad().get_2d(0, 1), 6.0, 0.001), "dL/dX[0,1] == 6.0");
+
+    assert_true(approx_eq(w.get_grad().get_2d(0, 0), 1.0, 0.001), "dL/dW[0,0] == 1.0");
+    assert_true(approx_eq(w.get_grad().get_2d(0, 1), 1.0, 0.001), "dL/dW[0,1] == 1.0");
+    assert_true(approx_eq(w.get_grad().get_2d(1, 0), 2.0, 0.001), "dL/dW[1,0] == 2.0");
+    assert_true(approx_eq(w.get_grad().get_2d(1, 1), 2.0, 0.001), "dL/dW[1,1] == 2.0");
+
+    println("SUITE 13 PASSED: roze-torch matrix GEMM backward pass and multi-dimensional backpropagation");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 14: Neural Network Training Loop with Real SGD (M8-T02)
+// -----------------------------------------------------------------------------
+func test_suite_14_mlp_training_loop() {
+    let layer = linear_new(2, 1);
+    let x = tensor_zeros_2d(1, 2);
+    x.set_2d(0, 0, 1.0); x.set_2d(0, 1, 2.0);
+
+    let target = tensor_zeros_2d(1, 1);
+    target.set_2d(0, 0, 5.0);
+
+    let pred_init = linear_forward(layer, x);
+    let init_loss_val = tensor_mse_loss(pred_init, target).item();
+
+    let iter = 0;
+    while iter < 10 {
+        linear_zero_grad(layer);
+        let pred = linear_forward(layer, x);
+        let loss = tensor_mse_loss(pred, target);
+        loss.backward();
+
+        sgd_step(layer, 0.05);
+        iter = iter + 1;
+    }
+
+    let pred_final = linear_forward(layer, x);
+    let final_loss = tensor_mse_loss(pred_final, target).item();
+
+    assert_true(final_loss < init_loss_val, "Neural network loss must decrease with SGD");
+
+    println("SUITE 14 PASSED: roze-torch neural network training loop with in-place gradient accumulation and SGD");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 15: no_grad() Execution Scope (M8-T02)
+// -----------------------------------------------------------------------------
+func test_suite_15_no_grad_scope() {
+    let a = tensor_scalar(5.0, dtype_float32());
+    let b = tensor_scalar(3.0, dtype_float32());
+    a.set_requires_grad(true);
+    b.set_requires_grad(true);
+
+    let prev = no_grad_scope_begin();
+    assert_true(!autograd_is_grad_enabled(), "Disabled in no_grad");
+
+    let c = tensor_add(a, b);
+    assert_true(!c.requires_grad, "c no requires_grad");
+    assert_true(c.get_grad_fn() == null, "c no grad_fn");
+
+    no_grad_scope_end(prev);
+    assert_true(autograd_is_grad_enabled(), "Re-enabled after no_grad");
+
+    let d = tensor_add(a, b);
+    assert_true(d.requires_grad, "d requires_grad");
+    assert_true(d.get_grad_fn() != null, "d has grad_fn");
+
+    println("SUITE 15 PASSED: roze-torch no_grad execution scopes and dynamic graph isolation");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 16: Custom Autograd Functions (M8-T02)
+// -----------------------------------------------------------------------------
+func test_suite_16_custom_functions() {
+    let x = tensor_scalar(2.0, dtype_float32());
+    x.set_requires_grad(true);
+
+    let y = autograd_custom_forward(1, x, null);
+    assert_true(approx_eq(y.item(), 8.0, 0.001), "Cube forward == 8.0");
+    y.backward();
+    assert_true(approx_eq(x.get_grad().item(), 12.0, 0.001), "Cube deriv == 12.0");
+
+    x.zero_grad();
+    let y2 = autograd_custom_forward(2, x, null);
+    y2.backward();
+    assert_true(approx_eq(x.get_grad().item(), 2.0, 0.001), "Affine deriv == 2.0");
+
+    println("SUITE 16 PASSED: roze-torch custom autograd function definition and dispatch");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 17: Universal Numerical Gradient Checking (Finite Differences) (M8-T02)
+// -----------------------------------------------------------------------------
+func test_suite_17_numerical_gradcheck() {
+    let x = tensor_zeros_1d(3);
+    x.set_1d(0, 0.5); x.set_1d(1, 1.2); x.set_1d(2, 2.1);
+
+    let eps = 0.0001;
+    let atol = 0.01;
+
+    let check_sigmoid = autograd_gradcheck(op_sigmoid(), x, eps, atol);
+    assert_true(check_sigmoid, "Gradcheck Sigmoid");
+
+    let check_tanh = autograd_gradcheck(op_tanh(), x, eps, atol);
+    assert_true(check_tanh, "Gradcheck Tanh");
+
+    let check_relu = autograd_gradcheck(op_relu(), x, eps, atol);
+    assert_true(check_relu, "Gradcheck ReLU");
+
+    let check_gelu = autograd_gradcheck(op_gelu(), x, eps, atol);
+    assert_true(check_gelu, "Gradcheck GELU");
+
+    let check_silu = autograd_gradcheck(op_silu(), x, eps, atol);
+    assert_true(check_silu, "Gradcheck SiLU");
+
+    let check_pow = autograd_gradcheck(op_pow(), x, eps, atol);
+    assert_true(check_pow, "Gradcheck Pow");
+
+    let check_exp = autograd_gradcheck(op_exp(), x, eps, atol);
+    assert_true(check_exp, "Gradcheck Exp");
+
+    println("SUITE 17 PASSED: roze-torch universal numerical gradient checking against central finite differences");
+}
+
 func main() {
     println("==================================================================");
-    println("  ROZE-TORCH N-DIMENSIONAL TENSOR ENGINE & VECTOR ARITHMETIC SUITE");
+    println("  ROZE-TORCH N-DIMENSIONAL TENSOR ENGINE & AUTOGRAD TAPE SUITE    ");
     println("==================================================================");
 
     test_suite_1_shapes_and_strides();
@@ -416,6 +669,16 @@ func main() {
     test_suite_7_linear_algebra();
     test_suite_8_reductions();
     test_suite_9_neural_network();
+
+    // M8-T02 Suites
+    test_suite_10_autograd_tape_and_grad_fn();
+    test_suite_11_scalar_and_vector_backprop();
+    test_suite_12_branching_and_accumulation();
+    test_suite_13_matrix_gemm_backprop();
+    test_suite_14_mlp_training_loop();
+    test_suite_15_no_grad_scope();
+    test_suite_16_custom_functions();
+    test_suite_17_numerical_gradcheck();
 
     println("==================================================================");
     println("ALL SUITES COMPLETED: Roze-Torch N-Dimensional Tensor Engine 100% OPERATIONAL");

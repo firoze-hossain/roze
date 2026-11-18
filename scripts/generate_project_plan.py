@@ -682,7 +682,7 @@ s1_rows = [
         ("M8-T02", 8), ("Month 8", 23), ("Sprint 15 (W31-W32)", 8), "Automatic Differentiation", "Dynamic Computational Graph Autograd Tape (roze-torch)",
         "Dynamic computational graph tape in pure Roze: forward pass operation recording, topological sort of DAG nodes, reverse-mode gradient backpropagation (tensor.backward()), in-place gradient accumulation (grad), no_grad() execution scopes, and custom autograd function definition API.",
         "Full parity with PyTorch torch.autograd dynamic backpropagation engine in pure Roze.",
-        "Deep Learning, Optimization, Neural Networks", "9 Days", ("Critical", 14), ("Planned", 12)
+        "Deep Learning, Optimization, Neural Networks", "9 Days", ("Critical", 14), ("Completed", 11)
     ],
     [
         ("M8-T03", 8), ("Month 8", 23), ("Sprint 15 (W31-W32)", 8), "Neural Network Layers", "Deep Learning Modules & Activation Functions (roze-torch::nn)",

@@ -2277,6 +2277,14 @@ fn standard_torch_nd_tensor_suite() {
     assert!(stdout.contains("SUITE 7 PASSED: roze-torch tensor contractions (dot, matmul GEMM, bmm, tensordot)"));
     assert!(stdout.contains("SUITE 8 PASSED: roze-torch mathematical reductions and L1/L2 vector norms"));
     assert!(stdout.contains("SUITE 9 PASSED: roze-torch neural activations, linear layer and SGD optimizer"));
+    assert!(stdout.contains("SUITE 10 PASSED: roze-torch dynamic autograd tape recording and grad_fn inspection"));
+    assert!(stdout.contains("SUITE 11 PASSED: roze-torch reverse-mode scalar and vector automatic differentiation"));
+    assert!(stdout.contains("SUITE 12 PASSED: roze-torch branched DAG gradient accumulation and zero_grad"));
+    assert!(stdout.contains("SUITE 13 PASSED: roze-torch matrix GEMM backward pass and multi-dimensional backpropagation"));
+    assert!(stdout.contains("SUITE 14 PASSED: roze-torch neural network training loop with in-place gradient accumulation and SGD"));
+    assert!(stdout.contains("SUITE 15 PASSED: roze-torch no_grad execution scopes and dynamic graph isolation"));
+    assert!(stdout.contains("SUITE 16 PASSED: roze-torch custom autograd function definition and dispatch"));
+    assert!(stdout.contains("SUITE 17 PASSED: roze-torch universal numerical gradient checking against central finite differences"));
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze-Torch N-Dimensional Tensor Engine 100% OPERATIONAL"));
 }
 

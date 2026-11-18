@@ -1766,10 +1766,78 @@ long __roze_proc_self_pid(void) { return 0; }
 void __roze_proc_exit(long code) { (void)code; }
 long __roze_proc_signal(long pid, long sig) { (void)pid; (void)sig; return 0; }
 
-const char *__roze_sys_env_var(const char *key) { (void)key; return ""; }
-long __roze_sys_env_has(const char *key) { (void)key; return 0; }
-void __roze_sys_env_set(const char *key, const char *val) { (void)key; (void)val; }
-void __roze_sys_env_remove(const char *key) { (void)key; }
+static char __roze_env_keys[64][64];
+static char __roze_env_vals[64][128];
+static int __roze_env_count = 0;
+
+const char *__roze_sys_env_var(const char *key) {
+    if (!key) return "";
+    for (int i = 0; i < __roze_env_count; i++) {
+        const char *a = __roze_env_keys[i];
+        const char *b = key;
+        int match = 1;
+        while (*a && *b) {
+            if (*a != *b) { match = 0; break; }
+            a++; b++;
+        }
+        if (match && *a == 0 && *b == 0) return __roze_env_vals[i];
+    }
+    return "";
+}
+
+long __roze_sys_env_has(const char *key) {
+    const char *v = __roze_sys_env_var(key);
+    return (v && v[0] != 0) ? 1 : 0;
+}
+
+void __roze_sys_env_set(const char *key, const char *val) {
+    if (!key || !val) return;
+    for (int i = 0; i < __roze_env_count; i++) {
+        const char *a = __roze_env_keys[i];
+        const char *b = key;
+        int match = 1;
+        while (*a && *b) {
+            if (*a != *b) { match = 0; break; }
+            a++; b++;
+        }
+        if (match && *a == 0 && *b == 0) {
+            int j = 0;
+            while (val[j] && j < 127) { __roze_env_vals[i][j] = val[j]; j++; }
+            __roze_env_vals[i][j] = 0;
+            return;
+        }
+    }
+    if (__roze_env_count < 64) {
+        int idx = __roze_env_count++;
+        int j = 0;
+        while (key[j] && j < 63) { __roze_env_keys[idx][j] = key[j]; j++; }
+        __roze_env_keys[idx][j] = 0;
+        j = 0;
+        while (val[j] && j < 127) { __roze_env_vals[idx][j] = val[j]; j++; }
+        __roze_env_vals[idx][j] = 0;
+    }
+}
+
+void __roze_sys_env_remove(const char *key) {
+    if (!key) return;
+    for (int i = 0; i < __roze_env_count; i++) {
+        const char *a = __roze_env_keys[i];
+        const char *b = key;
+        int match = 1;
+        while (*a && *b) {
+            if (*a != *b) { match = 0; break; }
+            a++; b++;
+        }
+        if (match && *a == 0 && *b == 0) {
+            for (int k = i; k < __roze_env_count - 1; k++) {
+                for (int m = 0; m < 64; m++) __roze_env_keys[k][m] = __roze_env_keys[k+1][m];
+                for (int m = 0; m < 128; m++) __roze_env_vals[k][m] = __roze_env_vals[k+1][m];
+            }
+            __roze_env_count--;
+            return;
+        }
+    }
+}
 const char *__roze_sys_env_cwd(void) { return "/"; }
 long __roze_sys_env_set_cwd(const char *dir) { (void)dir; return 0; }
 void *__roze_sys_env_args(void) { return 0; }

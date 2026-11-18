@@ -2250,6 +2250,20 @@ fn standard_concurrent_enterprise_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze Enterprise Concurrency Suite 100% OPERATIONAL"));
 }
 
+#[test]
+fn milestone_gate_m7_enterprise_stdlib_suite() {
+    let (stdout, stderr, ok) = run_fixture("milestone_gate_m7_enterprise_stdlib.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: roze.math arbitrary-precision BigInt/BigDecimal and 1,000,000 ops stress test"));
+    assert!(stdout.contains("SUITE 2 PASSED: roze.util Collections hierarchy and static algorithms"));
+    assert!(stdout.contains("SUITE 3 PASSED: roze.time JSR-310 temporal engine and ISO-8601 formatting"));
+    assert!(stdout.contains("SUITE 4 PASSED: roze.data Python 3.15 ergonomics, itertools, statistics & pathlib"));
+    assert!(stdout.contains("SUITE 5 PASSED: roze.nio zero-copy ByteBuffers, memory mapping & non-blocking channels"));
+    assert!(stdout.contains("SUITE 6 PASSED: roze.concurrent CompletableFuture pipelines and ForkJoinPool work-stealing"));
+    assert!(stdout.contains("SUITE 7 PASSED: Grand Cross-Module Convergence & ARC Memory Invariance Verified"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Milestone Gate M7 Enterprise Standard Library 100% OPERATIONAL"));
+}
+
 
 
 

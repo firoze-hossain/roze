@@ -234,7 +234,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         "cloud_security" | "security" | "roze::security" | "oauth2" | "jwt" | "metrics" | "telemetry" | "openapi" | "swagger" => {
             Some("rozeboot/src/cloud_security.roze".to_string())
         }
-        "orm" | "data" | "roze::data" | "roze::orm" | "roze-orm" | "roze_orm" | "sql_orm" | "jpa" | "diesel" | "seaorm" => {
+        "orm" | "roze::orm" | "roze-orm" | "roze_orm" | "sql_orm" | "jpa" | "diesel" | "seaorm" => {
             Some("roze-orm/src/lib.roze".to_string())
         }
         "raw_net" | "net" | "packet" | "pcap" | "roze::net::raw" | "packet_crafting" | "protocol" | "dissector" | "dns" | "dhcp"

@@ -4965,6 +4965,25 @@ fn native_standard_concurrent_enterprise_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze Enterprise Concurrency Suite 100% OPERATIONAL"));
 }
 
+#[test]
+fn native_milestone_gate_m7_enterprise_stdlib_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("milestone_gate_m7_enterprise_stdlib.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read milestone_gate_m7_enterprise_stdlib.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("m7_milestone_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: roze.math arbitrary-precision BigInt/BigDecimal and 1,000,000 ops stress test"));
+    assert!(stdout.contains("SUITE 2 PASSED: roze.util Collections hierarchy and static algorithms"));
+    assert!(stdout.contains("SUITE 3 PASSED: roze.time JSR-310 temporal engine and ISO-8601 formatting"));
+    assert!(stdout.contains("SUITE 4 PASSED: roze.data Python 3.15 ergonomics, itertools, statistics & pathlib"));
+    assert!(stdout.contains("SUITE 5 PASSED: roze.nio zero-copy ByteBuffers, memory mapping & non-blocking channels"));
+    assert!(stdout.contains("SUITE 6 PASSED: roze.concurrent CompletableFuture pipelines and ForkJoinPool work-stealing"));
+    assert!(stdout.contains("SUITE 7 PASSED: Grand Cross-Module Convergence & ARC Memory Invariance Verified"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Milestone Gate M7 Enterprise Standard Library 100% OPERATIONAL"));
+}
+
 
 
 

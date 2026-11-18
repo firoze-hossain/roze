@@ -632,43 +632,43 @@ s1_rows = [
         ("M7-T01", 8), ("Month 7", 22), ("Sprint 13 (W27-W28)", 8), "Universal Math", "Arbitrary-Precision BigInt & BigDecimal Engine (roze.math)",
         "Pure Roze implementation of arbitrary precision integers (BigInt with Karatsuba multiplication, modular exponentiation, Miller-Rabin prime test) and arbitrary precision fixed-point decimals (BigDecimal with precision & rounding modes: HALF_UP, HALF_EVEN, FLOOR, CEILING).",
         "Direct mathematical parity with Java 25 java.math.BigInteger / java.math.BigDecimal and Python 3.15 decimal.Decimal.",
-        "Fintech, Cryptography, Scientific Computing", "8 Days", ("Critical", 14), ("Completed", 13)
+        "Fintech, Cryptography, Scientific Computing", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M7-T02", 8), ("Month 7", 22), ("Sprint 13 (W27-W28)", 8), "Enterprise Collections", "Complete Java 25 Collections Hierarchy (roze.util)",
         "Comprehensive enterprise collections in pure Roze: ArrayList<T>, LinkedList<T>, HashMap<K,V>, LinkedHashMap<K,V>, HashSet<T>, TreeSet<T>, TreeMap<K,V>, ArrayDeque<T>, PriorityQueue<T>, BitSet. Built-in Collections static algorithm suite: sort, binary_search, shuffle, reverse, unmodifiable_view.",
         "1:1 parity with Java 25 java.util.* Collections Framework and Rust 1.99 std::collections.",
-        "All Domains, Data Structures, Algorithms", "8 Days", ("Critical", 14), ("Completed", 13)
+        "All Domains, Data Structures, Algorithms", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M7-T03", 8), ("Month 7", 22), ("Sprint 13 (W27-W28)", 8), "Temporal Engine", "JSR-310 Temporal Engine & High-Precision Clocks (roze.time)",
         "Pure Roze timezone-aware temporal engine: Instant (nanosecond epoch precision), Duration, Period, LocalDate, LocalTime, LocalDateTime, ZonedDateTime, ZoneId, ZoneOffset. Comprehensive ISO-8601 and RFC 2822 formatting and custom DateTimeFormatter.",
         "Parity with Java 25 java.time.* (JSR-310) and Python 3.15 datetime / zoneinfo.",
-        "Enterprise Systems, Calendaring, Telemetry", "7 Days", ("High", 14), ("Completed", 13)
+        "Enterprise Systems, Calendaring, Telemetry", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M7-T04", 8), ("Month 7", 22), ("Sprint 14 (W29-W30)", 8), "Python Ergonomics", "Functional Itertools, Statistics & Pathlib (roze.data)",
         "Python-class functional data manipulation in pure Roze: roze.itertools (permutations, combinations, product, cycle, repeat, chain, groupby), roze.functools (reduce, partial, lru_cache, memoize), roze.statistics (mean, median, mode, variance, stdev, linear_regression), roze.pathlib (Path), roze.csv, roze.argparse.",
         "Direct functional parity with Python 3.15 itertools, functools, statistics, pathlib, and argparse standard libraries.",
-        "Data Science, Numerical Analysis, Scripting", "8 Days", ("High", 14), ("Completed", 13)
+        "Data Science, Numerical Analysis, Scripting", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M7-T05", 8), ("Month 7", 22), ("Sprint 14 (W29-W30)", 8), "Non-Blocking I/O", "Zero-Copy Buffers & Memory-Mapped Channels (roze.nio)",
         "Zero-copy I/O engine in pure Roze: ByteBuffer (heap and direct off-heap native memory), byte order endianness switching, slicing, duplicate views, memory-mapped files (mmap with PAGE_READONLY, PAGE_READWRITE), I/O multiplexing event selectors (epoll, kqueue, IOCP).",
         "Direct parity with Java 25 java.nio.* (ByteBuffers, Channels, Selectors) and Rust mio / tokio-core.",
-        "High-Performance I/O, Storage, Databases", "8 Days", ("Critical", 14), ("Completed", 13)
+        "High-Performance I/O, Storage, Databases", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M7-T06", 8), ("Month 7", 22), ("Sprint 14 (W29-W30)", 8), "Enterprise Concurrency", "CompletableFuture & Work-Stealing Pools (roze.concurrent)",
         "Advanced enterprise coordination primitives in pure Roze: CompletableFuture<T> with monadic composition (then_apply, then_compose, all_of, any_of), ForkJoinPool work-stealing parallel engine, CountDownLatch, CyclicBarrier, Semaphore, Exchanger, ThreadPoolExecutor, AtomicReference<T>.",
         "Direct parity with Java 25 java.util.concurrent.* and Rust 1.99 crossbeam.",
-        "High-Concurrency Servers, Parallel Computing", "8 Days", ("Critical", 14), ("Completed", 10)
+        "High-Concurrency Servers, Parallel Computing", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M7-T07", 8), ("Month 7", 22), ("Sprint 14 (W29-W30)", 8), "Milestone Gate M7", "Enterprise Standard Library Benchmark Gate",
         "100% test pass on all mathematical, collections, temporal, nio, and concurrent fixtures; 1,000,000 BigInt operations stress test; zero memory leaks under ARC; dual JVM and Native Cranelift parity.",
         "Proves full Java 25 java.util.* and Python 3.15 standard library equivalence in pure Roze.",
-        "Core Standard Library & Systems", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
+        "Core Standard Library & Systems", "3 Days", ("Critical", 14), ("Completed", 16)
     ],
 
     # MONTH 8: ROZE-TORCH & AI / MACHINE LEARNING FRAMEWORK (PYTORCH + NUMPY PARITY)

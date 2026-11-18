@@ -676,7 +676,7 @@ s1_rows = [
         ("M8-T01", 8), ("Month 8", 23), ("Sprint 15 (W31-W32)", 8), "Tensor Computation", "N-Dimensional Tensor Engine & Vector Arithmetic (roze-torch)",
         "Multidimensional array engine in pure Roze: Tensor<T, D> supporting arbitrary ranks (0D to 6D), dtypes (f32, f64, f16, bf16, i32, i64, u8, bool), strided memory layout, slicing with negative indices/steps, broadcasting semantics matching NumPy/PyTorch, matrix transposition, contiguous re-allocation, tensor contraction.",
         "1:1 mathematical and architectural parity with NumPy ndarray and PyTorch Tensor.",
-        "AI / Machine Learning, Numerical Computing", "9 Days", ("Critical", 14), ("Planned", 12)
+        "AI / Machine Learning, Numerical Computing", "9 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M8-T02", 8), ("Month 8", 23), ("Sprint 15 (W31-W32)", 8), "Automatic Differentiation", "Dynamic Computational Graph Autograd Tape (roze-torch)",

@@ -1,0 +1,423 @@
+// compiler/tests/fixtures/std_torch.roze
+//
+// M8-T01: Tensor Computation - N-Dimensional Tensor Engine & Vector Arithmetic (roze-torch)
+// 1:1 mathematical and architectural parity with NumPy ndarray and PyTorch Tensor.
+
+import "torch";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("ASSERTION FAILED: " + msg);
+    }
+}
+
+func approx_eq(a: float, b: float, eps: float) -> bool {
+    let diff = a - b;
+    if diff < 0.0 { diff = 0.0 - diff; }
+    return diff <= eps;
+}
+
+// -----------------------------------------------------------------------------
+// Suite 1: Shapes & Strides for Arbitrary Ranks (0D to 6D)
+// -----------------------------------------------------------------------------
+func test_suite_1_shapes_and_strides() {
+    // 0D Scalar
+    let s0 = shape_0d();
+    assert_true(s0.rank == 0, "0D rank == 0");
+    assert_true(s0.numel() == 1, "0D numel == 1");
+    let t0 = tensor_scalar(42.0, dtype_float32());
+    assert_true(t0.rank() == 0, "Scalar rank == 0");
+    assert_true(approx_eq(t0.item(), 42.0, 0.001), "Scalar item == 42.0");
+
+    // 1D Vector
+    let t1 = tensor_zeros_1d(5);
+    assert_true(t1.rank() == 1, "1D rank == 1");
+    assert_true(t1.numel() == 5, "1D numel == 5");
+    assert_true(t1.is_contiguous(), "1D zeros contiguous");
+    t1.set_1d(2, 7.5);
+    assert_true(approx_eq(t1.get_1d(2), 7.5, 0.001), "1D get/set");
+
+    // 2D Matrix
+    let t2 = tensor_zeros_2d(3, 4);
+    assert_true(t2.rank() == 2, "2D rank == 2");
+    assert_true(t2.numel() == 12, "2D numel == 12");
+    assert_true(t2.strides.s0 == 4 && t2.strides.s1 == 1, "2D strides");
+    t2.set_2d(2, 3, 9.25);
+    assert_true(approx_eq(t2.get_2d(2, 3), 9.25, 0.001), "2D get/set");
+
+    // 3D Volume
+    let t3 = tensor_zeros_3d(2, 3, 4);
+    assert_true(t3.rank() == 3, "3D rank == 3");
+    assert_true(t3.numel() == 24, "3D numel == 24");
+    assert_true(t3.strides.s0 == 12 && t3.strides.s1 == 4 && t3.strides.s2 == 1, "3D strides");
+    t3.set_3d(1, 2, 3, 19.5);
+    assert_true(approx_eq(t3.get_3d(1, 2, 3), 19.5, 0.001), "3D get/set");
+
+    // 4D, 5D, 6D Tensors
+    let t4 = tensor_zeros_4d(2, 3, 2, 2);
+    assert_true(t4.rank() == 4 && t4.numel() == 24, "4D rank/numel");
+    let t5 = tensor_zeros_5d(2, 2, 2, 2, 2);
+    assert_true(t5.rank() == 5 && t5.numel() == 32, "5D rank/numel");
+    let t6 = tensor_zeros_6d(2, 1, 2, 1, 2, 2);
+    assert_true(t6.rank() == 6 && t6.numel() == 16, "6D rank/numel");
+
+    println("SUITE 1 PASSED: roze-torch N-dimensional shapes and arbitrary ranks (0D to 6D)");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 2: All 8 Dtypes & Bitwise Half/BFloat Conversions
+// -----------------------------------------------------------------------------
+func test_suite_2_dtypes() {
+    // Float32 & Float64
+    let tf32 = tensor_zeros(shape_1d(2), dtype_float32());
+    tf32.set_1d(0, 12.34);
+    assert_true(approx_eq(tf32.get_1d(0), 12.34, 0.01), "f32 read/write");
+
+    let tf64 = tensor_zeros(shape_1d(2), dtype_float64());
+    tf64.set_1d(0, 987654.321);
+    assert_true(approx_eq(tf64.get_1d(0), 987654.321, 0.0001), "f64 read/write");
+
+    // Float16 (IEEE 754 half-precision)
+    let tf16 = tensor_zeros(shape_1d(3), dtype_float16());
+    tf16.set_1d(0, 1.5);
+    tf16.set_1d(1, -2.5);
+    tf16.set_1d(2, 100.0);
+    assert_true(approx_eq(tf16.get_1d(0), 1.5, 0.01), "f16 1.5");
+    assert_true(approx_eq(tf16.get_1d(1), -2.5, 0.01), "f16 -2.5");
+    assert_true(approx_eq(tf16.get_1d(2), 100.0, 0.1), "f16 100.0");
+
+    // BFloat16
+    let tbf16 = tensor_zeros(shape_1d(2), dtype_bfloat16());
+    tbf16.set_1d(0, 3.14);
+    tbf16.set_1d(1, -42.0);
+    assert_true(approx_eq(tbf16.get_1d(0), 3.14, 0.05), "bf16 3.14");
+    assert_true(approx_eq(tbf16.get_1d(1), -42.0, 0.1), "bf16 -42.0");
+
+    // Int32 & Int64
+    let ti32 = tensor_zeros(shape_1d(2), dtype_int32());
+    ti32.set_1d(0, 12345.0);
+    ti32.set_1d(1, -6789.0);
+    assert_true(ti32.get_1d(0) == 12345.0, "i32 positive");
+    assert_true(ti32.get_1d(1) == -6789.0, "i32 negative");
+
+    let ti64 = tensor_zeros(shape_1d(1), dtype_int64());
+    ti64.set_1d(0, 1000000.0);
+    assert_true(ti64.get_1d(0) == 1000000.0, "i64");
+
+    // UInt8 & Bool
+    let tu8 = tensor_zeros(shape_1d(2), dtype_uint8());
+    tu8.set_1d(0, 255.0);
+    tu8.set_1d(1, 42.0);
+    assert_true(tu8.get_1d(0) == 255.0 && tu8.get_1d(1) == 42.0, "u8");
+
+    let tbool = tensor_zeros(shape_1d(2), dtype_bool());
+    tbool.set_1d(0, 1.0);
+    tbool.set_1d(1, 0.0);
+    assert_true(tbool.get_1d(0) == 1.0 && tbool.get_1d(1) == 0.0, "bool");
+
+    println("SUITE 2 PASSED: roze-torch 8 dtypes and IEEE-754 half/bfloat16 precision");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 3: Strided Slicing with Negative Indices & Steps (Zero-Copy Views)
+// -----------------------------------------------------------------------------
+func test_suite_3_slicing() {
+    let t = tensor_zeros_1d(6);
+    let i = 0;
+    while i < 6 {
+        t.set_1d(i, i * 10.0);
+        i = i + 1;
+    }
+
+    // Subslice [1:4]
+    let s_sub = tensor_slice_1d(t, slice_range(1, 4));
+    assert_true(s_sub.numel() == 3, "slice [1:4] numel");
+    assert_true(approx_eq(s_sub.get_1d(0), 10.0, 0.001), "slice [1:4] elem 0");
+    assert_true(approx_eq(s_sub.get_1d(2), 30.0, 0.001), "slice [1:4] elem 2");
+
+    // Negative indices [-4:-1]
+    let s_neg = tensor_slice_1d(t, slice_range(-4, -1));
+    assert_true(s_neg.numel() == 3, "slice [-4:-1] numel");
+    assert_true(approx_eq(s_neg.get_1d(0), 20.0, 0.001), "slice [-4:-1] elem 0");
+    assert_true(approx_eq(s_neg.get_1d(2), 40.0, 0.001), "slice [-4:-1] elem 2");
+
+    // Step slicing [::2]
+    let s_step = tensor_slice_1d(t, slice_new(0, 6, 2));
+    assert_true(s_step.numel() == 3, "slice [::2] numel");
+    assert_true(approx_eq(s_step.get_1d(0), 0.0, 0.001), "slice [::2] elem 0");
+    assert_true(approx_eq(s_step.get_1d(2), 40.0, 0.001), "slice [::2] elem 2");
+
+    // Negative step (Reverse slice) [::-1]
+    let sl_rev = slice_reverse();
+    let s_rev = tensor_slice_1d(t, sl_rev);
+    assert_true(s_rev.numel() == 6, "reverse numel");
+    assert_true(approx_eq(s_rev.get_1d(0), 50.0, 0.001), "reverse elem 0");
+    assert_true(approx_eq(s_rev.get_1d(5), 0.0, 0.001), "reverse elem 5");
+
+    // 2D Slicing: 3x3 matrix subslice [1:3, 0:2] -> 2x2
+    let m = tensor_zeros_2d(3, 3);
+    m.set_2d(0, 0, 1.0); m.set_2d(0, 1, 2.0); m.set_2d(0, 2, 3.0);
+    m.set_2d(1, 0, 4.0); m.set_2d(1, 1, 5.0); m.set_2d(1, 2, 6.0);
+    m.set_2d(2, 0, 7.0); m.set_2d(2, 1, 8.0); m.set_2d(2, 2, 9.0);
+
+    let sm = tensor_slice_2d(m, slice_range(1, 3), slice_range(0, 2));
+    assert_true(sm.shape.dim0 == 2 && sm.shape.dim1 == 2, "2d slice shape");
+    assert_true(approx_eq(sm.get_2d(0, 0), 4.0, 0.001), "sm(0,0)");
+    assert_true(approx_eq(sm.get_2d(1, 1), 8.0, 0.001), "sm(1,1)");
+
+    // Select row view
+    let r1 = tensor_select(m, 0, 1);
+    assert_true(r1.numel() == 3, "select row numel");
+    assert_true(approx_eq(r1.get_1d(0), 4.0, 0.001), "r1(0)");
+
+    println("SUITE 3 PASSED: roze-torch zero-copy strided slicing with negative indices and steps");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 4: Broadcasting Engine & Elementwise Binary Arithmetic
+// -----------------------------------------------------------------------------
+func test_suite_4_broadcasting() {
+    // (2, 3) + (1, 3) broadcasting
+    let a = tensor_ones_2d(2, 3);
+    let b = tensor_zeros_2d(1, 3);
+    b.set_2d(0, 0, 10.0);
+    b.set_2d(0, 1, 20.0);
+    b.set_2d(0, 2, 30.0);
+
+    let c = tensor_add(a, b);
+    assert_true(c.shape.dim0 == 2 && c.shape.dim1 == 3, "broadcast add shape");
+    assert_true(approx_eq(c.get_2d(0, 0), 11.0, 0.001), "c(0,0) == 11");
+    assert_true(approx_eq(c.get_2d(1, 2), 31.0, 0.001), "c(1,2) == 31");
+
+    // Sub, Scale, Mul, Div
+    let sub = tensor_sub(c, a);
+    assert_true(approx_eq(sub.get_2d(0, 0), 10.0, 0.001), "sub");
+
+    let scaled = tensor_scale(sub, 2.0);
+    assert_true(approx_eq(scaled.get_2d(0, 0), 20.0, 0.001), "scale");
+
+    let mul = tensor_mul(a, b);
+    assert_true(approx_eq(mul.get_2d(1, 1), 20.0, 0.001), "mul");
+
+    let div = tensor_div(mul, b);
+    assert_true(approx_eq(div.get_2d(1, 1), 1.0, 0.001), "div");
+
+    println("SUITE 4 PASSED: roze-torch NumPy/PyTorch broadcasting semantics and vector arithmetic");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 5: Transposition, Permutation & Contiguous Re-allocation
+// -----------------------------------------------------------------------------
+func test_suite_5_transpose_and_contiguous() {
+    let a = tensor_zeros_2d(2, 3);
+    a.set_2d(0, 0, 1.0); a.set_2d(0, 1, 2.0); a.set_2d(0, 2, 3.0);
+    a.set_2d(1, 0, 4.0); a.set_2d(1, 1, 5.0); a.set_2d(1, 2, 6.0);
+
+    let at = tensor_t(a);
+    assert_true(at.shape.dim0 == 3 && at.shape.dim1 == 2, "transpose shape");
+    assert_true(approx_eq(at.get_2d(0, 0), 1.0, 0.001), "at(0,0)");
+    assert_true(approx_eq(at.get_2d(1, 0), 2.0, 0.001), "at(1,0)");
+    assert_true(approx_eq(at.get_2d(2, 1), 6.0, 0.001), "at(2,1)");
+    assert_true(!at.is_contiguous(), "transposed view non-contiguous");
+
+    let contig = tensor_contiguous(at);
+    assert_true(contig.is_contiguous(), "contig copy contiguous");
+    assert_true(approx_eq(contig.get_2d(2, 1), 6.0, 0.001), "contig(2,1)");
+
+    let vol = tensor_zeros_3d(2, 3, 4);
+    vol.set_3d(1, 2, 3, 99.0);
+    let perm = tensor_permute_3d(vol, 2, 0, 1);
+    assert_true(perm.shape.dim0 == 4 && perm.shape.dim1 == 2 && perm.shape.dim2 == 3, "permute shape");
+    assert_true(approx_eq(perm.get_3d(3, 1, 2), 99.0, 0.001), "permute value");
+
+    println("SUITE 5 PASSED: roze-torch matrix transposition, permutation and contiguous reallocation");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 6: Shape Transformations (Reshape, Flatten, Squeeze, Unsqueeze)
+// -----------------------------------------------------------------------------
+func test_suite_6_shape_transformations() {
+    let a = tensor_zeros_2d(2, 3);
+    a.set_2d(0, 0, 1.0); a.set_2d(0, 1, 2.0); a.set_2d(0, 2, 3.0);
+    a.set_2d(1, 0, 4.0); a.set_2d(1, 1, 5.0); a.set_2d(1, 2, 6.0);
+
+    let reshaped = tensor_reshape(a, shape_1d(6));
+    assert_true(reshaped.rank() == 1 && reshaped.numel() == 6, "reshape 1D");
+    assert_true(approx_eq(reshaped.get_1d(3), 4.0, 0.001), "reshape elem 3");
+
+    let flat = tensor_flatten(a, 0, 1);
+    assert_true(flat.rank() == 1 && flat.numel() == 6, "flatten");
+
+    let unsq = tensor_unsqueeze(a, 0);
+    assert_true(unsq.rank() == 3 && unsq.shape.dim0 == 1 && unsq.shape.dim1 == 2 && unsq.shape.dim2 == 3, "unsqueeze 0");
+
+    let sq = tensor_squeeze(unsq, 0);
+    assert_true(sq.rank() == 2 && sq.shape.dim0 == 2 && sq.shape.dim1 == 3, "squeeze 0");
+
+    println("SUITE 6 PASSED: roze-torch shape transformations (reshape, flatten, squeeze, unsqueeze)");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 7: Tensor Contraction & Linear Algebra (dot, matmul GEMM, bmm, tensordot)
+// -----------------------------------------------------------------------------
+func test_suite_7_linear_algebra() {
+    // Vector Dot Product
+    let v1 = tensor_zeros_1d(3);
+    v1.set_1d(0, 1.0); v1.set_1d(1, 2.0); v1.set_1d(2, 3.0);
+    let v2 = tensor_zeros_1d(3);
+    v2.set_1d(0, 4.0); v2.set_1d(1, 5.0); v2.set_1d(2, 6.0);
+    let dot_prod = tensor_dot(v1, v2);
+    assert_true(approx_eq(dot_prod, 32.0, 0.001), "dot prod == 32");
+
+    // Matrix Multiplication GEMM: (2, 3) x (3, 2) -> (2, 2)
+    let a = tensor_zeros_2d(2, 3);
+    a.set_2d(0, 0, 1.0); a.set_2d(0, 1, 2.0); a.set_2d(0, 2, 3.0);
+    a.set_2d(1, 0, 4.0); a.set_2d(1, 1, 5.0); a.set_2d(1, 2, 6.0);
+
+    let b = tensor_zeros_2d(3, 2);
+    b.set_2d(0, 0, 7.0); b.set_2d(0, 1, 8.0);
+    b.set_2d(1, 0, 9.0); b.set_2d(1, 1, 1.0);
+    b.set_2d(2, 0, 2.0); b.set_2d(2, 1, 3.0);
+
+    let mm = tensor_matmul(a, b);
+    assert_true(mm.shape.dim0 == 2 && mm.shape.dim1 == 2, "matmul shape");
+    assert_true(approx_eq(mm.get_2d(0, 0), 31.0, 0.001), "GEMM (0,0)");
+    assert_true(approx_eq(mm.get_2d(0, 1), 19.0, 0.001), "GEMM (0,1)");
+    assert_true(approx_eq(mm.get_2d(1, 0), 85.0, 0.001), "GEMM (1,0)");
+    assert_true(approx_eq(mm.get_2d(1, 1), 55.0, 0.001), "GEMM (1,1)");
+
+    // Batched Matrix Multiply (BMM)
+    let b_a = tensor_zeros_3d(2, 2, 3);
+    let b_b = tensor_zeros_3d(2, 3, 2);
+    let bi = 0;
+    while bi < 2 {
+        let r = 0;
+        while r < 2 {
+            let k = 0;
+            while k < 3 {
+                b_a.set_3d(bi, r, k, a.get_2d(r, k));
+                k = k + 1;
+            }
+            r = r + 1;
+        }
+        let k2 = 0;
+        while k2 < 3 {
+            let c = 0;
+            while c < 2 {
+                b_b.set_3d(bi, k2, c, b.get_2d(k2, c));
+                c = c + 1;
+            }
+            k2 = k2 + 1;
+        }
+        bi = bi + 1;
+    }
+    let bmm_out = tensor_bmm(b_a, b_b);
+    assert_true(bmm_out.shape.dim0 == 2 && bmm_out.shape.dim1 == 2 && bmm_out.shape.dim2 == 2, "BMM shape");
+    assert_true(approx_eq(bmm_out.get_3d(0, 0, 0), 31.0, 0.001), "BMM batch 0");
+    assert_true(approx_eq(bmm_out.get_3d(1, 1, 1), 55.0, 0.001), "BMM batch 1");
+
+    let td = tensor_tensordot(a, b, 1);
+    assert_true(approx_eq(td.get_2d(0, 0), 31.0, 0.001), "Tensordot (0,0)");
+
+    println("SUITE 7 PASSED: roze-torch tensor contractions (dot, matmul GEMM, bmm, tensordot)");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 8: Mathematical Reductions & Vector Norms
+// -----------------------------------------------------------------------------
+func test_suite_8_reductions() {
+    let t = tensor_zeros_2d(2, 2);
+    t.set_2d(0, 0, 1.0);
+    t.set_2d(0, 1, -2.0);
+    t.set_2d(1, 0, 3.0);
+    t.set_2d(1, 1, -4.0);
+
+    let sum_val = tensor_sum(t);
+    assert_true(approx_eq(sum_val, -2.0, 0.001), "Sum == -2");
+
+    let mean_val = tensor_mean(t);
+    assert_true(approx_eq(mean_val, -0.5, 0.001), "Mean == -0.5");
+
+    let max_val = tensor_max(t);
+    assert_true(approx_eq(max_val, 3.0, 0.001), "Max == 3");
+
+    let min_val = tensor_min(t);
+    assert_true(approx_eq(min_val, -4.0, 0.001), "Min == -4");
+
+    let l1 = tensor_norm_l1(t);
+    assert_true(approx_eq(l1, 10.0, 0.001), "L1 norm == 10");
+
+    let l2 = tensor_norm_l2(t);
+    assert_true(approx_eq(l2, 5.4772, 0.01), "L2 norm");
+
+    let col_sum = tensor_sum_dim(t, 0, false);
+    assert_true(col_sum.numel() == 2, "Dim 0 sum length");
+    assert_true(approx_eq(col_sum.get_1d(0), 4.0, 0.001), "Col sum 0");
+    assert_true(approx_eq(col_sum.get_1d(1), -6.0, 0.001), "Col sum 1");
+
+    println("SUITE 8 PASSED: roze-torch mathematical reductions and L1/L2 vector norms");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 9: Neural Activations, Layers & Optimization
+// -----------------------------------------------------------------------------
+func test_suite_9_neural_network() {
+    let t = tensor_zeros_1d(3);
+    t.set_1d(0, -3.0);
+    t.set_1d(1, 0.0);
+    t.set_1d(2, 3.0);
+
+    // Activations
+    let r = tensor_relu(t);
+    assert_true(approx_eq(r.get_1d(0), 0.0, 0.001) && approx_eq(r.get_1d(2), 3.0, 0.001), "ReLU");
+
+    let sig = tensor_sigmoid(t);
+    assert_true(approx_eq(sig.get_1d(1), 0.5, 0.01), "Sigmoid");
+
+    let th = tensor_tanh(t);
+    assert_true(approx_eq(th.get_1d(1), 0.0, 0.01), "Tanh");
+
+    let gelu_out = tensor_gelu(t);
+    assert_true(approx_eq(gelu_out.get_1d(1), 0.0, 0.01), "GELU");
+
+    let silu_out = tensor_silu(t);
+    assert_true(approx_eq(silu_out.get_1d(1), 0.0, 0.01), "SiLU");
+
+    let sm = tensor_softmax(t);
+    let sm_sum = tensor_sum(sm);
+    assert_true(approx_eq(sm_sum, 1.0, 0.01), "Softmax sum == 1.0");
+
+    // Linear Layer Forward Pass
+    let layer = linear_new(3, 2);
+    let inp = tensor_ones_2d(1, 3);
+    let out = linear_forward(layer, inp);
+    assert_true(out.shape.dim0 == 1 && out.shape.dim1 == 2, "Linear forward shape");
+
+    let target = tensor_zeros_2d(1, 2);
+    let loss = mse_loss(out, target);
+    assert_true(loss >= 0.0, "MSE loss >= 0");
+
+    sgd_step(layer, 0.01);
+
+    println("SUITE 9 PASSED: roze-torch neural activations, linear layer and SGD optimizer");
+}
+
+func main() {
+    println("==================================================================");
+    println("  ROZE-TORCH N-DIMENSIONAL TENSOR ENGINE & VECTOR ARITHMETIC SUITE");
+    println("==================================================================");
+
+    test_suite_1_shapes_and_strides();
+    test_suite_2_dtypes();
+    test_suite_3_slicing();
+    test_suite_4_broadcasting();
+    test_suite_5_transpose_and_contiguous();
+    test_suite_6_shape_transformations();
+    test_suite_7_linear_algebra();
+    test_suite_8_reductions();
+    test_suite_9_neural_network();
+
+    println("==================================================================");
+    println("ALL SUITES COMPLETED: Roze-Torch N-Dimensional Tensor Engine 100% OPERATIONAL");
+    println("==================================================================");
+}

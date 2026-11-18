@@ -1,33 +1,492 @@
 // packages/roze-torch/tests/test_torch.roze
+// Comprehensive M8-T01 Tensor Engine & Vector Arithmetic Verification Suite
 import "roze-torch";
 
-func assert_true(condition: bool, message: string) {
-    if !condition {
-        println("❌ Assertion failed: " + message);
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("❌ Assertion failed: " + msg);
     }
 }
 
-func main() {
-    println("Testing Roze-Torch...");
+func approx_eq(a: float, b: float, eps: float) -> bool {
+    let diff = a - b;
+    if diff < 0.0 { diff = 0.0 - diff; }
+    return diff <= eps;
+}
 
-    // 1. MatMul verification
-    let a = tensor_ones_2d(3, 3);
-    let b = tensor_ones_2d(3, 3);
-    let c = tensor_matmul(a, b);
+// -----------------------------------------------------------------------------
+// Test 1: Shape & Strides for Arbitrary Ranks (0D to 6D)
+// -----------------------------------------------------------------------------
+func test_shapes_and_strides() {
+    println("--- Test 1: Shapes & Strides (0D to 6D) ---");
 
-    let val = tensor_get_2d(c, 0, 0);
-    assert_true(val == 3.0, "Matmul expected 3.0");
+    // 0D Scalar
+    let s0 = shape_0d();
+    assert_true(s0.rank == 0, "0D rank must be 0");
+    assert_true(s0.numel() == 1, "0D numel must be 1");
+    let t0 = tensor_scalar(42.0, dtype_float32());
+    assert_true(t0.rank() == 0, "Scalar rank must be 0");
+    assert_true(approx_eq(t0.item(), 42.0, 0.001), "Scalar item must be 42.0");
 
-    // 2. Linear layer forward pass
+    // 1D Vector
+    let t1 = tensor_zeros_1d(5);
+    assert_true(t1.rank() == 1, "1D rank must be 1");
+    assert_true(t1.numel() == 5, "1D numel must be 5");
+    assert_true(t1.is_contiguous(), "1D zeros must be contiguous");
+    t1.set_1d(2, 7.5);
+    assert_true(approx_eq(t1.get_1d(2), 7.5, 0.001), "1D get/set failed");
+
+    // 2D Matrix
+    let t2 = tensor_zeros_2d(3, 4);
+    assert_true(t2.rank() == 2, "2D rank must be 2");
+    assert_true(t2.numel() == 12, "2D numel must be 12");
+    assert_true(t2.strides.s0 == 4 && t2.strides.s1 == 1, "2D contiguous strides mismatch");
+    t2.set_2d(2, 3, 9.25);
+    assert_true(approx_eq(t2.get_2d(2, 3), 9.25, 0.001), "2D get/set failed");
+
+    // 3D Volume
+    let t3 = tensor_zeros_3d(2, 3, 4);
+    assert_true(t3.rank() == 3, "3D rank must be 3");
+    assert_true(t3.numel() == 24, "3D numel must be 24");
+    assert_true(t3.strides.s0 == 12 && t3.strides.s1 == 4 && t3.strides.s2 == 1, "3D strides mismatch");
+    t3.set_3d(1, 2, 3, 19.5);
+    assert_true(approx_eq(t3.get_3d(1, 2, 3), 19.5, 0.001), "3D get/set failed");
+
+    // 4D Tensor
+    let t4 = tensor_zeros_4d(2, 3, 2, 2);
+    assert_true(t4.rank() == 4, "4D rank must be 4");
+    assert_true(t4.numel() == 24, "4D numel must be 24");
+    t4.set_4d(1, 2, 1, 1, 33.0);
+    assert_true(approx_eq(t4.get_4d(1, 2, 1, 1), 33.0, 0.001), "4D get/set failed");
+
+    // 5D Tensor
+    let t5 = tensor_zeros_5d(2, 2, 2, 2, 2);
+    assert_true(t5.rank() == 5, "5D rank must be 5");
+    assert_true(t5.numel() == 32, "5D numel must be 32");
+    t5.set_5d(1, 1, 1, 1, 1, 55.0);
+    assert_true(approx_eq(t5.get_5d(1, 1, 1, 1, 1), 55.0, 0.001), "5D get/set failed");
+
+    // 6D Tensor
+    let t6 = tensor_zeros_6d(2, 1, 2, 1, 2, 2);
+    assert_true(t6.rank() == 6, "6D rank must be 6");
+    assert_true(t6.numel() == 16, "6D numel must be 16");
+    t6.set_6d(1, 0, 1, 0, 1, 1, 66.0);
+    assert_true(approx_eq(t6.get_6d(1, 0, 1, 0, 1, 1), 66.0, 0.001), "6D get/set failed");
+
+    println("✓ Shape and strides tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 2: All 8 Dtypes & Half / BFloat16 Precision
+// -----------------------------------------------------------------------------
+func test_dtypes() {
+    println("--- Test 2: All 8 Dtypes & Bitwise Half/BFloat Conversions ---");
+
+    // Float32
+    let tf32 = tensor_zeros(shape_1d(2), dtype_float32());
+    tf32.set_1d(0, 12.34);
+    assert_true(approx_eq(tf32.get_1d(0), 12.34, 0.01), "Float32 read/write failed");
+
+    // Float64
+    let tf64 = tensor_zeros(shape_1d(2), dtype_float64());
+    tf64.set_1d(0, 987654.321);
+    assert_true(approx_eq(tf64.get_1d(0), 987654.321, 0.0001), "Float64 read/write failed");
+
+    // Float16 (IEEE 754 half-precision)
+    let tf16 = tensor_zeros(shape_1d(4), dtype_float16());
+    tf16.set_1d(0, 1.5);
+    tf16.set_1d(1, -2.5);
+    tf16.set_1d(2, 100.0);
+    assert_true(approx_eq(tf16.get_1d(0), 1.5, 0.01), "Float16 (1.5) mismatch");
+    assert_true(approx_eq(tf16.get_1d(1), -2.5, 0.01), "Float16 (-2.5) mismatch");
+    assert_true(approx_eq(tf16.get_1d(2), 100.0, 0.1), "Float16 (100.0) mismatch");
+
+    // BFloat16
+    let tbf16 = tensor_zeros(shape_1d(3), dtype_bfloat16());
+    tbf16.set_1d(0, 3.14);
+    tbf16.set_1d(1, -42.0);
+    assert_true(approx_eq(tbf16.get_1d(0), 3.14, 0.05), "BFloat16 (3.14) mismatch");
+    assert_true(approx_eq(tbf16.get_1d(1), -42.0, 0.1), "BFloat16 (-42.0) mismatch");
+
+    // Int32
+    let ti32 = tensor_zeros(shape_1d(3), dtype_int32());
+    ti32.set_1d(0, 12345.0);
+    ti32.set_1d(1, -6789.0);
+    assert_true(ti32.get_1d(0) == 12345.0, "Int32 positive mismatch");
+    assert_true(ti32.get_1d(1) == -6789.0, "Int32 negative mismatch");
+
+    // Int64
+    let ti64 = tensor_zeros(shape_1d(2), dtype_int64());
+    ti64.set_1d(0, 1000000.0);
+    assert_true(ti64.get_1d(0) == 1000000.0, "Int64 mismatch");
+
+    // UInt8
+    let tu8 = tensor_zeros(shape_1d(3), dtype_uint8());
+    tu8.set_1d(0, 255.0);
+    tu8.set_1d(1, 42.0);
+    assert_true(tu8.get_1d(0) == 255.0, "UInt8 255 mismatch");
+    assert_true(tu8.get_1d(1) == 42.0, "UInt8 42 mismatch");
+
+    // Bool
+    let tbool = tensor_zeros(shape_1d(2), dtype_bool());
+    tbool.set_1d(0, 1.0);
+    tbool.set_1d(1, 0.0);
+    assert_true(tbool.get_1d(0) == 1.0, "Bool true mismatch");
+    assert_true(tbool.get_1d(1) == 0.0, "Bool false mismatch");
+
+    println("✓ Dtypes & precision tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 3: Strided Slicing with Negative Indices & Steps (Zero-Copy Views)
+// -----------------------------------------------------------------------------
+func test_slicing() {
+    println("--- Test 3: Strided Slicing with Negative Indices & Steps ---");
+
+    // 1D Slicing: [0, 10, 20, 30, 40, 50]
+    let t = tensor_zeros_1d(6);
+    let i = 0;
+    while i < 6 {
+        t.set_1d(i, i * 10.0);
+        i = i + 1;
+    }
+
+    // Subslice [1:4] -> elements 10, 20, 30
+    let s_sub = tensor_slice_1d(t, slice_range(1, 4));
+    assert_true(s_sub.numel() == 3, "Slice [1:4] length must be 3");
+    assert_true(approx_eq(s_sub.get_1d(0), 10.0, 0.001), "Slice [1:4] elem 0");
+    assert_true(approx_eq(s_sub.get_1d(1), 20.0, 0.001), "Slice [1:4] elem 1");
+    assert_true(approx_eq(s_sub.get_1d(2), 30.0, 0.001), "Slice [1:4] elem 2");
+
+    // Negative indices: [-4:-1] -> elements [2:5] = 20, 30, 40
+    let s_neg = tensor_slice_1d(t, slice_range(-4, -1));
+    assert_true(s_neg.numel() == 3, "Slice [-4:-1] length must be 3");
+    assert_true(approx_eq(s_neg.get_1d(0), 20.0, 0.001), "Slice [-4:-1] elem 0");
+    assert_true(approx_eq(s_neg.get_1d(2), 40.0, 0.001), "Slice [-4:-1] elem 2");
+
+    // Step slicing: [::2] -> elements 0, 20, 40
+    let s_step = tensor_slice_1d(t, slice_new(0, 6, 2));
+    assert_true(s_step.numel() == 3, "Slice [::2] length must be 3");
+    assert_true(approx_eq(s_step.get_1d(0), 0.0, 0.001), "Slice [::2] elem 0");
+    assert_true(approx_eq(s_step.get_1d(1), 20.0, 0.001), "Slice [::2] elem 1");
+    assert_true(approx_eq(s_step.get_1d(2), 40.0, 0.001), "Slice [::2] elem 2");
+
+    // Negative step (Reverse slice): [::-1] -> 50, 40, 30, 20, 10, 0
+    let sl_rev = slice_reverse();
+    let s_rev = tensor_slice_1d(t, sl_rev);
+    assert_true(s_rev.numel() == 6, "Reverse slice length must be 6");
+    assert_true(approx_eq(s_rev.get_1d(0), 50.0, 0.001), "Reverse elem 0 must be 50");
+    assert_true(approx_eq(s_rev.get_1d(1), 40.0, 0.001), "Reverse elem 1 must be 40");
+    assert_true(approx_eq(s_rev.get_1d(5), 0.0, 0.001), "Reverse elem 5 must be 0");
+
+    // 2D Slicing: 3x3 matrix
+    let m = tensor_zeros_2d(3, 3);
+    m.set_2d(0, 0, 1.0); m.set_2d(0, 1, 2.0); m.set_2d(0, 2, 3.0);
+    m.set_2d(1, 0, 4.0); m.set_2d(1, 1, 5.0); m.set_2d(1, 2, 6.0);
+    m.set_2d(2, 0, 7.0); m.set_2d(2, 1, 8.0); m.set_2d(2, 2, 9.0);
+
+    // Submatrix rows [1:3], cols [0:2] -> 2x2: [[4, 5], [7, 8]]
+    let sm = tensor_slice_2d(m, slice_range(1, 3), slice_range(0, 2));
+    assert_true(sm.shape.dim0 == 2 && sm.shape.dim1 == 2, "2D slice shape mismatch");
+    assert_true(approx_eq(sm.get_2d(0, 0), 4.0, 0.001), "Submatrix (0,0) == 4");
+    assert_true(approx_eq(sm.get_2d(0, 1), 5.0, 0.001), "Submatrix (0,1) == 5");
+    assert_true(approx_eq(sm.get_2d(1, 0), 7.0, 0.001), "Submatrix (1,0) == 7");
+    assert_true(approx_eq(sm.get_2d(1, 1), 8.0, 0.001), "Submatrix (1,1) == 8");
+
+    // Select row 1 view -> 1D vector [4, 5, 6]
+    let r1 = tensor_select(m, 0, 1);
+    assert_true(r1.numel() == 3, "Select row 1 length must be 3");
+    assert_true(approx_eq(r1.get_1d(0), 4.0, 0.001), "Row 1 (0) == 4");
+    assert_true(approx_eq(r1.get_1d(1), 5.0, 0.001), "Row 1 (1) == 5");
+    assert_true(approx_eq(r1.get_1d(2), 6.0, 0.001), "Row 1 (2) == 6");
+
+    println("✓ Strided slicing and negative steps tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 4: Broadcasting Engine & Elementwise Binary Arithmetic
+// -----------------------------------------------------------------------------
+func test_broadcasting() {
+    println("--- Test 4: Broadcasting Engine & Elementwise Ops ---");
+
+    // (2, 3) + (1, 3) broadcasting
+    let a = tensor_ones_2d(2, 3);
+    let b = tensor_zeros_2d(1, 3);
+    b.set_2d(0, 0, 10.0);
+    b.set_2d(0, 1, 20.0);
+    b.set_2d(0, 2, 30.0);
+
+    let c = tensor_add(a, b);
+    assert_true(c.shape.dim0 == 2 && c.shape.dim1 == 3, "Broadcast sum shape mismatch");
+    assert_true(approx_eq(c.get_2d(0, 0), 11.0, 0.001), "c(0,0) must be 11");
+    assert_true(approx_eq(c.get_2d(0, 1), 21.0, 0.001), "c(0,1) must be 21");
+    assert_true(approx_eq(c.get_2d(1, 2), 31.0, 0.001), "c(1,2) must be 31");
+
+    // Subtraction & Scaling
+    let sub = tensor_sub(c, a);
+    assert_true(approx_eq(sub.get_2d(0, 0), 10.0, 0.001), "Sub failed");
+
+    let scaled = tensor_scale(sub, 2.0);
+    assert_true(approx_eq(scaled.get_2d(0, 0), 20.0, 0.001), "Scale failed");
+
+    // Multiplication & Division
+    let mul = tensor_mul(a, b);
+    assert_true(approx_eq(mul.get_2d(1, 1), 20.0, 0.001), "Mul failed");
+
+    let div = tensor_div(mul, b);
+    assert_true(approx_eq(div.get_2d(1, 1), 1.0, 0.001), "Div failed");
+
+    println("✓ Broadcasting & elementwise arithmetic tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 5: Matrix Transposition, Permutation & Contiguous Re-allocation
+// -----------------------------------------------------------------------------
+func test_transpose_and_contiguous() {
+    println("--- Test 5: Transposition, Permutation & Contiguous Re-allocation ---");
+
+    // Transpose 2D matrix (2, 3) -> (3, 2)
+    let a = tensor_zeros_2d(2, 3);
+    a.set_2d(0, 0, 1.0); a.set_2d(0, 1, 2.0); a.set_2d(0, 2, 3.0);
+    a.set_2d(1, 0, 4.0); a.set_2d(1, 1, 5.0); a.set_2d(1, 2, 6.0);
+
+    let at = tensor_t(a);
+    assert_true(at.shape.dim0 == 3 && at.shape.dim1 == 2, "Transpose shape must be (3, 2)");
+    assert_true(approx_eq(at.get_2d(0, 0), 1.0, 0.001), "at(0,0) == 1");
+    assert_true(approx_eq(at.get_2d(1, 0), 2.0, 0.001), "at(1,0) == 2");
+    assert_true(approx_eq(at.get_2d(2, 1), 6.0, 0.001), "at(2,1) == 6");
+    assert_true(!at.is_contiguous(), "Transposed view must NOT be contiguous");
+
+    // Contiguous re-allocation
+    let contig = tensor_contiguous(at);
+    assert_true(contig.is_contiguous(), "Contiguous copy must be contiguous");
+    assert_true(approx_eq(contig.get_2d(0, 0), 1.0, 0.001), "contig(0,0) == 1");
+    assert_true(approx_eq(contig.get_2d(1, 0), 2.0, 0.001), "contig(1,0) == 2");
+    assert_true(approx_eq(contig.get_2d(2, 1), 6.0, 0.001), "contig(2,1) == 6");
+
+    // 3D Permute: (2, 3, 4) permute (2, 0, 1) -> (4, 2, 3)
+    let vol = tensor_zeros_3d(2, 3, 4);
+    vol.set_3d(1, 2, 3, 99.0);
+    let perm = tensor_permute_3d(vol, 2, 0, 1);
+    assert_true(perm.shape.dim0 == 4 && perm.shape.dim1 == 2 && perm.shape.dim2 == 3, "Permute shape mismatch");
+    assert_true(approx_eq(perm.get_3d(3, 1, 2), 99.0, 0.001), "Permuted value mismatch");
+
+    println("✓ Transposition and contiguous tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 6: Shape Transformations (Reshape, Flatten, Squeeze, Unsqueeze)
+// -----------------------------------------------------------------------------
+func test_shape_transformations() {
+    println("--- Test 6: Shape Transformations ---");
+
+    // Reshape: (2, 3) -> (6) and (3, 2)
+    let a = tensor_zeros_2d(2, 3);
+    a.set_2d(0, 0, 1.0); a.set_2d(0, 1, 2.0); a.set_2d(0, 2, 3.0);
+    a.set_2d(1, 0, 4.0); a.set_2d(1, 1, 5.0); a.set_2d(1, 2, 6.0);
+
+    let reshaped = tensor_reshape(a, shape_1d(6));
+    assert_true(reshaped.rank() == 1 && reshaped.numel() == 6, "Reshape 1D failed");
+    assert_true(approx_eq(reshaped.get_1d(3), 4.0, 0.001), "Reshape elem 3 mismatch");
+
+    // Flatten
+    let flat = tensor_flatten(a, 0, 1);
+    assert_true(flat.rank() == 1 && flat.numel() == 6, "Flatten failed");
+    assert_true(approx_eq(flat.get_1d(5), 6.0, 0.001), "Flatten elem 5 mismatch");
+
+    // Unsqueeze: (2, 3) unsqueeze at 0 -> (1, 2, 3)
+    let unsq = tensor_unsqueeze(a, 0);
+    assert_true(unsq.rank() == 3 && unsq.shape.dim0 == 1 && unsq.shape.dim1 == 2 && unsq.shape.dim2 == 3, "Unsqueeze 0 failed");
+
+    // Squeeze: (1, 2, 3) squeeze at 0 -> (2, 3)
+    let sq = tensor_squeeze(unsq, 0);
+    assert_true(sq.rank() == 2 && sq.shape.dim0 == 2 && sq.shape.dim1 == 3, "Squeeze failed");
+
+    println("✓ Shape transformation tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 7: Tensor Contraction & Linear Algebra (dot, matmul GEMM, bmm, tensordot)
+// -----------------------------------------------------------------------------
+func test_linear_algebra() {
+    println("--- Test 7: Tensor Contractions & Linear Algebra ---");
+
+    // Vector Dot Product: [1, 2, 3] . [4, 5, 6] = 4 + 10 + 18 = 32
+    let v1 = tensor_zeros_1d(3);
+    v1.set_1d(0, 1.0); v1.set_1d(1, 2.0); v1.set_1d(2, 3.0);
+    let v2 = tensor_zeros_1d(3);
+    v2.set_1d(0, 4.0); v2.set_1d(1, 5.0); v2.set_1d(2, 6.0);
+    let dot_prod = tensor_dot(v1, v2);
+    assert_true(approx_eq(dot_prod, 32.0, 0.001), "Dot product must be 32");
+
+    // Matrix Multiplication GEMM: (2, 3) x (3, 2) -> (2, 2)
+    // a = [[1, 2, 3], [4, 5, 6]]
+    // b = [[7, 8], [9, 1], [2, 3]]
+    // c = a x b = [[1*7+2*9+3*2, 1*8+2*1+3*3], [4*7+5*9+6*2, 4*8+5*1+6*3]]
+    //   = [[7+18+6, 8+2+9], [28+45+12, 32+5+18]] = [[31, 19], [85, 55]]
+    let a = tensor_zeros_2d(2, 3);
+    a.set_2d(0, 0, 1.0); a.set_2d(0, 1, 2.0); a.set_2d(0, 2, 3.0);
+    a.set_2d(1, 0, 4.0); a.set_2d(1, 1, 5.0); a.set_2d(1, 2, 6.0);
+
+    let b = tensor_zeros_2d(3, 2);
+    b.set_2d(0, 0, 7.0); b.set_2d(0, 1, 8.0);
+    b.set_2d(1, 0, 9.0); b.set_2d(1, 1, 1.0);
+    b.set_2d(2, 0, 2.0); b.set_2d(2, 1, 3.0);
+
+    let mm = tensor_matmul(a, b);
+    assert_true(mm.shape.dim0 == 2 && mm.shape.dim1 == 2, "Matmul shape mismatch");
+    assert_true(approx_eq(mm.get_2d(0, 0), 31.0, 0.001), "GEMM (0,0) must be 31");
+    assert_true(approx_eq(mm.get_2d(0, 1), 19.0, 0.001), "GEMM (0,1) must be 19");
+    assert_true(approx_eq(mm.get_2d(1, 0), 85.0, 0.001), "GEMM (1,0) must be 85");
+    assert_true(approx_eq(mm.get_2d(1, 1), 55.0, 0.001), "GEMM (1,1) must be 55");
+
+    // Batched Matrix Multiply (BMM): (2, 2, 3) x (2, 3, 2) -> (2, 2, 2)
+    let b_a = tensor_zeros_3d(2, 2, 3);
+    let b_b = tensor_zeros_3d(2, 3, 2);
+    let b_i = 0;
+    while b_i < 2 {
+        let r = 0;
+        while r < 2 {
+            let k = 0;
+            while k < 3 {
+                b_a.set_3d(b_i, r, k, a.get_2d(r, k));
+                k = k + 1;
+            }
+            r = r + 1;
+        }
+        let k2 = 0;
+        while k2 < 3 {
+            let c = 0;
+            while c < 2 {
+                b_b.set_3d(b_i, k2, c, b.get_2d(k2, c));
+                c = c + 1;
+            }
+            k2 = k2 + 1;
+        }
+        b_i = b_i + 1;
+    }
+    let bmm_out = tensor_bmm(b_a, b_b);
+    assert_true(bmm_out.shape.dim0 == 2 && bmm_out.shape.dim1 == 2 && bmm_out.shape.dim2 == 2, "BMM shape mismatch");
+    assert_true(approx_eq(bmm_out.get_3d(0, 0, 0), 31.0, 0.001), "BMM batch 0 (0,0) must be 31");
+    assert_true(approx_eq(bmm_out.get_3d(1, 1, 1), 55.0, 0.001), "BMM batch 1 (1,1) must be 55");
+
+    // Tensordot contraction
+    let td = tensor_tensordot(a, b, 1);
+    assert_true(approx_eq(td.get_2d(0, 0), 31.0, 0.001), "Tensordot (0,0) must be 31");
+
+    println("✓ Contractions and linear algebra tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 8: Mathematical Reductions & Norms
+// -----------------------------------------------------------------------------
+func test_reductions() {
+    println("--- Test 8: Reductions & Norms ---");
+
+    let t = tensor_zeros_2d(2, 2);
+    t.set_2d(0, 0, 1.0);
+    t.set_2d(0, 1, -2.0);
+    t.set_2d(1, 0, 3.0);
+    t.set_2d(1, 1, -4.0);
+
+    // Sum & Mean
+    let sum_val = tensor_sum(t);
+    assert_true(approx_eq(sum_val, -2.0, 0.001), "Sum must be -2");
+
+    let mean_val = tensor_mean(t);
+    assert_true(approx_eq(mean_val, -0.5, 0.001), "Mean must be -0.5");
+
+    // Max & Min
+    let max_val = tensor_max(t);
+    assert_true(approx_eq(max_val, 3.0, 0.001), "Max must be 3");
+
+    let min_val = tensor_min(t);
+    assert_true(approx_eq(min_val, -4.0, 0.001), "Min must be -4");
+
+    // Norms
+    let l1 = tensor_norm_l1(t); // |1| + |-2| + |3| + |-4| = 10
+    assert_true(approx_eq(l1, 10.0, 0.001), "L1 norm must be 10");
+
+    let l2 = tensor_norm_l2(t); // sqrt(1 + 4 + 9 + 16) = sqrt(30) ≈ 5.4772
+    assert_true(approx_eq(l2, 5.4772, 0.01), "L2 norm must be ~5.477");
+
+    // Dimensional Sum: along dim 0 -> (1, 2) sums columns -> [4.0, -6.0]
+    let col_sum = tensor_sum_dim(t, 0, false);
+    assert_true(col_sum.numel() == 2, "Dim 0 sum length must be 2");
+    assert_true(approx_eq(col_sum.get_1d(0), 4.0, 0.001), "Col sum 0 must be 4");
+    assert_true(approx_eq(col_sum.get_1d(1), -6.0, 0.001), "Col sum 1 must be -6");
+
+    println("✓ Reductions and norms tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 9: Neural Activations, Layers & Optimization
+// -----------------------------------------------------------------------------
+func test_neural_network() {
+    println("--- Test 9: Activations, Linear Layer & Optimizers ---");
+
+    let t = tensor_zeros_1d(3);
+    t.set_1d(0, -3.0);
+    t.set_1d(1, 0.0);
+    t.set_1d(2, 3.0);
+
+    // ReLU: [-3, 0, 3] -> [0, 0, 3]
+    let r = tensor_relu(t);
+    assert_true(approx_eq(r.get_1d(0), 0.0, 0.001), "ReLU (-3) == 0");
+    assert_true(approx_eq(r.get_1d(2), 3.0, 0.001), "ReLU (3) == 3");
+
+    // Sigmoid: 0 -> 0.5
+    let sig = tensor_sigmoid(t);
+    assert_true(approx_eq(sig.get_1d(1), 0.5, 0.01), "Sigmoid (0) == 0.5");
+
+    // Tanh: 0 -> 0.0
+    let th = tensor_tanh(t);
+    assert_true(approx_eq(th.get_1d(1), 0.0, 0.01), "Tanh (0) == 0.0");
+
+    // GELU & SiLU
+    let gelu_out = tensor_gelu(t);
+    assert_true(approx_eq(gelu_out.get_1d(1), 0.0, 0.01), "GELU (0) == 0.0");
+    let silu_out = tensor_silu(t);
+    assert_true(approx_eq(silu_out.get_1d(1), 0.0, 0.01), "SiLU (0) == 0.0");
+
+    // Softmax: sum over distribution equals 1.0
+    let sm = tensor_softmax(t);
+    let sm_sum = tensor_sum(sm);
+    assert_true(approx_eq(sm_sum, 1.0, 0.01), "Softmax probabilities must sum to 1.0");
+
+    // Linear Layer Forward Pass
     let layer = linear_new(3, 2);
-    let input = tensor_ones_2d(1, 3);
-    let output = linear_forward(layer, input);
+    let inp = tensor_ones_2d(1, 3);
+    let out = linear_forward(layer, inp);
+    assert_true(out.shape.dim0 == 1 && out.shape.dim1 == 2, "Linear forward shape mismatch");
 
-    assert_true(output.shape.dim0 == 1 && output.shape.dim1 == 2, "Linear output shape mismatch");
+    // MSE Loss
+    let target = tensor_zeros_2d(1, 2);
+    let loss = mse_loss(out, target);
+    assert_true(loss >= 0.0, "MSE loss must be non-negative");
 
-    // 3. Activations
-    let relu_out = tensor_relu(c);
-    assert_true(tensor_get_2d(relu_out, 0, 0) == 3.0, "ReLU failed");
+    // SGD Step
+    sgd_step(layer, 0.01);
 
-    println("✅ All Roze-Torch unit tests passed!");
+    println("✓ Neural network activations and layers tests passed!");
+}
+
+func main() {
+    println("=================================================");
+    println("      Roze-Torch M8-T01 Verification Suite       ");
+    println("=================================================");
+
+    test_shapes_and_strides();
+    test_dtypes();
+    test_slicing();
+    test_broadcasting();
+    test_transpose_and_contiguous();
+    test_shape_transformations();
+    test_linear_algebra();
+    test_reductions();
+    test_neural_network();
+
+    println("=================================================");
+    println("✅ 100% Roze-Torch M8-T01 Test Suites Passed! 🎉");
+    println("=================================================");
 }

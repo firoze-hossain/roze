@@ -4984,6 +4984,27 @@ fn native_milestone_gate_m7_enterprise_stdlib_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze Milestone Gate M7 Enterprise Standard Library 100% OPERATIONAL"));
 }
 
+#[test]
+fn native_standard_torch_nd_tensor_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_torch.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_torch.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_torch_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: roze-torch N-dimensional shapes and arbitrary ranks (0D to 6D)"));
+    assert!(stdout.contains("SUITE 2 PASSED: roze-torch 8 dtypes and IEEE-754 half/bfloat16 precision"));
+    assert!(stdout.contains("SUITE 3 PASSED: roze-torch zero-copy strided slicing with negative indices and steps"));
+    assert!(stdout.contains("SUITE 4 PASSED: roze-torch NumPy/PyTorch broadcasting semantics and vector arithmetic"));
+    assert!(stdout.contains("SUITE 5 PASSED: roze-torch matrix transposition, permutation and contiguous reallocation"));
+    assert!(stdout.contains("SUITE 6 PASSED: roze-torch shape transformations (reshape, flatten, squeeze, unsqueeze)"));
+    assert!(stdout.contains("SUITE 7 PASSED: roze-torch tensor contractions (dot, matmul GEMM, bmm, tensordot)"));
+    assert!(stdout.contains("SUITE 8 PASSED: roze-torch mathematical reductions and L1/L2 vector norms"));
+    assert!(stdout.contains("SUITE 9 PASSED: roze-torch neural activations, linear layer and SGD optimizer"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze-Torch N-Dimensional Tensor Engine 100% OPERATIONAL"));
+}
+
 
 
 

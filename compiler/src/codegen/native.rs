@@ -8079,6 +8079,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     let retain_ty = if value.type_ == Type::Unknown { type_ } else { &value.type_ };
                     self.retain_for_arc_type(retain_ty, val)?;
                 }
+                let val = self.coerce_for_target_type(val, &value.type_, type_);
                 let var = self.declare_local(name, type_.clone());
                 self.builder.def_var(var, val);
                 Ok(false)

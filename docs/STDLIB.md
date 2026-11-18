@@ -11,7 +11,7 @@ The **Roze Standard Library** provides zero-overhead, memory-safe, portable syst
 3. [Language Core & Algorithms](#3-language-core--algorithms)
    - `core` • `collections` • `math` • `ptr` • `memory` • `libc`
 4. [Concurrency & Synchronization](#4-concurrency--synchronization)
-   - `concurrency` • `sync`
+   - `concurrent` • `concurrency` • `sync`
 5. [I/O, File System & Process Management](#5-io-file-system--process-management)
    - `io` • `fs` • `process` • `env` • `time` • `nio`
 6. [Data Serialization, Text & Reflection](#6-data-serialization-text--reflection)
@@ -47,6 +47,7 @@ The **Roze Standard Library** provides zero-overhead, memory-safe, portable syst
 | `core` | `import "core";` | Fundamental primitives, math functions, string manipulation, conversions |
 | `collections` | `import "collections";` | `ArrayList<T>`, `LinkedList<T>`, `HashMap<K, V>`, `LinkedHashMap<K, V>`, `HashSet<T>`, `TreeSet<T>`, `TreeMap<K, V>`, `ArrayDeque<T>`, `PriorityQueue<T>`, `BitSet`, static Collections algorithms (`sort`, `binary_search`, `shuffle`, `reverse`, `rotate`, `unmodifiable_view`) |
 | `math` | `import "math";` | Arbitrary-precision `BigInt` (Karatsuba, Miller-Rabin), `BigDecimal` (7 rounding modes), `Complex`, and universal scientific mathematics |
+| `concurrent` | `import "roze.concurrent";` | Enterprise coordination: `CompletableFuture<T>` (monadic composition, `all_of`, `any_of`), `ForkJoinPool` work-stealing engine, `ThreadPoolExecutor`, `CountDownLatch`, `CyclicBarrier`, `Semaphore`, `Exchanger`, `AtomicReference<T>` |
 | `concurrency` | `import "concurrency";` | Native threads, M:N fibers, channels, async/await futures, task nurseries |
 | `sync` | `import "sync";` | Mutex, RwLock, Semaphore, Barrier, Atomic primitives (`AtomicInt`, `AtomicPtr`) |
 | `fs` | `import "fs";` | File metadata, directory walkers, path manipulation, permissions |
@@ -305,6 +306,76 @@ mutex_unlock(mtx);
 let atomic = atomic_i64_new(0);
 atomic_i64_add(atomic, 1);
 let count = atomic_i64_load(atomic);
+```
+
+### 4.3 Enterprise Concurrency: CompletableFuture & Work-Stealing Pools (`roze.concurrent`)
+1:1 architectural and functional parity with Java 25 `java.util.concurrent.*` and Rust 1.99 `crossbeam`.
+
+```roze
+import "roze.concurrent";
+
+// 1. AtomicReference (Lock-Free CAS Semantics)
+let ref = atomic_reference_new("initial");
+let updated = ref.compare_and_set("initial", "updated"); // -> true
+let val: string = ref.get(); // -> "updated"
+
+// 2. CountDownLatch & CyclicBarrier
+let latch = count_down_latch_new(3);
+latch.count_down();
+latch.await_latch(); // Blocks until count reaches 0
+
+let barrier = cyclic_barrier_new(3, || {
+    println("Barrier tripped across all 3 parties!");
+});
+barrier.await_barrier();
+
+// 3. Semaphore Permits & Exchanger Rendezvous
+let sem = semaphore_new(5);
+sem.acquire();
+let avail = sem.available_permits(); // -> 4
+sem.release();
+
+let ex = exchanger_new();
+let swapped: string = ex.exchange("data_from_producer");
+
+// 4. CompletableFuture<T> Async Monadic Composition
+let future = completable_future_supply_async(|| -> Unknown {
+    return 100;
+})
+.then_apply(|v: Unknown| -> Unknown {
+    let n: int = v;
+    return n * 2;
+})
+.then_compose(|v: Unknown| -> CompletableFuture {
+    let n: int = v;
+    return completable_future_supply_async(|| -> Unknown {
+        return n + 50;
+    });
+});
+
+let result: int = future.get(); // -> 250
+
+// Combinators: all_of, any_of
+let f1 = completable_future_completed(10);
+let f2 = completable_future_completed(20);
+let all_done = completable_future_all_of([f1, f2]);
+all_done.join();
+
+// 5. ThreadPoolExecutor & Work-Stealing ForkJoinPool
+let pool = thread_pool_executor_new(4, 8);
+let fut_task = pool.submit(|| -> Unknown {
+    return "task_completed";
+});
+let res: string = fut_task.get();
+pool.shutdown();
+
+let fjp = fork_join_pool_new(4);
+let task = fork_join_task_new(|arg: Unknown| -> Unknown {
+    let n: int = arg;
+    return n * 10;
+}, 5);
+let fj_res: int = fjp.invoke(task); // -> 50
+let stolen = fjp.steal_work(2); // Work-stealing across worker deques
 ```
 
 ---

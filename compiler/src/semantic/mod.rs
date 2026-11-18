@@ -6551,6 +6551,14 @@ fn collect_from_expr(expr: &TypedExpression, idents: &mut Vec<String>) {
         }
         TypedExpressionKind::FieldAccess { object, .. } => collect_from_expr(object, idents),
         TypedExpressionKind::Try(inner) => collect_from_expr(inner, idents),
+        TypedExpressionKind::Await(inner) => collect_from_expr(inner, idents),
+        TypedExpressionKind::MethodCall { object, arguments, .. } |
+        TypedExpressionKind::TraitMethodCall { object, arguments, .. } => {
+            collect_from_expr(object, idents);
+            for a in arguments {
+                collect_from_expr(a, idents);
+            }
+        }
         TypedExpressionKind::EnumConstruct { arguments, .. } => {
             for a in arguments {
                 collect_from_expr(a, idents);

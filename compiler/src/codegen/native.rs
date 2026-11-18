@@ -6923,6 +6923,7 @@ impl<'a> NativeGenerator<'a> {
                 for (i, (cap_name, cap_ty)) in c.captures.iter().enumerate() {
                     let offset = (16 + i * 8) as i32;
                     let cap_val = fc.builder.ins().load(cranelift_type_for(cap_ty), MemFlags::new(), env_val, offset);
+                    fc.retain_for_arc_type(cap_ty, cap_val)?;
                     let var = fc.declare_local(cap_name, cap_ty.clone());
                     fc.builder.def_var(var, cap_val);
                 }
@@ -9623,6 +9624,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             // ---- Concurrency: Threads & Channels (MED-03) ----
             "thread_spawn" if arguments.len() == 1 => {
                 let closure_val = self.compile_expression(&arguments[0])?;
+                self.retain_if_aliasing(&arguments[0], closure_val)?;
                 let func_ref = self.module.declare_func_in_func(self.concurrency.thread_spawn_id, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[closure_val]);
                 let result = self.builder.inst_results(call)[0];
@@ -9651,6 +9653,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             // ---- Modern Concurrency: M:N Green Threads / Virtual Threads (M1-T04) ----
             "fiber_spawn" if arguments.len() == 1 => {
                 let closure_val = self.compile_expression(&arguments[0])?;
+                self.retain_if_aliasing(&arguments[0], closure_val)?;
                 let func_ref = self.module.declare_func_in_func(self.concurrency.fiber_spawn_id, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[closure_val]);
                 let result = self.builder.inst_results(call)[0];
@@ -9692,6 +9695,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             "future_spawn" | "__roze_async_spawn" if arguments.len() == 1 => {
                 let closure_val = self.compile_expression(&arguments[0])?;
+                self.retain_if_aliasing(&arguments[0], closure_val)?;
                 let func_ref = self.module.declare_func_in_func(self.concurrency.future_spawn_id, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[closure_val]);
                 let result = self.builder.inst_results(call)[0];

@@ -4947,6 +4947,24 @@ fn native_standard_nio_zero_copy_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze Non-Blocking I/O & Memory-Mapped Channels 100% OPERATIONAL"));
 }
 
+#[test]
+fn native_standard_concurrent_enterprise_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_concurrent.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_concurrent.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_concurrent_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: roze.concurrent AtomicReference lock-free CAS semantics"));
+    assert!(stdout.contains("SUITE 2 PASSED: roze.concurrent CountDownLatch and CyclicBarrier multi-generation sync"));
+    assert!(stdout.contains("SUITE 3 PASSED: roze.concurrent Semaphore permits and Exchanger thread rendezvous"));
+    assert!(stdout.contains("SUITE 4 PASSED: roze.concurrent CompletableFuture lifecycle and async execution"));
+    assert!(stdout.contains("SUITE 5 PASSED: roze.concurrent CompletableFuture monadic composition and combinators"));
+    assert!(stdout.contains("SUITE 6 PASSED: roze.concurrent ThreadPoolExecutor and ForkJoinPool work-stealing"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Enterprise Concurrency Suite 100% OPERATIONAL"));
+}
+
 
 
 

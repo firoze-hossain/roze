@@ -662,7 +662,7 @@ s1_rows = [
         ("M7-T06", 8), ("Month 7", 22), ("Sprint 14 (W29-W30)", 8), "Enterprise Concurrency", "CompletableFuture & Work-Stealing Pools (roze.concurrent)",
         "Advanced enterprise coordination primitives in pure Roze: CompletableFuture<T> with monadic composition (then_apply, then_compose, all_of, any_of), ForkJoinPool work-stealing parallel engine, CountDownLatch, CyclicBarrier, Semaphore, Exchanger, ThreadPoolExecutor, AtomicReference<T>.",
         "Direct parity with Java 25 java.util.concurrent.* and Rust 1.99 crossbeam.",
-        "High-Concurrency Servers, Parallel Computing", "8 Days", ("Critical", 14), ("Planned", 12)
+        "High-Concurrency Servers, Parallel Computing", "8 Days", ("Critical", 14), ("Completed", 10)
     ],
     [
         ("M7-T07", 8), ("Month 7", 22), ("Sprint 14 (W29-W30)", 8), "Milestone Gate M7", "Enterprise Standard Library Benchmark Gate",

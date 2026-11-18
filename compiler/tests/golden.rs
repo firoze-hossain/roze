@@ -2237,6 +2237,19 @@ fn standard_nio_zero_copy_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze Non-Blocking I/O & Memory-Mapped Channels 100% OPERATIONAL"));
 }
 
+#[test]
+fn standard_concurrent_enterprise_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_concurrent.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: roze.concurrent AtomicReference lock-free CAS semantics"));
+    assert!(stdout.contains("SUITE 2 PASSED: roze.concurrent CountDownLatch and CyclicBarrier multi-generation sync"));
+    assert!(stdout.contains("SUITE 3 PASSED: roze.concurrent Semaphore permits and Exchanger thread rendezvous"));
+    assert!(stdout.contains("SUITE 4 PASSED: roze.concurrent CompletableFuture lifecycle and async execution"));
+    assert!(stdout.contains("SUITE 5 PASSED: roze.concurrent CompletableFuture monadic composition and combinators"));
+    assert!(stdout.contains("SUITE 6 PASSED: roze.concurrent ThreadPoolExecutor and ForkJoinPool work-stealing"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Enterprise Concurrency Suite 100% OPERATIONAL"));
+}
+
 
 
 

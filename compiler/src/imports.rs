@@ -129,6 +129,9 @@ const DATA_DISPLAY_NAME: &str = "data (built-in)";
 const NIO_SOURCE: &str = include_str!("../../stdlib/src/nio.roze");
 const NIO_DISPLAY_NAME: &str = "nio (built-in)";
 
+const CONCURRENT_SOURCE: &str = include_str!("../../stdlib/src/concurrent.roze");
+const CONCURRENT_DISPLAY_NAME: &str = "concurrent (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -457,6 +460,12 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         || path == "channels" || path == "roze.channels" || path == "roze::channels"
         || path == "mio" || path == "roze.mio" || path == "roze::mio" {
         return Ok((NIO_SOURCE.to_string(), NIO_DISPLAY_NAME.to_string()));
+    }
+    if path == "concurrent" || path == "std::concurrent" || path == "roze::concurrent" || path == "roze.concurrent"
+        || path == "futures" || path == "roze.futures" || path == "roze::futures"
+        || path == "forkjoin" || path == "roze.forkjoin" || path == "roze::forkjoin"
+        || path == "crossbeam" || path == "roze.crossbeam" || path == "roze::crossbeam" {
+        return Ok((CONCURRENT_SOURCE.to_string(), CONCURRENT_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

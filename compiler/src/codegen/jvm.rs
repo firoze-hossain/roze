@@ -6950,6 +6950,7 @@ pub struct JavaSourceGenerator {
     class_name: String,
     try_counter: std::cell::Cell<usize>,
     in_class: std::cell::Cell<bool>,
+    lambda_counter: std::cell::Cell<usize>,
 }
 
 impl JavaSourceGenerator {
@@ -6965,6 +6966,7 @@ impl JavaSourceGenerator {
             class_name,
             try_counter: std::cell::Cell::new(0),
             in_class: std::cell::Cell::new(false),
+            lambda_counter: std::cell::Cell::new(0),
         }
     }
 
@@ -8585,40 +8587,46 @@ impl JavaSourceGenerator {
                     }
                     None
                 });
+                let lid = self.lambda_counter.get();
+                self.lambda_counter.set(lid + 1);
+                let args_name = format!("__args_{}", lid);
                 if let Some((params, ret_ty)) = func_info {
                     if ret_ty == Type::Void {
-                        source.push_str("((RozeFn) (__args) -> { ");
+                        source.push_str(&format!("((RozeFn) ({}) -> {{ ", args_name));
                         source.push_str(&escape_java_identifier(name));
                         source.push('(');
                         for (i, p) in params.iter().enumerate() {
                             if i > 0 { source.push_str(", "); }
-                            source.push_str(&java_unbox(&p.type_, &format!("__args[{}]", i)));
+                            source.push_str(&java_unbox(&p.type_, &format!("{}[{}]", args_name, i)));
                         }
                         source.push_str("); return null; })");
                     } else {
-                        source.push_str("((RozeFn) (__args) -> ");
+                        source.push_str(&format!("((RozeFn) ({}) -> ", args_name));
                         source.push_str(&escape_java_identifier(name));
                         source.push('(');
                         for (i, p) in params.iter().enumerate() {
                             if i > 0 { source.push_str(", "); }
-                            source.push_str(&java_unbox(&p.type_, &format!("__args[{}]", i)));
+                            source.push_str(&java_unbox(&p.type_, &format!("{}[{}]", args_name, i)));
                         }
                         source.push_str("))");
                     }
                 } else {
-                    source.push_str("((RozeFn) (__args) -> ");
+                    source.push_str(&format!("((RozeFn) ({}) -> ", args_name));
                     source.push_str(&escape_java_identifier(name));
                     source.push_str("())");
                 }
             }
             TypedExpressionKind::Closure { params, return_type, captures: _, body, .. } => {
-                source.push_str("((RozeFn) (__args) -> {\n");
+                let lid = self.lambda_counter.get();
+                self.lambda_counter.set(lid + 1);
+                let args_name = format!("__args_{}", lid);
+                source.push_str(&format!("((RozeFn) ({}) -> {{\n", args_name));
                 for (i, (p_name, p_ty)) in params.iter().enumerate() {
                     source.push_str(&format!(
                         "    {} {} = {};\n",
                         java_type_name(p_ty),
                         escape_java_identifier(p_name),
-                        java_unbox(p_ty, &format!("__args[{}]", i))
+                        java_unbox(p_ty, &format!("{}[{}]", args_name, i))
                     ));
                 }
                 self.generate_statement(source, body, 1, return_type, true)?;

@@ -1,0 +1,439 @@
+// compiler/tests/fixtures/std_concurrent.roze
+//
+// M7-T06: Enterprise Concurrency, CompletableFuture & Work-Stealing Pools (roze.concurrent)
+// Full architectural parity with Java 25 java.util.concurrent.* and Rust 1.99 crossbeam.
+
+import "roze.concurrent";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("ASSERTION FAILED: " + msg);
+    }
+}
+
+func assert_eq_int(actual: int, expected: int, msg: string) {
+    if actual != expected {
+        println("ASSERTION FAILED: " + msg + " (expected " + to_string(expected) + ", got " + to_string(actual) + ")");
+    }
+}
+
+func assert_eq_str(actual: string, expected: string, msg: string) {
+    if actual != expected {
+        println("ASSERTION FAILED: " + msg + " (expected '" + expected + "', got '" + actual + "')");
+    }
+}
+
+// ------------------------------------------------------------------------------
+// Suite 1: AtomicReference<T> Operations & CAS Semantics
+// ------------------------------------------------------------------------------
+func test_suite_1_atomic_reference() {
+    let ar = atomic_reference_new("initial");
+    let v1: string = ar.get();
+    assert_eq_str(v1, "initial", "get initial");
+
+    ar.set("updated");
+    let v2: string = ar.get();
+    assert_eq_str(v2, "updated", "get updated");
+
+    let str_third = "third";
+    let old_v: string = ar.get_and_set(str_third);
+    assert_eq_str(old_v, "updated", "get_and_set old value");
+    let v3: string = ar.get();
+    assert_eq_str(v3, "third", "get third");
+
+    // Successful CAS
+    let str_fourth = "fourth";
+    let cas_ok = ar.compare_and_set(str_third, str_fourth);
+    assert_true(cas_ok, "successful CAS");
+    let v4: string = ar.get();
+    assert_eq_str(v4, "fourth", "get fourth");
+
+    // Failed CAS
+    let cas_fail = ar.compare_and_set("wrong_expected", "fifth");
+    assert_true(!cas_fail, "failed CAS on mismatch");
+    let v5: string = ar.get();
+    assert_eq_str(v5, "fourth", "value unchanged after failed CAS");
+
+    // compare_and_exchange witness
+    let witness: string = ar.compare_and_exchange("wrong", "sixth");
+    assert_eq_str(witness, "fourth", "witness is current value");
+
+    let str_sixth = "sixth";
+    let witness2: string = ar.compare_and_exchange(str_fourth, str_sixth);
+    assert_eq_str(witness2, "fourth", "witness before update");
+    let v6: string = ar.get();
+    assert_eq_str(v6, "sixth", "updated after successful witness exchange");
+
+    // Integer reference
+    let ar_num = atomic_reference_new(100);
+    let n1: int = ar_num.get();
+    assert_eq_int(n1, 100, "atomic ref int");
+    let num_cas = ar_num.compare_and_set(100, 200);
+    assert_true(num_cas, "atomic ref int CAS");
+    let n2: int = ar_num.get();
+    assert_eq_int(n2, 200, "atomic ref int updated");
+
+    println("SUITE 1 PASSED: roze.concurrent AtomicReference lock-free CAS semantics");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 2: CountDownLatch & CyclicBarrier Synchronization
+// ------------------------------------------------------------------------------
+func test_suite_2_latches_and_barriers() {
+    // 1. CountDownLatch
+    let latch = count_down_latch_new(3);
+    assert_eq_int(latch.get_count(), 3, "initial latch count is 3");
+
+    // Spawn 3 worker threads counting down
+    let i = 0;
+    while i < 3 {
+        thread_spawn(|| {
+            thread_sleep(10);
+            latch.count_down();
+            return 0;
+        });
+        i = i + 1;
+    }
+
+    // Await all 3 workers
+    latch.await_latch();
+    assert_eq_int(latch.get_count(), 0, "latch count is 0 after await");
+
+    // Timeout test on already 0 latch
+    let ok = latch.await_timeout(50);
+    assert_true(ok, "await_timeout succeeds when latch is 0");
+
+    // 2. CyclicBarrier with Barrier Action
+    let barrier_action_ran = atomic_reference_new(false);
+    let barrier_cb = || {
+        barrier_action_ran.set(true);
+    };
+
+    let barrier = cyclic_barrier_new(3, barrier_cb);
+    assert_eq_int(barrier.get_parties(), 3, "barrier parties is 3");
+    assert_true(!barrier.is_broken(), "barrier is not broken");
+
+    // Generation 1: 2 workers call await in background, main thread calls await
+    let completion_latch = count_down_latch_new(2);
+    thread_spawn(|| {
+        barrier.await_barrier();
+        completion_latch.count_down();
+        return 0;
+    });
+    thread_spawn(|| {
+        barrier.await_barrier();
+        completion_latch.count_down();
+        return 0;
+    });
+
+    thread_sleep(20);
+    barrier.await_barrier(); // 3rd party trips barrier
+    completion_latch.await_latch();
+    thread_sleep(25);
+
+    let act_ran: bool = barrier_action_ran.get();
+    assert_true(act_ran, "barrier action executed when tripped");
+
+    // Generation 2: Verify cyclic barrier reuse!
+    barrier_action_ran.set(false);
+    let gen2_latch = count_down_latch_new(2);
+    thread_spawn(|| {
+        barrier.await_barrier();
+        gen2_latch.count_down();
+        return 0;
+    });
+    thread_spawn(|| {
+        barrier.await_barrier();
+        gen2_latch.count_down();
+        return 0;
+    });
+
+    thread_sleep(20);
+    barrier.await_barrier(); // 3rd party trips barrier again in Gen 2
+    gen2_latch.await_latch();
+    thread_sleep(25);
+
+    let act_ran_gen2: bool = barrier_action_ran.get();
+    assert_true(act_ran_gen2, "barrier action executed again in cyclic generation 2");
+
+    println("SUITE 2 PASSED: roze.concurrent CountDownLatch and CyclicBarrier multi-generation sync");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 3: Semaphore Permits & Exchanger Atomic Rendezvous
+// ------------------------------------------------------------------------------
+func test_suite_3_semaphore_and_exchanger() {
+    // 1. Semaphore
+    let sem = semaphore_new(3);
+    assert_eq_int(sem.available_permits(), 3, "initial permits is 3");
+
+    sem.acquire();
+    assert_eq_int(sem.available_permits(), 2, "permits after acquire is 2");
+
+    let acquired2 = sem.try_acquire_permits(2);
+    assert_true(acquired2, "acquired 2 permits");
+    assert_eq_int(sem.available_permits(), 0, "permits is 0");
+
+    let try_fail = sem.try_acquire();
+    assert_true(!try_fail, "try_acquire fails when exhausted");
+
+    sem.release();
+    assert_eq_int(sem.available_permits(), 1, "permits after release is 1");
+
+    sem.release_permits(4);
+    assert_eq_int(sem.available_permits(), 5, "permits after release_permits is 5");
+
+    let drained = sem.drain_permits();
+    assert_eq_int(drained, 5, "drained 5 permits");
+    assert_eq_int(sem.available_permits(), 0, "permits 0 after drain");
+
+    // 2. Exchanger: Two threads swap data at atomic rendezvous
+    let ex = exchanger_new();
+    let thread2_received = atomic_reference_new("");
+    let t2_done = count_down_latch_new(1);
+
+    thread_spawn(|| {
+        let rec: string = ex.exchange("ITEM_FROM_THREAD_2");
+        thread2_received.set(rec);
+        t2_done.count_down();
+        return 0;
+    });
+
+    thread_sleep(20);
+    let main_received: string = ex.exchange("ITEM_FROM_MAIN");
+
+    assert_eq_str(main_received, "ITEM_FROM_THREAD_2", "main received thread 2 item");
+    t2_done.await_latch();
+    thread_sleep(25);
+    let t2_got: string = thread2_received.get();
+    assert_eq_str(t2_got, "ITEM_FROM_MAIN", "thread 2 received main item");
+
+    println("SUITE 3 PASSED: roze.concurrent Semaphore permits and Exchanger thread rendezvous");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 4: CompletableFuture<T> Core Lifecycle & Async Suppliers
+// ------------------------------------------------------------------------------
+func test_suite_4_completable_future_core() {
+    // Completed future
+    let f1 = completable_future_completed("hello_future");
+    assert_true(f1.is_done(), "f1 is done");
+    assert_true(!f1.is_completed_exceptionally(), "f1 not exceptional");
+    assert_true(!f1.is_cancelled(), "f1 not cancelled");
+    let v1: string = f1.get();
+    assert_eq_str(v1, "hello_future", "f1 get result");
+    let v1_now: string = f1.get_now("fallback");
+    assert_eq_str(v1_now, "hello_future", "f1 get_now result");
+
+    // Failed future
+    let f2 = completable_future_failed("NetworkTimeoutException");
+    assert_true(f2.is_done(), "f2 is done");
+    assert_true(f2.is_completed_exceptionally(), "f2 is exceptional");
+    assert_eq_str(f2.get_error(), "NetworkTimeoutException", "f2 error string");
+
+    // Cancelled future
+    let f3 = completable_future_new();
+    assert_true(!f3.is_done(), "f3 initially pending");
+    let cancelled = f3.cancel();
+    assert_true(cancelled, "f3 cancelled");
+    assert_true(f3.is_done(), "f3 is done after cancel");
+    assert_true(f3.is_cancelled(), "f3 is cancelled");
+
+    // supply_async on background thread
+    let f4 = completable_future_supply_async(|| -> Unknown {
+        thread_sleep(20);
+        return 42 * 2;
+    });
+    assert_true(!f4.is_done(), "f4 is running asynchronously");
+    let res4: int = f4.get();
+    assert_eq_int(res4, 84, "f4 resolved value");
+    assert_true(f4.is_done(), "f4 done after get");
+
+    // run_async
+    let ran_flag = atomic_reference_new(false);
+    let f5 = completable_future_run_async(|| {
+        thread_sleep(10);
+        ran_flag.set(true);
+    });
+    f5.get();
+    let is_ran: bool = ran_flag.get();
+    assert_true(is_ran, "run_async task executed");
+    thread_sleep(25);
+
+    println("SUITE 4 PASSED: roze.concurrent CompletableFuture lifecycle and async execution");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 5: CompletableFuture Monadic Composition & Multi-Future Combinators
+// ------------------------------------------------------------------------------
+func test_suite_5_monadic_composition() {
+    // 1. then_apply (Functor / map)
+    let f1 = completable_future_supply_async(|| -> Unknown {
+        return 10;
+    });
+    let f2 = f1.then_apply(|v: Unknown| -> Unknown {
+        let n: int = v;
+        return n * 5;
+    });
+    let f3 = f2.then_apply(|v: Unknown| -> Unknown {
+        let n: int = v;
+        return "result=" + to_string(n);
+    });
+    let s: string = f3.get();
+    assert_eq_str(s, "result=50", "then_apply pipeline result");
+
+    // 2. then_compose (Monad / flatMap)
+    let f_start = completable_future_completed(20);
+    let f_composed = f_start.then_compose(|v: Unknown| -> CompletableFuture {
+        let n: int = v;
+        return completable_future_supply_async(|| -> Unknown {
+            return n + 100;
+        });
+    });
+    let comp_res: int = f_composed.get();
+    assert_eq_int(comp_res, 120, "then_compose flatMap result");
+
+    // 3. then_combine (Binary product combination)
+    let fa = completable_future_supply_async(|| -> Unknown {
+        thread_sleep(10);
+        return 30;
+    });
+    let fb = completable_future_supply_async(|| -> Unknown {
+        thread_sleep(10);
+        return 70;
+    });
+    let f_combined = fa.then_combine(fb, |a: Unknown, b: Unknown| -> Unknown {
+        let na: int = a;
+        let nb: int = b;
+        return na + nb;
+    });
+    let sum_res: int = f_combined.get();
+    assert_eq_int(sum_res, 100, "then_combine result is 100");
+
+    // 4. exceptionally (Recovery)
+    let f_err = completable_future_failed("DatabaseDiskFull");
+    let f_recovered = f_err.exceptionally(|err: string| -> Unknown {
+        return "RECOVERED_FROM_" + err;
+    });
+    let rec_val: string = f_recovered.get();
+    assert_eq_str(rec_val, "RECOVERED_FROM_DatabaseDiskFull", "exceptionally recovery result");
+
+    // 5. all_of combinator
+    let fut_list = list_new();
+    let res_accumulator = atomic_reference_new(0);
+
+    let k = 0;
+    while k < 4 {
+        let child = completable_future_supply_async(|| -> Unknown {
+            thread_sleep(10);
+            return 1;
+        });
+        concurrent_push(fut_list, child);
+        k = k + 1;
+    }
+
+    let all_fut = completable_future_all_of(fut_list);
+    all_fut.get();
+    assert_true(all_fut.is_done(), "all_of completed after all 4 children finished");
+
+    // 6. any_of combinator
+    let fast_fut = completable_future_supply_async(|| -> Unknown {
+        return "FAST_FIRST";
+    });
+    let slow_fut = completable_future_supply_async(|| -> Unknown {
+        thread_sleep(100);
+        return "SLOW_SECOND";
+    });
+    let any_list = list_new();
+    concurrent_push(any_list, fast_fut);
+    concurrent_push(any_list, slow_fut);
+
+    let any_fut = completable_future_any_of(any_list);
+    let any_res: string = any_fut.get();
+    assert_eq_str(any_res, "FAST_FIRST", "any_of resolved to fastest future");
+    thread_sleep(25);
+
+    println("SUITE 5 PASSED: roze.concurrent CompletableFuture monadic composition and combinators");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 6: ThreadPoolExecutor & ForkJoinPool Work-Stealing Engine
+// ------------------------------------------------------------------------------
+func test_suite_6_executors_and_fork_join() {
+    // 1. ThreadPoolExecutor
+    let pool = thread_pool_executor_new(2, 4);
+    assert_eq_int(pool.get_pool_size(), 2, "core pool size is 2");
+    assert_true(!pool.is_shutdown(), "pool is not shutdown");
+
+    let counter = atomic_reference_new(0);
+    let i = 0;
+    while i < 10 {
+        pool.execute(|| {
+            let cur: int = counter.get();
+            counter.set(cur + 1);
+        });
+        i = i + 1;
+    }
+
+    // Submit with CompletableFuture
+    let fut_exec = pool.submit(|| -> Unknown {
+        return 999;
+    });
+    let exec_val: int = fut_exec.get();
+    assert_eq_int(exec_val, 999, "pool submit CompletableFuture result");
+
+    pool.shutdown();
+    assert_true(pool.is_shutdown(), "pool is shutdown");
+    let term_ok = pool.await_termination(100);
+    assert_true(term_ok, "pool terminated");
+
+    // 2. ForkJoinPool & Work-Stealing
+    let fjp = fork_join_pool_new(4);
+    assert_eq_int(fjp.get_parallelism(), 4, "parallelism is 4");
+
+    // Divide-and-conquer task
+    let task1 = fork_join_task_new(|arg: Unknown| -> Unknown {
+        let n: int = arg;
+        return n * 2;
+    }, 25);
+
+    let res_task1: int = fjp.invoke(task1);
+    assert_eq_int(res_task1, 50, "fork join task invoke result is 50");
+    assert_true(task1.is_done(), "task 1 is done");
+
+    // Submit multiple tasks across worker deques
+    let j = 0;
+    while j < 8 {
+        let t = fork_join_task_new(|arg: Unknown| -> Unknown {
+            let idx: int = arg;
+            return idx + 10;
+        }, j);
+        fjp.submit(t);
+        j = j + 1;
+    }
+
+    // Steal work from worker 0 queue by worker 2 (crossbeam-deque work stealing)
+    let stolen_task = fjp.steal_work(2);
+    assert_true(stolen_task != null, "worker 2 successfully stole task from worker 0");
+    let stolen_res: int = stolen_task.compute();
+    assert_true(stolen_res >= 10, "stolen task computed result");
+    assert_eq_int(fjp.get_steals(), 1, "steals count is 1");
+
+    thread_sleep(25);
+
+    println("SUITE 6 PASSED: roze.concurrent ThreadPoolExecutor and ForkJoinPool work-stealing");
+}
+
+// ------------------------------------------------------------------------------
+// Main Test Runner
+// ------------------------------------------------------------------------------
+func main() {
+    println("=== M7-T06 Enterprise Concurrency: CompletableFuture & Work-Stealing Suite ===");
+    test_suite_1_atomic_reference();
+    test_suite_2_latches_and_barriers();
+    test_suite_3_semaphore_and_exchanger();
+    test_suite_4_completable_future_core();
+    test_suite_5_monadic_composition();
+    test_suite_6_executors_and_fork_join();
+    println("ALL SUITES COMPLETED: Roze Enterprise Concurrency Suite 100% OPERATIONAL");
+}

@@ -682,31 +682,31 @@ s1_rows = [
         ("M8-T02", 8), ("Month 8", 23), ("Sprint 15 (W31-W32)", 8), "Automatic Differentiation", "Dynamic Computational Graph Autograd Tape (roze-torch)",
         "Dynamic computational graph tape in pure Roze: forward pass operation recording, topological sort of DAG nodes, reverse-mode gradient backpropagation (tensor.backward()), in-place gradient accumulation (grad), no_grad() execution scopes, and custom autograd function definition API.",
         "Full parity with PyTorch torch.autograd dynamic backpropagation engine in pure Roze.",
-        "Deep Learning, Optimization, Neural Networks", "9 Days", ("Critical", 14), ("Completed", 11)
+        "Deep Learning, Optimization, Neural Networks", "9 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M8-T03", 8), ("Month 8", 23), ("Sprint 15 (W31-W32)", 8), "Neural Network Layers", "Deep Learning Modules & Activation Functions (roze-torch::nn)",
         "Pure Roze neural network layer modules: nn.Module base class with parameter registration, nn.Linear, nn.Conv2d, nn.MaxPool2d, nn.AvgPool2d, nn.BatchNorm2d, nn.LayerNorm, nn.Dropout, nn.Embedding, nn.MultiheadAttention, nn.Sequential. Activations: ReLU, GELU, SiLU, Sigmoid, Softmax.",
         "Direct parity with PyTorch torch.nn module ecosystem.",
-        "Computer Vision, NLP, Deep Learning", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Computer Vision, NLP, Deep Learning", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M8-T04", 8), ("Month 8", 23), ("Sprint 16 (W33-W34)", 8), "Optimizers & Loss", "Numerical Optimizers & Loss Functions (roze-torch::optim)",
         "Production optimizers: SGD (with momentum and Nesterov), Adam, AdamW (decoupled weight decay), RMSprop, Adagrad. Learning rate schedulers: StepLR, CosineAnnealingLR. Loss functions: MSELoss, CrossEntropyLoss, BCEWithLogitsLoss, L1Loss.",
         "Direct parity with PyTorch torch.optim and standard deep learning training loops.",
-        "Machine Learning Training, Model Tuning", "7 Days", ("High", 14), ("Planned", 12)
+        "Machine Learning Training, Model Tuning", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M8-T05", 8), ("Month 8", 23), ("Sprint 16 (W33-W34)", 8), "LLM Inference Engine", "Local Transformer Decoder & GGUF/Safetensors Loader",
         "Transformer decoder engine in pure Roze: Rotary Positional Embeddings (RoPE), SwiGLU feed-forward networks, RMSNorm, KV-cache acceleration with speculative decoding, BPE tokenizer, model loaders for safetensors zero-copy format and GGUF quantizations (Q4_0, Q4_K_M, Q8_0, F16).",
         "Runs LLaMA-3 and Mistral 7B models locally in pure Roze with zero Python runtime dependency.",
-        "Generative AI, Large Language Models, Edge AI", "9 Days", ("Critical", 14), ("Planned", 12)
+        "Generative AI, Large Language Models, Edge AI", "9 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M8-T06", 8), ("Month 8", 23), ("Sprint 16 (W33-W34)", 8), "Hardware Acceleration", "CUDA FFI Kernels, OpenBLAS & Hardware SIMD",
         "Direct hardware compute acceleration bridges: CUDA runtime and cuBLAS / cuDNN bindings via pure Roze FFI, custom PTX kernel execution, CPU fallback with AVX-512 / AVX2 / ARM NEON vectorization, and OpenBLAS / oneMKL bindings.",
         "Sub-10ms token generation latency on NVIDIA GPUs and multi-core CPU SIMD.",
-        "GPU Computing, High-Performance AI", "8 Days", ("High", 14), ("Planned", 12)
+        "GPU Computing, High-Performance AI", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M8-T07", 8), ("Month 8", 23), ("Sprint 16 (W33-W34)", 8), "Milestone Gate M8", "Deep Learning & 7B LLM Inference Benchmark Gate",
@@ -1331,7 +1331,7 @@ s5_rows = [
         ("Sprint 15", 23), "W31 - W32", "Tensor Engine & Autograd", "N-D Tensor<T, D>, Strided Layout, Reverse-Mode Autograd Tape, NN Layers",
         "Arbitrary rank tensors with broadcasting, dynamic autograd backprop, linear/conv/attention neural network layers.",
         "Risk: Gradient accumulation bugs. Mitigation: Rigorous numerical gradient checking (finite difference test).",
-        ("Gate 15: Tensor & Autograd Pass", 12)
+        ("Gate 15: Tensor & Autograd Pass", 16)
     ],
     [
         ("Sprint 16", 23), "W33 - W34", "AI & LLM Milestone M8", "Optimizers (AdamW), 7B Transformer LLM Decoder, CUDA FFI Acceleration",

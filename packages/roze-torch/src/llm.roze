@@ -1,0 +1,8 @@
+// ==============================================================================
+// 🌹 Roze-Torch: Local Transformer Decoder & GGUF/Safetensors Loader (roze-torch::llm)
+// ==============================================================================
+// Sprint 16 (W33-W34) Deliverable: M8-T05
+// Pure Roze LLaMA-3 / Mistral 7B Local Inference Engine with Zero Python Dependencies
+// ==============================================================================
+
+import "lib.roze";

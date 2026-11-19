@@ -5022,6 +5022,13 @@ fn native_standard_torch_nd_tensor_suite() {
     assert!(stdout.contains("SUITE 27 PASSED: roze-torch RMSprop and Adagrad adaptive optimizers"));
     assert!(stdout.contains("SUITE 28 PASSED: roze-torch learning rate schedulers (StepLR and CosineAnnealingLR)"));
     assert!(stdout.contains("SUITE 29 PASSED: roze-torch end-to-end training pipeline with model, loss, optimizer and scheduler"));
+    assert!(stdout.contains("SUITE 30 PASSED: roze-torch RMSNorm normalization and Rotary Positional Embeddings (RoPE)"));
+    assert!(stdout.contains("SUITE 31 PASSED: roze-torch SwiGLU feed-forward networks with SiLU gating"));
+    assert!(stdout.contains("SUITE 32 PASSED: roze-torch KV-cache dynamic prefix slicing and Grouped-Query Attention acceleration"));
+    assert!(stdout.contains("SUITE 33 PASSED: roze-torch BPETokenizer with vocabulary merges and byte fallback tokens"));
+    assert!(stdout.contains("SUITE 34 PASSED: roze-torch safetensors zero-copy binary format parser and tensor loader"));
+    assert!(stdout.contains("SUITE 35 PASSED: roze-torch GGUF model parser with Q4_0, Q8_0 and F16 quantization decoders"));
+    assert!(stdout.contains("SUITE 36 PASSED: roze-torch local transformer decoder and speculative decoding engine"));
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze-Torch N-Dimensional Tensor Engine 100% OPERATIONAL"));
 }
 

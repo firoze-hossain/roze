@@ -246,7 +246,8 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         }
         "torch" | "roze::torch" | "roze-torch" | "roze_torch" | "tensors" | "autograd" | "neural" | "ai_torch"
         | "torch::nn" | "roze::torch::nn" | "roze-torch::nn" | "roze_torch::nn" | "nn" | "torch_nn"
-        | "torch::optim" | "roze::torch::optim" | "roze-torch::optim" | "roze_torch::optim" | "optim" | "torch_optim" => {
+        | "torch::optim" | "roze::torch::optim" | "roze-torch::optim" | "roze_torch::optim" | "optim" | "torch_optim"
+        | "torch::llm" | "roze::torch::llm" | "roze-torch::llm" | "roze_torch::llm" | "llm" | "torch_llm" | "gguf" | "safetensors" => {
             Some("roze-torch/src/lib.roze".to_string())
         }
         "game" | "roze::game" | "roze-game" | "roze_game" | "raylib_game" | "gamedev" | "engine" => {

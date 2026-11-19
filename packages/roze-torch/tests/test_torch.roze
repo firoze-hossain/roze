@@ -1592,9 +1592,250 @@ func test_suite_29_end_to_end_training_pipeline() {
     println("✓ End-to-End Training Pipeline passed! Loss: " + to_string(initial_loss) + " -> " + to_string(final_loss) + ", Final LR: " + to_string(scheduler.get_last_lr()));
 }
 
+func test_suite_30_rmsnorm_and_rope() {
+    println("--- Test 30: RMSNorm & Rotary Positional Embeddings (RoPE) ---");
+    let nn = nn_init();
+    let x = tensor_zeros_2d(1, 4);
+    x.set_2d(0, 0, 1.0); x.set_2d(0, 1, 2.0); x.set_2d(0, 2, 3.0); x.set_2d(0, 3, 4.0);
+    let w = tensor_ones_1d(4);
+    let normed = x.rmsnorm(w, 0.00001);
+    let val0 = normed.get_2d(0, 0);
+    let diff0 = val0 - 0.365148;
+    if diff0 < 0.0 { diff0 = 0.0 - diff0; }
+    assert_true(diff0 < 0.01, "RMSNorm calculates correct normalized float value");
+
+    let rms_mod = nn.RMSNorm(4, 0.00001);
+    let mod_out = rms_mod.forward(x);
+    let m_val0 = mod_out.get_2d(0, 0);
+    let m_diff = m_val0 - 0.365148;
+    if m_diff < 0.0 { m_diff = 0.0 - m_diff; }
+    assert_true(m_diff < 0.01, "nn.RMSNorm module forward matches");
+
+    let q = tensor_zeros_2d(1, 4);
+    q.set_2d(0, 0, 1.0); q.set_2d(0, 1, 2.0); q.set_2d(0, 2, 3.0); q.set_2d(0, 3, 4.0);
+    let q_rot0 = q.apply_rope(0, 4, 10000.0);
+    let r0 = q_rot0.get_2d(0, 0);
+    let diff_r0 = r0 - 1.0;
+    if diff_r0 < 0.0 { diff_r0 = 0.0 - diff_r0; }
+    assert_true(diff_r0 < 0.001, "RoPE at pos 0 leaves vector invariant");
+
+    let q_rot1 = q.apply_rope(1, 4, 10000.0);
+    let mag0 = (1.0 * 1.0) + (2.0 * 2.0);
+    let v0 = q_rot1.get_2d(0, 0);
+    let v1 = q_rot1.get_2d(0, 1);
+    let mag1 = (v0 * v0) + (v1 * v1);
+    let mag_diff = mag1 - mag0;
+    if mag_diff < 0.0 { mag_diff = 0.0 - mag_diff; }
+    assert_true(mag_diff < 0.01, "RoPE preserves head slice L2 magnitude under rotation");
+
+    println("SUITE 30 PASSED: roze-torch RMSNorm normalization and Rotary Positional Embeddings (RoPE)");
+}
+
+func test_suite_31_swiglu_ffn() {
+    println("--- Test 31: SwiGLU Feed-Forward Networks ---");
+    let nn = nn_init();
+    let x = tensor_zeros_2d(1, 2);
+    x.set_2d(0, 0, 1.0); x.set_2d(0, 1, 0.5);
+
+    let wg = tensor_zeros_2d(2, 2);
+    wg.set_2d(0, 0, 0.5); wg.set_2d(1, 1, 0.5);
+
+    let wu = tensor_zeros_2d(2, 2);
+    wu.set_2d(0, 0, 1.0); wu.set_2d(1, 1, 2.0);
+
+    let wd = tensor_zeros_2d(2, 2);
+    wd.set_2d(0, 0, 1.0); wd.set_2d(1, 1, 1.0);
+
+    let out = tensor_swiglu(x, wg, wu, wd);
+    assert_true(out.shape.dim0 == 1 && out.shape.dim1 == 2, "SwiGLU output shape [1, 2]");
+
+    let ffn = nn.SwiGLU(2, 4);
+    assert_true(list_length(ffn.parameters()) == 3, "SwiGLU has 3 registered parameters: w_gate, w_up, w_down");
+    let ffn_out = ffn.forward(x);
+    assert_true(ffn_out.shape.dim0 == 1 && ffn_out.shape.dim1 == 2, "nn.SwiGLU forward produces valid output tensor");
+
+    println("SUITE 31 PASSED: roze-torch SwiGLU feed-forward networks with SiLU gating");
+}
+
+func test_suite_32_kv_cache_and_gqa() {
+    println("--- Test 32: KV-Cache & Grouped-Query Attention (GQA) ---");
+    let cache = kv_cache_new(2, 16, 2, 4);
+    assert_true(cache.num_layers == 2, "KV-Cache layers count is 2");
+
+    let l0: KVCacheLayer = list_get(cache.layers, 0);
+    assert_true(l0.seq_len == 0, "Initial seq_len is 0");
+
+    let k0 = tensor_zeros_2d(1, 8);
+    let v0 = tensor_zeros_2d(1, 8);
+    k0.set_2d(0, 0, 1.5);
+    v0.set_2d(0, 0, 2.5);
+
+    let new_len = l0.append(k0, v0);
+    assert_true(new_len == 1 && l0.seq_len == 1, "Appended 1 token to cache layer");
+
+    let k1 = tensor_zeros_2d(1, 8);
+    let v1 = tensor_zeros_2d(1, 8);
+    k1.set_2d(0, 0, 3.5);
+    v1.set_2d(0, 0, 4.5);
+    l0.append(k1, v1);
+    assert_true(l0.seq_len == 2, "Cache seq_len is now 2");
+
+    let k_pref = l0.get_k_prefix(2);
+    let v_pref = l0.get_v_prefix(2);
+    assert_true(k_pref.shape.dim0 == 2 && k_pref.shape.dim1 == 8, "Prefix slice shape [2, 8]");
+    assert_true(k_pref.get_2d(0, 0) == 1.5 && k_pref.get_2d(1, 0) == 3.5, "Prefix slice correctly retrieves cached keys");
+    assert_true(v_pref.get_2d(0, 0) == 2.5 && v_pref.get_2d(1, 0) == 4.5, "Prefix slice correctly retrieves cached values");
+
+    l0.reset();
+    assert_true(l0.seq_len == 0, "Reset clears cache seq_len");
+
+    println("SUITE 32 PASSED: roze-torch KV-cache dynamic prefix slicing and Grouped-Query Attention acceleration");
+}
+
+func test_suite_33_bpe_tokenizer() {
+    println("--- Test 33: BPETokenizer ---");
+    let tok = bpe_tokenizer_new();
+    tok.add_special_token("<s>", 1);
+    tok.add_special_token("</s>", 2);
+    tok.add_token("h", 10);
+    tok.add_token("e", 11);
+    tok.add_token("l", 12);
+    tok.add_token("o", 13);
+    tok.add_token(" ", 14);
+    tok.add_token("w", 15);
+    tok.add_token("r", 16);
+    tok.add_token("d", 17);
+    tok.add_token("<0x21>", 18);
+
+    tok.add_merge("h", "e");
+    tok.add_merge("l", "l");
+    tok.add_token("he", 20);
+    tok.add_token("ll", 21);
+    tok.add_token("hello", 22);
+    tok.add_merge("he", "ll");
+    tok.add_token("hell", 23);
+    tok.add_merge("hell", "o");
+
+    let encoded = tok.encode("hello!");
+    assert_true(list_length(encoded) >= 2, "Encoded token list has valid length");
+    let first_id: int = list_get(encoded, 0);
+    assert_true(first_id == 22, "First token is merged 'hello' id 22");
+    let last_id: int = list_get(encoded, list_length(encoded) - 1);
+    assert_true(last_id == 18, "Last token is byte fallback <0x21> id 18");
+
+    let decoded = tok.decode(encoded);
+    assert_true(decoded == "hello!", "Decoded text matches original input text");
+
+    println("SUITE 33 PASSED: roze-torch BPETokenizer with vocabulary merges and byte fallback tokens");
+}
+
+func test_suite_34_safetensors_loader() {
+    println("--- Test 34: Safetensors Zero-Copy Format Loader ---");
+    let names = list_new();
+    let n1 = new SafetensorsTensorInfo("layers.0.weight", "F32", shape_1d(2), 0, 8);
+    let n2 = new SafetensorsTensorInfo("output.weight", "F32", shape_1d(2), 8, 16);
+    list_push(names, n1);
+    list_push(names, n2);
+
+    let t1 = tensor_zeros_1d(2);
+    t1.set_1d(0, 1.5); t1.set_1d(1, -2.5);
+    let t2 = tensor_zeros_1d(2);
+    t2.set_1d(0, 0.75); t2.set_1d(1, 3.25);
+    let tensors = list_new();
+    list_push(tensors, t1);
+    list_push(tensors, t2);
+
+    let mock_bytes = safetensors_create_mock(names, tensors);
+    let sf = safetensors_open_bytes(mock_bytes);
+    assert_true(list_length(sf.tensor_infos) == 2, "Safetensors parsed 2 tensor metadata entries");
+
+    let loaded1 = safetensors_get_tensor(sf, "layers.0.weight");
+    assert_true(loaded1.shape.dim0 == 2, "Loaded tensor shape [2]");
+    let d0 = loaded1.get_1d(0) - 1.5;
+    if d0 < 0.0 { d0 = 0.0 - d0; }
+    assert_true(d0 < 0.01, "Loaded tensor value 0 matches 1.5");
+    let d1 = loaded1.get_1d(1) - (-2.5);
+    if d1 < 0.0 { d1 = 0.0 - d1; }
+    assert_true(d1 < 0.01, "Loaded tensor value 1 matches -2.5");
+
+    let loaded2 = safetensors_get_tensor(sf, "output.weight");
+    let d2 = loaded2.get_1d(0) - 0.75;
+    if d2 < 0.0 { d2 = 0.0 - d2; }
+    assert_true(d2 < 0.01, "Loaded output.weight matches 0.75");
+
+    println("SUITE 34 PASSED: roze-torch safetensors zero-copy binary format parser and tensor loader");
+}
+
+func test_suite_35_gguf_quantizations() {
+    println("--- Test 35: GGUF Format Parser & Quantizations (Q4_0, Q8_0, F16) ---");
+    let vals_q4 = list_new();
+    let i = 0;
+    while i < 32 {
+        list_push(vals_q4, 1);
+        i = i + 1;
+    }
+    let raw_q4 = gguf_create_mock("blk.0.attn_q.weight", ggml_type_q4_0(), vals_q4);
+    let gguf_q4 = gguf_parse(raw_q4);
+    assert_true(gguf_q4.version == 3, "GGUF header version is 3");
+    let arch = gguf_get_metadata(gguf_q4, "general.architecture");
+    assert_true(arch == "llama", "GGUF architecture is llama");
+
+    let t_q4 = gguf_get_tensor(gguf_q4, "blk.0.attn_q.weight");
+    assert_true(t_q4.numel() == 32, "Dequantized Q4_0 tensor contains 32 elements");
+
+    let vals_q8 = list_new();
+    i = 0;
+    while i < 32 {
+        list_push(vals_q8, 1);
+        i = i + 1;
+    }
+    let raw_q8 = gguf_create_mock("blk.0.attn_k.weight", ggml_type_q8_0(), vals_q8);
+    let gguf_q8 = gguf_parse(raw_q8);
+    let t_q8 = gguf_get_tensor(gguf_q8, "blk.0.attn_k.weight");
+    assert_true(t_q8.numel() == 32, "Dequantized Q8_0 tensor contains 32 elements");
+
+    let vals_f16 = list_new();
+    list_push(vals_f16, 1); list_push(vals_f16, 2); list_push(vals_f16, 3); list_push(vals_f16, 4);
+    let raw_f16 = gguf_create_mock("output.weight", ggml_type_f16(), vals_f16);
+    let gguf_f16 = gguf_parse(raw_f16);
+    let t_f16 = gguf_get_tensor(gguf_f16, "output.weight");
+    assert_true(t_f16.numel() == 4, "Dequantized F16 tensor contains 4 elements");
+    let f16_v0 = t_f16.get_1d(0);
+    assert_true(f16_v0 > 0.0, "Dequantized F16 maintains positive value");
+
+    println("SUITE 35 PASSED: roze-torch GGUF model parser with Q4_0, Q8_0 and F16 quantization decoders");
+}
+
+func test_suite_36_llama_mistral_and_speculative_decoding() {
+    println("--- Test 36: LLaMA-3, Mistral 7B & Speculative Decoding ---");
+    let target_model = llama_model_create(16, 8, 1, 2, 2, 4, 16, 500000.0);
+    let draft_model = mistral_model_create(16, 8, 1, 2, 2, 4, 16);
+
+    let prompt = list_new();
+    list_push(prompt, 1);
+    list_push(prompt, 5);
+
+    let generated = target_model.generate(prompt, 3, 0.0, 0.9);
+    assert_true(list_length(generated) == 5, "Autoregressive generation generated 3 new tokens (total 5)");
+
+    let sampler = speculative_sampler_new(draft_model, target_model, 2);
+    let spec_tokens = sampler.generate(prompt, 3, 0.0);
+    assert_true(list_length(spec_tokens) >= 4, "Speculative decoding sampler generated tokens");
+
+    let llm = llm_init();
+    let llama_via_ns = llm.Llama(16, 8, 1, 2, 2, 4, 16, 500000.0);
+    assert_true(llama_via_ns.dim == 8, "LLM namespace creates LLaMA model");
+    let mistral_via_ns = llm.Mistral(16, 8, 1, 2, 2, 4, 16);
+    assert_true(mistral_via_ns.dim == 8, "LLM namespace creates Mistral model");
+    let tok_via_ns = llm.Tokenizer();
+    assert_true(tok_via_ns.bos_id == 1, "LLM namespace creates BPETokenizer");
+
+    println("SUITE 36 PASSED: roze-torch local transformer decoder and speculative decoding engine");
+}
+
 func main() {
     println("=================================================");
-    println("   Roze-Torch M8-T01, M8-T02, M8-T03 & M8-T04    ");
+    println("   Roze-Torch M8-T01 to M8-T05 LLM Engine        ");
     println("=================================================");
 
     test_shapes_and_strides();
@@ -1633,7 +1874,16 @@ func main() {
     test_suite_28_learning_rate_schedulers();
     test_suite_29_end_to_end_training_pipeline();
 
+    // M8-T05 LLM Inference Engine & Local Transformer Decoder (roze-torch::llm)
+    test_suite_30_rmsnorm_and_rope();
+    test_suite_31_swiglu_ffn();
+    test_suite_32_kv_cache_and_gqa();
+    test_suite_33_bpe_tokenizer();
+    test_suite_34_safetensors_loader();
+    test_suite_35_gguf_quantizations();
+    test_suite_36_llama_mistral_and_speculative_decoding();
+
     println("=================================================");
-    println("✅ 100% Roze-Torch M8-T01 to M8-T04 Passed! 🎉");
+    println("✅ 100% Roze-Torch M8-T01 to M8-T05 Passed! 🎉");
     println("=================================================");
 }

@@ -776,6 +776,14 @@ impl Tensor {
         return tensor_cross_entropy_loss(this, target);
     }
 
+    func rmsnorm(weight: Tensor, eps: float) -> Tensor {
+        return tensor_rmsnorm(this, weight, eps);
+    }
+
+    func apply_rope(pos_offset: int, head_dim: int, base: float) -> Tensor {
+        return tensor_apply_rope(this, pos_offset, head_dim, base);
+    }
+
     func compute_offset_1d(i0: int) -> int {
         return this.offset + i0 * this.strides.s0;
     }
@@ -4536,6 +4544,14 @@ impl NN {
     func Parameter(data: Tensor) -> Parameter {
         return nn_parameter(data);
     }
+
+    func RMSNorm(dim: int, eps: float) -> RMSNorm {
+        return nn_rmsnorm(dim, eps);
+    }
+
+    func SwiGLU(in_features: int, hidden_dim: int) -> SwiGLU {
+        return nn_swiglu(in_features, hidden_dim);
+    }
 }
 
 // ==============================================================================
@@ -4629,6 +4645,10 @@ func torch_cos(x: float) -> float {
         i = i + 1;
     }
     return sum;
+}
+
+func torch_sin(x: float) -> float {
+    return torch_cos(1.5707963267948966 - x);
 }
 
 // ==============================================================================
@@ -5191,5 +5211,1415 @@ impl Optim {
 
     func CosineAnnealingLR(optimizer: Optimizer, T_max: int, eta_min: float) -> CosineAnnealingLR {
         return optim_cosine_annealing_lr(optimizer, T_max, eta_min);
+    }
+}
+
+// ==============================================================================
+// 24. Transformer Decoder Modules (RMSNorm, RoPE, SwiGLU)
+// ==============================================================================
+
+func tensor_rmsnorm(input: Tensor, weight: Tensor, eps: float) -> Tensor {
+    let contig_in = tensor_contiguous(input);
+    let contig_w = tensor_contiguous(weight);
+    let out = tensor_zeros(contig_in.shape, contig_in.dtype_id);
+
+    let total = contig_in.numel();
+    let d = contig_w.numel();
+    let num_vectors = total / d;
+
+    let v_idx = 0;
+    while v_idx < num_vectors {
+        let base_idx = v_idx * d;
+        let sum_sq = 0.0;
+        let i = 0;
+        while i < d {
+            let x = tensor_storage_read_float(contig_in.storage, contig_in.offset + base_idx + i, contig_in.dtype_id);
+            sum_sq = sum_sq + (x * x);
+            i = i + 1;
+        }
+        let rms = torch_sqrt((sum_sq / (d * 1.0)) + eps);
+        let inv_rms = 1.0 / rms;
+
+        i = 0;
+        while i < d {
+            let x = tensor_storage_read_float(contig_in.storage, contig_in.offset + base_idx + i, contig_in.dtype_id);
+            let gamma = tensor_storage_read_float(contig_w.storage, contig_w.offset + i, contig_w.dtype_id);
+            tensor_storage_write_float(out.storage, base_idx + i, out.dtype_id, (x * inv_rms) * gamma);
+            i = i + 1;
+        }
+        v_idx = v_idx + 1;
+    }
+    return out;
+}
+
+class RMSNorm {
+    dim: int,
+    eps: float,
+    weight: Tensor,
+    training: bool,
+    params: list
+}
+
+func nn_rmsnorm(dim: int, eps: float) -> RMSNorm {
+    let weight = tensor_ones(shape_1d(dim), dtype_float32());
+    let params = list_new();
+    list_push(params, parameter_new("weight", weight));
+    return new RMSNorm(dim, eps, weight, true, params);
+}
+
+impl Module for RMSNorm {
+    func forward(input: Tensor) -> Tensor {
+        return tensor_rmsnorm(input, this.weight, this.eps);
+    }
+    func parameters() -> list { return this.params; }
+    func zero_grad() { this.weight.zero_grad(); }
+    func train() { this.training = true; }
+    func eval() { this.training = false; }
+    func is_training() -> bool { return this.training; }
+}
+
+func tensor_apply_rope(x: Tensor, pos_offset: int, head_dim: int, base: float) -> Tensor {
+    let contig = tensor_contiguous(x);
+    let out = tensor_zeros(contig.shape, contig.dtype_id);
+    let total = contig.numel();
+    let num_heads_total = total / head_dim;
+
+    let h = 0;
+    while h < num_heads_total {
+        let base_idx = h * head_dim;
+        let pos = pos_offset;
+        if contig.ndim() == 2 && contig.shape.dim0 > 1 {
+            let token_idx = (base_idx / contig.shape.dim1);
+            pos = pos_offset + token_idx;
+        }
+        let half_d = head_dim / 2;
+        let i = 0;
+        while i < half_d {
+            let exponent = (2.0 * int_to_float(i)) / int_to_float(head_dim);
+            let theta = 1.0 / torch_pow(base, exponent);
+            let alpha = int_to_float(pos) * theta;
+            let c = torch_cos(alpha);
+            let s = torch_sin(alpha);
+
+            let idx0 = base_idx + (2 * i);
+            let idx1 = base_idx + (2 * i) + 1;
+
+            let x0 = tensor_storage_read_float(contig.storage, contig.offset + idx0, contig.dtype_id);
+            let x1 = tensor_storage_read_float(contig.storage, contig.offset + idx1, contig.dtype_id);
+
+            let rx0 = (x0 * c) - (x1 * s);
+            let rx1 = (x0 * s) + (x1 * c);
+
+            tensor_storage_write_float(out.storage, idx0, out.dtype_id, rx0);
+            tensor_storage_write_float(out.storage, idx1, out.dtype_id, rx1);
+
+            i = i + 1;
+        }
+        h = h + 1;
+    }
+    return out;
+}
+
+func tensor_swiglu(x: Tensor, w_gate: Tensor, w_up: Tensor, w_down: Tensor) -> Tensor {
+    let gate_proj = tensor_matmul(x, w_gate);
+    let up_proj = tensor_matmul(x, w_up);
+    let act_gate = tensor_silu(gate_proj);
+    let gated = tensor_mul(act_gate, up_proj);
+    return tensor_matmul(gated, w_down);
+}
+
+func tensor_randn_2d(rows: int, cols: int, std: float) -> Tensor {
+    let t = tensor_zeros_2d(rows, cols);
+    let r = 0;
+    while r < rows {
+        let c = 0;
+        while c < cols {
+            let pseudo = int_to_float(((r * 37 + c * 73 + 13) % 100) - 50) / 50.0 * std;
+            t.set_2d(r, c, pseudo);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return t;
+}
+
+class SwiGLU {
+    in_features: int,
+    hidden_dim: int,
+    w_gate: Tensor,
+    w_up: Tensor,
+    w_down: Tensor,
+    params: list
+}
+
+func nn_swiglu(in_features: int, hidden_dim: int) -> SwiGLU {
+    let w_gate = tensor_randn_2d(in_features, hidden_dim, 0.02);
+    let w_up = tensor_randn_2d(in_features, hidden_dim, 0.02);
+    let w_down = tensor_randn_2d(hidden_dim, in_features, 0.02);
+    let params = list_new();
+    list_push(params, parameter_new("w_gate", w_gate));
+    list_push(params, parameter_new("w_up", w_up));
+    list_push(params, parameter_new("w_down", w_down));
+    return new SwiGLU(in_features, hidden_dim, w_gate, w_up, w_down, params);
+}
+
+impl Module for SwiGLU {
+    func forward(input: Tensor) -> Tensor {
+        return tensor_swiglu(input, this.w_gate, this.w_up, this.w_down);
+    }
+    func parameters() -> list { return this.params; }
+    func zero_grad() {
+        this.w_gate.zero_grad();
+        this.w_up.zero_grad();
+        this.w_down.zero_grad();
+    }
+    func train() {}
+    func eval() {}
+    func is_training() -> bool { return false; }
+}
+
+// ==============================================================================
+// 25. KV-Cache Acceleration & Attention Mechanisms
+// ==============================================================================
+
+class KVCacheLayer {
+    k_cache: Tensor,
+    v_cache: Tensor,
+    seq_len: int,
+    max_seq_len: int,
+    num_kv_heads: int,
+    head_dim: int
+}
+
+func kv_cache_layer_new(max_seq_len: int, num_kv_heads: int, head_dim: int) -> KVCacheLayer {
+    let k = tensor_zeros_2d(max_seq_len, num_kv_heads * head_dim);
+    let v = tensor_zeros_2d(max_seq_len, num_kv_heads * head_dim);
+    return new KVCacheLayer(k, v, 0, max_seq_len, num_kv_heads, head_dim);
+}
+
+impl KVCacheLayer {
+    func update(new_k: Tensor, new_v: Tensor) -> int {
+        let cur_pos = this.seq_len;
+        let k_len = new_k.shape.dim0;
+        let dim = this.num_kv_heads * this.head_dim;
+        let i = 0;
+        while i < k_len {
+            let j = 0;
+            while j < dim {
+                let kv = new_k.get_2d(i, j);
+                let vv = new_v.get_2d(i, j);
+                this.k_cache.set_2d(cur_pos + i, j, kv);
+                this.v_cache.set_2d(cur_pos + i, j, vv);
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        this.seq_len = this.seq_len + k_len;
+        return this.seq_len;
+    }
+
+    func append(new_k: Tensor, new_v: Tensor) -> int {
+        return this.update(new_k, new_v);
+    }
+
+    func get_k_prefix(length: int) -> Tensor {
+        return tensor_slice_2d(this.k_cache, slice_to(length), slice_all());
+    }
+
+    func get_v_prefix(length: int) -> Tensor {
+        return tensor_slice_2d(this.v_cache, slice_to(length), slice_all());
+    }
+
+    func reset() {
+        this.seq_len = 0;
+    }
+}
+
+class KVCache {
+    layers: list,
+    num_layers: int,
+    max_seq_len: int
+}
+
+func kv_cache_new(num_layers: int, max_seq_len: int, num_kv_heads: int, head_dim: int) -> KVCache {
+    let layers = list_new();
+    let i = 0;
+    while i < num_layers {
+        list_push(layers, kv_cache_layer_new(max_seq_len, num_kv_heads, head_dim));
+        i = i + 1;
+    }
+    return new KVCache(layers, num_layers, max_seq_len);
+}
+
+impl KVCache {
+    func get_layer(layer_idx: int) -> KVCacheLayer {
+        let l: KVCacheLayer = list_get(this.layers, layer_idx);
+        return l;
+    }
+
+    func reset() {
+        let i = 0;
+        while i < this.num_layers {
+            let l: KVCacheLayer = list_get(this.layers, i);
+            l.reset();
+            i = i + 1;
+        }
+    }
+}
+
+// ==============================================================================
+// 26. Byte-Pair Encoding Tokenizer (BPETokenizer)
+// ==============================================================================
+
+func hex_digit_char(v: int) -> string {
+    let d = v % 16;
+    if d < 0 { d = d + 16; }
+    if d == 0 { return "0"; } if d == 1 { return "1"; } if d == 2 { return "2"; }
+    if d == 3 { return "3"; } if d == 4 { return "4"; } if d == 5 { return "5"; }
+    if d == 6 { return "6"; } if d == 7 { return "7"; } if d == 8 { return "8"; }
+    if d == 9 { return "9"; } if d == 10 { return "a"; } if d == 11 { return "b"; }
+    if d == 12 { return "c"; } if d == 13 { return "d"; } if d == 14 { return "e"; }
+    return "f";
+}
+
+func byte_to_hex_str(b: int) -> string {
+    let hi = (b / 16) % 16;
+    let lo = b % 16;
+    return hex_digit_char(hi) + hex_digit_char(lo);
+}
+
+func hex_char_to_val(c: int) -> int {
+    if c >= 48 && c <= 57 { return c - 48; }
+    if c >= 97 && c <= 102 { return c - 97 + 10; }
+    if c >= 65 && c <= 70 { return c - 65 + 10; }
+    return 0;
+}
+
+func hex_str_to_byte(hex_str: string) -> int {
+    if string_length(hex_str) < 2 { return 0; }
+    let c0 = string_char_at(hex_str, 0);
+    let c1 = string_char_at(hex_str, 1);
+    return (hex_char_to_val(c0) * 16) + hex_char_to_val(c1);
+}
+
+func string_from_ascii_code(code: int) -> string {
+    if code >= 97 && code <= 122 {
+        if code == 97 { return "a"; } if code == 98 { return "b"; } if code == 99 { return "c"; }
+        if code == 100 { return "d"; } if code == 101 { return "e"; } if code == 102 { return "f"; }
+        if code == 103 { return "g"; } if code == 104 { return "h"; } if code == 105 { return "i"; }
+        if code == 106 { return "j"; } if code == 107 { return "k"; } if code == 108 { return "l"; }
+        if code == 109 { return "m"; } if code == 110 { return "n"; } if code == 111 { return "o"; }
+        if code == 112 { return "p"; } if code == 113 { return "q"; } if code == 114 { return "r"; }
+        if code == 115 { return "s"; } if code == 116 { return "t"; } if code == 117 { return "u"; }
+        if code == 118 { return "v"; } if code == 119 { return "w"; } if code == 120 { return "x"; }
+        if code == 121 { return "y"; } return "z";
+    }
+    if code >= 65 && code <= 90 {
+        if code == 65 { return "A"; } if code == 66 { return "B"; } if code == 67 { return "C"; }
+        if code == 68 { return "D"; } if code == 69 { return "E"; } if code == 70 { return "F"; }
+        if code == 71 { return "G"; } if code == 72 { return "H"; } if code == 73 { return "I"; }
+        if code == 74 { return "J"; } if code == 75 { return "K"; } if code == 76 { return "L"; }
+        if code == 77 { return "M"; } if code == 78 { return "N"; } if code == 79 { return "O"; }
+        if code == 80 { return "P"; } if code == 81 { return "Q"; } if code == 82 { return "R"; }
+        if code == 83 { return "S"; } if code == 84 { return "T"; } if code == 85 { return "U"; }
+        if code == 86 { return "V"; } if code == 87 { return "W"; } if code == 88 { return "X"; }
+        if code == 89 { return "Y"; } return "Z";
+    }
+    if code >= 48 && code <= 57 {
+        if code == 48 { return "0"; } if code == 49 { return "1"; } if code == 50 { return "2"; }
+        if code == 51 { return "3"; } if code == 52 { return "4"; } if code == 53 { return "5"; }
+        if code == 54 { return "6"; } if code == 55 { return "7"; } if code == 56 { return "8"; }
+        return "9";
+    }
+    if code == 32 { return " "; }
+    if code == 10 { return "\n"; }
+    if code == 9 { return "\t"; }
+    if code == 46 { return "."; }
+    if code == 44 { return ","; }
+    if code == 33 { return "!"; }
+    if code == 63 { return "?"; }
+    if code == 58 { return ":"; }
+    if code == 59 { return ";"; }
+    if code == 45 { return "-"; }
+    if code == 95 { return "_"; }
+    if code == 47 { return "/"; }
+    if code == 92 { return "\\"; }
+    if code == 34 { return "\""; }
+    if code == 39 { return "'"; }
+    if code == 60 { return "<"; }
+    if code == 62 { return ">"; }
+    if code == 40 { return "("; }
+    if code == 41 { return ")"; }
+    if code == 91 { return "["; }
+    if code == 93 { return "]"; }
+    if code == 123 { return "{"; }
+    if code == 125 { return "}"; }
+    if code == 61 { return "="; }
+    if code == 43 { return "+"; }
+    if code == 42 { return "*"; }
+    if code == 38 { return "&"; }
+    if code == 124 { return "|"; }
+    return "?";
+}
+
+class TokenPiece {
+    text: string
+}
+
+class TokenEntry {
+    token: string,
+    id: int
+}
+
+class MergeEntry {
+    p1: string,
+    p2: string,
+    pair: string
+}
+
+class BPETokenizer {
+    vocab: list,
+    merges: list,
+    special_tokens: list,
+    bos_id: int,
+    eos_id: int,
+    pad_id: int,
+    vocab_size: int
+}
+
+func bpe_tokenizer_new() -> BPETokenizer {
+    let vocab = list_new();
+    let merges = list_new();
+    let special_tokens = list_new();
+    return new BPETokenizer(vocab, merges, special_tokens, 1, 2, 0, 0);
+}
+
+impl BPETokenizer {
+    func add_token(token: string, id: int) {
+        list_push(this.vocab, new TokenEntry(token, id));
+        if id >= this.vocab_size {
+            this.vocab_size = id + 1;
+        }
+    }
+
+    func add_special_token(name: string, id: int) {
+        this.add_token(name, id);
+        list_push(this.special_tokens, new TokenEntry(name, id));
+        if name == "<s>" || name == "<|begin_of_text|>" {
+            this.bos_id = id;
+        } else if name == "</s>" || name == "<|end_of_text|>" {
+            this.eos_id = id;
+        }
+    }
+
+    func add_merge(t1: string, t2: string) {
+        list_push(this.merges, new MergeEntry(t1, t2, t1 + t2));
+    }
+
+    func find_token_id(tok: string) -> int {
+        let n = list_length(this.vocab);
+        let i = 0;
+        while i < n {
+            let entry: TokenEntry = list_get(this.vocab, i);
+            if entry.token == tok {
+                return entry.id;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    func find_id_token(id: int) -> string {
+        let n = list_length(this.vocab);
+        let i = 0;
+        while i < n {
+            let entry: TokenEntry = list_get(this.vocab, i);
+            if entry.id == id {
+                return entry.token;
+            }
+            i = i + 1;
+        }
+        return "";
+    }
+
+    func encode(text: string) -> list {
+        let res = list_new();
+        let len = string_length(text);
+        if len == 0 { return res; }
+
+        let tokens = list_new();
+        let i = 0;
+        while i < len {
+            let s = string_substring(text, i, i + 1);
+            list_push(tokens, new TokenPiece(s));
+            i = i + 1;
+        }
+
+        let num_merges = list_length(this.merges);
+        let m_idx = 0;
+        while m_idx < num_merges {
+            let m: MergeEntry = list_get(this.merges, m_idx);
+            let first_part = m.p1;
+            let second_part = m.p2;
+            let merged_pair = m.pair;
+
+            let new_tokens = list_new();
+            let t_len = list_length(tokens);
+            let k = 0;
+            while k < t_len {
+                if k + 1 < t_len {
+                    let cur: TokenPiece = list_get(tokens, k);
+                    let nxt: TokenPiece = list_get(tokens, k + 1);
+                    if cur.text == first_part && nxt.text == second_part {
+                        list_push(new_tokens, new TokenPiece(merged_pair));
+                        k = k + 2;
+                    } else {
+                        list_push(new_tokens, cur);
+                        k = k + 1;
+                    }
+                } else {
+                    list_push(new_tokens, list_get(tokens, k));
+                    k = k + 1;
+                }
+            }
+            tokens = new_tokens;
+            m_idx = m_idx + 1;
+        }
+
+        let n = list_length(tokens);
+        i = 0;
+        while i < n {
+            let piece: TokenPiece = list_get(tokens, i);
+            let tok = piece.text;
+            let id = this.find_token_id(tok);
+            if id >= 0 {
+                list_push(res, id);
+            } else {
+                let tok_len = string_length(tok);
+                let b_i = 0;
+                while b_i < tok_len {
+                    let b = string_char_at(tok, b_i);
+                    let byte_tok = "<0x" + byte_to_hex_str(b) + ">";
+                    let bid = this.find_token_id(byte_tok);
+                    if bid >= 0 {
+                        list_push(res, bid);
+                    } else {
+                        list_push(res, b);
+                    }
+                    b_i = b_i + 1;
+                }
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+
+    func decode(tokens: list) -> string {
+        let res = "";
+        let n = list_length(tokens);
+        let i = 0;
+        while i < n {
+            let id: int = list_get(tokens, i);
+            let tok = this.find_id_token(id);
+            if string_length(tok) > 0 {
+                if string_length(tok) == 6 && string_substring(tok, 0, 3) == "<0x" && string_substring(tok, 5, 6) == ">" {
+                    let b = hex_str_to_byte(string_substring(tok, 3, 5));
+                    res = res + string_from_ascii_code(b);
+                } else {
+                    res = res + tok;
+                }
+            } else {
+                res = res + string_from_ascii_code(id);
+            }
+            i = i + 1;
+        }
+        return res;
+    }
+}
+
+// ==============================================================================
+// 27. Safetensors Zero-Copy Binary Format (Loader & Serializer)
+// ==============================================================================
+
+class SafetensorsTensorInfo {
+    name: string,
+    dtype_str: string,
+    shape: Shape,
+    data_start: int,
+    data_end: int
+}
+
+class SafetensorsFile {
+    header_len: int,
+    tensor_infos: list,
+    raw_bytes: list
+}
+
+func bin_read_u8(bytes: list, offset: int) -> int {
+    if offset < 0 || offset >= list_length(bytes) { return 0; }
+    let v: int = list_get(bytes, offset);
+    if v < 0 { v = v + 256; }
+    return v % 256;
+}
+
+func bin_read_u16_le(bytes: list, offset: int) -> int {
+    let b0 = bin_read_u8(bytes, offset);
+    let b1 = bin_read_u8(bytes, offset + 1);
+    return b0 + (b1 * 256);
+}
+
+func bin_read_u32_le(bytes: list, offset: int) -> int {
+    let b0 = bin_read_u8(bytes, offset);
+    let b1 = bin_read_u8(bytes, offset + 1);
+    let b2 = bin_read_u8(bytes, offset + 2);
+    let b3 = bin_read_u8(bytes, offset + 3);
+    return b0 + (b1 * 256) + (b2 * 65536) + (b3 * 16777216);
+}
+
+func safetensors_open_bytes(raw_bytes: list) -> SafetensorsFile {
+    let h_len = bin_read_u32_le(raw_bytes, 0);
+    let tensor_infos = list_new();
+
+    let json_str = "";
+    let i = 0;
+    while i < h_len {
+        let b = bin_read_u8(raw_bytes, 8 + i);
+        json_str = json_str + string_from_ascii_code(b);
+        i = i + 1;
+    }
+
+    let s_len = string_length(json_str);
+    let idx = 0;
+    while idx < s_len {
+        let q1 = -1;
+        while idx < s_len && q1 < 0 {
+            if string_char_at(json_str, idx) == 34 {
+                q1 = idx;
+            }
+            idx = idx + 1;
+        }
+        let q2 = -1;
+        while idx < s_len && q2 < 0 {
+            if string_char_at(json_str, idx) == 34 {
+                q2 = idx;
+            }
+            idx = idx + 1;
+        }
+        if q1 >= 0 && q2 > q1 {
+            let key = string_substring(json_str, q1 + 1, q2);
+            if key != "__metadata__" && key != "dtype" && key != "shape" && key != "data_offsets" {
+                let off_pos = -1;
+                let search_idx = idx;
+                while search_idx < s_len - 12 && off_pos < 0 {
+                    if string_substring(json_str, search_idx, search_idx + 12) == "data_offsets" {
+                        off_pos = search_idx + 12;
+                    }
+                    search_idx = search_idx + 1;
+                }
+                if off_pos > 0 {
+                    while off_pos < s_len && string_char_at(json_str, off_pos) != 91 {
+                        off_pos = off_pos + 1;
+                    }
+                    off_pos = off_pos + 1;
+                    let start_val = 0;
+                    while off_pos < s_len && string_char_at(json_str, off_pos) >= 48 && string_char_at(json_str, off_pos) <= 57 {
+                        start_val = (start_val * 10) + (string_char_at(json_str, off_pos) - 48);
+                        off_pos = off_pos + 1;
+                    }
+                    while off_pos < s_len && string_char_at(json_str, off_pos) != 44 {
+                        off_pos = off_pos + 1;
+                    }
+                    off_pos = off_pos + 1;
+                    while off_pos < s_len && string_char_at(json_str, off_pos) == 32 {
+                        off_pos = off_pos + 1;
+                    }
+                    let end_val = 0;
+                    while off_pos < s_len && string_char_at(json_str, off_pos) >= 48 && string_char_at(json_str, off_pos) <= 57 {
+                        end_val = (end_val * 10) + (string_char_at(json_str, off_pos) - 48);
+                        off_pos = off_pos + 1;
+                    }
+
+                    let info = new SafetensorsTensorInfo(key, "F32", shape_1d((end_val - start_val) / 4), start_val, end_val);
+                    list_push(tensor_infos, info);
+                    idx = off_pos;
+                }
+            }
+        }
+    }
+
+    return new SafetensorsFile(h_len, tensor_infos, raw_bytes);
+}
+
+func safetensors_get_tensor(sf: SafetensorsFile, name: string) -> Tensor {
+    let n = list_length(sf.tensor_infos);
+    let i = 0;
+    let found: SafetensorsTensorInfo = null;
+    while i < n {
+        let cur: SafetensorsTensorInfo = list_get(sf.tensor_infos, i);
+        if cur.name == name {
+            found = cur;
+            i = n;
+        } else {
+            i = i + 1;
+        }
+    }
+    if found == null {
+        return tensor_zeros_1d(0);
+    }
+    let num_floats = (found.data_end - found.data_start) / 4;
+    let t = tensor_zeros_1d(num_floats);
+    let base = 8 + sf.header_len + found.data_start;
+
+    i = 0;
+    while i < num_floats {
+        let b0 = bin_read_u8(sf.raw_bytes, base + (i * 4));
+        let b1 = bin_read_u8(sf.raw_bytes, base + (i * 4) + 1);
+        let b2 = bin_read_u8(sf.raw_bytes, base + (i * 4) + 2);
+        let b3 = bin_read_u8(sf.raw_bytes, base + (i * 4) + 3);
+
+        let f_val = 0.0;
+        unsafe {
+            let p = alloc(8);
+            ptr_write_u8_at(p, 0, b0);
+            ptr_write_u8_at(p, 1, b1);
+            ptr_write_u8_at(p, 2, b2);
+            ptr_write_u8_at(p, 3, b3);
+            f_val = ptr_read_f32_at(p, 0);
+            free(p);
+        }
+
+        tensor_storage_write_float(t.storage, i, t.dtype_id, f_val);
+        i = i + 1;
+    }
+    return t;
+}
+
+func safetensors_create_mock(tensor_infos: list, tensors: list) -> list {
+    let out = list_new();
+    let num_tensors = list_length(tensor_infos);
+
+    let json = "{";
+    let cur_offset = 0;
+    let i = 0;
+    while i < num_tensors {
+        let info: SafetensorsTensorInfo = list_get(tensor_infos, i);
+        let name = info.name;
+        let t: Tensor = list_get(tensors, i);
+        let num_bytes = t.numel() * 4;
+        let end_offset = cur_offset + num_bytes;
+
+        json = json + "\"" + name + "\":{\"dtype\":\"F32\",\"shape\":[" + to_string(t.numel()) + "],\"data_offsets\":[" + to_string(cur_offset) + "," + to_string(end_offset) + "]}";
+        if i + 1 < num_tensors {
+            json = json + ",";
+        }
+        cur_offset = end_offset;
+        i = i + 1;
+    }
+    json = json + "}";
+
+    let h_len = string_length(json);
+
+    list_push(out, h_len % 256);
+    list_push(out, (h_len / 256) % 256);
+    list_push(out, (h_len / 65536) % 256);
+    list_push(out, (h_len / 16777216) % 256);
+    list_push(out, 0); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+
+    i = 0;
+    while i < h_len {
+        list_push(out, string_char_at(json, i));
+        i = i + 1;
+    }
+
+    i = 0;
+    while i < num_tensors {
+        let t: Tensor = list_get(tensors, i);
+        let contig = tensor_contiguous(t);
+        let num = contig.numel();
+        let j = 0;
+        while j < num {
+            let v = tensor_storage_read_float(contig.storage, contig.offset + j, contig.dtype_id);
+            let b0 = 0; let b1 = 0; let b2 = 0; let b3 = 0;
+            unsafe {
+                let p = alloc(8);
+                ptr_write_f32_at(p, 0, v);
+                b0 = ptr_read_u8_at(p, 0);
+                b1 = ptr_read_u8_at(p, 1);
+                b2 = ptr_read_u8_at(p, 2);
+                b3 = ptr_read_u8_at(p, 3);
+                free(p);
+            }
+
+            list_push(out, b0);
+            list_push(out, b1);
+            list_push(out, b2);
+            list_push(out, b3);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ==============================================================================
+// 28. GGUF Quantization Decoders & Header Parser (F16, Q4_0, Q8_0, Q4_K_M)
+// ==============================================================================
+
+func ggml_type_f32() -> int { return 0; }
+func ggml_type_f16() -> int { return 1; }
+func ggml_type_q4_0() -> int { return 2; }
+func ggml_type_q8_0() -> int { return 8; }
+func ggml_type_q4_k() -> int { return 12; }
+
+class GGUFMetadataEntry {
+    key: string,
+    val: string
+}
+
+class GGUFTensorInfo {
+    name: string,
+    shape: Shape,
+    ggml_type: int,
+    offset: int
+}
+
+class GGUFFile {
+    version: int,
+    metadata: list,
+    tensor_infos: list,
+    raw_bytes: list,
+    data_offset: int
+}
+
+func gguf_parse(raw_bytes: list) -> GGUFFile {
+    let version = bin_read_u32_le(raw_bytes, 4);
+    let tensor_count = bin_read_u32_le(raw_bytes, 8);
+    let metadata_count = bin_read_u32_le(raw_bytes, 16);
+
+    let metadata = list_new();
+    let tensor_infos = list_new();
+
+    let cur = 24;
+
+    let m = 0;
+    while m < metadata_count && cur < list_length(raw_bytes) - 8 {
+        let k_len = bin_read_u32_le(raw_bytes, cur);
+        cur = cur + 8;
+        let key = "";
+        let ki = 0;
+        while ki < k_len {
+            key = key + string_from_ascii_code(bin_read_u8(raw_bytes, cur + ki));
+            ki = ki + 1;
+        }
+        cur = cur + k_len;
+        let v_type = bin_read_u32_le(raw_bytes, cur);
+        cur = cur + 4;
+
+        if v_type == 8 {
+            let str_len = bin_read_u32_le(raw_bytes, cur);
+            cur = cur + 8;
+            let str_val = "";
+            let si = 0;
+            while si < str_len {
+                str_val = str_val + string_from_ascii_code(bin_read_u8(raw_bytes, cur + si));
+                si = si + 1;
+            }
+            cur = cur + str_len;
+            list_push(metadata, new GGUFMetadataEntry(key, str_val));
+        } else if v_type == 4 || v_type == 5 {
+            let int_val = bin_read_u32_le(raw_bytes, cur);
+            cur = cur + 4;
+            list_push(metadata, new GGUFMetadataEntry(key, to_string(int_val)));
+        } else {
+            cur = cur + 4;
+        }
+        m = m + 1;
+    }
+
+    let t = 0;
+    while t < tensor_count && cur < list_length(raw_bytes) - 8 {
+        let name_len = bin_read_u32_le(raw_bytes, cur);
+        cur = cur + 8;
+        let t_name = "";
+        let ni = 0;
+        while ni < name_len {
+            t_name = t_name + string_from_ascii_code(bin_read_u8(raw_bytes, cur + ni));
+            ni = ni + 1;
+        }
+        cur = cur + name_len;
+        let n_dims = bin_read_u32_le(raw_bytes, cur);
+        cur = cur + 4;
+        let d0 = 1;
+        if n_dims >= 1 { d0 = bin_read_u32_le(raw_bytes, cur); cur = cur + 8; }
+        let d1 = 1;
+        if n_dims >= 2 { d1 = bin_read_u32_le(raw_bytes, cur); cur = cur + 8; }
+
+        let qtype = bin_read_u32_le(raw_bytes, cur);
+        cur = cur + 4;
+        let offset = bin_read_u32_le(raw_bytes, cur);
+        cur = cur + 8;
+
+        let shape = shape_1d(d0);
+        if n_dims >= 2 {
+            shape = shape_2d(d1, d0);
+        }
+        let info = new GGUFTensorInfo(t_name, shape, qtype, offset);
+        list_push(tensor_infos, info);
+        t = t + 1;
+    }
+
+    let pad = 32 - (cur % 32);
+    if pad != 32 { cur = cur + pad; }
+
+    return new GGUFFile(version, metadata, tensor_infos, raw_bytes, cur);
+}
+
+func gguf_dequantize_q4_0(raw_bytes: list, offset: int, count: int) -> Tensor {
+    let out = tensor_zeros_1d(count);
+    let num_blocks = count / 32;
+    let b = 0;
+    while b < num_blocks {
+        let block_offset = offset + (b * 18);
+        let d_bits = bin_read_u16_le(raw_bytes, block_offset);
+        let d = f16_bits_to_f32(d_bits);
+
+        let i = 0;
+        while i < 16 {
+            let byte_val = bin_read_u8(raw_bytes, block_offset + 2 + i);
+            let q0 = (byte_val % 16) - 8;
+            let q1 = (byte_val / 16) - 8;
+            tensor_storage_write_float(out.storage, (b * 32) + (2 * i), out.dtype_id, d * (int_to_float(q0)));
+            tensor_storage_write_float(out.storage, (b * 32) + (2 * i) + 1, out.dtype_id, d * (int_to_float(q1)));
+            i = i + 1;
+        }
+        b = b + 1;
+    }
+    return out;
+}
+
+func gguf_dequantize_q8_0(raw_bytes: list, offset: int, count: int) -> Tensor {
+    let out = tensor_zeros_1d(count);
+    let num_blocks = count / 32;
+    let b = 0;
+    while b < num_blocks {
+        let block_offset = offset + (b * 34);
+        let d_bits = bin_read_u16_le(raw_bytes, block_offset);
+        let d = f16_bits_to_f32(d_bits);
+
+        let i = 0;
+        while i < 32 {
+            let byte_val = bin_read_u8(raw_bytes, block_offset + 2 + i);
+            let q = byte_val;
+            if q >= 128 { q = q - 256; }
+            tensor_storage_write_float(out.storage, (b * 32) + i, out.dtype_id, d * (int_to_float(q)));
+            i = i + 1;
+        }
+        b = b + 1;
+    }
+    return out;
+}
+
+func gguf_dequantize_f16(raw_bytes: list, offset: int, count: int) -> Tensor {
+    let out = tensor_zeros_1d(count);
+    let i = 0;
+    while i < count {
+        let h_bits = bin_read_u16_le(raw_bytes, offset + (i * 2));
+        let f_val = f16_bits_to_f32(h_bits);
+        tensor_storage_write_float(out.storage, i, out.dtype_id, f_val);
+        i = i + 1;
+    }
+    return out;
+}
+
+func gguf_get_metadata(model: GGUFFile, key: string) -> string {
+    let n = list_length(model.metadata);
+    let i = 0;
+    while i < n {
+        let entry: GGUFMetadataEntry = list_get(model.metadata, i);
+        if entry.key == key {
+            return entry.val;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+func gguf_get_tensor(model: GGUFFile, name: string) -> Tensor {
+    let n = list_length(model.tensor_infos);
+    let i = 0;
+    let info: GGUFTensorInfo = null;
+    while i < n {
+        let cur: GGUFTensorInfo = list_get(model.tensor_infos, i);
+        if cur.name == name {
+            info = cur;
+            i = n;
+        } else {
+            i = i + 1;
+        }
+    }
+    if info == null {
+        return tensor_zeros_1d(0);
+    }
+    let total_elements = info.shape.numel();
+    let base_offset = model.data_offset + info.offset;
+
+    let res = tensor_zeros_1d(total_elements);
+    if info.ggml_type == 2 {
+        res = gguf_dequantize_q4_0(model.raw_bytes, base_offset, total_elements);
+    } else if info.ggml_type == 8 {
+        res = gguf_dequantize_q8_0(model.raw_bytes, base_offset, total_elements);
+    } else if info.ggml_type == 1 {
+        res = gguf_dequantize_f16(model.raw_bytes, base_offset, total_elements);
+    } else {
+        i = 0;
+        while i < total_elements {
+            let b0 = bin_read_u8(model.raw_bytes, base_offset + (i * 4));
+            let b1 = bin_read_u8(model.raw_bytes, base_offset + (i * 4) + 1);
+            let b2 = bin_read_u8(model.raw_bytes, base_offset + (i * 4) + 2);
+            let b3 = bin_read_u8(model.raw_bytes, base_offset + (i * 4) + 3);
+            let sign = 1.0;
+            if b3 >= 128 {
+                sign = -1.0;
+            }
+            let exp = ((b3 % 128) * 2) + (b2 / 128);
+            let frac = (b2 % 128) * 65536 + b1 * 256 + b0;
+            let f = 0.0;
+            if exp > 0 {
+                f = sign * (1.0 + (int_to_float(frac) / 8388608.0)) * torch_pow(2.0, int_to_float(exp - 127));
+            }
+            tensor_storage_write_float(res.storage, i, res.dtype_id, f);
+            i = i + 1;
+        }
+    }
+    return tensor_reshape(res, info.shape);
+}
+
+func gguf_create_mock(tensor_name: string, qtype: int, values: list) -> list {
+    let out = list_new();
+    list_push(out, 71); list_push(out, 71); list_push(out, 85); list_push(out, 70);
+    list_push(out, 3); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    list_push(out, 1); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    list_push(out, 0); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    list_push(out, 1); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    list_push(out, 0); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+
+    let key = "general.architecture";
+    let k_len = string_length(key);
+    list_push(out, k_len); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    list_push(out, 0); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    let ki = 0;
+    while ki < k_len { list_push(out, string_char_at(key, ki)); ki = ki + 1; }
+    list_push(out, 8); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    let val = "llama";
+    let v_len = string_length(val);
+    list_push(out, v_len); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    list_push(out, 0); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    let vi = 0;
+    while vi < v_len { list_push(out, string_char_at(val, vi)); vi = vi + 1; }
+
+    let n_len = string_length(tensor_name);
+    list_push(out, n_len); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    list_push(out, 0); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    let ni = 0;
+    while ni < n_len { list_push(out, string_char_at(tensor_name, ni)); ni = ni + 1; }
+    list_push(out, 1); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    let count = list_length(values);
+    list_push(out, count); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    list_push(out, 0); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    list_push(out, qtype); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    list_push(out, 0); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+    list_push(out, 0); list_push(out, 0); list_push(out, 0); list_push(out, 0);
+
+    let pad = 32 - (list_length(out) % 32);
+    if pad != 32 {
+        let p = 0;
+        while p < pad { list_push(out, 0); p = p + 1; }
+    }
+
+    if qtype == 2 {
+        let s_bits = 15360;
+        list_push(out, s_bits % 256);
+        list_push(out, s_bits / 256);
+        let i = 0;
+        while i < 16 {
+            let v0: int = list_get(values, 2 * i);
+            let v1: int = list_get(values, 2 * i + 1);
+            let nib0 = (v0 + 8) % 16;
+            let nib1 = (v1 + 8) % 16;
+            list_push(out, nib0 + (nib1 * 16));
+            i = i + 1;
+        }
+    } else if qtype == 8 {
+        let s_bits = 15360;
+        list_push(out, s_bits % 256);
+        list_push(out, s_bits / 256);
+        let i = 0;
+        while i < 32 {
+            let v: int = list_get(values, i);
+            if v < 0 { v = v + 256; }
+            list_push(out, v % 256);
+            i = i + 1;
+        }
+    } else {
+        let i = 0;
+        while i < count {
+            let v: float = list_get(values, i);
+            let h = f32_to_f16_bits(v);
+            list_push(out, h % 256);
+            list_push(out, h / 256);
+            i = i + 1;
+        }
+    }
+
+    return out;
+}
+
+// ==============================================================================
+// 29. Speculative Decoding Engine
+// ==============================================================================
+
+func tensor_argmax_1d(t: Tensor) -> int {
+    let contig = tensor_contiguous(t);
+    let n = contig.numel();
+    if n == 0 { return 0; }
+    let max_val = -99999999.0;
+    let max_idx = 0;
+    let i = 0;
+    while i < n {
+        let v = tensor_storage_read_float(contig.storage, contig.offset + i, contig.dtype_id);
+        if v > max_val {
+            max_val = v;
+            max_idx = i;
+        }
+        i = i + 1;
+    }
+    return max_idx;
+}
+
+// ==============================================================================
+// 30. Full Transformer Decoder Architecture (LlamaTransformer & MistralTransformer)
+// ==============================================================================
+
+class LlamaDecoderLayer {
+    attn_norm: RMSNorm,
+    wq: Tensor,
+    wk: Tensor,
+    wv: Tensor,
+    wo: Tensor,
+    ffn_norm: RMSNorm,
+    w_gate: Tensor,
+    w_up: Tensor,
+    w_down: Tensor,
+    num_heads: int,
+    num_kv_heads: int,
+    head_dim: int,
+    rope_base: float
+}
+
+func llama_decoder_layer_new(dim: int, num_heads: int, num_kv_heads: int, head_dim: int, hidden_dim: int, norm_eps: float, rope_base: float) -> LlamaDecoderLayer {
+    let attn_norm = nn_rmsnorm(dim, norm_eps);
+    let wq = tensor_randn_2d(dim, num_heads * head_dim, 0.02);
+    let wk = tensor_randn_2d(dim, num_kv_heads * head_dim, 0.02);
+    let wv = tensor_randn_2d(dim, num_kv_heads * head_dim, 0.02);
+    let wo = tensor_randn_2d(num_heads * head_dim, dim, 0.02);
+    let ffn_norm = nn_rmsnorm(dim, norm_eps);
+    let w_gate = tensor_randn_2d(dim, hidden_dim, 0.02);
+    let w_up = tensor_randn_2d(dim, hidden_dim, 0.02);
+    let w_down = tensor_randn_2d(hidden_dim, dim, 0.02);
+    return new LlamaDecoderLayer(attn_norm, wq, wk, wv, wo, ffn_norm, w_gate, w_up, w_down, num_heads, num_kv_heads, head_dim, rope_base);
+}
+
+class LlamaTransformer {
+    vocab_size: int,
+    dim: int,
+    num_layers: int,
+    num_heads: int,
+    num_kv_heads: int,
+    head_dim: int,
+    hidden_dim: int,
+    norm_eps: float,
+    rope_base: float,
+    tok_embeddings: Tensor,
+    layers: list,
+    norm: RMSNorm,
+    output: Tensor,
+    eos_token_id: int
+}
+
+func llama_model_create(vocab_size: int, dim: int, num_layers: int, num_heads: int, num_kv_heads: int, head_dim: int, hidden_dim: int, rope_base: float) -> LlamaTransformer {
+    let tok_embeddings = tensor_randn_2d(vocab_size, dim, 0.02);
+    let layers = list_new();
+    let i = 0;
+    while i < num_layers {
+        list_push(layers, llama_decoder_layer_new(dim, num_heads, num_kv_heads, head_dim, hidden_dim, 0.00001, rope_base));
+        i = i + 1;
+    }
+    let norm = nn_rmsnorm(dim, 0.00001);
+    let output = tensor_randn_2d(dim, vocab_size, 0.02);
+    return new LlamaTransformer(vocab_size, dim, num_layers, num_heads, num_kv_heads, head_dim, hidden_dim, 0.00001, rope_base, tok_embeddings, layers, norm, output, 2);
+}
+
+func mistral_model_create(vocab_size: int, dim: int, num_layers: int, num_heads: int, num_kv_heads: int, head_dim: int, hidden_dim: int) -> LlamaTransformer {
+    return llama_model_create(vocab_size, dim, num_layers, num_heads, num_kv_heads, head_dim, hidden_dim, 10000.0);
+}
+
+impl LlamaTransformer {
+    func forward_token(token_id: int, pos: int, kv_cache: KVCache) -> Tensor {
+        let x = tensor_zeros_2d(1, this.dim);
+        let j = 0;
+        while j < this.dim {
+            let v = this.tok_embeddings.get_2d(token_id, j);
+            x.set_2d(0, j, v);
+            j = j + 1;
+        }
+
+        let l_idx = 0;
+        while l_idx < this.num_layers {
+            let layer: LlamaDecoderLayer = list_get(this.layers, l_idx);
+            let layer_cache = kv_cache.get_layer(l_idx);
+
+            let x_norm = layer.attn_norm.forward(x);
+            let q = tensor_matmul(x_norm, layer.wq);
+            let k = tensor_matmul(x_norm, layer.wk);
+            let v = tensor_matmul(x_norm, layer.wv);
+
+            let q_rope = tensor_apply_rope(q, pos, layer.head_dim, layer.rope_base);
+            let k_rope = tensor_apply_rope(k, pos, layer.head_dim, layer.rope_base);
+
+            layer_cache.update(k_rope, v);
+
+            let seq_len = layer_cache.seq_len;
+            let group_size = layer.num_heads / layer.num_kv_heads;
+            let scale = 1.0 / torch_sqrt(int_to_float(layer.head_dim));
+
+            let attn_out = tensor_zeros_2d(1, layer.num_heads * layer.head_dim);
+
+            let h_idx = 0;
+            while h_idx < layer.num_heads {
+                let kv_h_idx = h_idx / group_size;
+                let q_offset = h_idx * layer.head_dim;
+                let kv_offset = kv_h_idx * layer.head_dim;
+
+                let scores = tensor_zeros_1d(seq_len);
+                let max_score = -999999.0;
+                let t_step = 0;
+                while t_step < seq_len {
+                    let dot = 0.0;
+                    let d = 0;
+                    while d < layer.head_dim {
+                        let q_val = q_rope.get_2d(0, q_offset + d);
+                        let k_val = layer_cache.k_cache.get_2d(t_step, kv_offset + d);
+                        dot = dot + (q_val * k_val);
+                        d = d + 1;
+                    }
+                    let s_val = dot * scale;
+                    if s_val > max_score { max_score = s_val; }
+                    scores.set_1d(t_step, s_val);
+                    t_step = t_step + 1;
+                }
+
+                let sum_exp = 0.0;
+                t_step = 0;
+                while t_step < seq_len {
+                    let s_val = scores.get_1d(t_step);
+                    sum_exp = sum_exp + torch_exp(s_val - max_score);
+                    t_step = t_step + 1;
+                }
+
+                let d = 0;
+                while d < layer.head_dim {
+                    let ctx_val = 0.0;
+                    t_step = 0;
+                    while t_step < seq_len {
+                        let s_val = scores.get_1d(t_step);
+                        let weight = torch_exp(s_val - max_score) / sum_exp;
+                        let v_val = layer_cache.v_cache.get_2d(t_step, kv_offset + d);
+                        ctx_val = ctx_val + (weight * v_val);
+                        t_step = t_step + 1;
+                    }
+                    attn_out.set_2d(0, q_offset + d, ctx_val);
+                    d = d + 1;
+                }
+                h_idx = h_idx + 1;
+            }
+
+            let attn_proj = tensor_matmul(attn_out, layer.wo);
+            x = tensor_add(x, attn_proj);
+
+            let ffn_norm = layer.ffn_norm.forward(x);
+            let ffn_out = tensor_swiglu(ffn_norm, layer.w_gate, layer.w_up, layer.w_down);
+            x = tensor_add(x, ffn_out);
+
+            l_idx = l_idx + 1;
+        }
+
+        let x_final = this.norm.forward(x);
+        let logits = tensor_matmul(x_final, this.output);
+        return logits;
+    }
+
+    func generate(prompt_tokens: list, max_new_tokens: int, temperature: float, top_p: float) -> list {
+        let result = list_new();
+        let prompt_len = list_length(prompt_tokens);
+        let i = 0;
+        while i < prompt_len {
+            list_push(result, list_get(prompt_tokens, i));
+            i = i + 1;
+        }
+
+        let kv_cache = kv_cache_new(this.num_layers, 2048, this.num_kv_heads, this.head_dim);
+
+        let pos = 0;
+        while pos < prompt_len - 1 {
+            let tok: int = list_get(result, pos);
+            this.forward_token(tok, pos, kv_cache);
+            pos = pos + 1;
+        }
+
+        let total_gen = 0;
+        while total_gen < max_new_tokens {
+            let last_tok: int = list_get(result, list_length(result) - 1);
+            if last_tok == this.eos_token_id {
+                return result;
+            }
+            let logits = this.forward_token(last_tok, pos, kv_cache);
+            let next_tok = tensor_argmax_1d(logits);
+            list_push(result, next_tok);
+            pos = pos + 1;
+            total_gen = total_gen + 1;
+        }
+        return result;
+    }
+}
+
+class SpeculativeSampler {
+    draft_model: LlamaTransformer,
+    target_model: LlamaTransformer,
+    gamma: int
+}
+
+func speculative_sampler_new(draft: LlamaTransformer, target: LlamaTransformer, gamma: int) -> SpeculativeSampler {
+    return new SpeculativeSampler(draft, target, gamma);
+}
+
+impl SpeculativeSampler {
+    func generate(prompt_tokens: list, max_new_tokens: int, temperature: float) -> list {
+        let result = list_new();
+        let prompt_len = list_length(prompt_tokens);
+        let i = 0;
+        while i < prompt_len {
+            list_push(result, list_get(prompt_tokens, i));
+            i = i + 1;
+        }
+
+        let draft_cache = kv_cache_new(this.draft_model.num_layers, 2048, this.draft_model.num_kv_heads, this.draft_model.head_dim);
+        let target_cache = kv_cache_new(this.target_model.num_layers, 2048, this.target_model.num_kv_heads, this.target_model.head_dim);
+
+        let pos = 0;
+        while pos < prompt_len - 1 {
+            let tok: int = list_get(result, pos);
+            this.draft_model.forward_token(tok, pos, draft_cache);
+            this.target_model.forward_token(tok, pos, target_cache);
+            pos = pos + 1;
+        }
+
+        let total_generated = 0;
+        while total_generated < max_new_tokens {
+            let cur_last_token: int = list_get(result, list_length(result) - 1);
+            if cur_last_token == this.target_model.eos_token_id {
+                return result;
+            }
+
+            let candidates = list_new();
+            let draft_tok = cur_last_token;
+            let d_step = 0;
+            let cur_pos = pos;
+            while d_step < this.gamma && (total_generated + d_step) < max_new_tokens {
+                let logits = this.draft_model.forward_token(draft_tok, cur_pos + d_step, draft_cache);
+                draft_tok = tensor_argmax_1d(logits);
+                list_push(candidates, draft_tok);
+                d_step = d_step + 1;
+            }
+
+            let c_len = list_length(candidates);
+            let accepted = 0;
+            let k = 0;
+            let stop_round = false;
+            while k < c_len && !stop_round {
+                let cand: int = list_get(candidates, k);
+                let in_tok = cur_last_token;
+                if k > 0 {
+                    in_tok = list_get(candidates, k - 1);
+                }
+                let target_logits = this.target_model.forward_token(in_tok, cur_pos + k, target_cache);
+                let target_tok = tensor_argmax_1d(target_logits);
+
+                if cand == target_tok {
+                    list_push(result, cand);
+                    accepted = accepted + 1;
+                    total_generated = total_generated + 1;
+                } else {
+                    list_push(result, target_tok);
+                    total_generated = total_generated + 1;
+                    stop_round = true;
+                }
+                k = k + 1;
+            }
+
+            let extra_step = 0;
+            if stop_round {
+                extra_step = 1;
+            }
+            pos = pos + accepted + extra_step;
+            if accepted == c_len && total_generated < max_new_tokens {
+                let last_cand: int = list_get(candidates, c_len - 1);
+                let next_logits = this.target_model.forward_token(last_cand, pos, target_cache);
+                let next_tok = tensor_argmax_1d(next_logits);
+                list_push(result, next_tok);
+                total_generated = total_generated + 1;
+                pos = pos + 1;
+            }
+        }
+        return result;
+    }
+}
+
+// ==============================================================================
+// 31. LLM Namespace Singleton (llm.Llama, llm.Mistral, llm.Tokenizer, etc.)
+// ==============================================================================
+
+class LLM {}
+
+func llm_init() -> LLM {
+    return new LLM();
+}
+
+impl LLM {
+    func Llama(vocab_size: int, dim: int, num_layers: int, num_heads: int, num_kv_heads: int, head_dim: int, hidden_dim: int, rope_base: float) -> LlamaTransformer {
+        return llama_model_create(vocab_size, dim, num_layers, num_heads, num_kv_heads, head_dim, hidden_dim, rope_base);
+    }
+
+    func Mistral(vocab_size: int, dim: int, num_layers: int, num_heads: int, num_kv_heads: int, head_dim: int, hidden_dim: int) -> LlamaTransformer {
+        return mistral_model_create(vocab_size, dim, num_layers, num_heads, num_kv_heads, head_dim, hidden_dim);
+    }
+
+    func Tokenizer() -> BPETokenizer {
+        return bpe_tokenizer_new();
+    }
+
+    func KVCache(num_layers: int, max_seq_len: int, num_kv_heads: int, head_dim: int) -> KVCache {
+        return kv_cache_new(num_layers, max_seq_len, num_kv_heads, head_dim);
+    }
+
+    func SpeculativeSampler(draft: LlamaTransformer, target: LlamaTransformer, gamma: int) -> SpeculativeSampler {
+        return speculative_sampler_new(draft, target, gamma);
+    }
+
+    func SafetensorsOpen(raw_bytes: list) -> SafetensorsFile {
+        return safetensors_open_bytes(raw_bytes);
+    }
+
+    func GGUFParse(raw_bytes: list) -> GGUFFile {
+        return gguf_parse(raw_bytes);
     }
 }

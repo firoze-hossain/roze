@@ -8312,9 +8312,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             TypedStatement::Return { value, .. } => {
                 match value {
                     Some(expr) => {
+                        let ret_ty = self.current_return_type.clone();
                         let val = self.compile_expression(expr)?;
-                        self.retain_if_aliasing(expr, val)?;
-                        let val = self.coerce_for_target_type(val, &expr.type_, &self.current_return_type.clone());
+                        if expression_is_borrowed(expr) {
+                            let retain_ty = if expr.type_ == Type::Unknown { &ret_ty } else { &expr.type_ };
+                            self.retain_for_arc_type(retain_ty, val)?;
+                        }
+                        let val = self.coerce_for_target_type(val, &expr.type_, &ret_ty);
                         self.release_all_active_scopes()?;
                         self.builder.ins().return_(&[val]);
                     }

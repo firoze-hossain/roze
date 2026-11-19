@@ -655,6 +655,286 @@ func test_suite_17_numerical_gradcheck() {
     println("SUITE 17 PASSED: roze-torch universal numerical gradient checking against central finite differences");
 }
 
+// -----------------------------------------------------------------------------
+// Suite 18: nn.Linear & Parameter Registration (M8-T03)
+// -----------------------------------------------------------------------------
+func test_suite_18_nn_linear() {
+    let lin = nn_linear(4, 2, true);
+    assert_true(lin.in_features == 4 && lin.out_features == 2, "Linear in/out");
+    assert_true(lin.has_bias, "Linear bias flag");
+    assert_true(list_length(lin.parameters()) == 2, "Linear parameter count");
+
+    let x2d = tensor_ones_2d(3, 4);
+    let y2d = lin.forward(x2d);
+    assert_true(y2d.shape.dim0 == 3 && y2d.shape.dim1 == 2, "Linear 2D forward shape");
+
+    let x1d = tensor_ones_1d(4);
+    let y1d = lin.forward(x1d);
+    assert_true(y1d.shape.dim0 == 2, "Linear 1D forward shape");
+
+    let x3d = tensor_ones_3d(2, 5, 4);
+    let y3d = lin.forward(x3d);
+    assert_true(y3d.shape.dim0 == 2 && y3d.shape.dim1 == 5 && y3d.shape.dim2 == 2, "Linear 3D forward shape");
+
+    lin.eval();
+    assert_true(!lin.is_training(), "Linear eval mode");
+    lin.train();
+    assert_true(lin.is_training(), "Linear train mode");
+
+    let lin_nb = nn_linear(4, 2, false);
+    assert_true(!lin_nb.has_bias && list_length(lin_nb.parameters()) == 1, "Linear without bias");
+
+    println("SUITE 18 PASSED: roze-torch nn.Linear and Parameter registration");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 19: nn.Conv2d, nn.MaxPool2d & nn.AvgPool2d (M8-T03)
+// -----------------------------------------------------------------------------
+func test_suite_19_nn_conv_and_pooling() {
+    let conv = nn_conv2d(1, 2, 3, 1, 1, true);
+    assert_true(conv.in_channels == 1 && conv.out_channels == 2, "Conv2d channels");
+    assert_true(list_length(conv.parameters()) == 2, "Conv2d params");
+
+    let c = 0;
+    while c < 2 {
+        let kh = 0;
+        while kh < 3 {
+            let kw = 0;
+            while kw < 3 {
+                conv.weight.set_4d(c, 0, kh, kw, 1.0);
+                kw = kw + 1;
+            }
+            kh = kh + 1;
+        }
+        conv.bias.set_1d(c, 0.5);
+        c = c + 1;
+    }
+
+    let in_img = tensor_ones_4d(1, 1, 4, 4);
+    let out_conv = conv.forward(in_img);
+    assert_true(out_conv.shape.dim0 == 1 && out_conv.shape.dim1 == 2 && out_conv.shape.dim2 == 4 && out_conv.shape.dim3 == 4, "Conv2d output shape");
+    assert_true(approx_eq(out_conv.get_4d(0, 0, 1, 1), 9.5, 0.001), "Conv2d center val == 9.5");
+    assert_true(approx_eq(out_conv.get_4d(0, 0, 0, 0), 4.5, 0.001), "Conv2d corner val == 4.5");
+
+    let pool_in = tensor_zeros_4d(1, 1, 4, 4);
+    pool_in.set_4d(0, 0, 0, 1, 15.0);
+    pool_in.set_4d(0, 0, 1, 3, 25.0);
+    pool_in.set_4d(0, 0, 2, 0, 35.0);
+    pool_in.set_4d(0, 0, 3, 3, 45.0);
+
+    let max_pool = nn_max_pool2d(2, 2, 0);
+    let out_max = max_pool.forward(pool_in);
+    assert_true(out_max.shape.dim2 == 2 && out_max.shape.dim3 == 2, "MaxPool shape");
+    assert_true(approx_eq(out_max.get_4d(0, 0, 0, 0), 15.0, 0.001), "MaxPool (0, 0) == 15.0");
+    assert_true(approx_eq(out_max.get_4d(0, 0, 1, 1), 45.0, 0.001), "MaxPool (1, 1) == 45.0");
+
+    let avg_pool = nn_avg_pool2d(2, 2, 0);
+    let avg_in = tensor_ones_4d(1, 1, 4, 4);
+    let out_avg = avg_pool.forward(avg_in);
+    assert_true(approx_eq(out_avg.get_4d(0, 0, 0, 0), 1.0, 0.001), "AvgPool == 1.0");
+
+    println("SUITE 19 PASSED: roze-torch nn.Conv2d, nn.MaxPool2d and nn.AvgPool2d");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 20: nn.BatchNorm2d, nn.LayerNorm & nn.Dropout (M8-T03)
+// -----------------------------------------------------------------------------
+func test_suite_20_nn_norm_and_dropout() {
+    let bn = nn_batch_norm2d(2, 0.00001, 0.1);
+    assert_true(bn.num_features == 2 && list_length(bn.parameters()) == 2, "BatchNorm setup");
+
+    let bn_in = tensor_zeros_4d(2, 2, 2, 2);
+    let b = 0;
+    while b < 2 {
+        let r = 0;
+        while r < 2 {
+            let col = 0;
+            while col < 2 {
+                bn_in.set_4d(b, 0, r, col, (b * 4 + r * 2 + col + 1) * 2.0);
+                bn_in.set_4d(b, 1, r, col, 5.0);
+                col = col + 1;
+            }
+            r = r + 1;
+        }
+        b = b + 1;
+    }
+
+    bn.train();
+    let bn_out = bn.forward(bn_in);
+    assert_true(bn_out.shape.equals(bn_in.shape), "BatchNorm train shape");
+    assert_true(bn.running_mean.get_1d(0) != 0.0, "BatchNorm running mean updated");
+
+    bn.eval();
+    let bn_eval_out = bn.forward(bn_in);
+    assert_true(bn_eval_out.shape.equals(bn_in.shape), "BatchNorm eval shape");
+
+    let ln = nn_layer_norm(4, 0.00001);
+    let ln_in = tensor_zeros_2d(2, 4);
+    ln_in.set_2d(0, 0, 1.0); ln_in.set_2d(0, 1, 2.0); ln_in.set_2d(0, 2, 3.0); ln_in.set_2d(0, 3, 4.0);
+    ln_in.set_2d(1, 0, 10.0); ln_in.set_2d(1, 1, 20.0); ln_in.set_2d(1, 2, 30.0); ln_in.set_2d(1, 3, 40.0);
+
+    let ln_out = ln.forward(ln_in);
+    let row0_mean = (ln_out.get_2d(0, 0) + ln_out.get_2d(0, 1) + ln_out.get_2d(0, 2) + ln_out.get_2d(0, 3)) / 4.0;
+    assert_true(approx_eq(row0_mean, 0.0, 0.001), "LayerNorm normalized mean approx 0.0");
+
+    let drop = nn_dropout(0.5);
+    drop.eval();
+    let drop_in = tensor_ones_2d(4, 4);
+    let drop_eval_out = drop.forward(drop_in);
+    assert_true(approx_eq(drop_eval_out.get_2d(0, 0), 1.0, 0.001), "Dropout eval identity");
+
+    println("SUITE 20 PASSED: roze-torch nn.BatchNorm2d, nn.LayerNorm and nn.Dropout");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 21: nn.Embedding & nn.MultiheadAttention (M8-T03)
+// -----------------------------------------------------------------------------
+func test_suite_21_nn_embedding_and_attention() {
+    let emb = nn_embedding(10, 8);
+    assert_true(emb.num_embeddings == 10 && emb.embedding_dim == 8, "Embedding setup");
+
+    let t = 0;
+    while t < 10 {
+        let d = 0;
+        while d < 8 {
+            emb.weight.set_2d(t, d, (t * 10.0) + (d * 1.0));
+            d = d + 1;
+        }
+        t = t + 1;
+    }
+
+    let indices_1d = tensor_zeros_1d(3);
+    indices_1d.set_1d(0, 3.0);
+    indices_1d.set_1d(1, 7.0);
+    indices_1d.set_1d(2, 1.0);
+
+    let emb_out = emb.forward(indices_1d);
+    assert_true(emb_out.shape.dim0 == 3 && emb_out.shape.dim1 == 8, "Embedding out shape (3, 8)");
+    assert_true(approx_eq(emb_out.get_2d(0, 0), 30.0, 0.001), "Token 3 embed == 30.0");
+    assert_true(approx_eq(emb_out.get_2d(1, 0), 70.0, 0.001), "Token 7 embed == 70.0");
+
+    let mha = nn_multihead_attention(8, 2, 0.0, true);
+    assert_true(mha.embed_dim == 8 && mha.num_heads == 2, "MHA setup");
+    assert_true(list_length(mha.parameters()) == 8, "MHA param count == 8");
+
+    let query_in = tensor_ones_2d(4, 8);
+    let attn_out = mha.forward(query_in);
+    assert_true(attn_out.shape.dim0 == 4 && attn_out.shape.dim1 == 8, "MHA out shape (4, 8)");
+
+    println("SUITE 21 PASSED: roze-torch nn.Embedding and nn.MultiheadAttention");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 22: nn.Sequential & Neural Activations (M8-T03)
+// -----------------------------------------------------------------------------
+func test_suite_22_nn_sequential_and_activations() {
+    let x = tensor_zeros_1d(3);
+    x.set_1d(0, -2.0); x.set_1d(1, 0.0); x.set_1d(2, 3.0);
+
+    assert_true(approx_eq(relu(x).get_1d(0), 0.0, 0.001), "relu(-2) == 0");
+    assert_true(approx_eq(sigmoid(x).get_1d(1), 0.5, 0.001), "sigmoid(0) == 0.5");
+    assert_true(approx_eq(softmax(x, 0).get_1d(0) + softmax(x, 0).get_1d(1) + softmax(x, 0).get_1d(2), 1.0, 0.001), "softmax sums to 1.0");
+
+    let l1 = nn_linear(4, 6, true);
+    let act1 = nn_relu();
+    let drop = nn_dropout(0.0);
+    let l2 = nn_linear(6, 2, true);
+    let sm = nn_softmax(1);
+
+    let module_list = list_new();
+    list_push(module_list, l1);
+    list_push(module_list, act1);
+    list_push(module_list, drop);
+    list_push(module_list, l2);
+    list_push(module_list, sm);
+
+    let seq = nn_sequential(module_list);
+    assert_true(list_length(seq.parameters()) == 4, "Sequential param count == 4");
+
+    let seq_in = tensor_ones_2d(3, 4);
+    let seq_out = seq.forward(seq_in);
+    assert_true(seq_out.shape.dim0 == 3 && seq_out.shape.dim1 == 2, "Sequential out shape (3, 2)");
+    let r0_sum = seq_out.get_2d(0, 0) + seq_out.get_2d(0, 1);
+    assert_true(approx_eq(r0_sum, 1.0, 0.001), "Sequential row probabilities sum to 1.0");
+
+    seq.eval();
+    assert_true(!seq.is_training(), "Sequential eval mode");
+    seq.train();
+    assert_true(seq.is_training(), "Sequential train mode");
+
+    println("SUITE 22 PASSED: roze-torch nn.Sequential and neural activation modules");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 23: NN Namespace & End-to-End Deep Learning Training Loop (M8-T03)
+// -----------------------------------------------------------------------------
+func test_suite_23_nn_namespace_and_training() {
+    let nn = nn_init();
+    let lin = nn.Linear(3, 2, true);
+    assert_true(lin.in_features == 3 && lin.out_features == 2, "nn.Linear via namespace");
+
+    let mlp_l1 = nn.Linear(2, 4, true);
+    let mlp_act = nn.ReLU();
+    let mlp_l2 = nn.Linear(4, 1, true);
+
+    let net_mods = list_new();
+    list_push(net_mods, mlp_l1);
+    list_push(net_mods, mlp_act);
+    list_push(net_mods, mlp_l2);
+    let net = nn.Sequential(net_mods);
+
+    let x_train = tensor_zeros_2d(4, 2);
+    x_train.set_2d(0, 0, 1.0); x_train.set_2d(0, 1, 2.0);
+    x_train.set_2d(1, 0, 2.0); x_train.set_2d(1, 1, 1.0);
+    x_train.set_2d(2, 0, 3.0); x_train.set_2d(2, 1, 0.0);
+    x_train.set_2d(3, 0, 0.0); x_train.set_2d(3, 1, 3.0);
+
+    let y_target = tensor_zeros_2d(4, 1);
+    y_target.set_2d(0, 0, 3.0);
+    y_target.set_2d(1, 0, 3.0);
+    y_target.set_2d(2, 0, 3.0);
+    y_target.set_2d(3, 0, 3.0);
+
+    let initial_pred = net.forward(x_train);
+    let initial_loss_t = tensor_mse_loss(initial_pred, y_target);
+    let initial_loss = initial_loss_t.item();
+
+    let lr = 0.05;
+    let epoch = 0;
+    while epoch < 10 {
+        net.zero_grad();
+        let pred = net.forward(x_train);
+        let loss_t = tensor_mse_loss(pred, y_target);
+        loss_t.backward();
+
+        let params = net.parameters();
+        let p_count = list_length(params);
+        let p_idx = 0;
+        while p_idx < p_count {
+            let p: Parameter = list_get(params, p_idx);
+            if p.data.grad != null {
+                let num = p.data.numel();
+                let i = 0;
+                while i < num {
+                    let w = tensor_storage_read_float(p.data.storage, p.data.offset + i, p.data.dtype_id);
+                    let g = tensor_storage_read_float(p.data.grad.storage, p.data.grad.offset + i, p.data.grad.dtype_id);
+                    tensor_storage_write_float(p.data.storage, p.data.offset + i, p.data.dtype_id, w - lr * g);
+                    i = i + 1;
+                }
+            }
+            p_idx = p_idx + 1;
+        }
+        epoch = epoch + 1;
+    }
+
+    let final_pred = net.forward(x_train);
+    let final_loss_t = tensor_mse_loss(final_pred, y_target);
+    let final_loss = final_loss_t.item();
+
+    assert_true(final_loss < initial_loss, "Loss decreased");
+    println("SUITE 23 PASSED: roze-torch nn namespace singleton and end-to-end backpropagation");
+}
+
 func main() {
     println("==================================================================");
     println("  ROZE-TORCH N-DIMENSIONAL TENSOR ENGINE & AUTOGRAD TAPE SUITE    ");
@@ -679,6 +959,14 @@ func main() {
     test_suite_15_no_grad_scope();
     test_suite_16_custom_functions();
     test_suite_17_numerical_gradcheck();
+
+    // M8-T03 Suites
+    test_suite_18_nn_linear();
+    test_suite_19_nn_conv_and_pooling();
+    test_suite_20_nn_norm_and_dropout();
+    test_suite_21_nn_embedding_and_attention();
+    test_suite_22_nn_sequential_and_activations();
+    test_suite_23_nn_namespace_and_training();
 
     println("==================================================================");
     println("ALL SUITES COMPLETED: Roze-Torch N-Dimensional Tensor Engine 100% OPERATIONAL");

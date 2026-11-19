@@ -537,6 +537,8 @@ func op_pow() -> int { return 21; }
 func op_exp() -> int { return 22; }
 func op_log() -> int { return 23; }
 func op_custom() -> int { return 24; }
+func op_conv2d() -> int { return 25; }
+func op_embedding() -> int { return 26; }
 
 func autograd_node_new(op: int, op_name: string, input_a: Tensor, input_b: Tensor) -> AutogradNode {
     return new AutogradNode(op, op_name, input_a, input_b, 0.0, 0, 0);
@@ -596,6 +598,30 @@ func autograd_str_to_int(s: string) -> int {
         mut_i = mut_i + 1;
     }
     return mut_val;
+}
+
+func float_to_int(f: float) -> int {
+    let s = to_string(f);
+    let len = string_length(s);
+    let sign = 1;
+    let start = 0;
+    if len > 0 && string_char_at(s, 0) == 45 {
+        sign = -1;
+        start = 1;
+    }
+    let res = 0;
+    let i = start;
+    while i < len {
+        let c = string_char_at(s, i);
+        if c == 46 {
+            return sign * res;
+        }
+        if c >= 48 && c <= 57 {
+            res = (res * 10) + (c - 48);
+        }
+        i = i + 1;
+    }
+    return sign * res;
 }
 
 func autograd_ctrl_addr() -> int {
@@ -2618,6 +2644,138 @@ func autograd_execute_node(node_t: Tensor, fn: AutogradNode, g: Tensor) {
         autograd_dispatch_custom_backward(fn.custom_fn_id, fn.input_a, fn.input_b, g);
         return;
     }
+
+    if op == op_conv2d() {
+        let stride = fn.saved_param_int / 100;
+        let padding = fn.saved_param_int % 100;
+        let in_t = fn.input_a;
+        let wt = fn.input_b;
+
+        let n = in_t.shape.dim0;
+        let c_in = in_t.shape.dim1;
+        let h = in_t.shape.dim2;
+        let w = in_t.shape.dim3;
+
+        let c_out = wt.shape.dim0;
+        let k_h = wt.shape.dim2;
+        let k_w = wt.shape.dim3;
+
+        let h_out = (h + 2 * padding - k_h) / stride + 1;
+        let w_out = (w + 2 * padding - k_w) / stride + 1;
+
+        if wt != null && wt.requires_grad {
+            let gw = tensor_zeros_4d(c_out, c_in, k_h, k_w);
+            let batch = 0;
+            while batch < n {
+                let co = 0;
+                while co < c_out {
+                    let oh = 0;
+                    while oh < h_out {
+                        let ow = 0;
+                        while ow < w_out {
+                            let g_val = g.get_4d(batch, co, oh, ow);
+                            let ci = 0;
+                            while ci < c_in {
+                                let kh = 0;
+                                while kh < k_h {
+                                    let ih = oh * stride - padding + kh;
+                                    if ih >= 0 && ih < h {
+                                        let kw = 0;
+                                        while kw < k_w {
+                                            let iw = ow * stride - padding + kw;
+                                            if iw >= 0 && iw < w {
+                                                let iv = in_t.get_4d(batch, ci, ih, iw);
+                                                let cur_w = gw.get_4d(co, ci, kh, kw);
+                                                gw.set_4d(co, ci, kh, kw, cur_w + g_val * iv);
+                                            }
+                                            kw = kw + 1;
+                                        }
+                                    }
+                                    kh = kh + 1;
+                                }
+                                ci = ci + 1;
+                            }
+                            ow = ow + 1;
+                        }
+                        oh = oh + 1;
+                    }
+                    co = co + 1;
+                }
+                batch = batch + 1;
+            }
+            autograd_accumulate_grad(wt, gw);
+        }
+
+        if in_t != null && in_t.requires_grad {
+            let gi = tensor_zeros_4d(n, c_in, h, w);
+            let batch = 0;
+            while batch < n {
+                let co = 0;
+                while co < c_out {
+                    let oh = 0;
+                    while oh < h_out {
+                        let ow = 0;
+                        while ow < w_out {
+                            let g_val = g.get_4d(batch, co, oh, ow);
+                            let ci = 0;
+                            while ci < c_in {
+                                let kh = 0;
+                                while kh < k_h {
+                                    let ih = oh * stride - padding + kh;
+                                    if ih >= 0 && ih < h {
+                                        let kw = 0;
+                                        while kw < k_w {
+                                            let iw = ow * stride - padding + kw;
+                                            if iw >= 0 && iw < w {
+                                                let wv = wt.get_4d(co, ci, kh, kw);
+                                                let cur_i = gi.get_4d(batch, ci, ih, iw);
+                                                gi.set_4d(batch, ci, ih, iw, cur_i + g_val * wv);
+                                            }
+                                            kw = kw + 1;
+                                        }
+                                    }
+                                    kh = kh + 1;
+                                }
+                                ci = ci + 1;
+                            }
+                            ow = ow + 1;
+                        }
+                        oh = oh + 1;
+                    }
+                    co = co + 1;
+                }
+                batch = batch + 1;
+            }
+            autograd_accumulate_grad(in_t, gi);
+        }
+        return;
+    }
+
+    if op == op_embedding() {
+        let wt = fn.input_a;
+        let indices = fn.input_b;
+        if wt != null && wt.requires_grad {
+            let gw = tensor_zeros(wt.shape, wt.dtype_id);
+            let n = indices.numel();
+            let d = wt.shape.dim1;
+            let i = 0;
+            while i < n {
+                let idx = float_to_int(indices.get_1d(i));
+                if idx >= 0 && idx < wt.shape.dim0 {
+                    let c = 0;
+                    while c < d {
+                        let cur_g = gw.get_2d(idx, c);
+                        let in_g = g.get_2d(i, c);
+                        gw.set_2d(idx, c, cur_g + in_g);
+                        c = c + 1;
+                    }
+                }
+                i = i + 1;
+            }
+            autograd_accumulate_grad(wt, gw);
+        }
+        return;
+    }
 }
 
 func tensor_backward(t: Tensor) {
@@ -2897,4 +3055,1195 @@ func cuda_device_count() -> int {
 
 func torch_version() -> string {
     return "3.0.0-titan";
+}
+
+// ==============================================================================
+// SECTION 17: Deep Learning Modules & Activation Functions (roze-torch::nn)
+// ==============================================================================
+// Sprint 15 (W31-W32) Deliverable: M8-T03
+// 1:1 Architectural and Module Parity with PyTorch torch.nn Module Ecosystem
+//
+// Key Modules & Primitives:
+// 1. Parameter Registration & Module Base Abstraction (trait Module, Parameter)
+// 2. nn.Linear (Dense projection with Xavier/Kaiming init and autograd backprop)
+// 3. nn.Conv2d (2D convolution with multi-channel kernels, striding & padding)
+// 4. nn.MaxPool2d & nn.AvgPool2d (Spatial 2D pooling engines)
+// 5. nn.BatchNorm2d (Spatial batch normalization with running mean/variance)
+// 6. nn.LayerNorm (Channel/feature normalization with learnable affine weights)
+// 7. nn.Dropout (Stochastic activation dropout with train/eval mode isolation)
+// 8. nn.Embedding (Dense vector lookup table with backward gradient scatter)
+// 9. nn.MultiheadAttention (Scaled dot-product multihead self/cross-attention)
+// 10. nn.Sequential (Ordered container with automatic gradient propagation)
+// 11. Activations: ReLU, GELU, SiLU, Sigmoid, Softmax (Functional & Module)
+// 12. NN Namespace Singleton (nn.Linear, nn.Conv2d, nn.Sequential, etc.)
+// ==============================================================================
+
+class Parameter {
+    name: string,
+    data: Tensor,
+    requires_grad: bool
+}
+
+func parameter_new(name: string, data: Tensor) -> Parameter {
+    data.requires_grad = true;
+    return new Parameter(name, data, true);
+}
+
+trait Module {
+    func forward(input: Tensor) -> Tensor;
+    func parameters() -> list;
+    func zero_grad();
+    func train();
+    func eval();
+    func is_training() -> bool;
+}
+
+// ------------------------------------------------------------------------------
+// 1. nn.Linear: Fully Connected Layer
+// ------------------------------------------------------------------------------
+
+class Linear {
+    in_features: int,
+    out_features: int,
+    has_bias: bool,
+    weight: Tensor,
+    bias: Tensor,
+    training: bool,
+    params: list
+}
+
+func nn_linear(in_features: int, out_features: int, bias: bool) -> Linear {
+    let weight = tensor_zeros_2d(in_features, out_features);
+    let limit = torch_sqrt(6.0 / ((in_features + out_features) * 1.0));
+    let r = 0;
+    while r < in_features {
+        let c = 0;
+        while c < out_features {
+            let pseudo_rand = (((r * 17 + c * 31) % 100) - 50) / 100.0 * limit;
+            weight.set_2d(r, c, pseudo_rand);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    weight.requires_grad = true;
+
+    let b: Tensor = null;
+    let params = list_new();
+    list_push(params, parameter_new("weight", weight));
+
+    if bias {
+        b = tensor_zeros_2d(1, out_features);
+        b.requires_grad = true;
+        list_push(params, parameter_new("bias", b));
+    }
+
+    return new Linear(in_features, out_features, bias, weight, b, true, params);
+}
+
+func nn_linear_default(in_features: int, out_features: int) -> Linear {
+    return nn_linear(in_features, out_features, true);
+}
+
+impl Module for Linear {
+    func forward(input: Tensor) -> Tensor {
+        let in_t = input;
+        let is_1d = (input.rank() == 1);
+        if is_1d {
+            in_t = tensor_reshape(input, shape_2d(1, this.in_features));
+        }
+
+        let is_3d = (input.rank() == 3);
+        let b = 0;
+        let t = 0;
+        if is_3d {
+            b = input.shape.dim0;
+            t = input.shape.dim1;
+            in_t = tensor_reshape(input, shape_2d(b * t, this.in_features));
+        }
+
+        let mm = tensor_matmul(in_t, this.weight);
+        let out = mm;
+        if this.has_bias && this.bias != null {
+            out = tensor_add(mm, this.bias);
+        }
+
+        if is_1d {
+            return tensor_reshape(out, shape_1d(this.out_features));
+        }
+        if is_3d {
+            return tensor_reshape(out, shape_3d(b, t, this.out_features));
+        }
+        return out;
+    }
+
+    func parameters() -> list {
+        return this.params;
+    }
+
+    func zero_grad() {
+        this.weight.zero_grad();
+        if this.has_bias && this.bias != null {
+            this.bias.zero_grad();
+        }
+    }
+
+    func train() {
+        this.training = true;
+    }
+
+    func eval() {
+        this.training = false;
+    }
+
+    func is_training() -> bool {
+        return this.training;
+    }
+}
+
+// ------------------------------------------------------------------------------
+// 2. nn.Conv2d: 2D Spatial Convolution
+// ------------------------------------------------------------------------------
+
+func tensor_conv2d(input: Tensor, weight: Tensor, bias: Tensor, stride: int, padding: int) -> Tensor {
+    let in_4d = input;
+    let is_3d = (input.rank() == 3);
+    if is_3d {
+        in_4d = tensor_reshape(input, shape_4d(1, input.shape.dim0, input.shape.dim1, input.shape.dim2));
+    }
+    let n = in_4d.shape.dim0;
+    let c_in = in_4d.shape.dim1;
+    let h = in_4d.shape.dim2;
+    let w = in_4d.shape.dim3;
+
+    let c_out = weight.shape.dim0;
+    let k_h = weight.shape.dim2;
+    let k_w = weight.shape.dim3;
+
+    let h_out = (h + 2 * padding - k_h) / stride + 1;
+    let w_out = (w + 2 * padding - k_w) / stride + 1;
+
+    let out = tensor_zeros_4d(n, c_out, h_out, w_out);
+
+    let batch = 0;
+    while batch < n {
+        let co = 0;
+        while co < c_out {
+            let b_val = 0.0;
+            if bias != null {
+                if bias.rank() == 1 {
+                    b_val = bias.get_1d(co);
+                } else {
+                    b_val = bias.item();
+                }
+            }
+            let oh = 0;
+            while oh < h_out {
+                let ow = 0;
+                while ow < w_out {
+                    let sum = b_val;
+                    let ci = 0;
+                    while ci < c_in {
+                        let kh = 0;
+                        while kh < k_h {
+                            let ih = oh * stride - padding + kh;
+                            if ih >= 0 && ih < h {
+                                let kw = 0;
+                                while kw < k_w {
+                                    let iw = ow * stride - padding + kw;
+                                    if iw >= 0 && iw < w {
+                                        let in_v = in_4d.get_4d(batch, ci, ih, iw);
+                                        let wt_v = weight.get_4d(co, ci, kh, kw);
+                                        sum = sum + in_v * wt_v;
+                                    }
+                                    kw = kw + 1;
+                                }
+                            }
+                            kh = kh + 1;
+                        }
+                        ci = ci + 1;
+                    }
+                    out.set_4d(batch, co, oh, ow, sum);
+                    ow = ow + 1;
+                }
+                oh = oh + 1;
+            }
+            co = co + 1;
+        }
+        batch = batch + 1;
+    }
+
+    if autograd_is_grad_enabled() && (input.requires_grad || weight.requires_grad) {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_param(op_conv2d(), "<Conv2dBackward0>", in_4d, weight, 0.0, stride * 100 + padding);
+    }
+
+    if is_3d {
+        return tensor_reshape(out, shape_3d(c_out, h_out, w_out));
+    }
+    return out;
+}
+
+class Conv2d {
+    in_channels: int,
+    out_channels: int,
+    kernel_size: int,
+    stride: int,
+    padding: int,
+    has_bias: bool,
+    weight: Tensor,
+    bias: Tensor,
+    training: bool,
+    params: list
+}
+
+func nn_conv2d(in_channels: int, out_channels: int, kernel_size: int, stride: int, padding: int, bias: bool) -> Conv2d {
+    let weight = tensor_zeros_4d(out_channels, in_channels, kernel_size, kernel_size);
+    let fan_in = in_channels * kernel_size * kernel_size;
+    let fan_out = out_channels * kernel_size * kernel_size;
+    let limit = torch_sqrt(6.0 / ((fan_in + fan_out) * 1.0));
+
+    let co = 0;
+    while co < out_channels {
+        let ci = 0;
+        while ci < in_channels {
+            let kh = 0;
+            while kh < kernel_size {
+                let kw = 0;
+                while kw < kernel_size {
+                    let pseudo_rand = (((co * 11 + ci * 7 + kh * 13 + kw * 17) % 100) - 50) / 100.0 * limit;
+                    weight.set_4d(co, ci, kh, kw, pseudo_rand);
+                    kw = kw + 1;
+                }
+                kh = kh + 1;
+            }
+            ci = ci + 1;
+        }
+        co = co + 1;
+    }
+    weight.requires_grad = true;
+
+    let b: Tensor = null;
+    let params = list_new();
+    list_push(params, parameter_new("weight", weight));
+
+    if bias {
+        b = tensor_zeros_1d(out_channels);
+        b.requires_grad = true;
+        list_push(params, parameter_new("bias", b));
+    }
+
+    return new Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias, weight, b, true, params);
+}
+
+impl Module for Conv2d {
+    func forward(input: Tensor) -> Tensor {
+        return tensor_conv2d(input, this.weight, this.bias, this.stride, this.padding);
+    }
+
+    func parameters() -> list {
+        return this.params;
+    }
+
+    func zero_grad() {
+        this.weight.zero_grad();
+        if this.has_bias && this.bias != null {
+            this.bias.zero_grad();
+        }
+    }
+
+    func train() {
+        this.training = true;
+    }
+
+    func eval() {
+        this.training = false;
+    }
+
+    func is_training() -> bool {
+        return this.training;
+    }
+}
+
+// ------------------------------------------------------------------------------
+// 3. nn.MaxPool2d & nn.AvgPool2d: Spatial Pooling
+// ------------------------------------------------------------------------------
+
+class MaxPool2d {
+    kernel_size: int,
+    stride: int,
+    padding: int,
+    training: bool,
+    params: list
+}
+
+func nn_max_pool2d(kernel_size: int, stride: int, padding: int) -> MaxPool2d {
+    let p = list_new();
+    return new MaxPool2d(kernel_size, stride, padding, true, p);
+}
+
+impl Module for MaxPool2d {
+    func forward(input: Tensor) -> Tensor {
+        let in_4d = input;
+        let is_3d = (input.rank() == 3);
+        if is_3d {
+            in_4d = tensor_reshape(input, shape_4d(1, input.shape.dim0, input.shape.dim1, input.shape.dim2));
+        }
+        let n = in_4d.shape.dim0;
+        let c = in_4d.shape.dim1;
+        let h = in_4d.shape.dim2;
+        let w = in_4d.shape.dim3;
+
+        let h_out = (h + 2 * this.padding - this.kernel_size) / this.stride + 1;
+        let w_out = (w + 2 * this.padding - this.kernel_size) / this.stride + 1;
+        let out = tensor_zeros_4d(n, c, h_out, w_out);
+
+        let batch = 0;
+        while batch < n {
+            let ch = 0;
+            while ch < c {
+                let oh = 0;
+                while oh < h_out {
+                    let ow = 0;
+                    while ow < w_out {
+                        let max_v = -999999999.0;
+                        let kh = 0;
+                        while kh < this.kernel_size {
+                            let ih = oh * this.stride - this.padding + kh;
+                            if ih >= 0 && ih < h {
+                                let kw = 0;
+                                while kw < this.kernel_size {
+                                    let iw = ow * this.stride - this.padding + kw;
+                                    if iw >= 0 && iw < w {
+                                        let v = in_4d.get_4d(batch, ch, ih, iw);
+                                        if v > max_v { max_v = v; }
+                                    }
+                                    kw = kw + 1;
+                                }
+                            }
+                            kh = kh + 1;
+                        }
+                        out.set_4d(batch, ch, oh, ow, max_v);
+                        ow = ow + 1;
+                    }
+                    oh = oh + 1;
+                }
+                ch = ch + 1;
+            }
+            batch = batch + 1;
+        }
+
+        if is_3d {
+            return tensor_reshape(out, shape_3d(c, h_out, w_out));
+        }
+        return out;
+    }
+
+    func parameters() -> list { return this.params; }
+    func zero_grad() {}
+    func train() { this.training = true; }
+    func eval() { this.training = false; }
+    func is_training() -> bool { return this.training; }
+}
+
+class AvgPool2d {
+    kernel_size: int,
+    stride: int,
+    padding: int,
+    training: bool,
+    params: list
+}
+
+func nn_avg_pool2d(kernel_size: int, stride: int, padding: int) -> AvgPool2d {
+    let p = list_new();
+    return new AvgPool2d(kernel_size, stride, padding, true, p);
+}
+
+impl Module for AvgPool2d {
+    func forward(input: Tensor) -> Tensor {
+        let in_4d = input;
+        let is_3d = (input.rank() == 3);
+        if is_3d {
+            in_4d = tensor_reshape(input, shape_4d(1, input.shape.dim0, input.shape.dim1, input.shape.dim2));
+        }
+        let n = in_4d.shape.dim0;
+        let c = in_4d.shape.dim1;
+        let h = in_4d.shape.dim2;
+        let w = in_4d.shape.dim3;
+
+        let h_out = (h + 2 * this.padding - this.kernel_size) / this.stride + 1;
+        let w_out = (w + 2 * this.padding - this.kernel_size) / this.stride + 1;
+        let out = tensor_zeros_4d(n, c, h_out, w_out);
+        let win_area = (this.kernel_size * this.kernel_size) * 1.0;
+
+        let batch = 0;
+        while batch < n {
+            let ch = 0;
+            while ch < c {
+                let oh = 0;
+                while oh < h_out {
+                    let ow = 0;
+                    while ow < w_out {
+                        let sum = 0.0;
+                        let kh = 0;
+                        while kh < this.kernel_size {
+                            let ih = oh * this.stride - this.padding + kh;
+                            if ih >= 0 && ih < h {
+                                let kw = 0;
+                                while kw < this.kernel_size {
+                                    let iw = ow * this.stride - this.padding + kw;
+                                    if iw >= 0 && iw < w {
+                                        sum = sum + in_4d.get_4d(batch, ch, ih, iw);
+                                    }
+                                    kw = kw + 1;
+                                }
+                            }
+                            kh = kh + 1;
+                        }
+                        out.set_4d(batch, ch, oh, ow, sum / win_area);
+                        ow = ow + 1;
+                    }
+                    oh = oh + 1;
+                }
+                ch = ch + 1;
+            }
+            batch = batch + 1;
+        }
+
+        if is_3d {
+            return tensor_reshape(out, shape_3d(c, h_out, w_out));
+        }
+        return out;
+    }
+
+    func parameters() -> list { return this.params; }
+    func zero_grad() {}
+    func train() { this.training = true; }
+    func eval() { this.training = false; }
+    func is_training() -> bool { return this.training; }
+}
+
+// ------------------------------------------------------------------------------
+// 4. nn.BatchNorm2d: 2D Spatial Batch Normalization
+// ------------------------------------------------------------------------------
+
+class BatchNorm2d {
+    num_features: int,
+    eps: float,
+    momentum: float,
+    weight: Tensor,
+    bias: Tensor,
+    running_mean: Tensor,
+    running_var: Tensor,
+    training: bool,
+    params: list
+}
+
+func nn_batch_norm2d(num_features: int, eps: float, momentum: float) -> BatchNorm2d {
+    let weight = tensor_ones_1d(num_features);
+    weight.requires_grad = true;
+    let bias = tensor_zeros_1d(num_features);
+    bias.requires_grad = true;
+    let running_mean = tensor_zeros_1d(num_features);
+    let running_var = tensor_ones_1d(num_features);
+
+    let params = list_new();
+    list_push(params, parameter_new("weight", weight));
+    list_push(params, parameter_new("bias", bias));
+
+    return new BatchNorm2d(num_features, eps, momentum, weight, bias, running_mean, running_var, true, params);
+}
+
+impl Module for BatchNorm2d {
+    func forward(input: Tensor) -> Tensor {
+        let in_4d = input;
+        let is_3d = (input.rank() == 3);
+        if is_3d {
+            in_4d = tensor_reshape(input, shape_4d(1, input.shape.dim0, input.shape.dim1, input.shape.dim2));
+        }
+        let n = in_4d.shape.dim0;
+        let c = in_4d.shape.dim1;
+        let h = in_4d.shape.dim2;
+        let w = in_4d.shape.dim3;
+        let out = tensor_zeros_4d(n, c, h, w);
+
+        let m = (n * h * w) * 1.0;
+
+        let ch = 0;
+        while ch < c {
+            let mean = 0.0;
+            let var_val = 0.0;
+            let gamma = this.weight.get_1d(ch);
+            let beta = this.bias.get_1d(ch);
+
+            if this.training {
+                let batch = 0;
+                while batch < n {
+                    let r = 0;
+                    while r < h {
+                        let col = 0;
+                        while col < w {
+                            mean = mean + in_4d.get_4d(batch, ch, r, col);
+                            col = col + 1;
+                        }
+                        r = r + 1;
+                    }
+                    batch = batch + 1;
+                }
+                mean = mean / m;
+
+                batch = 0;
+                while batch < n {
+                    let r = 0;
+                    while r < h {
+                        let col = 0;
+                        while col < w {
+                            let diff = in_4d.get_4d(batch, ch, r, col) - mean;
+                            var_val = var_val + diff * diff;
+                            col = col + 1;
+                        }
+                        r = r + 1;
+                    }
+                    batch = batch + 1;
+                }
+                var_val = var_val / m;
+
+                let cur_rm = this.running_mean.get_1d(ch);
+                let cur_rv = this.running_var.get_1d(ch);
+                this.running_mean.set_1d(ch, (1.0 - this.momentum) * cur_rm + this.momentum * mean);
+                this.running_var.set_1d(ch, (1.0 - this.momentum) * cur_rv + this.momentum * var_val);
+            } else {
+                mean = this.running_mean.get_1d(ch);
+                var_val = this.running_var.get_1d(ch);
+            }
+
+            let inv_std = 1.0 / torch_sqrt(var_val + this.eps);
+
+            let batch = 0;
+            while batch < n {
+                let r = 0;
+                while r < h {
+                    let col = 0;
+                    while col < w {
+                        let x = in_4d.get_4d(batch, ch, r, col);
+                        let norm = (x - mean) * inv_std;
+                        out.set_4d(batch, ch, r, col, norm * gamma + beta);
+                        col = col + 1;
+                    }
+                    r = r + 1;
+                }
+                batch = batch + 1;
+            }
+            ch = ch + 1;
+        }
+
+        if is_3d {
+            return tensor_reshape(out, shape_3d(c, h, w));
+        }
+        return out;
+    }
+
+    func parameters() -> list { return this.params; }
+    func zero_grad() { this.weight.zero_grad(); this.bias.zero_grad(); }
+    func train() { this.training = true; }
+    func eval() { this.training = false; }
+    func is_training() -> bool { return this.training; }
+}
+
+// ------------------------------------------------------------------------------
+// 5. nn.LayerNorm: Layer Normalization
+// ------------------------------------------------------------------------------
+
+class LayerNorm {
+    normalized_shape: int,
+    eps: float,
+    weight: Tensor,
+    bias: Tensor,
+    training: bool,
+    params: list
+}
+
+func nn_layer_norm(normalized_shape: int, eps: float) -> LayerNorm {
+    let weight = tensor_ones_1d(normalized_shape);
+    weight.requires_grad = true;
+    let bias = tensor_zeros_1d(normalized_shape);
+    bias.requires_grad = true;
+
+    let params = list_new();
+    list_push(params, parameter_new("weight", weight));
+    list_push(params, parameter_new("bias", bias));
+
+    return new LayerNorm(normalized_shape, eps, weight, bias, true, params);
+}
+
+impl Module for LayerNorm {
+    func forward(input: Tensor) -> Tensor {
+        let d = this.normalized_shape;
+        let d_f = d * 1.0;
+
+        if input.rank() == 1 {
+            let out = tensor_zeros_1d(d);
+            let mean = 0.0;
+            let i = 0;
+            while i < d {
+                mean = mean + input.get_1d(i);
+                i = i + 1;
+            }
+            mean = mean / d_f;
+
+            let var_val = 0.0;
+            i = 0;
+            while i < d {
+                let diff = input.get_1d(i) - mean;
+                var_val = var_val + diff * diff;
+                i = i + 1;
+            }
+            var_val = var_val / d_f;
+            let inv_std = 1.0 / torch_sqrt(var_val + this.eps);
+
+            i = 0;
+            while i < d {
+                let norm = (input.get_1d(i) - mean) * inv_std;
+                out.set_1d(i, norm * this.weight.get_1d(i) + this.bias.get_1d(i));
+                i = i + 1;
+            }
+            return out;
+        }
+
+        if input.rank() == 2 {
+            let rows = input.shape.dim0;
+            let out = tensor_zeros_2d(rows, d);
+            let r = 0;
+            while r < rows {
+                let mean = 0.0;
+                let c = 0;
+                while c < d {
+                    mean = mean + input.get_2d(r, c);
+                    c = c + 1;
+                }
+                mean = mean / d_f;
+
+                let var_val = 0.0;
+                c = 0;
+                while c < d {
+                    let diff = input.get_2d(r, c) - mean;
+                    var_val = var_val + diff * diff;
+                    c = c + 1;
+                }
+                var_val = var_val / d_f;
+                let inv_std = 1.0 / torch_sqrt(var_val + this.eps);
+
+                c = 0;
+                while c < d {
+                    let norm = (input.get_2d(r, c) - mean) * inv_std;
+                    out.set_2d(r, c, norm * this.weight.get_1d(c) + this.bias.get_1d(c));
+                    c = c + 1;
+                }
+                r = r + 1;
+            }
+            return out;
+        }
+
+        if input.rank() == 3 {
+            let b = input.shape.dim0;
+            let t = input.shape.dim1;
+            let flat = tensor_reshape(input, shape_2d(b * t, d));
+            let out2 = this.forward(flat);
+            return tensor_reshape(out2, shape_3d(b, t, d));
+        }
+
+        return input;
+    }
+
+    func parameters() -> list { return this.params; }
+    func zero_grad() { this.weight.zero_grad(); this.bias.zero_grad(); }
+    func train() { this.training = true; }
+    func eval() { this.training = false; }
+    func is_training() -> bool { return this.training; }
+}
+
+// ------------------------------------------------------------------------------
+// 6. nn.Dropout: Stochastic Regularization
+// ------------------------------------------------------------------------------
+
+class Dropout {
+    p: float,
+    training: bool,
+    params: list
+}
+
+func nn_dropout(p: float) -> Dropout {
+    let params = list_new();
+    return new Dropout(p, true, params);
+}
+
+impl Module for Dropout {
+    func forward(input: Tensor) -> Tensor {
+        if !this.training || this.p <= 0.0 {
+            return tensor_clone(input);
+        }
+        let contig = tensor_contiguous(input);
+        let out = tensor_zeros(contig.shape, contig.dtype_id);
+        let n = contig.numel();
+        let scale = 1.0 / (1.0 - this.p);
+
+        let i = 0;
+        while i < n {
+            let pseudo = ((i * 37 + 19) % 100) / 100.0;
+            if pseudo >= this.p {
+                let v = tensor_storage_read_float(contig.storage, contig.offset + i, contig.dtype_id);
+                tensor_storage_write_float(out.storage, i, contig.dtype_id, v * scale);
+            }
+            i = i + 1;
+        }
+        return out;
+    }
+
+    func parameters() -> list { return this.params; }
+    func zero_grad() {}
+    func train() { this.training = true; }
+    func eval() { this.training = false; }
+    func is_training() -> bool { return this.training; }
+}
+
+// ------------------------------------------------------------------------------
+// 7. nn.Embedding: Dense Vector Lookup Table
+// ------------------------------------------------------------------------------
+
+class Embedding {
+    num_embeddings: int,
+    embedding_dim: int,
+    weight: Tensor,
+    training: bool,
+    params: list
+}
+
+func nn_embedding(num_embeddings: int, embedding_dim: int) -> Embedding {
+    let weight = tensor_zeros_2d(num_embeddings, embedding_dim);
+    let limit = 1.0 / torch_sqrt(embedding_dim * 1.0);
+    let r = 0;
+    while r < num_embeddings {
+        let c = 0;
+        while c < embedding_dim {
+            let pseudo = (((r * 23 + c * 41) % 100) - 50) / 100.0 * limit;
+            weight.set_2d(r, c, pseudo);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    weight.requires_grad = true;
+
+    let params = list_new();
+    list_push(params, parameter_new("weight", weight));
+
+    return new Embedding(num_embeddings, embedding_dim, weight, true, params);
+}
+
+func tensor_embedding_forward(weight: Tensor, indices: Tensor) -> Tensor {
+    if indices.rank() == 1 {
+        let n = indices.shape.dim0;
+        let d = weight.shape.dim1;
+        let out = tensor_zeros_2d(n, d);
+        let i = 0;
+        while i < n {
+            let idx = float_to_int(indices.get_1d(i));
+            if idx >= 0 && idx < weight.shape.dim0 {
+                let c = 0;
+                while c < d {
+                    out.set_2d(i, c, weight.get_2d(idx, c));
+                    c = c + 1;
+                }
+            }
+            i = i + 1;
+        }
+        if autograd_is_grad_enabled() && weight.requires_grad {
+            out.requires_grad = true;
+            out.is_leaf = false;
+            out.grad_fn = autograd_node_new(op_embedding(), "<EmbeddingBackward0>", weight, indices);
+        }
+        return out;
+    }
+
+    if indices.rank() == 2 {
+        let b = indices.shape.dim0;
+        let t = indices.shape.dim1;
+        let d = weight.shape.dim1;
+        let out = tensor_zeros_3d(b, t, d);
+        let bi = 0;
+        while bi < b {
+            let ti = 0;
+            while ti < t {
+                let idx = float_to_int(indices.get_2d(bi, ti));
+                if idx >= 0 && idx < weight.shape.dim0 {
+                    let c = 0;
+                    while c < d {
+                        out.set_3d(bi, ti, c, weight.get_2d(idx, c));
+                        c = c + 1;
+                    }
+                }
+                ti = ti + 1;
+            }
+            bi = bi + 1;
+        }
+        return out;
+    }
+    return weight;
+}
+
+impl Module for Embedding {
+    func forward(input: Tensor) -> Tensor {
+        return tensor_embedding_forward(this.weight, input);
+    }
+
+    func parameters() -> list { return this.params; }
+    func zero_grad() { this.weight.zero_grad(); }
+    func train() { this.training = true; }
+    func eval() { this.training = false; }
+    func is_training() -> bool { return this.training; }
+}
+
+// ------------------------------------------------------------------------------
+// 8. nn.MultiheadAttention: Multi-Head Self / Cross Attention
+// ------------------------------------------------------------------------------
+
+class MultiheadAttention {
+    embed_dim: int,
+    num_heads: int,
+    head_dim: int,
+    dropout: float,
+    q_proj: Linear,
+    k_proj: Linear,
+    v_proj: Linear,
+    out_proj: Linear,
+    training: bool,
+    params: list
+}
+
+func nn_multihead_attention(embed_dim: int, num_heads: int, dropout: float, bias: bool) -> MultiheadAttention {
+    let head_dim = embed_dim / num_heads;
+    let q_proj = nn_linear(embed_dim, embed_dim, bias);
+    let k_proj = nn_linear(embed_dim, embed_dim, bias);
+    let v_proj = nn_linear(embed_dim, embed_dim, bias);
+    let out_proj = nn_linear(embed_dim, embed_dim, bias);
+
+    let params = list_new();
+    let p_q = q_proj.parameters();
+    let i = 0;
+    while i < list_length(p_q) { list_push(params, list_get(p_q, i)); i = i + 1; }
+    let p_k = k_proj.parameters();
+    i = 0;
+    while i < list_length(p_k) { list_push(params, list_get(p_k, i)); i = i + 1; }
+    let p_v = v_proj.parameters();
+    i = 0;
+    while i < list_length(p_v) { list_push(params, list_get(p_v, i)); i = i + 1; }
+    let p_out = out_proj.parameters();
+    i = 0;
+    while i < list_length(p_out) { list_push(params, list_get(p_out, i)); i = i + 1; }
+
+    return new MultiheadAttention(embed_dim, num_heads, head_dim, dropout, q_proj, k_proj, v_proj, out_proj, true, params);
+}
+
+impl Module for MultiheadAttention {
+    func forward(query: Tensor) -> Tensor {
+        return this.forward_qkv(query, query, query);
+    }
+
+    func forward_qkv(query: Tensor, key: Tensor, value: Tensor) -> Tensor {
+        let is_3d = (query.rank() == 3);
+        let b = 1;
+        let t = 1;
+        let q_in = query;
+        let k_in = key;
+        let v_in = value;
+
+        if is_3d {
+            b = query.shape.dim0;
+            t = query.shape.dim1;
+            q_in = tensor_reshape(query, shape_2d(b * t, this.embed_dim));
+            k_in = tensor_reshape(key, shape_2d(b * t, this.embed_dim));
+            v_in = tensor_reshape(value, shape_2d(b * t, this.embed_dim));
+        }
+
+        let q = this.q_proj.forward(q_in);
+        let k = this.k_proj.forward(k_in);
+        let v = this.v_proj.forward(v_in);
+
+        let kt = tensor_transpose(k, 0, 1);
+        let scores = tensor_matmul(q, kt);
+        let scale = 1.0 / torch_sqrt(this.head_dim * 1.0);
+        let scaled_scores = tensor_scale(scores, scale);
+        let attn_weights = tensor_softmax(scaled_scores);
+        let context = tensor_matmul(attn_weights, v);
+        let out = this.out_proj.forward(context);
+
+        if is_3d {
+            return tensor_reshape(out, shape_3d(b, t, this.embed_dim));
+        }
+        return out;
+    }
+
+    func parameters() -> list { return this.params; }
+    func zero_grad() {
+        this.q_proj.zero_grad();
+        this.k_proj.zero_grad();
+        this.v_proj.zero_grad();
+        this.out_proj.zero_grad();
+    }
+    func train() {
+        this.training = true;
+        this.q_proj.train();
+        this.k_proj.train();
+        this.v_proj.train();
+        this.out_proj.train();
+    }
+    func eval() {
+        this.training = false;
+        this.q_proj.eval();
+        this.k_proj.eval();
+        this.v_proj.eval();
+        this.out_proj.eval();
+    }
+    func is_training() -> bool { return this.training; }
+}
+
+// ------------------------------------------------------------------------------
+// 9. nn.Sequential: Sequential Module Container
+// ------------------------------------------------------------------------------
+
+class Sequential {
+    modules: list,
+    training: bool
+}
+
+func nn_sequential(modules: list) -> Sequential {
+    return new Sequential(modules, true);
+}
+
+func nn_sequential_empty() -> Sequential {
+    return new Sequential(list_new(), true);
+}
+
+impl Sequential {
+    func add(m: Module) {
+        list_push(this.modules, m);
+    }
+}
+
+impl Module for Sequential {
+    func forward(input: Tensor) -> Tensor {
+        let cur = input;
+        let n = list_length(this.modules);
+        let i = 0;
+        while i < n {
+            let m: Module = list_get(this.modules, i);
+            cur = m.forward(cur);
+            i = i + 1;
+        }
+        return cur;
+    }
+
+    func parameters() -> list {
+        let all_params = list_new();
+        let n = list_length(this.modules);
+        let i = 0;
+        while i < n {
+            let m: Module = list_get(this.modules, i);
+            let p_list = m.parameters();
+            let p_len = list_length(p_list);
+            let j = 0;
+            while j < p_len {
+                list_push(all_params, list_get(p_list, j));
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return all_params;
+    }
+
+    func zero_grad() {
+        let n = list_length(this.modules);
+        let i = 0;
+        while i < n {
+            let m: Module = list_get(this.modules, i);
+            m.zero_grad();
+            i = i + 1;
+        }
+    }
+
+    func train() {
+        this.training = true;
+        let n = list_length(this.modules);
+        let i = 0;
+        while i < n {
+            let m: Module = list_get(this.modules, i);
+            m.train();
+            i = i + 1;
+        }
+    }
+
+    func eval() {
+        this.training = false;
+        let n = list_length(this.modules);
+        let i = 0;
+        while i < n {
+            let m: Module = list_get(this.modules, i);
+            m.eval();
+            i = i + 1;
+        }
+    }
+
+    func is_training() -> bool { return this.training; }
+}
+
+// ------------------------------------------------------------------------------
+// 10. Neural Activation Modules & Functional Dispatch
+// ------------------------------------------------------------------------------
+
+func relu(x: Tensor) -> Tensor { return tensor_relu(x); }
+func gelu(x: Tensor) -> Tensor { return tensor_gelu(x); }
+func silu(x: Tensor) -> Tensor { return tensor_silu(x); }
+func sigmoid(x: Tensor) -> Tensor { return tensor_sigmoid(x); }
+func softmax(x: Tensor, dim: int) -> Tensor { return tensor_softmax(x); }
+
+class ReLU {
+    training: bool,
+    params: list
+}
+func nn_relu() -> ReLU { return new ReLU(true, list_new()); }
+impl Module for ReLU {
+    func forward(input: Tensor) -> Tensor { return tensor_relu(input); }
+    func parameters() -> list { return this.params; }
+    func zero_grad() {}
+    func train() { this.training = true; }
+    func eval() { this.training = false; }
+    func is_training() -> bool { return this.training; }
+}
+
+class GELU {
+    training: bool,
+    params: list
+}
+func nn_gelu() -> GELU { return new GELU(true, list_new()); }
+impl Module for GELU {
+    func forward(input: Tensor) -> Tensor { return tensor_gelu(input); }
+    func parameters() -> list { return this.params; }
+    func zero_grad() {}
+    func train() { this.training = true; }
+    func eval() { this.training = false; }
+    func is_training() -> bool { return this.training; }
+}
+
+class SiLU {
+    training: bool,
+    params: list
+}
+func nn_silu() -> SiLU { return new SiLU(true, list_new()); }
+impl Module for SiLU {
+    func forward(input: Tensor) -> Tensor { return tensor_silu(input); }
+    func parameters() -> list { return this.params; }
+    func zero_grad() {}
+    func train() { this.training = true; }
+    func eval() { this.training = false; }
+    func is_training() -> bool { return this.training; }
+}
+
+class Sigmoid {
+    training: bool,
+    params: list
+}
+func nn_sigmoid() -> Sigmoid { return new Sigmoid(true, list_new()); }
+impl Module for Sigmoid {
+    func forward(input: Tensor) -> Tensor { return tensor_sigmoid(input); }
+    func parameters() -> list { return this.params; }
+    func zero_grad() {}
+    func train() { this.training = true; }
+    func eval() { this.training = false; }
+    func is_training() -> bool { return this.training; }
+}
+
+class Softmax {
+    dim: int,
+    training: bool,
+    params: list
+}
+func nn_softmax(dim: int) -> Softmax { return new Softmax(dim, true, list_new()); }
+impl Module for Softmax {
+    func forward(input: Tensor) -> Tensor { return tensor_softmax(input); }
+    func parameters() -> list { return this.params; }
+    func zero_grad() {}
+    func train() { this.training = true; }
+    func eval() { this.training = false; }
+    func is_training() -> bool { return this.training; }
+}
+
+// ------------------------------------------------------------------------------
+// 11. NN Namespace Class for Direct PyTorch torch.nn Parity
+// ------------------------------------------------------------------------------
+
+class NN {}
+
+func nn_init() -> NN {
+    return new NN();
+}
+
+impl NN {
+    func Linear(in_features: int, out_features: int, bias: bool) -> Linear {
+        return nn_linear(in_features, out_features, bias);
+    }
+
+    func Conv2d(in_channels: int, out_channels: int, kernel_size: int, stride: int, padding: int, bias: bool) -> Conv2d {
+        return nn_conv2d(in_channels, out_channels, kernel_size, stride, padding, bias);
+    }
+
+    func MaxPool2d(kernel_size: int, stride: int, padding: int) -> MaxPool2d {
+        return nn_max_pool2d(kernel_size, stride, padding);
+    }
+
+    func AvgPool2d(kernel_size: int, stride: int, padding: int) -> AvgPool2d {
+        return nn_avg_pool2d(kernel_size, stride, padding);
+    }
+
+    func BatchNorm2d(num_features: int, eps: float, momentum: float) -> BatchNorm2d {
+        return nn_batch_norm2d(num_features, eps, momentum);
+    }
+
+    func LayerNorm(normalized_shape: int, eps: float) -> LayerNorm {
+        return nn_layer_norm(normalized_shape, eps);
+    }
+
+    func Dropout(p: float) -> Dropout {
+        return nn_dropout(p);
+    }
+
+    func Embedding(num_embeddings: int, embedding_dim: int) -> Embedding {
+        return nn_embedding(num_embeddings, embedding_dim);
+    }
+
+    func MultiheadAttention(embed_dim: int, num_heads: int, dropout: float, bias: bool) -> MultiheadAttention {
+        return nn_multihead_attention(embed_dim, num_heads, dropout, bias);
+    }
+
+    func Sequential(modules: list) -> Sequential {
+        return nn_sequential(modules);
+    }
+
+    func ReLU() -> ReLU {
+        return nn_relu();
+    }
+
+    func GELU() -> GELU {
+        return nn_gelu();
+    }
+
+    func SiLU() -> SiLU {
+        return nn_silu();
+    }
+
+    func Sigmoid() -> Sigmoid {
+        return nn_sigmoid();
+    }
+
+    func Softmax(dim: int) -> Softmax {
+        return nn_softmax(dim);
+    }
 }

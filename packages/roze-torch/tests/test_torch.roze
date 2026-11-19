@@ -768,9 +768,408 @@ func test_autograd_numerical_gradcheck() {
     println("✓ Numerical gradient checking against finite differences passed!");
 }
 
+// -----------------------------------------------------------------------------
+// Test 18: nn.Linear & Parameter Registration (M8-T03)
+// -----------------------------------------------------------------------------
+func test_suite_18_nn_linear_and_modules() {
+    println("--- Test 18: nn.Linear & Parameter Registration ---");
+
+    // 1. Creation with bias
+    let lin = nn_linear(4, 2, true);
+    assert_true(lin.in_features == 4 && lin.out_features == 2, "Linear in/out features match");
+    assert_true(lin.has_bias, "Linear has bias");
+    assert_true(lin.weight.shape.dim0 == 4 && lin.weight.shape.dim1 == 2, "Weight shape (4, 2)");
+    assert_true(lin.bias.shape.dim0 == 1 && lin.bias.shape.dim1 == 2, "Bias shape (1, 2)");
+
+    // 2. Parameters inspection
+    let params = lin.parameters();
+    assert_true(list_length(params) == 2, "Linear has 2 registered parameters (weight, bias)");
+    let p0: Parameter = list_get(params, 0);
+    let p1: Parameter = list_get(params, 1);
+    assert_true(p0.name == "weight" && p0.requires_grad, "Param 0 is weight with requires_grad");
+    assert_true(p1.name == "bias" && p1.requires_grad, "Param 1 is bias with requires_grad");
+
+    // 3. Forward pass on 2D input (batch=3, in_features=4)
+    let x2d = tensor_ones_2d(3, 4);
+    let y2d = lin.forward(x2d);
+    assert_true(y2d.rank() == 2, "Output rank == 2");
+    assert_true(y2d.shape.dim0 == 3 && y2d.shape.dim1 == 2, "Output shape == (3, 2)");
+
+    // 4. Forward pass on 1D input (in_features=4) -> (out_features=2)
+    let x1d = tensor_ones_1d(4);
+    let y1d = lin.forward(x1d);
+    assert_true(y1d.rank() == 1, "1D input produces 1D output");
+    assert_true(y1d.shape.dim0 == 2, "1D output shape == (2)");
+
+    // 5. Forward pass on 3D input (batch=2, seq=5, in_features=4) -> (2, 5, 2)
+    let x3d = tensor_ones_3d(2, 5, 4);
+    let y3d = lin.forward(x3d);
+    assert_true(y3d.rank() == 3, "3D input produces 3D output");
+    assert_true(y3d.shape.dim0 == 2 && y3d.shape.dim1 == 5 && y3d.shape.dim2 == 2, "3D output shape == (2, 5, 2)");
+
+    // 6. Mode switching
+    assert_true(lin.is_training(), "Default is training mode");
+    lin.eval();
+    assert_true(!lin.is_training(), "eval() sets is_training to false");
+    lin.train();
+    assert_true(lin.is_training(), "train() restores is_training to true");
+
+    // 7. Linear without bias
+    let lin_no_bias = nn_linear(4, 2, false);
+    assert_true(!lin_no_bias.has_bias, "Linear without bias");
+    assert_true(list_length(lin_no_bias.parameters()) == 1, "Only 1 parameter without bias");
+    let y_nb = lin_no_bias.forward(x2d);
+    assert_true(y_nb.shape.dim0 == 3 && y_nb.shape.dim1 == 2, "No-bias forward shape (3, 2)");
+
+    println("✓ nn.Linear and Parameter registration tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 19: nn.Conv2d, nn.MaxPool2d & nn.AvgPool2d (M8-T03)
+// -----------------------------------------------------------------------------
+func test_suite_19_nn_conv2d_and_pooling() {
+    println("--- Test 19: nn.Conv2d, nn.MaxPool2d & nn.AvgPool2d ---");
+
+    // 1. Conv2d Creation: in_channels=1, out_channels=2, kernel_size=3, stride=1, padding=1
+    let conv = nn_conv2d(1, 2, 3, 1, 1, true);
+    assert_true(conv.in_channels == 1 && conv.out_channels == 2, "Conv2d channels");
+    assert_true(conv.kernel_size == 3 && conv.stride == 1 && conv.padding == 1, "Conv2d params");
+    assert_true(list_length(conv.parameters()) == 2, "Conv2d has 2 params (weight, bias)");
+    assert_true(conv.weight.shape.dim0 == 2 && conv.weight.shape.dim1 == 1 && conv.weight.shape.dim2 == 3 && conv.weight.shape.dim3 == 3, "Conv weight 4D shape");
+
+    // Set deterministic filter weights for testing
+    let c = 0;
+    while c < 2 {
+        let kh = 0;
+        while kh < 3 {
+            let kw = 0;
+            while kw < 3 {
+                conv.weight.set_4d(c, 0, kh, kw, 1.0);
+                kw = kw + 1;
+            }
+            kh = kh + 1;
+        }
+        conv.bias.set_1d(c, 0.5);
+        c = c + 1;
+    }
+
+    // 2. Conv2d Forward: Input (batch=1, channel=1, height=4, width=4)
+    let in_img = tensor_ones_4d(1, 1, 4, 4);
+    let out_conv = conv.forward(in_img);
+    assert_true(out_conv.rank() == 4, "Conv2d output rank == 4");
+    assert_true(out_conv.shape.dim0 == 1 && out_conv.shape.dim1 == 2 && out_conv.shape.dim2 == 4 && out_conv.shape.dim3 == 4, "Conv2d output shape (1, 2, 4, 4)");
+
+    // Center pixel with 3x3 filter of ones: interior sum = 9.0 * 1.0 + bias 0.5 = 9.5
+    let center_val = out_conv.get_4d(0, 0, 1, 1);
+    assert_true(approx_eq(center_val, 9.5, 0.001), "Conv2d interior sum == 9.5");
+    // Corner pixel with padding=1: 4 valid neighbors -> 4.0 * 1.0 + bias 0.5 = 4.5
+    let corner_val = out_conv.get_4d(0, 0, 0, 0);
+    assert_true(approx_eq(corner_val, 4.5, 0.001), "Conv2d padded corner sum == 4.5");
+
+    // 3. MaxPool2d (kernel_size=2, stride=2, padding=0) on (1, 1, 4, 4) -> (1, 1, 2, 2)
+    let pool_in = tensor_zeros_4d(1, 1, 4, 4);
+    pool_in.set_4d(0, 0, 0, 1, 15.0); // top-left 2x2 max
+    pool_in.set_4d(0, 0, 1, 3, 25.0); // top-right 2x2 max
+    pool_in.set_4d(0, 0, 2, 0, 35.0); // bottom-left 2x2 max
+    pool_in.set_4d(0, 0, 3, 3, 45.0); // bottom-right 2x2 max
+
+    let max_pool = nn_max_pool2d(2, 2, 0);
+    let out_max = max_pool.forward(pool_in);
+    assert_true(out_max.shape.dim2 == 2 && out_max.shape.dim3 == 2, "MaxPool2d output shape (1, 1, 2, 2)");
+    assert_true(approx_eq(out_max.get_4d(0, 0, 0, 0), 15.0, 0.001), "MaxPool top-left == 15.0");
+    assert_true(approx_eq(out_max.get_4d(0, 0, 0, 1), 25.0, 0.001), "MaxPool top-right == 25.0");
+    assert_true(approx_eq(out_max.get_4d(0, 0, 1, 0), 35.0, 0.001), "MaxPool bottom-left == 35.0");
+    assert_true(approx_eq(out_max.get_4d(0, 0, 1, 1), 45.0, 0.001), "MaxPool bottom-right == 45.0");
+
+    // 4. AvgPool2d (kernel_size=2, stride=2, padding=0) on (1, 1, 2, 2) of ones -> average is 1.0
+    let avg_pool = nn_avg_pool2d(2, 2, 0);
+    let avg_in = tensor_ones_4d(1, 1, 4, 4);
+    let out_avg = avg_pool.forward(avg_in);
+    assert_true(approx_eq(out_avg.get_4d(0, 0, 0, 0), 1.0, 0.001), "AvgPool window mean == 1.0");
+
+    println("✓ nn.Conv2d, nn.MaxPool2d & nn.AvgPool2d tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 20: nn.BatchNorm2d, nn.LayerNorm & nn.Dropout (M8-T03)
+// -----------------------------------------------------------------------------
+func test_suite_20_nn_normalization_and_dropout() {
+    println("--- Test 20: nn.BatchNorm2d, nn.LayerNorm & nn.Dropout ---");
+
+    // 1. BatchNorm2d (num_features=2)
+    let bn = nn_batch_norm2d(2, 0.00001, 0.1);
+    assert_true(bn.num_features == 2, "BatchNorm features == 2");
+    assert_true(list_length(bn.parameters()) == 2, "BatchNorm has weight and bias params");
+
+    // Construct input batch of (batch=2, channel=2, height=2, width=2)
+    let bn_in = tensor_zeros_4d(2, 2, 2, 2);
+    // Channel 0 has values 10, 20, 30, 40...
+    let b = 0;
+    while b < 2 {
+        let r = 0;
+        while r < 2 {
+            let col = 0;
+            while col < 2 {
+                bn_in.set_4d(b, 0, r, col, (b * 4 + r * 2 + col + 1) * 2.0);
+                bn_in.set_4d(b, 1, r, col, 5.0);
+                col = col + 1;
+            }
+            r = r + 1;
+        }
+        b = b + 1;
+    }
+
+    // Training mode forward
+    bn.train();
+    let bn_out = bn.forward(bn_in);
+    assert_true(bn_out.shape.equals(bn_in.shape), "BatchNorm output shape matches input");
+    assert_true(bn.running_mean.get_1d(0) != 0.0, "Running mean updated during training");
+
+    // Eval mode forward: uses running mean & var
+    bn.eval();
+    let bn_eval_out = bn.forward(bn_in);
+    assert_true(bn_eval_out.shape.equals(bn_in.shape), "BatchNorm eval output shape matches");
+
+    // 2. LayerNorm (normalized_shape=4)
+    let ln = nn_layer_norm(4, 0.00001);
+    assert_true(ln.normalized_shape == 4, "LayerNorm shape == 4");
+    assert_true(list_length(ln.parameters()) == 2, "LayerNorm has weight & bias params");
+
+    let ln_in = tensor_zeros_2d(2, 4);
+    ln_in.set_2d(0, 0, 1.0); ln_in.set_2d(0, 1, 2.0); ln_in.set_2d(0, 2, 3.0); ln_in.set_2d(0, 3, 4.0);
+    ln_in.set_2d(1, 0, 10.0); ln_in.set_2d(1, 1, 20.0); ln_in.set_2d(1, 2, 30.0); ln_in.set_2d(1, 3, 40.0);
+
+    let ln_out = ln.forward(ln_in);
+    // Each row after LayerNorm should have mean approx 0.0
+    let row0_mean = (ln_out.get_2d(0, 0) + ln_out.get_2d(0, 1) + ln_out.get_2d(0, 2) + ln_out.get_2d(0, 3)) / 4.0;
+    assert_true(approx_eq(row0_mean, 0.0, 0.001), "LayerNorm row 0 normalized mean approx 0.0");
+    let row1_mean = (ln_out.get_2d(1, 0) + ln_out.get_2d(1, 1) + ln_out.get_2d(1, 2) + ln_out.get_2d(1, 3)) / 4.0;
+    assert_true(approx_eq(row1_mean, 0.0, 0.001), "LayerNorm row 1 normalized mean approx 0.0");
+
+    // 3. Dropout (p=0.5)
+    let drop = nn_dropout(0.5);
+    drop.eval();
+    let drop_in = tensor_ones_2d(4, 4);
+    let drop_eval_out = drop.forward(drop_in);
+    assert_true(approx_eq(drop_eval_out.get_2d(0, 0), 1.0, 0.001), "Dropout eval mode preserves values (identity)");
+
+    drop.train();
+    let drop_train_out = drop.forward(drop_in);
+    // In training mode, elements are either 0 or scaled by 1/(1-0.5) = 2.0
+    let v0 = drop_train_out.get_2d(0, 0);
+    assert_true(v0 == 0.0 || approx_eq(v0, 2.0, 0.001), "Dropout train mode either drops or scales by 2.0");
+
+    println("✓ nn.BatchNorm2d, nn.LayerNorm & nn.Dropout tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 21: nn.Embedding & nn.MultiheadAttention (M8-T03)
+// -----------------------------------------------------------------------------
+func test_suite_21_nn_embedding_and_attention() {
+    println("--- Test 21: nn.Embedding & nn.MultiheadAttention ---");
+
+    // 1. Embedding (vocab=10, embed_dim=8)
+    let emb = nn_embedding(10, 8);
+    assert_true(emb.num_embeddings == 10 && emb.embedding_dim == 8, "Embedding dimensions");
+    assert_true(list_length(emb.parameters()) == 1, "Embedding has 1 weight parameter");
+
+    // Fill embedding weights deterministically: weight[token, d] = token * 10.0 + d
+    let t = 0;
+    while t < 10 {
+        let d = 0;
+        while d < 8 {
+            emb.weight.set_2d(t, d, (t * 10.0) + (d * 1.0));
+            d = d + 1;
+        }
+        t = t + 1;
+    }
+
+    // 1D sequence of token indices: [3, 7, 1] -> (3, 8)
+    let indices_1d = tensor_zeros_1d(3);
+    indices_1d.set_1d(0, 3.0);
+    indices_1d.set_1d(1, 7.0);
+    indices_1d.set_1d(2, 1.0);
+
+    let emb_out = emb.forward(indices_1d);
+    assert_true(emb_out.rank() == 2, "Embedding 1D lookup produces 2D tensor");
+    assert_true(emb_out.shape.dim0 == 3 && emb_out.shape.dim1 == 8, "Embedding 1D lookup shape (3, 8)");
+    assert_true(approx_eq(emb_out.get_2d(0, 0), 30.0, 0.001), "Token 3 embed[0] == 30.0");
+    assert_true(approx_eq(emb_out.get_2d(1, 0), 70.0, 0.001), "Token 7 embed[0] == 70.0");
+    assert_true(approx_eq(emb_out.get_2d(2, 0), 10.0, 0.001), "Token 1 embed[0] == 10.0");
+
+    // 2. MultiheadAttention (embed_dim=8, num_heads=2)
+    let mha = nn_multihead_attention(8, 2, 0.0, true);
+    assert_true(mha.embed_dim == 8 && mha.num_heads == 2, "MHA dimensions");
+    assert_true(mha.head_dim == 4, "MHA head_dim == 4 (8 / 2)");
+    // 4 linear layers (q, k, v, out) with 2 params each = 8 total parameters
+    assert_true(list_length(mha.parameters()) == 8, "MHA has 8 registered parameters");
+
+    // Self-attention forward on sequence (seq_len=4, embed_dim=8)
+    let query_in = tensor_ones_2d(4, 8);
+    let attn_out = mha.forward(query_in);
+    assert_true(attn_out.rank() == 2, "MHA output rank == 2");
+    assert_true(attn_out.shape.dim0 == 4 && attn_out.shape.dim1 == 8, "MHA output shape (4, 8)");
+
+    println("✓ nn.Embedding & nn.MultiheadAttention tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 22: nn.Sequential & Neural Activations (M8-T03)
+// -----------------------------------------------------------------------------
+func test_suite_22_nn_sequential_and_activations() {
+    println("--- Test 22: nn.Sequential & Neural Activation Modules ---");
+
+    // 1. Activation functions (ReLU, GELU, SiLU, Sigmoid, Softmax)
+    let x = tensor_zeros_1d(3);
+    x.set_1d(0, -2.0); x.set_1d(1, 0.0); x.set_1d(2, 3.0);
+
+    let y_relu = relu(x);
+    assert_true(approx_eq(y_relu.get_1d(0), 0.0, 0.001) && approx_eq(y_relu.get_1d(2), 3.0, 0.001), "Functional relu");
+
+    let y_gelu = gelu(x);
+    assert_true(approx_eq(y_gelu.get_1d(1), 0.0, 0.001) && y_gelu.get_1d(2) > 2.9, "Functional gelu");
+
+    let y_silu = silu(x);
+    assert_true(approx_eq(y_silu.get_1d(1), 0.0, 0.001) && y_silu.get_1d(2) > 2.8, "Functional silu");
+
+    let y_sig = sigmoid(x);
+    assert_true(approx_eq(y_sig.get_1d(1), 0.5, 0.001), "Functional sigmoid(0.0) == 0.5");
+
+    let y_sm = softmax(x, 0);
+    let sm_sum = y_sm.get_1d(0) + y_sm.get_1d(1) + y_sm.get_1d(2);
+    assert_true(approx_eq(sm_sum, 1.0, 0.001), "Functional softmax sums to 1.0");
+
+    // 2. Activation Modules
+    let m_relu = nn_relu();
+    let m_gelu = nn_gelu();
+    let m_silu = nn_silu();
+    let m_sig = nn_sigmoid();
+    let m_sm = nn_softmax(0);
+
+    assert_true(approx_eq(m_relu.forward(x).get_1d(2), 3.0, 0.001), "Module ReLU forward");
+    assert_true(approx_eq(m_sig.forward(x).get_1d(1), 0.5, 0.001), "Module Sigmoid forward");
+
+    // 3. nn.Sequential Pipeline: Linear(4, 6) -> ReLU -> Dropout(0.2) -> Linear(6, 2) -> Softmax(1)
+    let l1 = nn_linear(4, 6, true);
+    let act1 = nn_relu();
+    let drop = nn_dropout(0.0); // 0.0 for deterministic test
+    let l2 = nn_linear(6, 2, true);
+    let sm = nn_softmax(1);
+
+    let module_list = list_new();
+    list_push(module_list, l1);
+    list_push(module_list, act1);
+    list_push(module_list, drop);
+    list_push(module_list, l2);
+    list_push(module_list, sm);
+
+    let seq = nn_sequential(module_list);
+    assert_true(list_length(seq.parameters()) == 4, "Sequential has 4 total parameter tensors (2 from l1, 2 from l2)");
+
+    let seq_in = tensor_ones_2d(3, 4);
+    let seq_out = seq.forward(seq_in);
+    assert_true(seq_out.shape.dim0 == 3 && seq_out.shape.dim1 == 2, "Sequential output shape (3, 2)");
+
+    // Softmax along rows: each row sums to 1.0
+    let r0_sum = seq_out.get_2d(0, 0) + seq_out.get_2d(0, 1);
+    assert_true(approx_eq(r0_sum, 1.0, 0.001), "Sequential output row 0 probabilities sum to 1.0");
+    let r1_sum = seq_out.get_2d(1, 0) + seq_out.get_2d(1, 1);
+    assert_true(approx_eq(r1_sum, 1.0, 0.001), "Sequential output row 1 probabilities sum to 1.0");
+
+    // Recursive mode switching
+    seq.eval();
+    assert_true(!seq.is_training(), "Sequential eval mode");
+    assert_true(!l1.is_training() && !l2.is_training(), "Submodules switched to eval");
+    seq.train();
+    assert_true(seq.is_training() && l1.is_training(), "Submodules switched back to train");
+
+    println("✓ nn.Sequential & Neural Activation Modules tests passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 23: NN Namespace & End-to-End Deep Learning Training Loop (M8-T03)
+// -----------------------------------------------------------------------------
+func test_suite_23_nn_namespace_and_end_to_end_backprop() {
+    println("--- Test 23: NN Namespace & End-to-End Training Loop ---");
+
+    // 1. PyTorch parity via nn namespace singleton
+    let nn = nn_init();
+    let lin = nn.Linear(3, 2, true);
+    let relu_mod = nn.ReLU();
+    assert_true(lin.in_features == 3 && lin.out_features == 2, "nn.Linear created via namespace");
+
+    // 2. Multi-layer network optimization with autograd backprop
+    // Target function: simple 2-input linear combination
+    let mlp_l1 = nn.Linear(2, 4, true);
+    let mlp_act = nn.ReLU();
+    let mlp_l2 = nn.Linear(4, 1, true);
+
+    let net_mods = list_new();
+    list_push(net_mods, mlp_l1);
+    list_push(net_mods, mlp_act);
+    list_push(net_mods, mlp_l2);
+    let net = nn.Sequential(net_mods);
+
+    // Training data: XOR / addition task
+    let x_train = tensor_zeros_2d(4, 2);
+    x_train.set_2d(0, 0, 1.0); x_train.set_2d(0, 1, 2.0); // target: 3.0
+    x_train.set_2d(1, 0, 2.0); x_train.set_2d(1, 1, 1.0); // target: 3.0
+    x_train.set_2d(2, 0, 3.0); x_train.set_2d(2, 1, 0.0); // target: 3.0
+    x_train.set_2d(3, 0, 0.0); x_train.set_2d(3, 1, 3.0); // target: 3.0
+
+    let y_target = tensor_zeros_2d(4, 1);
+    y_target.set_2d(0, 0, 3.0);
+    y_target.set_2d(1, 0, 3.0);
+    y_target.set_2d(2, 0, 3.0);
+    y_target.set_2d(3, 0, 3.0);
+
+    // Compute initial loss
+    let initial_pred = net.forward(x_train);
+    let initial_loss_t = tensor_mse_loss(initial_pred, y_target);
+    let initial_loss = initial_loss_t.item();
+
+    // Run 10 gradient descent epochs
+    let lr = 0.05;
+    let epoch = 0;
+    while epoch < 10 {
+        net.zero_grad();
+        let pred = net.forward(x_train);
+        let loss_t = tensor_mse_loss(pred, y_target);
+        loss_t.backward();
+
+        // Parameter update on all network parameters
+        let params = net.parameters();
+        let p_count = list_length(params);
+        let p_idx = 0;
+        while p_idx < p_count {
+            let p: Parameter = list_get(params, p_idx);
+            if p.data.grad != null {
+                let num = p.data.numel();
+                let i = 0;
+                while i < num {
+                    let w = tensor_storage_read_float(p.data.storage, p.data.offset + i, p.data.dtype_id);
+                    let g = tensor_storage_read_float(p.data.grad.storage, p.data.grad.offset + i, p.data.grad.dtype_id);
+                    tensor_storage_write_float(p.data.storage, p.data.offset + i, p.data.dtype_id, w - lr * g);
+                    i = i + 1;
+                }
+            }
+            p_idx = p_idx + 1;
+        }
+        epoch = epoch + 1;
+    }
+
+    // Compute final loss
+    let final_pred = net.forward(x_train);
+    let final_loss_t = tensor_mse_loss(final_pred, y_target);
+    let final_loss = final_loss_t.item();
+
+    assert_true(final_loss < initial_loss, "Training loop strictly decreased MSE loss");
+    println("✓ NN Namespace & End-to-End Training Loop passed! Loss reduced: " + to_string(initial_loss) + " -> " + to_string(final_loss));
+}
+
 func main() {
     println("=================================================");
-    println("   Roze-Torch M8-T01 & M8-T02 Verification Suite ");
+    println("   Roze-Torch M8-T01, M8-T02 & M8-T03 Test Suite ");
     println("=================================================");
 
     test_shapes_and_strides();
@@ -793,7 +1192,15 @@ func main() {
     test_autograd_custom_functions();
     test_autograd_numerical_gradcheck();
 
+    // M8-T03 Neural Network Layer Modules & Activations (roze-torch::nn)
+    test_suite_18_nn_linear_and_modules();
+    test_suite_19_nn_conv2d_and_pooling();
+    test_suite_20_nn_normalization_and_dropout();
+    test_suite_21_nn_embedding_and_attention();
+    test_suite_22_nn_sequential_and_activations();
+    test_suite_23_nn_namespace_and_end_to_end_backprop();
+
     println("=================================================");
-    println("✅ 100% Roze-Torch M8-T01 & M8-T02 Passed! 🎉    ");
+    println("✅ 100% Roze-Torch M8-T01, M8-T02 & M8-T03 Passed! 🎉");
     println("=================================================");
 }

@@ -244,7 +244,8 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         "crypto" | "roze::crypto" | "roze-crypto" | "roze_crypto" | "tls" | "sha" | "aes" | "chacha" | "rsa" => {
             Some("roze-crypto/src/lib.roze".to_string())
         }
-        "torch" | "roze::torch" | "roze-torch" | "roze_torch" | "tensors" | "autograd" | "neural" | "ai_torch" => {
+        "torch" | "roze::torch" | "roze-torch" | "roze_torch" | "tensors" | "autograd" | "neural" | "ai_torch"
+        | "torch::nn" | "roze::torch::nn" | "roze-torch::nn" | "roze_torch::nn" | "nn" | "torch_nn" => {
             Some("roze-torch/src/lib.roze".to_string())
         }
         "game" | "roze::game" | "roze-game" | "roze_game" | "raylib_game" | "gamedev" | "engine" => {

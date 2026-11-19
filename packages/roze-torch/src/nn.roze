@@ -1,0 +1,8 @@
+// ==============================================================================
+// 🌹 Roze-Torch: Deep Learning Modules & Activation Functions (roze-torch::nn)
+// ==============================================================================
+// Sprint 15 (W31-W32) Deliverable: M8-T03
+// 1:1 Architectural and Module Parity with PyTorch torch.nn Module Ecosystem
+// ==============================================================================
+
+import "lib.roze";

@@ -2285,6 +2285,12 @@ fn standard_torch_nd_tensor_suite() {
     assert!(stdout.contains("SUITE 15 PASSED: roze-torch no_grad execution scopes and dynamic graph isolation"));
     assert!(stdout.contains("SUITE 16 PASSED: roze-torch custom autograd function definition and dispatch"));
     assert!(stdout.contains("SUITE 17 PASSED: roze-torch universal numerical gradient checking against central finite differences"));
+    assert!(stdout.contains("SUITE 18 PASSED: roze-torch nn.Linear and Parameter registration"));
+    assert!(stdout.contains("SUITE 19 PASSED: roze-torch nn.Conv2d, nn.MaxPool2d and nn.AvgPool2d"));
+    assert!(stdout.contains("SUITE 20 PASSED: roze-torch nn.BatchNorm2d, nn.LayerNorm and nn.Dropout"));
+    assert!(stdout.contains("SUITE 21 PASSED: roze-torch nn.Embedding and nn.MultiheadAttention"));
+    assert!(stdout.contains("SUITE 22 PASSED: roze-torch nn.Sequential and neural activation modules"));
+    assert!(stdout.contains("SUITE 23 PASSED: roze-torch nn namespace singleton and end-to-end backpropagation"));
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze-Torch N-Dimensional Tensor Engine 100% OPERATIONAL"));
 }
 

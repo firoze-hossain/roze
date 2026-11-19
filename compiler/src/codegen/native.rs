@@ -7838,7 +7838,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     /// compile time instead of ever executing them.
     fn reject_unless_supported_as_container_value(&self, value: &TypedExpression, location: &Location, context: &str) -> Result<()> {
         match &value.type_ {
-            Type::Int | Type::Bool | Type::Unknown | Type::RawPointer(_) | Type::Class(_) => Ok(()),
+            Type::Int | Type::Bool | Type::Unknown | Type::RawPointer(_) | Type::Class(_) | Type::Trait(_) => Ok(()),
             other => Err(anyhow!(
                 "line {}, column {}: the native backend's lists and maps can only hold int/bool values for now, not {} -- {}",
                 location.line, location.column, other, context

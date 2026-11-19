@@ -1387,6 +1387,8 @@ void __roze_thread_sleep(long ms) { (void)ms; }
 long __roze_thread_current_id(void) { return 0; }
 void __roze_thread_retain(long t) { (void)t; }
 void __roze_thread_release(long t) { (void)t; }
+void __roze_closure_retain(void* c) { (void)c; }
+void __roze_closure_release(void* c) { (void)c; }
 long __roze_fiber_spawn(long f) { (void)f; return 0; }
 long __roze_fiber_join(long f) { (void)f; return 0; }
 void __roze_fiber_yield(void) {}
@@ -2138,7 +2140,20 @@ pub fn run_native(name: &str) -> Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(anyhow!("native program exited with a non-zero status"))
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if let Some(sig) = status.signal() {
+                return Err(anyhow!("native program terminated by signal {} ({})", sig, match sig {
+                    4 => "SIGILL - Illegal Instruction",
+                    6 => "SIGABRT - Abort",
+                    8 => "SIGFPE - Floating Point Exception",
+                    11 => "SIGSEGV - Segmentation Fault",
+                    _ => "signal",
+                }));
+            }
+        }
+        Err(anyhow!("native program exited with status: {:?}", status.code()))
     }
 }
 
@@ -3996,6 +4011,8 @@ struct ConcurrencyRuntime {
     cancel_token_release_id: FuncId,
     time_now_id: FuncId,
     time_now_millis_id: FuncId,
+    closure_retain_id: FuncId,
+    closure_release_id: FuncId,
 }
 
 fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyRuntime> {
@@ -4215,6 +4232,11 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
     let time_now_millis_id = module.declare_function("__roze_time_now_millis", Linkage::Import, &void_to_i64)
         .map_err(|e| anyhow!(e.to_string()))?;
 
+    let closure_retain_id = module.declare_function("__roze_closure_retain", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+    let closure_release_id = module.declare_function("__roze_closure_release", Linkage::Import, &i64_to_void)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
     Ok(ConcurrencyRuntime {
         thread_spawn_id,
         thread_join_id,
@@ -4303,6 +4325,8 @@ fn declare_concurrency_runtime(module: &mut ObjectModule) -> Result<ConcurrencyR
         cancel_token_release_id,
         time_now_id,
         time_now_millis_id,
+        closure_retain_id,
+        closure_release_id,
     })
 }
 
@@ -6424,6 +6448,7 @@ struct NativeGenerator<'a> {
     functions: HashMap<String, FuncId>,
     function_param_types: HashMap<String, Vec<Type>>,
     closure_funcs: HashMap<usize, FuncId>,
+    closure_dtor_funcs: HashMap<usize, FuncId>,
     trampoline_funcs: HashMap<String, FuncId>,
     printf_id: FuncId,
     gcvt_id: FuncId,
@@ -6559,6 +6584,7 @@ impl<'a> NativeGenerator<'a> {
             functions: HashMap::new(),
             function_param_types: HashMap::new(),
             closure_funcs: HashMap::new(),
+            closure_dtor_funcs: HashMap::new(),
             trampoline_funcs: HashMap::new(),
             printf_id,
             gcvt_id,
@@ -6841,6 +6867,13 @@ impl<'a> NativeGenerator<'a> {
             let func_id = self.module.declare_function(&func_name, Linkage::Local, &sig)
                 .map_err(|e| anyhow!(e.to_string()))?;
             self.closure_funcs.insert(c.id, func_id);
+
+            let mut dtor_sig = self.module.make_signature();
+            dtor_sig.params.push(AbiParam::new(VALUE_TYPE));
+            let dtor_name = format!("__roze_closure_dtor_{}", c.id);
+            let dtor_id = self.module.declare_function(&dtor_name, Linkage::Local, &dtor_sig)
+                .map_err(|e| anyhow!(e.to_string()))?;
+            self.closure_dtor_funcs.insert(c.id, dtor_id);
         }
 
         for name in func_refs {
@@ -6923,6 +6956,7 @@ impl<'a> NativeGenerator<'a> {
                     functions: &self.functions,
                     function_param_types: &self.function_param_types,
                     closure_funcs: &self.closure_funcs,
+                    closure_dtor_funcs: &self.closure_dtor_funcs,
                     trampoline_funcs: &self.trampoline_funcs,
                     printf_id: self.printf_id,
                     gcvt_id: self.gcvt_id,
@@ -6989,7 +7023,7 @@ impl<'a> NativeGenerator<'a> {
                 let env_val = fc.builder.block_params(entry)[0];
 
                 for (i, (cap_name, cap_ty)) in c.captures.iter().enumerate() {
-                    let offset = (16 + i * 8) as i32;
+                    let offset = (24 + i * 8) as i32;
                     let cap_val = fc.builder.ins().load(cranelift_type_for(cap_ty), MemFlags::new(), env_val, offset);
                     fc.retain_for_arc_type(cap_ty, cap_val)?;
                     let var = fc.declare_local(cap_name, cap_ty.clone());
@@ -7023,6 +7057,97 @@ impl<'a> NativeGenerator<'a> {
             }
             self.module.define_function(func_id, &mut ctx).map_err(|e| anyhow!(e.to_string()))?;
             self.module.clear_context(&mut ctx);
+
+            // Compile the closure destructor function
+            let dtor_func_id = *self.closure_dtor_funcs.get(&c.id).unwrap();
+            let dtor_sig = self.module.declarations().get_function_decl(dtor_func_id).signature.clone();
+            ctx.func.signature = dtor_sig;
+            {
+                let mut func_ctx = FunctionBuilderContext::new();
+                let builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+                let mut fc = FunctionCompiler {
+                    module: self.module,
+                    builder,
+                    functions: &self.functions,
+                    function_param_types: &self.function_param_types,
+                    closure_funcs: &self.closure_funcs,
+                    closure_dtor_funcs: &self.closure_dtor_funcs,
+                    trampoline_funcs: &self.trampoline_funcs,
+                    printf_id: self.printf_id,
+                    gcvt_id: self.gcvt_id,
+                    malloc_id: self.malloc_id,
+                    fmt_int: self.fmt_int,
+                    fmt_str: self.fmt_str,
+                    fmt_char: self.fmt_char,
+                    fmt_uint: self.fmt_uint,
+                    true_str: self.true_str,
+                    false_str: self.false_str,
+                    string_retain_id: self.strings.retain_id,
+                    string_release_id: self.strings.release_id,
+                    string_concat_id: self.strings.concat_id,
+                    string_eq_id: self.strings.eq_id,
+                    string_from_c_str_id: self.strings.from_c_str_id,
+                    list_new_id: self.lists.new_id,
+                    list_retain_id: self.lists.retain_id,
+                    list_release_id: self.lists.release_id,
+                    list_push_id: self.lists.push_id,
+                    list_get_id: self.lists.get_id,
+                    list_set_id: self.lists.set_id,
+                    list_remove_id: self.lists.remove_id,
+                    list_length_id: self.lists.length_id,
+                    list_is_empty_id: self.lists.is_empty_id,
+                    map_new_id: self.maps.new_id,
+                    map_retain_id: self.maps.retain_id,
+                    map_release_id: self.maps.release_id,
+                    map_put_id: self.maps.put_id,
+                    map_get_id: self.maps.get_id,
+                    map_has_id: self.maps.has_id,
+                    map_remove_id: self.maps.remove_id,
+                    map_size_id: self.maps.size_id,
+                    map_is_empty_id: self.maps.is_empty_id,
+                    concurrency: &self.concurrency,
+                    raw_memory: &self.raw_memory,
+                    is_freestanding: self.is_freestanding,
+                    vga: &self.vga,
+                    kernel: &self.kernel,
+                    numerics: &self.numerics,
+                    simd: &self.simd,
+                    collections: &self.collections,
+                    memory: &self.memory,
+                    raw_net: &self.raw_net,
+                    fs: &self.fs,
+                    proc: &self.proc,
+                    time: &self.time,
+                    regex: &self.regex,
+                    classes: &self.classes,
+                    class_retain_id: self.class_retain_id,
+                    trait_release_id: self.trait_release_id,
+                    methods: &self.methods,
+                    extern_functions: &self.extern_functions,
+                    literal_counter: &mut self.literal_counter,
+                    scopes: vec![HashMap::new()],
+                    next_var_index: 0,
+                    current_return_type: Type::Void,
+                };
+
+                let entry = fc.builder.create_block();
+                fc.builder.append_block_params_for_function_params(entry);
+                fc.builder.switch_to_block(entry);
+                fc.builder.seal_block(entry);
+
+                let env_val = fc.builder.block_params(entry)[0];
+
+                for (i, (_cap_name, cap_ty)) in c.captures.iter().enumerate() {
+                    let offset = (24 + i * 8) as i32;
+                    let cap_val = fc.builder.ins().load(cranelift_type_for(cap_ty), MemFlags::new(), env_val, offset);
+                    fc.emit_release_for_type(cap_ty, cap_val)?;
+                }
+
+                fc.builder.ins().return_(&[]);
+                fc.builder.finalize();
+            }
+            self.module.define_function(dtor_func_id, &mut ctx).map_err(|e| anyhow!(e.to_string()))?;
+            self.module.clear_context(&mut ctx);
         }
         Ok(())
     }
@@ -7049,6 +7174,7 @@ impl<'a> NativeGenerator<'a> {
                                 functions: &self.functions,
                                 function_param_types: &self.function_param_types,
                                 closure_funcs: &self.closure_funcs,
+                                closure_dtor_funcs: &self.closure_dtor_funcs,
                                 trampoline_funcs: &self.trampoline_funcs,
                                 methods: &self.methods,
                                 extern_functions: &self.extern_functions,
@@ -7168,6 +7294,7 @@ impl<'a> NativeGenerator<'a> {
                         functions: &self.functions,
                         function_param_types: &self.function_param_types,
                         closure_funcs: &self.closure_funcs,
+                        closure_dtor_funcs: &self.closure_dtor_funcs,
                         trampoline_funcs: &self.trampoline_funcs,
                         printf_id: self.printf_id,
                         gcvt_id: self.gcvt_id,
@@ -7327,6 +7454,7 @@ struct FunctionCompiler<'a, 'b> {
     functions: &'a HashMap<String, FuncId>,
     function_param_types: &'a HashMap<String, Vec<Type>>,
     closure_funcs: &'a HashMap<usize, FuncId>,
+    closure_dtor_funcs: &'a HashMap<usize, FuncId>,
     trampoline_funcs: &'a HashMap<String, FuncId>,
     printf_id: FuncId,
     gcvt_id: FuncId,
@@ -7451,7 +7579,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     fn release_frame(&mut self, frame_index: usize) -> Result<()> {
         let arc_vars: Vec<(Variable, Type)> = self.scopes[frame_index]
             .values()
-            .filter(|(_, ty)| matches!(ty, Type::String | Type::List | Type::Map | Type::Class(_) | Type::Generic { .. } | Type::I128 | Type::U128 | Type::Vec4f | Type::Vec8f | Type::Vec4i | Type::Vec16u8))
+            .filter(|(_, ty)| matches!(ty, Type::String | Type::List | Type::Map | Type::Class(_) | Type::Function { .. } | Type::Generic { .. } | Type::I128 | Type::U128 | Type::Vec4f | Type::Vec8f | Type::Vec4i | Type::Vec16u8))
             .cloned()
             .collect();
         for (var, ty) in arc_vars {
@@ -7497,7 +7625,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             Type::List => self.emit_list_retain(val),
             Type::Map => self.emit_map_retain(val),
             Type::Class(_) | Type::Trait(_) => self.emit_class_retain(val),
-            Type::Function { .. } => self.emit_class_retain(val),
+            Type::Function { .. } => {
+                let func_ref = self.module.declare_func_in_func(self.concurrency.closure_retain_id, self.builder.func);
+                self.builder.ins().call(func_ref, &[val]);
+                Ok(())
+            }
             Type::Generic { base, .. } if base == "List" || base == "list" => self.emit_list_retain(val),
             Type::Generic { base, .. } if base == "Map" || base == "map" => self.emit_map_retain(val),
             Type::Generic { base, .. } if base == "Channel" || base == "channel" => {
@@ -7730,6 +7862,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             Type::String => self.emit_string_release(val),
             Type::List => self.emit_list_release(val),
             Type::Map => self.emit_map_release(val),
+            Type::Function { .. } => {
+                let release_ref = self.module.declare_func_in_func(self.concurrency.closure_release_id, self.builder.func);
+                self.builder.ins().call(release_ref, &[val]);
+                Ok(())
+            }
             Type::Trait(_) => {
                 let release_ref = self.module.declare_func_in_func(self.trait_release_id, self.builder.func);
                 self.builder.ins().call(release_ref, &[val]);
@@ -8880,7 +9017,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 Ok(ptr)
             }
             TypedExpressionKind::Closure { id, captures, .. } => {
-                let total_size = 16 + captures.len() * 8;
+                let total_size = 24 + captures.len() * 8;
                 let size_val = self.builder.ins().iconst(VALUE_TYPE, total_size as i64);
                 let malloc_ref = self.module.declare_func_in_func(self.malloc_id, self.builder.func);
                 let call = self.builder.ins().call(malloc_ref, &[size_val]);
@@ -8895,18 +9032,24 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let fn_ptr = self.builder.ins().func_addr(VALUE_TYPE, func_ref);
                 self.builder.ins().store(MemFlags::new(), fn_ptr, closure_ptr, 8);
 
+                let dtor_func_id = *self.closure_dtor_funcs.get(id)
+                    .ok_or_else(|| anyhow!("closure dtor {} not declared", id))?;
+                let dtor_ref = self.module.declare_func_in_func(dtor_func_id, self.builder.func);
+                let dtor_ptr = self.builder.ins().func_addr(VALUE_TYPE, dtor_ref);
+                self.builder.ins().store(MemFlags::new(), dtor_ptr, closure_ptr, 16);
+
                 for (i, (cap_name, cap_ty)) in captures.iter().enumerate() {
                     let (var, _ty) = self.lookup_local(cap_name);
                     let val = self.builder.use_var(var);
                     self.retain_for_arc_type(cap_ty, val)?;
-                    let offset = (16 + i * 8) as i32;
+                    let offset = (24 + i * 8) as i32;
                     self.builder.ins().store(MemFlags::new(), val, closure_ptr, offset);
                 }
 
                 Ok(closure_ptr)
             }
             TypedExpressionKind::FunctionRef(name) => {
-                let total_size = 16;
+                let total_size = 24;
                 let size_val = self.builder.ins().iconst(VALUE_TYPE, total_size as i64);
                 let malloc_ref = self.module.declare_func_in_func(self.malloc_id, self.builder.func);
                 let call = self.builder.ins().call(malloc_ref, &[size_val]);
@@ -8920,6 +9063,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let func_ref = self.module.declare_func_in_func(trampoline_id, self.builder.func);
                 let fn_ptr = self.builder.ins().func_addr(VALUE_TYPE, func_ref);
                 self.builder.ins().store(MemFlags::new(), fn_ptr, closure_ptr, 8);
+
+                let zero = self.builder.ins().iconst(VALUE_TYPE, 0);
+                self.builder.ins().store(MemFlags::new(), zero, closure_ptr, 16);
 
                 Ok(closure_ptr)
             }

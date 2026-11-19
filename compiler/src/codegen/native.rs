@@ -6447,6 +6447,7 @@ struct NativeGenerator<'a> {
     is_freestanding: bool,
     functions: HashMap<String, FuncId>,
     function_param_types: HashMap<String, Vec<Type>>,
+    method_param_types: HashMap<(String, String), Vec<Type>>,
     closure_funcs: HashMap<usize, FuncId>,
     closure_dtor_funcs: HashMap<usize, FuncId>,
     trampoline_funcs: HashMap<String, FuncId>,
@@ -6583,6 +6584,7 @@ impl<'a> NativeGenerator<'a> {
             is_freestanding,
             functions: HashMap::new(),
             function_param_types: HashMap::new(),
+            method_param_types: HashMap::new(),
             closure_funcs: HashMap::new(),
             closure_dtor_funcs: HashMap::new(),
             trampoline_funcs: HashMap::new(),
@@ -6681,6 +6683,7 @@ impl<'a> NativeGenerator<'a> {
                         let func_id = self.module.declare_function(&fn_name, Linkage::Local, &sig)
                             .map_err(|e| anyhow!(e.to_string()))?;
                         self.methods.insert((class_name.clone(), name.clone()), func_id);
+                        self.method_param_types.insert((class_name.clone(), name.clone()), params.iter().map(|p| p.type_.clone()).collect());
                     }
                 }
             }
@@ -7008,6 +7011,7 @@ impl<'a> NativeGenerator<'a> {
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
                     methods: &self.methods,
+                    method_param_types: &self.method_param_types,
                     extern_functions: &self.extern_functions,
                     literal_counter: &mut self.literal_counter,
                     scopes: vec![HashMap::new()],
@@ -7123,6 +7127,7 @@ impl<'a> NativeGenerator<'a> {
                     class_retain_id: self.class_retain_id,
                     trait_release_id: self.trait_release_id,
                     methods: &self.methods,
+                    method_param_types: &self.method_param_types,
                     extern_functions: &self.extern_functions,
                     literal_counter: &mut self.literal_counter,
                     scopes: vec![HashMap::new()],
@@ -7177,6 +7182,7 @@ impl<'a> NativeGenerator<'a> {
                                 closure_dtor_funcs: &self.closure_dtor_funcs,
                                 trampoline_funcs: &self.trampoline_funcs,
                                 methods: &self.methods,
+                    method_param_types: &self.method_param_types,
                                 extern_functions: &self.extern_functions,
                                 trait_release_id: self.trait_release_id,
                                 printf_id: self.printf_id,
@@ -7346,6 +7352,7 @@ impl<'a> NativeGenerator<'a> {
                         class_retain_id: self.class_retain_id,
                         trait_release_id: self.trait_release_id,
                         methods: &self.methods,
+                    method_param_types: &self.method_param_types,
                         extern_functions: &self.extern_functions,
                         literal_counter: &mut self.literal_counter,
                         scopes: vec![HashMap::new()],
@@ -7506,6 +7513,7 @@ struct FunctionCompiler<'a, 'b> {
     class_retain_id: FuncId,
     trait_release_id: FuncId,
     methods: &'a HashMap<(String, String), FuncId>,
+    method_param_types: &'a HashMap<(String, String), Vec<Type>>,
     extern_functions: &'a HashSet<String>,
     /// Shared across every function being compiled (not reset per
     /// function), so two string literals never collide on the same
@@ -9109,9 +9117,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.retain_if_aliasing(object, obj_val)?;
                 let mut call_args = Vec::with_capacity(arguments.len() + 1);
                 call_args.push(obj_val);
-                for arg in arguments {
+                let param_types = self.method_param_types.get(&(class_name.clone(), method.clone())).cloned().unwrap_or_default();
+                for (i, arg) in arguments.iter().enumerate() {
                     let arg_val = self.compile_expression(arg)?;
                     self.retain_if_aliasing(arg, arg_val)?;
+                    let arg_val = match param_types.get(i) {
+                        Some(param_type) => self.coerce_for_target_type(arg_val, &arg.type_, param_type),
+                        None => arg_val,
+                    };
                     call_args.push(arg_val);
                 }
 
@@ -13939,13 +13952,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 return Ok(res);
             }
             "to_string" if arguments.len() == 1 => {
-                let arg = self.compile_expression(&arguments[0])?;
+                let mut arg = self.compile_expression(&arguments[0])?;
                 if arguments[0].type_ == Type::String {
                     return Ok(arg);
                 }
                 let func_id = if arguments[0].type_ == Type::Bool {
                     self.fs.to_string_bool
                 } else if arguments[0].type_.is_float() {
+                    if arguments[0].type_ == Type::F32 {
+                        arg = self.builder.ins().fpromote(types::F64, arg);
+                    }
                     self.fs.to_string_f64
                 } else {
                     self.fs.to_string_i64

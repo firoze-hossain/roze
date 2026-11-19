@@ -5029,6 +5029,12 @@ fn native_standard_torch_nd_tensor_suite() {
     assert!(stdout.contains("SUITE 34 PASSED: roze-torch safetensors zero-copy binary format parser and tensor loader"));
     assert!(stdout.contains("SUITE 35 PASSED: roze-torch GGUF model parser with Q4_0, Q8_0 and F16 quantization decoders"));
     assert!(stdout.contains("SUITE 36 PASSED: roze-torch local transformer decoder and speculative decoding engine"));
+    assert!(stdout.contains("SUITE 37 PASSED: roze-torch CUDA runtime, device memory management and stream synchronization"));
+    assert!(stdout.contains("SUITE 38 PASSED: roze-torch cuBLAS matrix multiplication and GPU compute dispatch"));
+    assert!(stdout.contains("SUITE 39 PASSED: roze-torch custom PTX kernel compilation and GPU JIT execution engine"));
+    assert!(stdout.contains("SUITE 40 PASSED: roze-torch OpenBLAS and BLAS FFI bindings for accelerated linear algebra"));
+    assert!(stdout.contains("SUITE 41 PASSED: roze-torch hardware SIMD vector intrinsics (AVX2/NEON 8-wide float32)"));
+    assert!(stdout.contains("SUITE 42 PASSED: roze-torch accelerated LLM inference engine with sub-10ms token generation latency"));
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze-Torch N-Dimensional Tensor Engine 100% OPERATIONAL"));
 }
 

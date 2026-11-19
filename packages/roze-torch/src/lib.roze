@@ -539,6 +539,9 @@ func op_log() -> int { return 23; }
 func op_custom() -> int { return 24; }
 func op_conv2d() -> int { return 25; }
 func op_embedding() -> int { return 26; }
+func op_cross_entropy_loss() -> int { return 27; }
+func op_bce_with_logits_loss() -> int { return 28; }
+func op_l1_loss() -> int { return 29; }
 
 func autograd_node_new(op: int, op_name: string, input_a: Tensor, input_b: Tensor) -> AutogradNode {
     return new AutogradNode(op, op_name, input_a, input_b, 0.0, 0, 0);
@@ -697,6 +700,10 @@ impl Tensor {
         return this.shape.rank;
     }
 
+    func ndim() -> int {
+        return this.shape.rank;
+    }
+
     func dim(axis: int) -> int {
         return this.shape.dim(axis);
     }
@@ -751,6 +758,22 @@ impl Tensor {
 
     func mean() -> Tensor {
         return tensor_mean_tensor(this);
+    }
+
+    func mse_loss(target: Tensor) -> Tensor {
+        return tensor_mse_loss(this, target);
+    }
+
+    func l1_loss(target: Tensor) -> Tensor {
+        return tensor_l1_loss(this, target);
+    }
+
+    func bce_with_logits_loss(target: Tensor) -> Tensor {
+        return tensor_bce_with_logits_loss(this, target);
+    }
+
+    func cross_entropy_loss(target: Tensor) -> Tensor {
+        return tensor_cross_entropy_loss(this, target);
     }
 
     func compute_offset_1d(i0: int) -> int {
@@ -2207,6 +2230,101 @@ func mse_loss(pred: Tensor, target: Tensor) -> float {
     return sum_sq / (n * 1.0);
 }
 
+// L1 Loss (Mean Absolute Error)
+func l1_loss(pred: Tensor, target: Tensor) -> float {
+    let diff = tensor_sub(pred, target);
+    let n = diff.numel();
+    let sum_abs = 0.0;
+    let i = 0;
+    while i < n {
+        let v = tensor_storage_read_float(diff.storage, diff.offset + i, diff.dtype_id);
+        if v < 0.0 {
+            v = 0.0 - v;
+        }
+        sum_abs = sum_abs + v;
+        i = i + 1;
+    }
+    return sum_abs / (n * 1.0);
+}
+
+// Binary Cross Entropy With Logits Loss (Numerically Stable Sigmoid + BCE)
+func bce_with_logits_loss(pred: Tensor, target: Tensor) -> float {
+    let contig_p = tensor_contiguous(pred);
+    let contig_t = tensor_contiguous(target);
+    let n = contig_p.numel();
+    let sum_loss = 0.0;
+    let i = 0;
+    while i < n {
+        let x = tensor_storage_read_float(contig_p.storage, contig_p.offset + i, contig_p.dtype_id);
+        let y = tensor_storage_read_float(contig_t.storage, contig_t.offset + i, contig_t.dtype_id);
+        let max_x = 0.0;
+        if x > 0.0 {
+            max_x = x;
+        }
+        let abs_x = x;
+        if abs_x < 0.0 {
+            abs_x = 0.0 - abs_x;
+        }
+        let term = max_x - (x * y) + torch_ln(1.0 + torch_exp(0.0 - abs_x));
+        sum_loss = sum_loss + term;
+        i = i + 1;
+    }
+    return sum_loss / (n * 1.0);
+}
+
+// Cross Entropy Loss (LogSoftmax + NLLLoss, Numerically Stable with LogSumExp)
+func cross_entropy_loss(pred: Tensor, target: Tensor) -> float {
+    let contig_p = tensor_contiguous(pred);
+    let contig_t = tensor_contiguous(target);
+    let n = 1;
+    let c = contig_p.numel();
+    if contig_p.ndim() == 2 {
+        n = contig_p.shape.dim0;
+        c = contig_p.shape.dim1;
+    }
+    let is_class_index = (contig_t.numel() == n);
+    let total_loss = 0.0;
+    let i = 0;
+    while i < n {
+        let max_val = -999999.0;
+        let j = 0;
+        while j < c {
+            let v = tensor_storage_read_float(contig_p.storage, contig_p.offset + (i * c) + j, contig_p.dtype_id);
+            if v > max_val {
+                max_val = v;
+            }
+            j = j + 1;
+        }
+        let sum_exp = 0.0;
+        j = 0;
+        while j < c {
+            let v = tensor_storage_read_float(contig_p.storage, contig_p.offset + (i * c) + j, contig_p.dtype_id);
+            sum_exp = sum_exp + torch_exp(v - max_val);
+            j = j + 1;
+        }
+        let log_sum_exp = max_val + torch_ln(sum_exp);
+
+        if is_class_index {
+            let target_cls = float_to_int(tensor_storage_read_float(contig_t.storage, contig_t.offset + i, contig_t.dtype_id));
+            let logit = tensor_storage_read_float(contig_p.storage, contig_p.offset + (i * c) + target_cls, contig_p.dtype_id);
+            total_loss = total_loss + (log_sum_exp - logit);
+        } else {
+            j = 0;
+            while j < c {
+                let target_prob = tensor_storage_read_float(contig_t.storage, contig_t.offset + (i * c) + j, contig_t.dtype_id);
+                if target_prob > 0.0 {
+                    let logit = tensor_storage_read_float(contig_p.storage, contig_p.offset + (i * c) + j, contig_p.dtype_id);
+                    let log_p = logit - log_sum_exp;
+                    total_loss = total_loss - (target_prob * log_p);
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return total_loss / (n * 1.0);
+}
+
 func linear_zero_grad(layer: LinearLayer) {
     layer.weights.zero_grad();
     layer.bias.zero_grad();
@@ -2640,6 +2758,113 @@ func autograd_execute_node(node_t: Tensor, fn: AutogradNode, g: Tensor) {
         return;
     }
 
+    if op == op_cross_entropy_loss() {
+        let contig_a = tensor_contiguous(fn.input_a);
+        let contig_b = tensor_contiguous(fn.input_b);
+        let n = 1;
+        let c = contig_a.numel();
+        if contig_a.ndim() == 2 {
+            n = contig_a.shape.dim0;
+            c = contig_a.shape.dim1;
+        }
+        let is_class_index = (contig_b.numel() == n);
+        let ga = tensor_zeros(contig_a.shape, contig_a.dtype_id);
+        let gb = tensor_zeros(contig_b.shape, contig_b.dtype_id);
+        let factor = (1.0 / (n * 1.0)) * g.item();
+
+        let i = 0;
+        while i < n {
+            let max_val = -999999.0;
+            let j = 0;
+            while j < c {
+                let v = tensor_storage_read_float(contig_a.storage, contig_a.offset + (i * c) + j, contig_a.dtype_id);
+                if v > max_val { max_val = v; }
+                j = j + 1;
+            }
+            let sum_exp = 0.0;
+            j = 0;
+            while j < c {
+                let v = tensor_storage_read_float(contig_a.storage, contig_a.offset + (i * c) + j, contig_a.dtype_id);
+                sum_exp = sum_exp + torch_exp(v - max_val);
+                j = j + 1;
+            }
+            let log_sum_exp = max_val + torch_ln(sum_exp);
+            j = 0;
+            while j < c {
+                let v = tensor_storage_read_float(contig_a.storage, contig_a.offset + (i * c) + j, contig_a.dtype_id);
+                let prob = torch_exp(v - max_val) / sum_exp;
+                let target_v = 0.0;
+                if is_class_index {
+                    let target_cls = float_to_int(tensor_storage_read_float(contig_b.storage, contig_b.offset + i, contig_b.dtype_id));
+                    if j == target_cls {
+                        target_v = 1.0;
+                    }
+                } else {
+                    target_v = tensor_storage_read_float(contig_b.storage, contig_b.offset + (i * c) + j, contig_b.dtype_id);
+                    let log_p = v - log_sum_exp;
+                    tensor_storage_write_float(gb.storage, (i * c) + j, gb.dtype_id, (0.0 - log_p) * factor);
+                }
+                let grad_a_val = (prob - target_v) * factor;
+                tensor_storage_write_float(ga.storage, (i * c) + j, ga.dtype_id, grad_a_val);
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        autograd_accumulate_grad(fn.input_b, gb);
+        return;
+    }
+
+    if op == op_bce_with_logits_loss() {
+        let n = fn.input_a.numel();
+        let factor = (1.0 / (n * 1.0)) * g.item();
+        let contig_a = tensor_contiguous(fn.input_a);
+        let contig_b = tensor_contiguous(fn.input_b);
+        let ga = tensor_zeros(contig_a.shape, contig_a.dtype_id);
+        let gb = tensor_zeros(contig_b.shape, contig_b.dtype_id);
+        let i = 0;
+        while i < n {
+            let x = tensor_storage_read_float(contig_a.storage, contig_a.offset + i, contig_a.dtype_id);
+            let y = tensor_storage_read_float(contig_b.storage, contig_b.offset + i, contig_b.dtype_id);
+            let sig = 1.0 / (1.0 + torch_exp(0.0 - x));
+            let grad_x = (sig - y) * factor;
+            let grad_y = (0.0 - x) * factor;
+            tensor_storage_write_float(ga.storage, i, ga.dtype_id, grad_x);
+            tensor_storage_write_float(gb.storage, i, gb.dtype_id, grad_y);
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        autograd_accumulate_grad(fn.input_b, gb);
+        return;
+    }
+
+    if op == op_l1_loss() {
+        let n = fn.input_a.numel();
+        let factor = (1.0 / (n * 1.0)) * g.item();
+        let contig_a = tensor_contiguous(fn.input_a);
+        let contig_b = tensor_contiguous(fn.input_b);
+        let ga = tensor_zeros(contig_a.shape, contig_a.dtype_id);
+        let gb = tensor_zeros(contig_b.shape, contig_b.dtype_id);
+        let i = 0;
+        while i < n {
+            let va = tensor_storage_read_float(contig_a.storage, contig_a.offset + i, contig_a.dtype_id);
+            let vb = tensor_storage_read_float(contig_b.storage, contig_b.offset + i, contig_b.dtype_id);
+            let diff = va - vb;
+            let sgn = 0.0;
+            if diff > 0.0 {
+                sgn = 1.0;
+            } else if diff < 0.0 {
+                sgn = -1.0;
+            }
+            tensor_storage_write_float(ga.storage, i, ga.dtype_id, sgn * factor);
+            tensor_storage_write_float(gb.storage, i, gb.dtype_id, (0.0 - sgn) * factor);
+            i = i + 1;
+        }
+        autograd_accumulate_grad(fn.input_a, ga);
+        autograd_accumulate_grad(fn.input_b, gb);
+        return;
+    }
+
     if op == op_custom() {
         autograd_dispatch_custom_backward(fn.custom_fn_id, fn.input_a, fn.input_b, g);
         return;
@@ -2906,6 +3131,39 @@ func tensor_mse_loss(pred: Tensor, target: Tensor) -> Tensor {
     return out;
 }
 
+func tensor_l1_loss(pred: Tensor, target: Tensor) -> Tensor {
+    let loss_val = l1_loss(pred, target);
+    let out = tensor_scalar(loss_val, pred.dtype_id);
+    if autograd_is_grad_enabled() && (pred.requires_grad || target.requires_grad) {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_l1_loss(), "<L1LossBackward0>", pred, target);
+    }
+    return out;
+}
+
+func tensor_bce_with_logits_loss(pred: Tensor, target: Tensor) -> Tensor {
+    let loss_val = bce_with_logits_loss(pred, target);
+    let out = tensor_scalar(loss_val, pred.dtype_id);
+    if autograd_is_grad_enabled() && (pred.requires_grad || target.requires_grad) {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_bce_with_logits_loss(), "<BceWithLogitsLossBackward0>", pred, target);
+    }
+    return out;
+}
+
+func tensor_cross_entropy_loss(pred: Tensor, target: Tensor) -> Tensor {
+    let loss_val = cross_entropy_loss(pred, target);
+    let out = tensor_scalar(loss_val, pred.dtype_id);
+    if autograd_is_grad_enabled() && (pred.requires_grad || target.requires_grad) {
+        out.requires_grad = true;
+        out.is_leaf = false;
+        out.grad_fn = autograd_node_new(op_cross_entropy_loss(), "<CrossEntropyLossBackward0>", pred, target);
+    }
+    return out;
+}
+
 class AutogradFunction {
     fn_id: int,
     name: string
@@ -3087,6 +3345,18 @@ class Parameter {
 func parameter_new(name: string, data: Tensor) -> Parameter {
     data.requires_grad = true;
     return new Parameter(name, data, true);
+}
+
+func nn_parameter(data: Tensor) -> Parameter {
+    return parameter_new("param", data);
+}
+
+impl Parameter {
+    func zero_grad() {
+        if this.data != null {
+            this.data.zero_grad();
+        }
+    }
 }
 
 trait Module {
@@ -4245,5 +4515,681 @@ impl NN {
 
     func Softmax(dim: int) -> Softmax {
         return nn_softmax(dim);
+    }
+
+    func MSELoss() -> MSELoss {
+        return nn_mse_loss();
+    }
+
+    func L1Loss() -> L1Loss {
+        return nn_l1_loss();
+    }
+
+    func BCEWithLogitsLoss() -> BCEWithLogitsLoss {
+        return nn_bce_with_logits_loss();
+    }
+
+    func CrossEntropyLoss() -> CrossEntropyLoss {
+        return nn_cross_entropy_loss();
+    }
+
+    func Parameter(data: Tensor) -> Parameter {
+        return nn_parameter(data);
+    }
+}
+
+// ==============================================================================
+// 19. Loss Function Modules (MSELoss, L1Loss, BCEWithLogitsLoss, CrossEntropyLoss)
+// ==============================================================================
+
+class MSELoss {
+    reduction: string
+}
+
+func nn_mse_loss() -> MSELoss {
+    return new MSELoss("mean");
+}
+
+impl MSELoss {
+    func forward(pred: Tensor, target: Tensor) -> Tensor {
+        return tensor_mse_loss(pred, target);
+    }
+}
+
+class L1Loss {
+    reduction: string
+}
+
+func nn_l1_loss() -> L1Loss {
+    return new L1Loss("mean");
+}
+
+impl L1Loss {
+    func forward(pred: Tensor, target: Tensor) -> Tensor {
+        return tensor_l1_loss(pred, target);
+    }
+}
+
+class BCEWithLogitsLoss {
+    reduction: string
+}
+
+func nn_bce_with_logits_loss() -> BCEWithLogitsLoss {
+    return new BCEWithLogitsLoss("mean");
+}
+
+impl BCEWithLogitsLoss {
+    func forward(pred: Tensor, target: Tensor) -> Tensor {
+        return tensor_bce_with_logits_loss(pred, target);
+    }
+}
+
+class CrossEntropyLoss {
+    reduction: string
+}
+
+func nn_cross_entropy_loss() -> CrossEntropyLoss {
+    return new CrossEntropyLoss("mean");
+}
+
+impl CrossEntropyLoss {
+    func forward(pred: Tensor, target: Tensor) -> Tensor {
+        return tensor_cross_entropy_loss(pred, target);
+    }
+}
+
+// ==============================================================================
+// 20. Pure Roze Mathematical Helpers for Optimizers & Schedulers
+// ==============================================================================
+
+func int_to_float(i: int) -> float {
+    return i * 1.0;
+}
+
+func torch_cos(x: float) -> float {
+    let pi = 3.141592653589793;
+    let pi2 = 2.0 * pi;
+    let rem = x;
+    if rem < 0.0 {
+        rem = 0.0 - rem;
+    }
+    let k = float_to_int(rem / pi2);
+    rem = rem - (int_to_float(k) * pi2);
+    if rem > pi {
+        rem = pi2 - rem;
+    }
+    let x2 = rem * rem;
+    let sum = 1.0;
+    let term = 1.0;
+    let i = 1;
+    while i <= 10 {
+        let d = int_to_float(2 * i * (2 * i - 1));
+        term = (0.0 - term * x2) / d;
+        sum = sum + term;
+        i = i + 1;
+    }
+    return sum;
+}
+
+// ==============================================================================
+// 21. Numerical Optimizers (SGD, Adam, AdamW, RMSprop, Adagrad)
+// ==============================================================================
+
+trait Optimizer {
+    func step();
+    func zero_grad();
+    func get_lr() -> float;
+    func set_lr(new_lr: float);
+}
+
+// ------------------------------------------------------------------------------
+// 1. SGD (Stochastic Gradient Descent with Momentum & Nesterov)
+// ------------------------------------------------------------------------------
+
+class SGD {
+    params: list,
+    lr: float,
+    momentum: float,
+    dampening: float,
+    weight_decay: float,
+    nesterov: bool,
+    velocities: list,
+    step_count: int
+}
+
+func optim_sgd(params: list, lr: float, momentum: float, weight_decay: float, dampening: float, nesterov: bool) -> SGD {
+    let vels = list_new();
+    let n = list_length(params);
+    let i = 0;
+    while i < n {
+        let p: Parameter = list_get(params, i);
+        list_push(vels, tensor_zeros(p.data.shape, p.data.dtype_id));
+        i = i + 1;
+    }
+    return new SGD(params, lr, momentum, dampening, weight_decay, nesterov, vels, 0);
+}
+
+impl Optimizer for SGD {
+    func step() {
+        this.step_count = this.step_count + 1;
+        let n = list_length(this.params);
+        let i = 0;
+        while i < n {
+            let p: Parameter = list_get(this.params, i);
+            if p.requires_grad && p.data != null && p.data.grad != null {
+                let t = p.data;
+                let g = t.grad;
+                let vel: Tensor = list_get(this.velocities, i);
+                let num = t.numel();
+                let j = 0;
+                while j < num {
+                    let p_val = tensor_storage_read_float(t.storage, t.offset + j, t.dtype_id);
+                    let g_val = tensor_storage_read_float(g.storage, g.offset + j, g.dtype_id);
+                    if this.weight_decay != 0.0 {
+                        g_val = g_val + (this.weight_decay * p_val);
+                    }
+                    let d_p = g_val;
+                    if this.momentum != 0.0 {
+                        let v_val = tensor_storage_read_float(vel.storage, vel.offset + j, vel.dtype_id);
+                        if this.step_count == 1 {
+                            v_val = g_val;
+                        } else {
+                            v_val = (this.momentum * v_val) + ((1.0 - this.dampening) * g_val);
+                        }
+                        tensor_storage_write_float(vel.storage, vel.offset + j, vel.dtype_id, v_val);
+                        if this.nesterov {
+                            d_p = g_val + (this.momentum * v_val);
+                        } else {
+                            d_p = v_val;
+                        }
+                    }
+                    let new_p = p_val - (this.lr * d_p);
+                    tensor_storage_write_float(t.storage, t.offset + j, t.dtype_id, new_p);
+                    j = j + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    func zero_grad() {
+        let n = list_length(this.params);
+        let i = 0;
+        while i < n {
+            let p: Parameter = list_get(this.params, i);
+            p.zero_grad();
+            i = i + 1;
+        }
+    }
+
+    func get_lr() -> float {
+        return this.lr;
+    }
+
+    func set_lr(new_lr: float) {
+        this.lr = new_lr;
+    }
+}
+
+// ------------------------------------------------------------------------------
+// 2. Adam (Adaptive Moment Estimation)
+// ------------------------------------------------------------------------------
+
+class Adam {
+    params: list,
+    lr: float,
+    beta1: float,
+    beta2: float,
+    eps: float,
+    weight_decay: float,
+    exp_avg: list,
+    exp_avg_sq: list,
+    step_count: int,
+    beta1_t: float,
+    beta2_t: float
+}
+
+func optim_adam(params: list, lr: float, beta1: float, beta2: float, eps: float, weight_decay: float) -> Adam {
+    let exp_m = list_new();
+    let exp_v = list_new();
+    let n = list_length(params);
+    let i = 0;
+    while i < n {
+        let p: Parameter = list_get(params, i);
+        list_push(exp_m, tensor_zeros(p.data.shape, p.data.dtype_id));
+        list_push(exp_v, tensor_zeros(p.data.shape, p.data.dtype_id));
+        i = i + 1;
+    }
+    return new Adam(params, lr, beta1, beta2, eps, weight_decay, exp_m, exp_v, 0, 1.0, 1.0);
+}
+
+impl Optimizer for Adam {
+    func step() {
+        this.step_count = this.step_count + 1;
+        this.beta1_t = this.beta1_t * this.beta1;
+        this.beta2_t = this.beta2_t * this.beta2;
+        let bias_corr1 = 1.0 - this.beta1_t;
+        let bias_corr2 = 1.0 - this.beta2_t;
+
+        let n = list_length(this.params);
+        let i = 0;
+        while i < n {
+            let p: Parameter = list_get(this.params, i);
+            if p.requires_grad && p.data != null && p.data.grad != null {
+                let t = p.data;
+                let g = t.grad;
+                let exp_m: Tensor = list_get(this.exp_avg, i);
+                let exp_v: Tensor = list_get(this.exp_avg_sq, i);
+                let num = t.numel();
+                let j = 0;
+                while j < num {
+                    let p_val = tensor_storage_read_float(t.storage, t.offset + j, t.dtype_id);
+                    let g_val = tensor_storage_read_float(g.storage, g.offset + j, g.dtype_id);
+                    if this.weight_decay != 0.0 {
+                        g_val = g_val + (this.weight_decay * p_val);
+                    }
+                    let m_val = tensor_storage_read_float(exp_m.storage, exp_m.offset + j, exp_m.dtype_id);
+                    let v_val = tensor_storage_read_float(exp_v.storage, exp_v.offset + j, exp_v.dtype_id);
+
+                    m_val = (this.beta1 * m_val) + ((1.0 - this.beta1) * g_val);
+                    v_val = (this.beta2 * v_val) + ((1.0 - this.beta2) * g_val * g_val);
+
+                    tensor_storage_write_float(exp_m.storage, exp_m.offset + j, exp_m.dtype_id, m_val);
+                    tensor_storage_write_float(exp_v.storage, exp_v.offset + j, exp_v.dtype_id, v_val);
+
+                    let m_hat = m_val / bias_corr1;
+                    let v_hat = v_val / bias_corr2;
+
+                    let update = (this.lr * m_hat) / (torch_sqrt(v_hat) + this.eps);
+                    tensor_storage_write_float(t.storage, t.offset + j, t.dtype_id, p_val - update);
+                    j = j + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    func zero_grad() {
+        let n = list_length(this.params);
+        let i = 0;
+        while i < n {
+            let p: Parameter = list_get(this.params, i);
+            p.zero_grad();
+            i = i + 1;
+        }
+    }
+
+    func get_lr() -> float {
+        return this.lr;
+    }
+
+    func set_lr(new_lr: float) {
+        this.lr = new_lr;
+    }
+}
+
+// ------------------------------------------------------------------------------
+// 3. AdamW (Decoupled Weight Decay Adam)
+// ------------------------------------------------------------------------------
+
+class AdamW {
+    params: list,
+    lr: float,
+    beta1: float,
+    beta2: float,
+    eps: float,
+    weight_decay: float,
+    exp_avg: list,
+    exp_avg_sq: list,
+    step_count: int,
+    beta1_t: float,
+    beta2_t: float
+}
+
+func optim_adamw(params: list, lr: float, beta1: float, beta2: float, eps: float, weight_decay: float) -> AdamW {
+    let exp_m = list_new();
+    let exp_v = list_new();
+    let n = list_length(params);
+    let i = 0;
+    while i < n {
+        let p: Parameter = list_get(params, i);
+        list_push(exp_m, tensor_zeros(p.data.shape, p.data.dtype_id));
+        list_push(exp_v, tensor_zeros(p.data.shape, p.data.dtype_id));
+        i = i + 1;
+    }
+    return new AdamW(params, lr, beta1, beta2, eps, weight_decay, exp_m, exp_v, 0, 1.0, 1.0);
+}
+
+impl Optimizer for AdamW {
+    func step() {
+        this.step_count = this.step_count + 1;
+        this.beta1_t = this.beta1_t * this.beta1;
+        this.beta2_t = this.beta2_t * this.beta2;
+        let bias_corr1 = 1.0 - this.beta1_t;
+        let bias_corr2 = 1.0 - this.beta2_t;
+
+        let n = list_length(this.params);
+        let i = 0;
+        while i < n {
+            let p: Parameter = list_get(this.params, i);
+            if p.requires_grad && p.data != null && p.data.grad != null {
+                let t = p.data;
+                let g = t.grad;
+                let exp_m: Tensor = list_get(this.exp_avg, i);
+                let exp_v: Tensor = list_get(this.exp_avg_sq, i);
+                let num = t.numel();
+                let j = 0;
+                while j < num {
+                    let p_val = tensor_storage_read_float(t.storage, t.offset + j, t.dtype_id);
+                    let g_val = tensor_storage_read_float(g.storage, g.offset + j, g.dtype_id);
+
+                    // Decoupled weight decay: theta_t+1 = theta_t - lr * weight_decay * theta_t
+                    if this.weight_decay != 0.0 {
+                        p_val = p_val * (1.0 - (this.lr * this.weight_decay));
+                    }
+
+                    let m_val = tensor_storage_read_float(exp_m.storage, exp_m.offset + j, exp_m.dtype_id);
+                    let v_val = tensor_storage_read_float(exp_v.storage, exp_v.offset + j, exp_v.dtype_id);
+
+                    m_val = (this.beta1 * m_val) + ((1.0 - this.beta1) * g_val);
+                    v_val = (this.beta2 * v_val) + ((1.0 - this.beta2) * g_val * g_val);
+
+                    tensor_storage_write_float(exp_m.storage, exp_m.offset + j, exp_m.dtype_id, m_val);
+                    tensor_storage_write_float(exp_v.storage, exp_v.offset + j, exp_v.dtype_id, v_val);
+
+                    let m_hat = m_val / bias_corr1;
+                    let v_hat = v_val / bias_corr2;
+
+                    let update = (this.lr * m_hat) / (torch_sqrt(v_hat) + this.eps);
+                    tensor_storage_write_float(t.storage, t.offset + j, t.dtype_id, p_val - update);
+                    j = j + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    func zero_grad() {
+        let n = list_length(this.params);
+        let i = 0;
+        while i < n {
+            let p: Parameter = list_get(this.params, i);
+            p.zero_grad();
+            i = i + 1;
+        }
+    }
+
+    func get_lr() -> float {
+        return this.lr;
+    }
+
+    func set_lr(new_lr: float) {
+        this.lr = new_lr;
+    }
+}
+
+// ------------------------------------------------------------------------------
+// 4. RMSprop
+// ------------------------------------------------------------------------------
+
+class RMSprop {
+    params: list,
+    lr: float,
+    alpha: float,
+    eps: float,
+    weight_decay: float,
+    momentum: float,
+    square_avg: list,
+    momentum_buffer: list,
+    step_count: int
+}
+
+func optim_rmsprop(params: list, lr: float, alpha: float, eps: float, weight_decay: float, momentum: float) -> RMSprop {
+    let sq_avg = list_new();
+    let mom_buf = list_new();
+    let n = list_length(params);
+    let i = 0;
+    while i < n {
+        let p: Parameter = list_get(params, i);
+        list_push(sq_avg, tensor_zeros(p.data.shape, p.data.dtype_id));
+        list_push(mom_buf, tensor_zeros(p.data.shape, p.data.dtype_id));
+        i = i + 1;
+    }
+    return new RMSprop(params, lr, alpha, eps, weight_decay, momentum, sq_avg, mom_buf, 0);
+}
+
+impl Optimizer for RMSprop {
+    func step() {
+        this.step_count = this.step_count + 1;
+        let n = list_length(this.params);
+        let i = 0;
+        while i < n {
+            let p: Parameter = list_get(this.params, i);
+            if p.requires_grad && p.data != null && p.data.grad != null {
+                let t = p.data;
+                let g = t.grad;
+                let sq: Tensor = list_get(this.square_avg, i);
+                let mom: Tensor = list_get(this.momentum_buffer, i);
+                let num = t.numel();
+                let j = 0;
+                while j < num {
+                    let p_val = tensor_storage_read_float(t.storage, t.offset + j, t.dtype_id);
+                    let g_val = tensor_storage_read_float(g.storage, g.offset + j, g.dtype_id);
+                    if this.weight_decay != 0.0 {
+                        g_val = g_val + (this.weight_decay * p_val);
+                    }
+                    let sq_val = tensor_storage_read_float(sq.storage, sq.offset + j, sq.dtype_id);
+                    sq_val = (this.alpha * sq_val) + ((1.0 - this.alpha) * g_val * g_val);
+                    tensor_storage_write_float(sq.storage, sq.offset + j, sq.dtype_id, sq_val);
+
+                    let avg = torch_sqrt(sq_val) + this.eps;
+                    if this.momentum > 0.0 {
+                        let m_val = tensor_storage_read_float(mom.storage, mom.offset + j, mom.dtype_id);
+                        m_val = (this.momentum * m_val) + (g_val / avg);
+                        tensor_storage_write_float(mom.storage, mom.offset + j, mom.dtype_id, m_val);
+                        p_val = p_val - (this.lr * m_val);
+                    } else {
+                        p_val = p_val - (this.lr * g_val / avg);
+                    }
+                    tensor_storage_write_float(t.storage, t.offset + j, t.dtype_id, p_val);
+                    j = j + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    func zero_grad() {
+        let n = list_length(this.params);
+        let i = 0;
+        while i < n {
+            let p: Parameter = list_get(this.params, i);
+            p.zero_grad();
+            i = i + 1;
+        }
+    }
+
+    func get_lr() -> float {
+        return this.lr;
+    }
+
+    func set_lr(new_lr: float) {
+        this.lr = new_lr;
+    }
+}
+
+// ------------------------------------------------------------------------------
+// 5. Adagrad
+// ------------------------------------------------------------------------------
+
+class Adagrad {
+    params: list,
+    lr: float,
+    eps: float,
+    weight_decay: float,
+    sum_sq: list,
+    step_count: int
+}
+
+func optim_adagrad(params: list, lr: float, eps: float, weight_decay: float) -> Adagrad {
+    let s_sq = list_new();
+    let n = list_length(params);
+    let i = 0;
+    while i < n {
+        let p: Parameter = list_get(params, i);
+        list_push(s_sq, tensor_zeros(p.data.shape, p.data.dtype_id));
+        i = i + 1;
+    }
+    return new Adagrad(params, lr, eps, weight_decay, s_sq, 0);
+}
+
+impl Optimizer for Adagrad {
+    func step() {
+        this.step_count = this.step_count + 1;
+        let n = list_length(this.params);
+        let i = 0;
+        while i < n {
+            let p: Parameter = list_get(this.params, i);
+            if p.requires_grad && p.data != null && p.data.grad != null {
+                let t = p.data;
+                let g = t.grad;
+                let sum_sq: Tensor = list_get(this.sum_sq, i);
+                let num = t.numel();
+                let j = 0;
+                while j < num {
+                    let p_val = tensor_storage_read_float(t.storage, t.offset + j, t.dtype_id);
+                    let g_val = tensor_storage_read_float(g.storage, g.offset + j, g.dtype_id);
+                    if this.weight_decay != 0.0 {
+                        g_val = g_val + (this.weight_decay * p_val);
+                    }
+                    let s_val = tensor_storage_read_float(sum_sq.storage, sum_sq.offset + j, sum_sq.dtype_id);
+                    s_val = s_val + (g_val * g_val);
+                    tensor_storage_write_float(sum_sq.storage, sum_sq.offset + j, sum_sq.dtype_id, s_val);
+
+                    let std = torch_sqrt(s_val) + this.eps;
+                    p_val = p_val - (this.lr * g_val / std);
+                    tensor_storage_write_float(t.storage, t.offset + j, t.dtype_id, p_val);
+                    j = j + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    func zero_grad() {
+        let n = list_length(this.params);
+        let i = 0;
+        while i < n {
+            let p: Parameter = list_get(this.params, i);
+            p.zero_grad();
+            i = i + 1;
+        }
+    }
+
+    func get_lr() -> float {
+        return this.lr;
+    }
+
+    func set_lr(new_lr: float) {
+        this.lr = new_lr;
+    }
+}
+
+// ==============================================================================
+// 22. Learning Rate Schedulers (StepLR, CosineAnnealingLR)
+// ==============================================================================
+
+class StepLR {
+    optimizer: Optimizer,
+    step_size: int,
+    gamma: float,
+    last_epoch: int
+}
+
+func optim_step_lr(optimizer: Optimizer, step_size: int, gamma: float) -> StepLR {
+    return new StepLR(optimizer, step_size, gamma, 0);
+}
+
+impl StepLR {
+    func step() -> float {
+        this.last_epoch = this.last_epoch + 1;
+        if this.last_epoch % this.step_size == 0 {
+            let cur_lr = this.optimizer.get_lr();
+            let new_lr = cur_lr * this.gamma;
+            this.optimizer.set_lr(new_lr);
+        }
+        return this.optimizer.get_lr();
+    }
+
+    func get_last_lr() -> float {
+        return this.optimizer.get_lr();
+    }
+}
+
+class CosineAnnealingLR {
+    optimizer: Optimizer,
+    T_max: int,
+    eta_min: float,
+    last_epoch: int,
+    base_lr: float
+}
+
+func optim_cosine_annealing_lr(optimizer: Optimizer, T_max: int, eta_min: float) -> CosineAnnealingLR {
+    return new CosineAnnealingLR(optimizer, T_max, eta_min, 0, optimizer.get_lr());
+}
+
+impl CosineAnnealingLR {
+    func step() -> float {
+        this.last_epoch = this.last_epoch + 1;
+        let pi = 3.141592653589793;
+        let frac = int_to_float(this.last_epoch) / int_to_float(this.T_max);
+        let cos_val = torch_cos(frac * pi);
+        let new_lr = this.eta_min + (0.5 * (this.base_lr - this.eta_min) * (1.0 + cos_val));
+        this.optimizer.set_lr(new_lr);
+        return new_lr;
+    }
+
+    func get_last_lr() -> float {
+        return this.optimizer.get_lr();
+    }
+}
+
+// ==============================================================================
+// 23. Optim Namespace Singleton (optim.SGD, optim.Adam, optim.StepLR, etc.)
+// ==============================================================================
+
+class Optim {}
+
+func optim_init() -> Optim {
+    return new Optim();
+}
+
+impl Optim {
+    func SGD(params: list, lr: float, momentum: float, weight_decay: float, dampening: float, nesterov: bool) -> SGD {
+        return optim_sgd(params, lr, momentum, weight_decay, dampening, nesterov);
+    }
+
+    func Adam(params: list, lr: float, beta1: float, beta2: float, eps: float, weight_decay: float) -> Adam {
+        return optim_adam(params, lr, beta1, beta2, eps, weight_decay);
+    }
+
+    func AdamW(params: list, lr: float, beta1: float, beta2: float, eps: float, weight_decay: float) -> AdamW {
+        return optim_adamw(params, lr, beta1, beta2, eps, weight_decay);
+    }
+
+    func RMSprop(params: list, lr: float, alpha: float, eps: float, weight_decay: float, momentum: float) -> RMSprop {
+        return optim_rmsprop(params, lr, alpha, eps, weight_decay, momentum);
+    }
+
+    func Adagrad(params: list, lr: float, eps: float, weight_decay: float) -> Adagrad {
+        return optim_adagrad(params, lr, eps, weight_decay);
+    }
+
+    func StepLR(optimizer: Optimizer, step_size: int, gamma: float) -> StepLR {
+        return optim_step_lr(optimizer, step_size, gamma);
+    }
+
+    func CosineAnnealingLR(optimizer: Optimizer, T_max: int, eta_min: float) -> CosineAnnealingLR {
+        return optim_cosine_annealing_lr(optimizer, T_max, eta_min);
     }
 }

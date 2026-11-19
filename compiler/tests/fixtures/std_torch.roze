@@ -935,6 +935,376 @@ func test_suite_23_nn_namespace_and_training() {
     println("SUITE 23 PASSED: roze-torch nn namespace singleton and end-to-end backpropagation");
 }
 
+// -----------------------------------------------------------------------------
+// Suite 24: Loss Functions & Reverse-Mode Backprop (MSE, L1, BCE, CrossEntropy)
+// -----------------------------------------------------------------------------
+func test_suite_24_loss_functions() {
+    let nn = nn_init();
+
+    // 1. MSELoss
+    let mse_fn = nn.MSELoss();
+    let p_mse = tensor_zeros_1d(2);
+    p_mse.set_1d(0, 2.0);
+    p_mse.set_1d(1, 3.0);
+    p_mse.set_requires_grad(true);
+
+    let t_mse = tensor_zeros_1d(2);
+    t_mse.set_1d(0, 1.0);
+    t_mse.set_1d(1, 5.0);
+
+    let l_mse = mse_fn.forward(p_mse, t_mse);
+    assert_true(approx_eq(l_mse.item(), 2.5, 0.001), "MSELoss value mismatch");
+    l_mse.backward();
+    assert_true(p_mse.grad != null, "MSELoss backward must populate grad");
+    assert_true(approx_eq(p_mse.grad.get_1d(0), 1.0, 0.001), "MSE grad[0] mismatch");
+    assert_true(approx_eq(p_mse.grad.get_1d(1), -2.0, 0.001), "MSE grad[1] mismatch");
+
+    // 2. L1Loss
+    let l1_fn = nn.L1Loss();
+    let p_l1 = tensor_zeros_1d(2);
+    p_l1.set_1d(0, 2.0);
+    p_l1.set_1d(1, 3.0);
+    p_l1.set_requires_grad(true);
+
+    let t_l1 = tensor_zeros_1d(2);
+    t_l1.set_1d(0, 1.0);
+    t_l1.set_1d(1, 5.0);
+
+    let l_l1 = l1_fn.forward(p_l1, t_l1);
+    assert_true(approx_eq(l_l1.item(), 1.5, 0.001), "L1Loss value mismatch");
+    l_l1.backward();
+    assert_true(p_l1.grad != null, "L1Loss backward must populate grad");
+    assert_true(approx_eq(p_l1.grad.get_1d(0), 0.5, 0.001), "L1 grad[0] mismatch");
+    assert_true(approx_eq(p_l1.grad.get_1d(1), -0.5, 0.001), "L1 grad[1] mismatch");
+
+    // 3. BCEWithLogitsLoss
+    let bce_fn = nn.BCEWithLogitsLoss();
+    let p_bce = tensor_zeros_1d(2);
+    p_bce.set_1d(0, 0.0);
+    p_bce.set_1d(1, 2.0);
+    p_bce.set_requires_grad(true);
+
+    let t_bce = tensor_zeros_1d(2);
+    t_bce.set_1d(0, 1.0);
+    t_bce.set_1d(1, 0.0);
+
+    let l_bce = bce_fn.forward(p_bce, t_bce);
+    assert_true(approx_eq(l_bce.item(), 1.41, 0.05), "BCEWithLogitsLoss value mismatch");
+    l_bce.backward();
+    assert_true(p_bce.grad != null, "BCE backward must populate grad");
+    assert_true(approx_eq(p_bce.grad.get_1d(0), -0.25, 0.01), "BCE grad[0] mismatch");
+    assert_true(approx_eq(p_bce.grad.get_1d(1), 0.4404, 0.01), "BCE grad[1] mismatch");
+
+    // 4. CrossEntropyLoss (with Class Index Target)
+    let ce_fn = nn.CrossEntropyLoss();
+    let p_ce = tensor_zeros_2d(1, 3);
+    p_ce.set_2d(0, 0, 2.0);
+    p_ce.set_2d(0, 1, 1.0);
+    p_ce.set_2d(0, 2, 0.1);
+    p_ce.set_requires_grad(true);
+
+    let t_ce = tensor_zeros_1d(1);
+    t_ce.set_1d(0, 0.0);
+
+    let l_ce = ce_fn.forward(p_ce, t_ce);
+    assert_true(approx_eq(l_ce.item(), 0.417, 0.05), "CrossEntropyLoss value mismatch");
+    l_ce.backward();
+    assert_true(p_ce.grad != null, "CrossEntropy backward must populate grad");
+    assert_true(approx_eq(p_ce.grad.get_2d(0, 0), -0.341, 0.05), "CE grad[0] mismatch");
+    assert_true(approx_eq(p_ce.grad.get_2d(0, 1), 0.242, 0.05), "CE grad[1] mismatch");
+    assert_true(approx_eq(p_ce.grad.get_2d(0, 2), 0.099, 0.05), "CE grad[2] mismatch");
+
+    // Tensor method loss wrappers
+    let p_m = tensor_zeros_1d(2);
+    p_m.set_1d(0, 5.0);
+    let t_m = tensor_zeros_1d(2);
+    t_m.set_1d(0, 1.0);
+    let tm_loss = p_m.l1_loss(t_m);
+    assert_true(approx_eq(tm_loss.item(), 2.0, 0.001), "Tensor.l1_loss wrapper failed");
+
+    println("SUITE 24 PASSED: roze-torch numerical loss functions and autograd backpropagation (MSE, L1, BCE, CrossEntropy)");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 25: SGD Optimizer (Momentum, Dampening, Nesterov, Decoupled Weight Decay)
+// -----------------------------------------------------------------------------
+func test_suite_25_sgd_momentum_nesterov() {
+    let optim = optim_init();
+    let nn = nn_init();
+
+    // 1. Basic SGD
+    let w1 = tensor_zeros_1d(2);
+    w1.set_1d(0, 10.0);
+    w1.set_1d(1, 20.0);
+    let p1 = nn.Parameter(w1);
+
+    let params1 = list_new();
+    list_push(params1, p1);
+
+    let sgd1 = optim.SGD(params1, 0.1, 0.0, 0.0, 0.0, false);
+    assert_true(approx_eq(sgd1.get_lr(), 0.1, 0.001), "SGD get_lr mismatch");
+
+    let g1 = tensor_zeros_1d(2);
+    g1.set_1d(0, 1.0);
+    g1.set_1d(1, 2.0);
+    p1.data.grad = g1;
+
+    sgd1.step();
+    assert_true(approx_eq(p1.data.get_1d(0), 9.9, 0.001), "SGD step 1 w[0] mismatch");
+    assert_true(approx_eq(p1.data.get_1d(1), 19.8, 0.001), "SGD step 1 w[1] mismatch");
+
+    sgd1.zero_grad();
+    assert_true(p1.data.grad == null, "SGD zero_grad failed");
+
+    // 2. SGD with Momentum (momentum = 0.9, weight_decay = 0.01)
+    let w2 = tensor_zeros_1d(2);
+    w2.set_1d(0, 10.0);
+    w2.set_1d(1, 20.0);
+    let p2 = nn.Parameter(w2);
+
+    let params2 = list_new();
+    list_push(params2, p2);
+
+    let sgd2 = optim.SGD(params2, 0.1, 0.9, 0.01, 0.0, false);
+
+    let g2_1 = tensor_zeros_1d(2);
+    g2_1.set_1d(0, 1.0);
+    g2_1.set_1d(1, 2.0);
+    p2.data.grad = g2_1;
+
+    sgd2.step();
+    assert_true(approx_eq(p2.data.get_1d(0), 9.89, 0.001), "SGD Momentum step 1 mismatch");
+    assert_true(approx_eq(p2.data.get_1d(1), 19.78, 0.001), "SGD Momentum step 1 mismatch");
+
+    let g2_2 = tensor_zeros_1d(2);
+    g2_2.set_1d(0, 1.0);
+    g2_2.set_1d(1, 2.0);
+    p2.data.grad = g2_2;
+
+    sgd2.step();
+    assert_true(approx_eq(p2.data.get_1d(0), 9.6811, 0.01), "SGD Momentum step 2 mismatch");
+
+    // 3. SGD with Nesterov
+    let w3 = tensor_zeros_1d(1);
+    w3.set_1d(0, 5.0);
+    let p3 = nn.Parameter(w3);
+    let params3 = list_new();
+    list_push(params3, p3);
+
+    let sgd3 = optim.SGD(params3, 0.1, 0.9, 0.0, 0.0, true);
+    let g3 = tensor_zeros_1d(1);
+    g3.set_1d(0, 1.0);
+    p3.data.grad = g3;
+
+    sgd3.step();
+    assert_true(approx_eq(p3.data.get_1d(0), 4.81, 0.001), "SGD Nesterov step mismatch");
+
+    println("SUITE 25 PASSED: roze-torch SGD optimizer with momentum, dampening, Nesterov and weight decay");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 26: Adam & AdamW Optimizers (Decoupled Weight Decay Parity)
+// -----------------------------------------------------------------------------
+func test_suite_26_adam_and_adamw() {
+    let optim = optim_init();
+    let nn = nn_init();
+
+    // 1. Adam Optimizer
+    let wa = tensor_zeros_1d(2);
+    wa.set_1d(0, 1.0);
+    wa.set_1d(1, 2.0);
+    let pa = nn.Parameter(wa);
+    let params_a = list_new();
+    list_push(params_a, pa);
+
+    let adam = optim.Adam(params_a, 0.001, 0.9, 0.999, 0.00000001, 0.0);
+    assert_true(approx_eq(adam.get_lr(), 0.001, 0.00001), "Adam get_lr mismatch");
+
+    let ga = tensor_zeros_1d(2);
+    ga.set_1d(0, 0.1);
+    ga.set_1d(1, 0.2);
+    pa.data.grad = ga;
+
+    adam.step();
+    assert_true(approx_eq(pa.data.get_1d(0), 0.999, 0.001), "Adam step 1 w[0] mismatch");
+    assert_true(approx_eq(pa.data.get_1d(1), 1.999, 0.001), "Adam step 1 w[1] mismatch");
+
+    // 2. AdamW Optimizer (Decoupled Weight Decay)
+    let waw = tensor_zeros_1d(2);
+    waw.set_1d(0, 1.0);
+    waw.set_1d(1, 2.0);
+    let paw = nn.Parameter(waw);
+    let params_aw = list_new();
+    list_push(params_aw, paw);
+
+    let adamw = optim.AdamW(params_aw, 0.001, 0.9, 0.999, 0.00000001, 0.1);
+
+    let gaw = tensor_zeros_1d(2);
+    gaw.set_1d(0, 0.1);
+    gaw.set_1d(1, 0.2);
+    paw.data.grad = gaw;
+
+    adamw.step();
+    assert_true(approx_eq(paw.data.get_1d(0), 0.9989, 0.001), "AdamW step 1 w[0] mismatch");
+    assert_true(approx_eq(paw.data.get_1d(1), 1.9988, 0.001), "AdamW step 1 w[1] mismatch");
+
+    println("SUITE 26 PASSED: roze-torch Adam and AdamW optimizers with decoupled weight decay parity");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 27: RMSprop & Adagrad Optimizers
+// -----------------------------------------------------------------------------
+func test_suite_27_rmsprop_and_adagrad() {
+    let optim = optim_init();
+    let nn = nn_init();
+
+    // 1. Adagrad Optimizer
+    let w_ada = tensor_zeros_1d(2);
+    w_ada.set_1d(0, 3.0);
+    w_ada.set_1d(1, 4.0);
+    let p_ada = nn.Parameter(w_ada);
+    let params_ada = list_new();
+    list_push(params_ada, p_ada);
+
+    let adagrad = optim.Adagrad(params_ada, 0.1, 0.00000001, 0.0);
+    let g_ada = tensor_zeros_1d(2);
+    g_ada.set_1d(0, 2.0);
+    g_ada.set_1d(1, 3.0);
+    p_ada.data.grad = g_ada;
+
+    adagrad.step();
+    assert_true(approx_eq(p_ada.data.get_1d(0), 2.9, 0.001), "Adagrad step 1 w[0] mismatch");
+    assert_true(approx_eq(p_ada.data.get_1d(1), 3.9, 0.001), "Adagrad step 1 w[1] mismatch");
+
+    // 2. RMSprop Optimizer
+    let w_rms = tensor_zeros_1d(1);
+    w_rms.set_1d(0, 5.0);
+    let p_rms = nn.Parameter(w_rms);
+    let params_rms = list_new();
+    list_push(params_rms, p_rms);
+
+    let rmsprop = optim.RMSprop(params_rms, 0.01, 0.99, 0.00000001, 0.0, 0.0);
+    let g_rms = tensor_zeros_1d(1);
+    g_rms.set_1d(0, 1.0);
+    p_rms.data.grad = g_rms;
+
+    rmsprop.step();
+    assert_true(approx_eq(p_rms.data.get_1d(0), 4.9, 0.001), "RMSprop step 1 w[0] mismatch");
+
+    println("SUITE 27 PASSED: roze-torch RMSprop and Adagrad adaptive optimizers");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 28: Learning Rate Schedulers (StepLR & CosineAnnealingLR)
+// -----------------------------------------------------------------------------
+func test_suite_28_learning_rate_schedulers() {
+    let optim = optim_init();
+    let nn = nn_init();
+
+    // 1. StepLR
+    let w1 = tensor_zeros_1d(1);
+    let p1 = nn.Parameter(w1);
+    let params1 = list_new();
+    list_push(params1, p1);
+
+    let opt1 = optim.SGD(params1, 0.1, 0.0, 0.0, 0.0, false);
+    let scheduler_step = optim.StepLR(opt1, 2, 0.5);
+
+    assert_true(approx_eq(opt1.get_lr(), 0.1, 0.0001), "Initial LR must be 0.1");
+
+    let lr_ep1 = scheduler_step.step();
+    assert_true(approx_eq(lr_ep1, 0.1, 0.0001), "Epoch 1 LR must remain 0.1");
+
+    let lr_ep2 = scheduler_step.step();
+    assert_true(approx_eq(lr_ep2, 0.05, 0.0001), "Epoch 2 LR must drop to 0.05");
+
+    let lr_ep3 = scheduler_step.step();
+    assert_true(approx_eq(lr_ep3, 0.05, 0.0001), "Epoch 3 LR must remain 0.05");
+
+    let lr_ep4 = scheduler_step.step();
+    assert_true(approx_eq(lr_ep4, 0.025, 0.0001), "Epoch 4 LR must drop to 0.025");
+
+    // 2. CosineAnnealingLR
+    let w2 = tensor_zeros_1d(1);
+    let p2 = nn.Parameter(w2);
+    let params2 = list_new();
+    list_push(params2, p2);
+
+    let opt2 = optim.SGD(params2, 0.1, 0.0, 0.0, 0.0, false);
+    let scheduler_cos = optim.CosineAnnealingLR(opt2, 4, 0.01);
+
+    scheduler_cos.step();
+    let lr_cos_ep2 = scheduler_cos.step();
+    assert_true(approx_eq(lr_cos_ep2, 0.055, 0.001), "Cosine Annealing mid-cycle LR mismatch");
+
+    scheduler_cos.step();
+    let lr_cos_ep4 = scheduler_cos.step();
+    assert_true(approx_eq(lr_cos_ep4, 0.01, 0.001), "Cosine Annealing end-cycle LR mismatch");
+
+    println("SUITE 28 PASSED: roze-torch learning rate schedulers (StepLR and CosineAnnealingLR)");
+}
+
+// -----------------------------------------------------------------------------
+// Suite 29: End-to-End Training Pipeline (Model + Loss + AdamW + CosineAnnealingLR)
+// -----------------------------------------------------------------------------
+func test_suite_29_end_to_end_training_pipeline() {
+    let nn = nn_init();
+    let optim = optim_init();
+
+    let layers = list_new();
+    let l1 = nn.Linear(2, 4, true);
+    l1.weight.set_2d(0, 0, 0.5); l1.weight.set_2d(0, 1, -0.3);
+    l1.weight.set_2d(0, 2, 0.2); l1.weight.set_2d(0, 3, 0.4);
+    l1.weight.set_2d(1, 0, -0.4); l1.weight.set_2d(1, 1, 0.6);
+    l1.weight.set_2d(1, 2, -0.1); l1.weight.set_2d(1, 3, 0.3);
+
+    let l2 = nn.Linear(4, 1, true);
+    l2.weight.set_2d(0, 0, 0.4);
+    l2.weight.set_2d(1, 0, -0.5);
+    l2.weight.set_2d(2, 0, 0.3);
+    l2.weight.set_2d(3, 0, 0.2);
+
+    list_push(layers, l1);
+    list_push(layers, nn.ReLU());
+    list_push(layers, l2);
+
+    let model = nn.Sequential(layers);
+
+    let loss_fn = nn.BCEWithLogitsLoss();
+    let optimizer = optim.AdamW(model.parameters(), 0.05, 0.9, 0.999, 0.00000001, 0.01);
+    let scheduler = optim.CosineAnnealingLR(optimizer, 15, 0.005);
+
+    let x = tensor_zeros_2d(2, 2);
+    x.set_2d(0, 0, 1.0); x.set_2d(0, 1, 0.5);
+    x.set_2d(1, 0, -0.5); x.set_2d(1, 1, 1.0);
+
+    let y = tensor_zeros_2d(2, 1);
+    y.set_2d(0, 0, 1.0);
+    y.set_2d(1, 0, 0.0);
+
+    let initial_logits = model.forward(x);
+    let initial_loss_t = loss_fn.forward(initial_logits, y);
+    let initial_loss = initial_loss_t.item();
+
+    let epoch = 0;
+    while epoch < 15 {
+        optimizer.zero_grad();
+        let logits = model.forward(x);
+        let loss = loss_fn.forward(logits, y);
+        loss.backward();
+        optimizer.step();
+        scheduler.step();
+        epoch = epoch + 1;
+    }
+
+    let final_logits = model.forward(x);
+    let final_loss_t = loss_fn.forward(final_logits, y);
+    let final_loss = final_loss_t.item();
+
+    assert_true(final_loss < initial_loss, "Training loop strictly decreased BCE loss");
+    println("SUITE 29 PASSED: roze-torch end-to-end training pipeline with model, loss, optimizer and scheduler");
+}
+
 func main() {
     println("==================================================================");
     println("  ROZE-TORCH N-DIMENSIONAL TENSOR ENGINE & AUTOGRAD TAPE SUITE    ");
@@ -967,6 +1337,14 @@ func main() {
     test_suite_21_nn_embedding_and_attention();
     test_suite_22_nn_sequential_and_activations();
     test_suite_23_nn_namespace_and_training();
+
+    // M8-T04 Suites
+    test_suite_24_loss_functions();
+    test_suite_25_sgd_momentum_nesterov();
+    test_suite_26_adam_and_adamw();
+    test_suite_27_rmsprop_and_adagrad();
+    test_suite_28_learning_rate_schedulers();
+    test_suite_29_end_to_end_training_pipeline();
 
     println("==================================================================");
     println("ALL SUITES COMPLETED: Roze-Torch N-Dimensional Tensor Engine 100% OPERATIONAL");

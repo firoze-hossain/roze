@@ -3069,6 +3069,20 @@ impl TypeChecker {
             }
         }
 
+        // Pre-register all trait names so class field types or method signatures
+        // referencing traits resolve to Type::Trait instead of Type::Unknown.
+        for raw_stmt in &program_statements {
+            let stmt = unwrap_annotated_stmt(raw_stmt);
+            if let Statement::TraitDecl { name, associated_types, location, .. } = stmt {
+                self.traits.insert(name.clone(), TraitDef {
+                    name: name.clone(),
+                    associated_types: associated_types.clone(),
+                    methods: HashMap::new(),
+                    location: location.clone(),
+                });
+            }
+        }
+
         // Pre-register all class names so mutually-referential or forward-referencing
         // class field types resolve to Type::Class instead of Type::Unknown.
         for raw_stmt in &program_statements {

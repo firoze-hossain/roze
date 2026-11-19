@@ -1167,9 +1167,434 @@ func test_suite_23_nn_namespace_and_end_to_end_backprop() {
     println("✓ NN Namespace & End-to-End Training Loop passed! Loss reduced: " + to_string(initial_loss) + " -> " + to_string(final_loss));
 }
 
+// -----------------------------------------------------------------------------
+// Test 24: Loss Functions & Reverse-Mode Backprop (MSE, L1, BCE, CrossEntropy)
+// -----------------------------------------------------------------------------
+func test_suite_24_loss_functions() {
+    println("--- Test 24: Loss Functions & Reverse-Mode Backprop ---");
+    let nn = nn_init();
+
+    // 1. MSELoss
+    let mse_fn = nn.MSELoss();
+    let p_mse = tensor_zeros_1d(2);
+    p_mse.set_1d(0, 2.0);
+    p_mse.set_1d(1, 3.0);
+    p_mse.set_requires_grad(true);
+
+    let t_mse = tensor_zeros_1d(2);
+    t_mse.set_1d(0, 1.0);
+    t_mse.set_1d(1, 5.0);
+
+    let l_mse = mse_fn.forward(p_mse, t_mse);
+    // (1^2 + (-2)^2) / 2 = 5 / 2 = 2.5
+    assert_true(approx_eq(l_mse.item(), 2.5, 0.001), "MSELoss value mismatch");
+    l_mse.backward();
+    assert_true(p_mse.grad != null, "MSELoss backward must populate grad");
+    // grad = 2/2 * (p - t) = [1.0, -2.0]
+    assert_true(approx_eq(p_mse.grad.get_1d(0), 1.0, 0.001), "MSE grad[0] mismatch");
+    assert_true(approx_eq(p_mse.grad.get_1d(1), -2.0, 0.001), "MSE grad[1] mismatch");
+
+    // 2. L1Loss
+    let l1_fn = nn.L1Loss();
+    let p_l1 = tensor_zeros_1d(2);
+    p_l1.set_1d(0, 2.0);
+    p_l1.set_1d(1, 3.0);
+    p_l1.set_requires_grad(true);
+
+    let t_l1 = tensor_zeros_1d(2);
+    t_l1.set_1d(0, 1.0);
+    t_l1.set_1d(1, 5.0);
+
+    let l_l1 = l1_fn.forward(p_l1, t_l1);
+    // (|1| + |-2|) / 2 = 1.5
+    assert_true(approx_eq(l_l1.item(), 1.5, 0.001), "L1Loss value mismatch");
+    l_l1.backward();
+    assert_true(p_l1.grad != null, "L1Loss backward must populate grad");
+    // grad = 1/2 * sgn(p - t) = [0.5, -0.5]
+    assert_true(approx_eq(p_l1.grad.get_1d(0), 0.5, 0.001), "L1 grad[0] mismatch");
+    assert_true(approx_eq(p_l1.grad.get_1d(1), -0.5, 0.001), "L1 grad[1] mismatch");
+
+    // 3. BCEWithLogitsLoss
+    let bce_fn = nn.BCEWithLogitsLoss();
+    let p_bce = tensor_zeros_1d(2);
+    p_bce.set_1d(0, 0.0);
+    p_bce.set_1d(1, 2.0);
+    p_bce.set_requires_grad(true);
+
+    let t_bce = tensor_zeros_1d(2);
+    t_bce.set_1d(0, 1.0);
+    t_bce.set_1d(1, 0.0);
+
+    let l_bce = bce_fn.forward(p_bce, t_bce);
+    // x0=0, y0=1: -log(0.5) = 0.693147
+    // x1=2, y1=0: 2 + log(1 + e^-2) = 2.126928
+    // mean = (0.693147 + 2.126928)/2 = 1.410037
+    assert_true(approx_eq(l_bce.item(), 1.41, 0.05), "BCEWithLogitsLoss value mismatch");
+    l_bce.backward();
+    assert_true(p_bce.grad != null, "BCE backward must populate grad");
+    // grad = 1/2 * (sig(x) - y):
+    // grad[0] = 0.5 * (0.5 - 1.0) = -0.25
+    // grad[1] = 0.5 * (0.8808 - 0.0) = 0.4404
+    assert_true(approx_eq(p_bce.grad.get_1d(0), -0.25, 0.01), "BCE grad[0] mismatch");
+    assert_true(approx_eq(p_bce.grad.get_1d(1), 0.4404, 0.01), "BCE grad[1] mismatch");
+
+    // 4. CrossEntropyLoss (with Class Index Target)
+    let ce_fn = nn.CrossEntropyLoss();
+    let p_ce = tensor_zeros_2d(1, 3);
+    p_ce.set_2d(0, 0, 2.0);
+    p_ce.set_2d(0, 1, 1.0);
+    p_ce.set_2d(0, 2, 0.1);
+    p_ce.set_requires_grad(true);
+
+    let t_ce = tensor_zeros_1d(1);
+    t_ce.set_1d(0, 0.0); // target class 0
+
+    let l_ce = ce_fn.forward(p_ce, t_ce);
+    // p0 = e^2 / (e^2 + e^1 + e^0.1) = 7.389 / (7.389 + 2.718 + 1.105) = 7.389 / 11.212 = 0.659
+    // loss = -ln(0.659) = 0.417
+    assert_true(approx_eq(l_ce.item(), 0.417, 0.05), "CrossEntropyLoss value mismatch");
+    l_ce.backward();
+    assert_true(p_ce.grad != null, "CrossEntropy backward must populate grad");
+    // grad = p - target:
+    // grad[0] = 0.659 - 1 = -0.341
+    // grad[1] = 0.242 - 0 = 0.242
+    // grad[2] = 0.099 - 0 = 0.099
+    assert_true(approx_eq(p_ce.grad.get_2d(0, 0), -0.341, 0.05), "CE grad[0] mismatch");
+    assert_true(approx_eq(p_ce.grad.get_2d(0, 1), 0.242, 0.05), "CE grad[1] mismatch");
+    assert_true(approx_eq(p_ce.grad.get_2d(0, 2), 0.099, 0.05), "CE grad[2] mismatch");
+
+    // Tensor method loss wrappers
+    let p_m = tensor_zeros_1d(2);
+    p_m.set_1d(0, 5.0);
+    let t_m = tensor_zeros_1d(2);
+    t_m.set_1d(0, 1.0);
+    let tm_loss = p_m.l1_loss(t_m);
+    assert_true(approx_eq(tm_loss.item(), 2.0, 0.001), "Tensor.l1_loss wrapper failed");
+
+    println("✓ Loss functions & autograd reverse-mode backprop passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 25: SGD Optimizer (Momentum, Dampening, Nesterov, Decoupled Weight Decay)
+// -----------------------------------------------------------------------------
+func test_suite_25_sgd_momentum_nesterov() {
+    println("--- Test 25: SGD Optimizer with Momentum & Nesterov ---");
+    let optim = optim_init();
+    let nn = nn_init();
+
+    // 1. Basic SGD
+    let w1 = tensor_zeros_1d(2);
+    w1.set_1d(0, 10.0);
+    w1.set_1d(1, 20.0);
+    let p1 = nn.Parameter(w1);
+
+    let params1 = list_new();
+    list_push(params1, p1);
+
+    let sgd1 = optim.SGD(params1, 0.1, 0.0, 0.0, 0.0, false);
+    assert_true(approx_eq(sgd1.get_lr(), 0.1, 0.001), "SGD get_lr mismatch");
+
+    // Set grad: [1.0, 2.0]
+    let g1 = tensor_zeros_1d(2);
+    g1.set_1d(0, 1.0);
+    g1.set_1d(1, 2.0);
+    p1.data.grad = g1;
+
+    sgd1.step();
+    // w = w - 0.1 * [1, 2] = [9.9, 19.8]
+    assert_true(approx_eq(p1.data.get_1d(0), 9.9, 0.001), "SGD step 1 w[0] mismatch");
+    assert_true(approx_eq(p1.data.get_1d(1), 19.8, 0.001), "SGD step 1 w[1] mismatch");
+
+    sgd1.zero_grad();
+    assert_true(p1.data.grad == null, "SGD zero_grad failed");
+
+    // 2. SGD with Momentum (momentum = 0.9, weight_decay = 0.01)
+    let w2 = tensor_zeros_1d(2);
+    w2.set_1d(0, 10.0);
+    w2.set_1d(1, 20.0);
+    let p2 = nn.Parameter(w2);
+
+    let params2 = list_new();
+    list_push(params2, p2);
+
+    let sgd2 = optim.SGD(params2, 0.1, 0.9, 0.01, 0.0, false);
+
+    // Step 1:
+    let g2_1 = tensor_zeros_1d(2);
+    g2_1.set_1d(0, 1.0);
+    g2_1.set_1d(1, 2.0);
+    p2.data.grad = g2_1;
+
+    sgd2.step();
+    // g_eff = g + 0.01*w = [1.1, 2.2]
+    // v_1 = [1.1, 2.2]
+    // w = w - 0.1 * [1.1, 2.2] = [9.89, 19.78]
+    assert_true(approx_eq(p2.data.get_1d(0), 9.89, 0.001), "SGD Momentum step 1 mismatch");
+    assert_true(approx_eq(p2.data.get_1d(1), 19.78, 0.001), "SGD Momentum step 1 mismatch");
+
+    // Step 2:
+    let g2_2 = tensor_zeros_1d(2);
+    g2_2.set_1d(0, 1.0);
+    g2_2.set_1d(1, 2.0);
+    p2.data.grad = g2_2;
+
+    sgd2.step();
+    // v_2 = 0.9 * [1.1, 2.2] + [1.0 + 0.01*9.89, 2.0 + 0.01*19.78]
+    // v_2[0] = 0.99 + 1.0989 = 2.0889
+    // w[0] = 9.89 - 0.1 * 2.0889 = 9.6811
+    assert_true(approx_eq(p2.data.get_1d(0), 9.6811, 0.01), "SGD Momentum step 2 mismatch");
+
+    // 3. SGD with Nesterov
+    let w3 = tensor_zeros_1d(1);
+    w3.set_1d(0, 5.0);
+    let p3 = nn.Parameter(w3);
+    let params3 = list_new();
+    list_push(params3, p3);
+
+    let sgd3 = optim.SGD(params3, 0.1, 0.9, 0.0, 0.0, true);
+    let g3 = tensor_zeros_1d(1);
+    g3.set_1d(0, 1.0);
+    p3.data.grad = g3;
+
+    sgd3.step();
+    // Step 1: v_1 = 1.0. d = g + 0.9 * v_1 = 1.0 + 0.9 = 1.9.
+    // w = 5.0 - 0.1 * 1.9 = 4.81
+    assert_true(approx_eq(p3.data.get_1d(0), 4.81, 0.001), "SGD Nesterov step mismatch");
+
+    println("✓ SGD Optimizer with Momentum & Nesterov passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 26: Adam & AdamW Optimizers (Decoupled Weight Decay Parity)
+// -----------------------------------------------------------------------------
+func test_suite_26_adam_and_adamw() {
+    println("--- Test 26: Adam & AdamW Optimizers ---");
+    let optim = optim_init();
+    let nn = nn_init();
+
+    // 1. Adam Optimizer
+    let wa = tensor_zeros_1d(2);
+    wa.set_1d(0, 1.0);
+    wa.set_1d(1, 2.0);
+    let pa = nn.Parameter(wa);
+    let params_a = list_new();
+    list_push(params_a, pa);
+
+    let adam = optim.Adam(params_a, 0.001, 0.9, 0.999, 0.00000001, 0.0);
+    assert_true(approx_eq(adam.get_lr(), 0.001, 0.00001), "Adam get_lr mismatch");
+
+    let ga = tensor_zeros_1d(2);
+    ga.set_1d(0, 0.1);
+    ga.set_1d(1, 0.2);
+    pa.data.grad = ga;
+
+    adam.step();
+    // In step 1: m1 = 0.1*g, m_hat = g. v1 = 0.001*g^2, v_hat = g^2.
+    // update = lr * g / sqrt(g^2) = lr * sgn(g) = 0.001.
+    // wa[0] = 1.0 - 0.001 = 0.999
+    // wa[1] = 2.0 - 0.001 = 1.999
+    assert_true(approx_eq(pa.data.get_1d(0), 0.999, 0.001), "Adam step 1 w[0] mismatch");
+    assert_true(approx_eq(pa.data.get_1d(1), 1.999, 0.001), "Adam step 1 w[1] mismatch");
+
+    // 2. AdamW Optimizer (Decoupled Weight Decay)
+    let waw = tensor_zeros_1d(2);
+    waw.set_1d(0, 1.0);
+    waw.set_1d(1, 2.0);
+    let paw = nn.Parameter(waw);
+    let params_aw = list_new();
+    list_push(params_aw, paw);
+
+    // weight_decay = 0.1, lr = 0.001
+    let adamw = optim.AdamW(params_aw, 0.001, 0.9, 0.999, 0.00000001, 0.1);
+
+    let gaw = tensor_zeros_1d(2);
+    gaw.set_1d(0, 0.1);
+    gaw.set_1d(1, 0.2);
+    paw.data.grad = gaw;
+
+    adamw.step();
+    // Decoupled weight decay: w = w * (1 - 0.001 * 0.1) = w * 0.9999
+    // waw[0] = 1.0 * 0.9999 - 0.001 = 0.9989
+    // waw[1] = 2.0 * 0.9999 - 0.001 = 1.9988
+    assert_true(approx_eq(paw.data.get_1d(0), 0.9989, 0.001), "AdamW step 1 w[0] mismatch");
+    assert_true(approx_eq(paw.data.get_1d(1), 1.9988, 0.001), "AdamW step 1 w[1] mismatch");
+
+    println("✓ Adam & AdamW Optimizers passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 27: RMSprop & Adagrad Optimizers
+// -----------------------------------------------------------------------------
+func test_suite_27_rmsprop_and_adagrad() {
+    println("--- Test 27: RMSprop & Adagrad Optimizers ---");
+    let optim = optim_init();
+    let nn = nn_init();
+
+    // 1. Adagrad Optimizer
+    let w_ada = tensor_zeros_1d(2);
+    w_ada.set_1d(0, 3.0);
+    w_ada.set_1d(1, 4.0);
+    let p_ada = nn.Parameter(w_ada);
+    let params_ada = list_new();
+    list_push(params_ada, p_ada);
+
+    let adagrad = optim.Adagrad(params_ada, 0.1, 0.00000001, 0.0);
+    let g_ada = tensor_zeros_1d(2);
+    g_ada.set_1d(0, 2.0);
+    g_ada.set_1d(1, 3.0);
+    p_ada.data.grad = g_ada;
+
+    adagrad.step();
+    // s[0] = 4, sqrt(s) = 2. step[0] = 0.1 * 2 / 2 = 0.1. w[0] = 3.0 - 0.1 = 2.9
+    // s[1] = 9, sqrt(s) = 3. step[1] = 0.1 * 3 / 3 = 0.1. w[1] = 4.0 - 0.1 = 3.9
+    assert_true(approx_eq(p_ada.data.get_1d(0), 2.9, 0.001), "Adagrad step 1 w[0] mismatch");
+    assert_true(approx_eq(p_ada.data.get_1d(1), 3.9, 0.001), "Adagrad step 1 w[1] mismatch");
+
+    // 2. RMSprop Optimizer
+    let w_rms = tensor_zeros_1d(1);
+    w_rms.set_1d(0, 5.0);
+    let p_rms = nn.Parameter(w_rms);
+    let params_rms = list_new();
+    list_push(params_rms, p_rms);
+
+    // alpha = 0.99, eps = 1e-8, momentum = 0.0
+    let rmsprop = optim.RMSprop(params_rms, 0.01, 0.99, 0.00000001, 0.0, 0.0);
+    let g_rms = tensor_zeros_1d(1);
+    g_rms.set_1d(0, 1.0);
+    p_rms.data.grad = g_rms;
+
+    rmsprop.step();
+    // v = 0.01 * 1.0 = 0.01. sqrt(v) = 0.1.
+    // step = 0.01 * 1.0 / 0.1 = 0.1.
+    // w = 5.0 - 0.1 = 4.9.
+    assert_true(approx_eq(p_rms.data.get_1d(0), 4.9, 0.001), "RMSprop step 1 w[0] mismatch");
+
+    println("✓ RMSprop & Adagrad Optimizers passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 28: Learning Rate Schedulers (StepLR & CosineAnnealingLR)
+// -----------------------------------------------------------------------------
+func test_suite_28_learning_rate_schedulers() {
+    println("--- Test 28: Learning Rate Schedulers ---");
+    let optim = optim_init();
+    let nn = nn_init();
+
+    // 1. StepLR
+    let w1 = tensor_zeros_1d(1);
+    let p1 = nn.Parameter(w1);
+    let params1 = list_new();
+    list_push(params1, p1);
+
+    let opt1 = optim.SGD(params1, 0.1, 0.0, 0.0, 0.0, false);
+    let scheduler_step = optim.StepLR(opt1, 2, 0.5);
+
+    assert_true(approx_eq(opt1.get_lr(), 0.1, 0.0001), "Initial LR must be 0.1");
+
+    let lr_ep1 = scheduler_step.step();
+    assert_true(approx_eq(lr_ep1, 0.1, 0.0001), "Epoch 1 LR must remain 0.1");
+
+    let lr_ep2 = scheduler_step.step();
+    assert_true(approx_eq(lr_ep2, 0.05, 0.0001), "Epoch 2 LR must drop to 0.05");
+
+    let lr_ep3 = scheduler_step.step();
+    assert_true(approx_eq(lr_ep3, 0.05, 0.0001), "Epoch 3 LR must remain 0.05");
+
+    let lr_ep4 = scheduler_step.step();
+    assert_true(approx_eq(lr_ep4, 0.025, 0.0001), "Epoch 4 LR must drop to 0.025");
+
+    // 2. CosineAnnealingLR
+    let w2 = tensor_zeros_1d(1);
+    let p2 = nn.Parameter(w2);
+    let params2 = list_new();
+    list_push(params2, p2);
+
+    let opt2 = optim.SGD(params2, 0.1, 0.0, 0.0, 0.0, false);
+    let scheduler_cos = optim.CosineAnnealingLR(opt2, 4, 0.01);
+
+    // T_max = 4, eta_min = 0.01, base_lr = 0.1
+    // epoch 2 (t = 2): t/T_max = 0.5. cos(pi/2) = 0.
+    // lr = 0.01 + 0.5 * (0.09) * 1.0 = 0.055.
+    scheduler_cos.step(); // epoch 1
+    let lr_cos_ep2 = scheduler_cos.step(); // epoch 2
+    assert_true(approx_eq(lr_cos_ep2, 0.055, 0.001), "Cosine Annealing mid-cycle LR mismatch");
+
+    scheduler_cos.step(); // epoch 3
+    let lr_cos_ep4 = scheduler_cos.step(); // epoch 4: t = 4 = T_max. cos(pi) = -1. lr = eta_min = 0.01
+    assert_true(approx_eq(lr_cos_ep4, 0.01, 0.001), "Cosine Annealing end-cycle LR mismatch");
+
+    println("✓ StepLR & CosineAnnealingLR schedulers passed!");
+}
+
+// -----------------------------------------------------------------------------
+// Test 29: End-to-End Training Pipeline (Model + Loss + AdamW + CosineAnnealingLR)
+// -----------------------------------------------------------------------------
+func test_suite_29_end_to_end_training_pipeline() {
+    println("--- Test 29: End-to-End Deep Learning Training Pipeline ---");
+    let nn = nn_init();
+    let optim = optim_init();
+
+    // 2-layer MLP for binary classification: 2 -> 4 -> 1
+    let layers = list_new();
+    let l1 = nn.Linear(2, 4, true);
+    // Initialize deterministic weights
+    l1.weight.set_2d(0, 0, 0.5); l1.weight.set_2d(0, 1, -0.3);
+    l1.weight.set_2d(0, 2, 0.2); l1.weight.set_2d(0, 3, 0.4);
+    l1.weight.set_2d(1, 0, -0.4); l1.weight.set_2d(1, 1, 0.6);
+    l1.weight.set_2d(1, 2, -0.1); l1.weight.set_2d(1, 3, 0.3);
+
+    let l2 = nn.Linear(4, 1, true);
+    l2.weight.set_2d(0, 0, 0.4);
+    l2.weight.set_2d(1, 0, -0.5);
+    l2.weight.set_2d(2, 0, 0.3);
+    l2.weight.set_2d(3, 0, 0.2);
+
+    list_push(layers, l1);
+    list_push(layers, nn.ReLU());
+    list_push(layers, l2);
+
+    let model = nn.Sequential(layers);
+
+    let loss_fn = nn.BCEWithLogitsLoss();
+    let optimizer = optim.AdamW(model.parameters(), 0.05, 0.9, 0.999, 0.00000001, 0.01);
+    let scheduler = optim.CosineAnnealingLR(optimizer, 15, 0.005);
+
+    // Training sample
+    let x = tensor_zeros_2d(2, 2);
+    x.set_2d(0, 0, 1.0); x.set_2d(0, 1, 0.5);
+    x.set_2d(1, 0, -0.5); x.set_2d(1, 1, 1.0);
+
+    let y = tensor_zeros_2d(2, 1);
+    y.set_2d(0, 0, 1.0);
+    y.set_2d(1, 0, 0.0);
+
+    // Initial loss
+    let initial_logits = model.forward(x);
+    let initial_loss_t = loss_fn.forward(initial_logits, y);
+    let initial_loss = initial_loss_t.item();
+
+    let epoch = 0;
+    while epoch < 15 {
+        optimizer.zero_grad();
+        let logits = model.forward(x);
+        let loss = loss_fn.forward(logits, y);
+        loss.backward();
+        optimizer.step();
+        scheduler.step();
+        epoch = epoch + 1;
+    }
+
+    let final_logits = model.forward(x);
+    let final_loss_t = loss_fn.forward(final_logits, y);
+    let final_loss = final_loss_t.item();
+
+    assert_true(final_loss < initial_loss, "Training loop strictly decreased BCE loss");
+    println("✓ End-to-End Training Pipeline passed! Loss: " + to_string(initial_loss) + " -> " + to_string(final_loss) + ", Final LR: " + to_string(scheduler.get_last_lr()));
+}
+
 func main() {
     println("=================================================");
-    println("   Roze-Torch M8-T01, M8-T02 & M8-T03 Test Suite ");
+    println("   Roze-Torch M8-T01, M8-T02, M8-T03 & M8-T04    ");
     println("=================================================");
 
     test_shapes_and_strides();
@@ -1200,7 +1625,15 @@ func main() {
     test_suite_22_nn_sequential_and_activations();
     test_suite_23_nn_namespace_and_end_to_end_backprop();
 
+    // M8-T04 Numerical Optimizers, Loss Functions & Schedulers (roze-torch::optim)
+    test_suite_24_loss_functions();
+    test_suite_25_sgd_momentum_nesterov();
+    test_suite_26_adam_and_adamw();
+    test_suite_27_rmsprop_and_adagrad();
+    test_suite_28_learning_rate_schedulers();
+    test_suite_29_end_to_end_training_pipeline();
+
     println("=================================================");
-    println("✅ 100% Roze-Torch M8-T01, M8-T02 & M8-T03 Passed! 🎉");
+    println("✅ 100% Roze-Torch M8-T01 to M8-T04 Passed! 🎉");
     println("=================================================");
 }

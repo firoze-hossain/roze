@@ -2291,6 +2291,12 @@ fn standard_torch_nd_tensor_suite() {
     assert!(stdout.contains("SUITE 21 PASSED: roze-torch nn.Embedding and nn.MultiheadAttention"));
     assert!(stdout.contains("SUITE 22 PASSED: roze-torch nn.Sequential and neural activation modules"));
     assert!(stdout.contains("SUITE 23 PASSED: roze-torch nn namespace singleton and end-to-end backpropagation"));
+    assert!(stdout.contains("SUITE 24 PASSED: roze-torch numerical loss functions and autograd backpropagation (MSE, L1, BCE, CrossEntropy)"));
+    assert!(stdout.contains("SUITE 25 PASSED: roze-torch SGD optimizer with momentum, dampening, Nesterov and weight decay"));
+    assert!(stdout.contains("SUITE 26 PASSED: roze-torch Adam and AdamW optimizers with decoupled weight decay parity"));
+    assert!(stdout.contains("SUITE 27 PASSED: roze-torch RMSprop and Adagrad adaptive optimizers"));
+    assert!(stdout.contains("SUITE 28 PASSED: roze-torch learning rate schedulers (StepLR and CosineAnnealingLR)"));
+    assert!(stdout.contains("SUITE 29 PASSED: roze-torch end-to-end training pipeline with model, loss, optimizer and scheduler"));
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze-Torch N-Dimensional Tensor Engine 100% OPERATIONAL"));
 }
 

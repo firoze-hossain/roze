@@ -1,0 +1,228 @@
+// packages/roze-net/tests/test_scan.roze
+// ==============================================================================
+// 🌹 Roze-Sec: Defensive Network Asset Discovery & Monitoring Engine (M9-T03)
+// ==============================================================================
+// Test Suite: Scope Authorization, CIDR Enforcement, OS Fingerprinting,
+// Service Identification, Asset Inventory, Telemetry & JSON/CSV Reports
+// ==============================================================================
+
+import "../src/scan.roze";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("❌ Assertion failed: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+func main() {
+    println("================================================================================");
+    println("🌹 Roze-Sec: Network Asset Discovery & Monitoring Engine (M9-T03) Verification");
+    println("================================================================================");
+
+    // --------------------------------------------------------------------------
+    // 1. Authorization Scope & CIDR Boundary Enforcement
+    // --------------------------------------------------------------------------
+    println("--- 1. Testing Authorization Scope & CIDR Enforcement ---");
+    let scope = sec_scan_scope_new("SecOps-Lead");
+    sec_scan_scope_allow_cidr(scope, "192.168.1.0/24");
+    sec_scan_scope_allow_cidr(scope, "10.0.0.0/16");
+    sec_scan_scope_allow_cidr(scope, "::1");
+    sec_scan_scope_block_cidr(scope, "192.168.1.254"); // Explicit perimeter exclusion
+
+    assert(sec_scan_scope_is_authorized(scope, "192.168.1.1"), "192.168.1.1 must be authorized");
+    assert(sec_scan_scope_is_authorized(scope, "192.168.1.50"), "192.168.1.50 must be authorized");
+    assert(sec_scan_scope_is_authorized(scope, "10.0.5.20"), "10.0.5.20 must be authorized");
+    assert(sec_scan_scope_is_authorized(scope, "::1"), "::1 loopback must be authorized");
+
+    // Blocked and out-of-scope targets
+    assert(!sec_scan_scope_is_authorized(scope, "192.168.1.254"), "192.168.1.254 must be blocked by explicit rule");
+    assert(!sec_scan_scope_is_authorized(scope, "172.16.0.1"), "172.16.0.1 must be denied (out of scope)");
+    assert(!sec_scan_scope_is_authorized(scope, "8.8.8.8"), "8.8.8.8 must be denied (external)");
+    assert(list_length(scope.audit_events) >= 3, "Scope configuration audit events must be logged");
+    println("✅ Scope boundaries and fail-safe default-deny verified");
+
+    // --------------------------------------------------------------------------
+    // 2. CIDR Subnet Expansion
+    // --------------------------------------------------------------------------
+    println("--- 2. Testing CIDR Subnet Expansion ---");
+    let hosts_28 = cidr_expand_ips("192.168.1.0/28", 14);
+    assert(list_length(hosts_28) == 14, "Subnet /28 must expand to 14 usable hosts");
+    let h1: TargetEndpoint = list_get(hosts_28, 0);
+    assert(h1.ip == "192.168.1.1", "First host must be 192.168.1.1");
+    let h14: TargetEndpoint = list_get(hosts_28, 13);
+    assert(h14.ip == "192.168.1.14", "Last host must be 192.168.1.14");
+
+    let single_ip = cidr_expand_ips("10.0.0.5/32", 10);
+    assert(list_length(single_ip) == 1, "/32 CIDR must expand to exactly 1 host");
+    println("✅ CIDR expansion and host enumeration verified");
+
+    // --------------------------------------------------------------------------
+    // 3. Cancellation Token & Emergency Stop
+    // --------------------------------------------------------------------------
+    println("--- 3. Testing Cancellation Token & Emergency Stop ---");
+    let token = sec_scan_cancel_token_new();
+    assert(!sec_scan_is_cancelled(token), "Token must initially be uncancelled");
+    sec_scan_cancel(token, "SecOps emergency pause triggered");
+    assert(sec_scan_is_cancelled(token), "Token must report cancelled");
+    assert(token.cancel_reason == "SecOps emergency pause triggered", "Cancel reason must match");
+    println("✅ Emergency stop token verified");
+
+    // --------------------------------------------------------------------------
+    // 4. Rate Limiter (Token Bucket) & Resource Config
+    // --------------------------------------------------------------------------
+    println("--- 4. Testing Rate Limiter & Concurrency Config ---");
+    let config = sec_scan_config_new(8, 100000, 1000);
+    assert(config.max_workers == 8, "Max workers must be 8");
+    assert(config.rate_limit_pps == 100000, "Rate limit PPS must be 100000");
+
+    let limiter = rate_limiter_new(50000);
+    assert(rate_limiter_acquire(limiter), "Limiter token acquire must succeed");
+    println("✅ Rate limiter and worker pool configuration verified");
+
+    // --------------------------------------------------------------------------
+    // 5. Passive TCP/IP Stack OS Fingerprinting
+    // --------------------------------------------------------------------------
+    println("--- 5. Testing Passive OS Fingerprinting Engine ---");
+    // Linux match
+    let linux_os = sec_scan_classify_os(64, 29200, true, "MSS,SACK,TS,NOP,WScale");
+    assert(linux_os.os_family == "Linux", "OS family must be Linux");
+    assert(linux_os.accuracy >= 95, "Linux confidence must be >= 95%");
+
+    // Windows match
+    let win_os = sec_scan_classify_os(128, 64240, true, "MSS,NOP,NOP,SACK");
+    assert(win_os.os_family == "Windows", "OS family must be Windows");
+    assert(win_os.accuracy >= 95, "Windows confidence must be >= 95%");
+
+    // Apple Darwin match
+    let darwin_os = sec_scan_classify_os(64, 65535, true, "MSS,NOP,WScale,NOP,NOP,TS,SACK,EOL");
+    assert(darwin_os.os_family == "Apple", "OS family must be Apple");
+    assert(darwin_os.accuracy >= 95, "Apple confidence must be >= 95%");
+
+    // Cisco IOS match
+    let cisco_os = sec_scan_classify_os(255, 4128, false, "MSS");
+    assert(cisco_os.os_family == "Cisco", "OS family must be Cisco");
+    println("✅ OS fingerprint classification (Linux, Windows, Apple, Cisco) verified");
+
+    // --------------------------------------------------------------------------
+    // 6. Service Banner Identification & Protocol Inspection
+    // --------------------------------------------------------------------------
+    println("--- 6. Testing Service Banner Identification Engine ---");
+    // SSH
+    let ssh_srv = sec_scan_identify_service(22, "SSH-2.0-OpenSSH_9.3p1 Ubuntu-1ubuntu3\r\n");
+    assert(ssh_srv.service_name == "ssh", "Service must be ssh");
+    assert(ssh_srv.product == "OpenSSH", "Product must be OpenSSH");
+    assert(ssh_srv.version == "9.3p1", "Version must be 9.3p1");
+
+    // HTTP (nginx)
+    let http_srv = sec_scan_identify_service(80, "HTTP/1.1 200 OK\r\nServer: nginx/1.24.0 (Ubuntu)\r\nContent-Type: text/html\r\n\r\n");
+    assert(http_srv.service_name == "http", "Service must be http");
+    assert(http_srv.product == "nginx", "Product must be nginx");
+    assert(http_srv.version == "1.24.0", "Version must be 1.24.0");
+
+    // SMTP
+    let smtp_srv = sec_scan_identify_service(25, "220 mail.corp.net ESMTP Postfix (Ubuntu)\r\n");
+    assert(smtp_srv.service_name == "smtp", "Service must be smtp");
+    assert(smtp_srv.product == "Postfix", "Product must be Postfix");
+
+    // MySQL
+    let mysql_srv = sec_scan_identify_service(3306, "MySQL 8.0.35 Protocol 10");
+    assert(mysql_srv.service_name == "mysql", "Service must be mysql");
+    assert(mysql_srv.product == "MySQL", "Product must be MySQL");
+    assert(mysql_srv.version == "8.0.35", "Version must be 8.0.35");
+
+    // Redis
+    let redis_srv = sec_scan_identify_service(6379, "redis_version:7.2.4\r\nrole:master\r\n");
+    assert(redis_srv.service_name == "redis", "Service must be redis");
+    assert(redis_srv.product == "Redis", "Product must be Redis");
+    assert(redis_srv.version == "7.2.4", "Version must be 7.2.4");
+
+    // TLS Certificate Inspection
+    let tls_cert = sec_scan_inspect_tls_cert("CERT: CN=api.secure.internal, O=Enterprise Security Corp, ValidDays=365\r\n");
+    assert(tls_cert.service_name == "tls/https", "Service must be tls/https");
+    assert(tls_cert.cert_cn == "api.secure.internal", "Certificate CN must match");
+    assert(tls_cert.cert_org == "Enterprise Security Corp", "Certificate Org must match");
+    assert(tls_cert.cert_valid_days == 365, "Valid days must be 365");
+    println("✅ Service identification for SSH, HTTP, SMTP, MySQL, Redis & TLS verified");
+
+    // --------------------------------------------------------------------------
+    // 7. IPv4/IPv6 Asset Inventory & DNS Discovery
+    // --------------------------------------------------------------------------
+    println("--- 7. Testing Asset Inventory & DNS Discovery ---");
+    let ptr4 = sec_scan_dns_reverse_ptr("192.168.1.1");
+    assert(ptr4 == "1.1.168.192.in-addr.arpa", "IPv4 PTR must match in-addr.arpa format");
+
+    let ptr6 = sec_scan_dns_reverse_ptr("::1");
+    assert(str_contains(ptr6, "ip6.arpa"), "IPv6 PTR must contain ip6.arpa");
+
+    let host1 = sec_scan_dns_resolve("192.168.1.1");
+    assert(host1 == "gateway.lab.local", "Gateway IP must resolve to gateway.lab.local");
+
+    let inv = sec_scan_inventory_new();
+    let asset1 = sec_scan_asset_new("192.168.1.1", false);
+    asset1.hostname = host1;
+    sec_scan_asset_add_port(asset1, port_probe_result_new(80, port_status_open(), "http", "nginx", 64, 29200, "Linux", 2));
+    sec_scan_asset_add_service(asset1, http_srv);
+    sec_scan_inventory_add_asset(inv, asset1);
+
+    assert(inv.total_discovered == 1, "Inventory must contain 1 discovered asset");
+    assert(inv.active_hosts == 1, "Inventory must contain 1 active host");
+    assert(inv.total_services == 1, "Inventory must contain 1 registered service");
+
+    let found = sec_scan_inventory_find(inv, "192.168.1.1");
+    assert(found.ip == "192.168.1.1", "Found asset IP must match");
+    println("✅ Asset inventory and DNS discovery verified");
+
+    // --------------------------------------------------------------------------
+    // 8. End-to-End Defensive Discovery Scan Execution
+    // --------------------------------------------------------------------------
+    println("--- 8. Testing End-to-End Discovery Scan Execution ---");
+    let scan_scope = sec_scan_scope_new("Audit-Officer");
+    sec_scan_scope_allow_cidr(scan_scope, "192.168.1.0/30"); // 192.168.1.1 and 192.168.1.2
+    let scan_cfg = sec_scan_config_new(4, 50000, 500);
+    let run_token = sec_scan_cancel_token_new();
+
+    let cidr_targets = list_new();
+    list_push(cidr_targets, scope_cidr_new("192.168.1.0/30"));
+
+    let probe_ports = list_new();
+    list_push(probe_ports, 22);
+    list_push(probe_ports, 80);
+    list_push(probe_ports, 443);
+
+    let report = sec_scan_run_discovery(scan_scope, scan_cfg, cidr_targets, probe_ports, run_token);
+    assert(report.telemetry.total_targets == 2, "Discovery must target 2 hosts in /30 subnet");
+    assert(report.telemetry.total_probes_sent == 6, "Total probes sent must be 2 hosts * 3 ports = 6");
+    assert(report.telemetry.total_open_ports == 6, "All 6 probed ports must be verified open");
+    assert(report.inventory.active_hosts == 2, "Both hosts must be active");
+
+    // Output Formats: Summary Table, JSON, CSV
+    let table_txt = sec_scan_report_format_table(report);
+    assert(str_contains(table_txt, "ROZE DEFENSIVE NETWORK ASSET INVENTORY"), "Table must contain report header");
+    assert(str_contains(table_txt, "192.168.1.1"), "Table must contain host 192.168.1.1");
+
+    let json_txt = sec_scan_report_export_json(report);
+    assert(str_contains(json_txt, "\"scope\": \"Audit-Officer\""), "JSON export must contain scope");
+    assert(str_contains(json_txt, "\"total_targets\": 2"), "JSON export must contain total_targets");
+    assert(str_contains(json_txt, "\"services\":"), "JSON export must contain services array");
+
+    let csv_txt = sec_scan_report_export_csv(report);
+    assert(str_contains(csv_txt, "IP,Hostname,Alive,LatencyMs,OS,Port,Proto,Service,Product,Version"), "CSV must have header");
+    assert(str_contains(csv_txt, "192.168.1.1"), "CSV must contain 192.168.1.1");
+    println("✅ End-to-end discovery scan and JSON/CSV reporting verified");
+
+    // --------------------------------------------------------------------------
+    // 9. Multi-Core Laboratory Benchmark (100,000+ probes/sec)
+    // --------------------------------------------------------------------------
+    println("--- 9. Testing High-Throughput Pipeline Benchmark ---");
+    let bench_probes = 100000;
+    let bench_workers = 4;
+    let pps = sec_scan_benchmark_pipeline(bench_probes, bench_workers);
+    println("Benchmarked Pipeline Throughput: " + int_to_str(pps) + " probes/second across " + int_to_str(bench_workers) + " cores");
+    assert(pps >= 100000, "Laboratory benchmark pipeline must exceed 100,000 probes/sec");
+    println("✅ Multi-core pipeline throughput exceeds 100,000 probes/second");
+
+    println("================================================================================");
+    println("🎉 ALL 9 DEFENSIVE NETWORK DISCOVERY & SCAN SUITES PASSED SUCCESSFULLY (M9-T03)");
+    println("================================================================================");
+}

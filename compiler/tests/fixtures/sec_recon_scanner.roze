@@ -1,0 +1,136 @@
+// compiler/tests/fixtures/sec_recon_scanner.roze
+// ==============================================================================
+// 🌹 Roze-Sec: Defensive Network Asset Discovery & Monitoring Engine (M9-T03)
+// ==============================================================================
+// Golden Fixture: Asynchronous Multi-Core Discovery, OS Fingerprinting,
+// Service Banner Identification, Asset Inventory & JSON/CSV Reporting
+// ==============================================================================
+
+import "roze.sec.scan";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("❌ Assertion failed: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+func main() {
+    println("=== ROZE-SEC DEFENSIVE NETWORK DISCOVERY & ASSET AUDIT ENGINE (M9-T03) ===");
+
+    // Test 1: Authorization Scope & CIDR Boundary Enforcement
+    let scope = sec_scan_scope_new("Security-Auditor");
+    sec_scan_scope_allow_cidr(scope, "192.168.1.0/24");
+    sec_scan_scope_allow_cidr(scope, "10.0.0.0/16");
+    sec_scan_scope_allow_cidr(scope, "::1");
+    sec_scan_scope_block_cidr(scope, "192.168.1.254");
+
+    assert(sec_scan_scope_is_authorized(scope, "192.168.1.1"), "192.168.1.1 in scope");
+    assert(sec_scan_scope_is_authorized(scope, "10.0.1.10"), "10.0.1.10 in scope");
+    assert(!sec_scan_scope_is_authorized(scope, "192.168.1.254"), "192.168.1.254 blocked");
+    assert(!sec_scan_scope_is_authorized(scope, "172.16.0.1"), "172.16.0.1 out of scope");
+    println("[PASS] Test 1: Authorization scope enforcement and fail-safe default-deny");
+
+    // Test 2: Subnet expansion and cancellation emergency stop
+    let hosts = cidr_expand_ips("192.168.1.0/29", 6);
+    assert(list_length(hosts) == 6, "Subnet /29 must yield 6 hosts");
+    let ep0: TargetEndpoint = list_get(hosts, 0);
+    assert(ep0.ip == "192.168.1.1", "First host 192.168.1.1");
+
+    let cancel_tok = sec_scan_cancel_token_new();
+    assert(!sec_scan_is_cancelled(cancel_tok), "Initially active");
+    sec_scan_cancel(cancel_tok, "Audit emergency stop");
+    assert(sec_scan_is_cancelled(cancel_tok), "Cancelled successfully");
+    println("[PASS] Test 2: Subnet host expansion and emergency stop cancellation token");
+
+    // Test 3: Passive TCP/IP Stack OS Fingerprint Classification
+    let linux_os = sec_scan_classify_os(64, 29200, true, "MSS,SACK,TS,NOP,WScale");
+    assert(linux_os.os_family == "Linux", "Linux family match");
+    assert(linux_os.accuracy >= 95, "Linux accuracy >= 95%");
+
+    let win_os = sec_scan_classify_os(128, 64240, true, "MSS,NOP,NOP,SACK");
+    assert(win_os.os_family == "Windows", "Windows family match");
+
+    let apple_os = sec_scan_classify_os(64, 65535, true, "MSS,NOP,WScale,NOP,NOP,TS,SACK,EOL");
+    assert(apple_os.os_family == "Apple", "Apple family match");
+
+    let cisco_os = sec_scan_classify_os(255, 4128, false, "MSS");
+    assert(cisco_os.os_family == "Cisco", "Cisco family match");
+    println("[PASS] Test 3: Passive TCP/IP OS fingerprint classification (Linux, Windows, Apple, Cisco)");
+
+    // Test 4: Service Banner Identification (SSH, HTTP, SMTP, MySQL, Redis, TLS)
+    let ssh = sec_scan_identify_service(22, "SSH-2.0-OpenSSH_9.3p1 Ubuntu-1ubuntu3\r\n");
+    assert(ssh.service_name == "ssh", "SSH service");
+    assert(ssh.product == "OpenSSH", "OpenSSH product");
+    assert(ssh.version == "9.3p1", "OpenSSH version");
+
+    let http = sec_scan_identify_service(80, "HTTP/1.1 200 OK\r\nServer: nginx/1.24.0 (Ubuntu)\r\n");
+    assert(http.service_name == "http", "HTTP service");
+    assert(http.product == "nginx", "nginx product");
+    assert(http.version == "1.24.0", "nginx version");
+
+    let smtp = sec_scan_identify_service(25, "220 mail.corp.internal ESMTP Postfix\r\n");
+    assert(smtp.service_name == "smtp", "SMTP service");
+    assert(smtp.product == "Postfix", "Postfix product");
+
+    let mysql = sec_scan_identify_service(3306, "MySQL 8.0.35 Protocol 10");
+    assert(mysql.service_name == "mysql", "MySQL service");
+    assert(mysql.product == "MySQL", "MySQL product");
+
+    let redis = sec_scan_identify_service(6379, "redis_version:7.2.4\r\nrole:master\r\n");
+    assert(redis.service_name == "redis", "Redis service");
+    assert(redis.product == "Redis", "Redis product");
+    assert(redis.version == "7.2.4", "Redis version");
+
+    let tls = sec_scan_inspect_tls_cert("CERT: CN=auth.internal.net, O=Corp Systems, ValidDays=365\r\n");
+    assert(tls.service_name == "tls/https", "TLS service");
+    assert(tls.cert_cn == "auth.internal.net", "TLS CN match");
+    assert(tls.cert_valid_days == 365, "TLS valid days match");
+    println("[PASS] Test 4: Service banner identification (SSH, HTTP, SMTP, MySQL, Redis, TLS)");
+
+    // Test 5: Asset Inventory & DNS Discovery
+    let ptr4 = sec_scan_dns_reverse_ptr("192.168.1.1");
+    assert(ptr4 == "1.1.168.192.in-addr.arpa", "PTR record match");
+    let host_res = sec_scan_dns_resolve("192.168.1.1");
+    assert(host_res == "gateway.lab.local", "Host resolution match");
+
+    let inv = sec_scan_inventory_new();
+    let asset = sec_scan_asset_new("192.168.1.1", false);
+    asset.hostname = host_res;
+    sec_scan_asset_add_port(asset, port_probe_result_new(80, port_status_open(), "http", "nginx", 64, 29200, "Linux", 1));
+    sec_scan_asset_add_service(asset, http);
+    sec_scan_inventory_add_asset(inv, asset);
+    assert(inv.total_discovered == 1, "Inventory 1 discovered");
+    assert(inv.active_hosts == 1, "Inventory 1 active host");
+    println("[PASS] Test 5: Asset inventory compilation and DNS reverse resolution");
+
+    // Test 6: End-to-End Discovery Scan, Telemetry & JSON/CSV Reports
+    let scan_cfg = sec_scan_config_new(4, 50000, 500);
+    let run_token = sec_scan_cancel_token_new();
+    let target_list = list_new();
+    list_push(target_list, scope_cidr_new("192.168.1.0/30")); // 192.168.1.1, 192.168.1.2
+    let ports = list_new();
+    list_push(ports, 22);
+    list_push(ports, 80);
+
+    let report = sec_scan_run_discovery(scope, scan_cfg, target_list, ports, run_token);
+    assert(report.telemetry.total_targets == 2, "2 targets probed");
+    assert(report.telemetry.total_probes_sent == 4, "4 probes sent");
+    assert(report.telemetry.total_open_ports == 4, "4 open ports");
+
+    let json_rep = sec_scan_report_export_json(report);
+    assert(str_contains(json_rep, "\"scope\": \"Security-Auditor\""), "JSON scope match");
+    assert(str_contains(json_rep, "\"total_targets\": 2"), "JSON target count match");
+
+    let csv_rep = sec_scan_report_export_csv(report);
+    assert(str_contains(csv_rep, "IP,Hostname,Alive,LatencyMs,OS,Port,Proto,Service,Product,Version"), "CSV header match");
+    assert(str_contains(csv_rep, "192.168.1.1"), "CSV host match");
+    println("[PASS] Test 6: End-to-end discovery scan execution, telemetry, JSON and CSV exports");
+
+    // Test 7: High-Throughput Multi-Core Benchmark (100,000+ probes/sec)
+    let pps = sec_scan_benchmark_pipeline(100000, 4);
+    assert(pps >= 100000, "Benchmark must exceed 100,000 probes/sec");
+    println("[PASS] Test 7: Multi-core pipeline throughput exceeds 100,000 probes/second");
+
+    println("[CI-PASS] ALL DEFENSIVE NETWORK DISCOVERY & ASSET AUDIT TESTS PASSED (M9-T03)");
+}

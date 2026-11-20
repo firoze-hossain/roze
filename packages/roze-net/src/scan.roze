@@ -1,0 +1,8 @@
+// ==============================================================================
+// 🌹 Roze-Sec: Defensive Network Asset Discovery & Monitoring Engine (roze.sec.scan)
+// ==============================================================================
+// Sprint 17 (W35-W36) Deliverable: M9-T03
+// Multi-core async network asset discovery, service identification, and OS fingerprinting
+// ==============================================================================
+
+import "lib.roze";

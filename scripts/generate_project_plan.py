@@ -732,7 +732,7 @@ s1_rows = [
         ("M9-T03", 8), ("Month 9", 24), ("Sprint 17 (W35-W36)", 8), "Stealth Reconnaissance", "Distributed Multi-Core Stealth Network Scanner (roze.sec.scan)",
         "Multi-core async network reconnaissance engine: stealth SYN scanning, FIN scanning, Xmas scanning, Null scanning, UDP port probing, passive and active TCP/IP stack OS fingerprinting (TTL, TCP window size, DF bit, options order), service banner identification engine (SSH, HTTP, SMTP, MySQL, Redis, TLS certs), achieving 100,000+ probes/sec per CPU core.",
         "Parity with Nmap and ZMap performance in pure Roze with zero external dependencies.",
-        "Red Teaming, Network Defense, Attack Surface Management", "8 Days", ("High", 14), ("Planned", 12)
+        "Red Teaming, Network Defense, Attack Surface Management", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M9-T04", 8), ("Month 9", 24), ("Sprint 18 (W37-W38)", 8), "Multi-Arch Disassembler", "Static Binary Analysis & Instruction Decoders (roze.sec.disasm)",

@@ -241,6 +241,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         | "scanner" | "port_scanner" | "net_scan" | "roze::net::scanner" | "roze-net" | "roze_net"
         | "roze.sec.raw" | "roze::sec::raw" | "roze-sec::raw" | "roze_sec_raw" | "sec.raw" | "sec::raw" | "sec_raw"
         | "roze.sec.packet" | "roze::sec::packet" | "roze-sec::packet" | "roze_sec_packet" | "sec.packet" | "sec::packet" | "sec_packet" | "scapy" | "stacking"
+        | "roze.sec.scan" | "roze::sec::scan" | "roze-sec::scan" | "roze_sec_scan" | "sec.scan" | "sec::scan" | "sec_scan"
         | "roze.sec" | "roze::sec" | "sec" | "security_sec" => {
             Some("roze-net/src/lib.roze".to_string())
         }

@@ -2357,6 +2357,21 @@ fn sec_packet_dsl_suite() {
     assert!(stdout.contains("[CI-PASS] ALL PROTOCOL STACKING DSL & PACKET BUILDER TESTS PASSED (M9-T02)"));
 }
 
+#[test]
+fn sec_recon_scanner_suite() {
+    let (stdout, stderr, ok) = run_fixture("sec_recon_scanner.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== ROZE-SEC DEFENSIVE NETWORK DISCOVERY & ASSET AUDIT ENGINE (M9-T03) ==="));
+    assert!(stdout.contains("[PASS] Test 1: Authorization scope enforcement and fail-safe default-deny"));
+    assert!(stdout.contains("[PASS] Test 2: Subnet host expansion and emergency stop cancellation token"));
+    assert!(stdout.contains("[PASS] Test 3: Passive TCP/IP OS fingerprint classification (Linux, Windows, Apple, Cisco)"));
+    assert!(stdout.contains("[PASS] Test 4: Service banner identification (SSH, HTTP, SMTP, MySQL, Redis, TLS)"));
+    assert!(stdout.contains("[PASS] Test 5: Asset inventory compilation and DNS reverse resolution"));
+    assert!(stdout.contains("[PASS] Test 6: End-to-end discovery scan execution, telemetry, JSON and CSV exports"));
+    assert!(stdout.contains("[PASS] Test 7: Multi-core pipeline throughput exceeds 100,000 probes/second"));
+    assert!(stdout.contains("[CI-PASS] ALL DEFENSIVE NETWORK DISCOVERY & ASSET AUDIT TESTS PASSED (M9-T03)"));
+}
+
 
 
 

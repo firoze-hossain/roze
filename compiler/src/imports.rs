@@ -414,7 +414,8 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         || path == "roze.sec.disasm" || path == "roze::sec::disasm" || path == "roze-sec::disasm" || path == "roze_sec_disasm" || path == "sec.disasm" || path == "sec::disasm" || path == "sec_disasm" || path == "wasm" || path == "riscv" {
         return Ok((BINARY_SOURCE.to_string(), BINARY_DISPLAY_NAME.to_string()));
     }
-    if path == "forensics" || path == "roze::forensics" || path == "mem_forensics" || path == "memory_forensics" || path == "rop" {
+    if path == "forensics" || path == "roze::forensics" || path == "mem_forensics" || path == "memory_forensics" || path == "rop"
+        || path == "roze.sec.forensics" || path == "roze::sec::forensics" || path == "roze-sec::forensics" || path == "roze_sec_forensics" || path == "sec.forensics" || path == "sec::forensics" || path == "sec_forensics" {
         return Ok((FORENSICS_SOURCE.to_string(), FORENSICS_DISPLAY_NAME.to_string()));
     }
     if path == "ffi" || path == "roze::ffi" || path == "c_ffi" || path == "cabi" || path == "panama" || path == "dl" {

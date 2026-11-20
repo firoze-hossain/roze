@@ -1,0 +1,82 @@
+// Roze Golden Test Fixture: Defensive Memory Forensics & Exploit Analysis (M9-T05)
+// Module: roze.sec.forensics
+
+import "roze.sec.forensics";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("[ASSERTION FAILED]: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+func main() {
+    println("=== Roze M9-T05 Defensive Memory Forensics Fixture ===");
+    
+    // 1. /proc/<pid>/maps & VirtualQueryEx
+    let maps_content = "00400000-00452000 r-xp 00000000 fd:00 123456 /usr/bin/daemon\n" +
+                       "01a00000-01a21000 rwxp 00000000 00:00 0 [heap]\n" +
+                       "7ffde000-7ffdf000 r-xp 00000000 00:00 0 [stack]\n";
+    let regions = sec_forensics_parse_maps(maps_content);
+    assert(list_length(regions) == 3, "regions count mismatch");
+    
+    let mbi = new MemoryBasicInformation(5368709120, 5368709120, 64, 65536, 4096, 64, 131072);
+    let win_reg = virtual_query_to_region(mbi);
+    assert(memory_region_is_rwx(win_reg), "win_reg rwx mismatch");
+    
+    // 2. Memory security audit
+    let anomalies = sec_forensics_audit_regions(regions);
+    assert(list_length(anomalies) >= 2, "anomalies count mismatch");
+    
+    // 3. Shannon entropy
+    let diverse = list_new();
+    let mut_i = 0;
+    while mut_i < 256 {
+        list_push(diverse, mut_i);
+        mut_i = mut_i + 1;
+    }
+    let ent = sec_forensics_entropy(diverse);
+    assert(ent >= 7000, "entropy mismatch");
+    
+    let packed = sec_forensics_detect_packed(diverse, 256, 128, 7000);
+    assert(list_length(packed) == 1, "packed count mismatch");
+    
+    // 4. ROP & Stack Pivots
+    let code = list_new();
+    list_push(code, 95);  // pop rdi
+    list_push(code, 195); // ret
+    list_push(code, 92);  // pop rsp
+    list_push(code, 195); // ret
+    list_push(code, 201); // leave
+    list_push(code, 195); // ret
+    list_push(code, 72); list_push(code, 135); list_push(code, 224); list_push(code, 195); // xchg rsp, rax; ret
+    
+    let gadgets = sec_forensics_harvest_rop(code, 4194304);
+    assert(list_length(gadgets) >= 4, "gadgets count mismatch");
+    let pivots = sec_forensics_detect_pivots(code, 4194304);
+    assert(list_length(pivots) == 3, "pivots count mismatch");
+    
+    // 5. Sandboxed CPU emulation
+    let emu_code = list_new();
+    list_push(emu_code, 184); list_push(emu_code, 42); list_push(emu_code, 0); list_push(emu_code, 0); list_push(emu_code, 0); // mov eax, 42
+    list_push(emu_code, 80);  // push rax
+    list_push(emu_code, 91);  // pop rbx
+    list_push(emu_code, 195); // ret
+    
+    let harness = sandbox_new(4096, 4194304);
+    sandbox_load_bytes(harness, emu_code, 4194304);
+    sandbox_push(harness, 4198400);
+    let steps = sandbox_run(harness, 10);
+    assert(steps == 4, "steps count mismatch");
+    assert(harness.cpu.rax == 42, "rax mismatch");
+    assert(harness.cpu.rbx == 42, "rbx mismatch");
+    
+    // 6. Report & JSON / CSV exports
+    let report = sec_forensics_create_report(1234, "test_target", regions, anomalies);
+    let json = sec_forensics_export_json(report);
+    assert(str_contains(json, "\"pid\": 1234"), "json pid mismatch");
+    let csv = sec_forensics_export_csv(report);
+    assert(str_contains(csv, "severity,start_addr,size"), "csv header mismatch");
+    
+    println("Memory forensics golden verification passed!");
+}

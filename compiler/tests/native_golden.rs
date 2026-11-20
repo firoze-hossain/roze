@@ -5137,6 +5137,20 @@ fn native_sec_disasm_engine_suite() {
     assert!(stdout.contains("[CI-PASS] ALL MULTI-ARCH DISASSEMBLER & BINARY INSPECTION TESTS PASSED (M9-T04)"));
 }
 
+#[test]
+fn native_sec_memory_forensics_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("sec_memory_forensics.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read sec_memory_forensics.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("sec_memory_forensics_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== Roze M9-T05 Defensive Memory Forensics Fixture ==="));
+    assert!(stdout.contains("Memory forensics golden verification passed!"));
+}
+
+
 
 
 

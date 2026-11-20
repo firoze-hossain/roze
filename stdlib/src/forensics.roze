@@ -297,6 +297,143 @@ func parse_proc_maps_line(line: string) -> MemoryRegion {
     return memory_region_new(mut_start_addr, mut_end_addr, mut_perms, mut_offset, pathname);
 }
 
+// Parses full /proc/<pid>/maps multi-line string into a List of MemoryRegion
+func parse_proc_maps(content: string) -> List {
+    let regions = list_new();
+    let c_len = string_length(content);
+    if c_len == 0 { return regions; }
+    
+    let mut_line_start = 0;
+    let mut_i = 0;
+    while mut_i < c_len {
+        let ch = string_char_at(content, mut_i);
+        if ch == 10 || ch == 13 {
+            if mut_i > mut_line_start {
+                let line = sub_str(content, mut_line_start, mut_i);
+                if string_length(line) > 5 {
+                    let r = parse_proc_maps_line(line);
+                    list_push(regions, r);
+                }
+            }
+            while mut_i < c_len && (string_char_at(content, mut_i) == 10 || string_char_at(content, mut_i) == 13) {
+                mut_i = mut_i + 1;
+            }
+            mut_line_start = mut_i;
+        } else {
+            mut_i = mut_i + 1;
+        }
+    }
+    if mut_i > mut_line_start {
+        let line = sub_str(content, mut_line_start, mut_i);
+        if string_length(line) > 5 {
+            let r = parse_proc_maps_line(line);
+            list_push(regions, r);
+        }
+    }
+    return regions;
+}
+
+// Windows VirtualQueryEx Memory Basic Information emulation
+class MemoryBasicInformation {
+    base_address: int,
+    allocation_base: int,
+    allocation_protect: int,
+    region_size: int,
+    state: int,
+    protect: int,
+    type_mem: int,
+}
+
+func virtual_query_to_region(mbi: MemoryBasicInformation) -> MemoryRegion {
+    let perms = page_protection_to_string(mbi.protect);
+    let pathname = "";
+    if mbi.type_mem == 131072 { // MEM_PRIVATE (0x20000)
+        pathname = "[private]";
+    } else if mbi.type_mem == 16777216 { // MEM_IMAGE (0x1000000)
+        pathname = "[image]";
+    } else if mbi.type_mem == 262144 { // MEM_MAPPED (0x40000)
+        pathname = "[mapped]";
+    }
+    return memory_region_new(mbi.base_address, mbi.base_address + mbi.region_size, perms, 0, pathname);
+}
+
+// Binary byte reader utilities
+func read_u8(bytes: List, offset: int) -> int {
+    if offset < 0 || offset >= list_length(bytes) { return 0; }
+    let val: int = list_get(bytes, offset);
+    return val;
+}
+
+func read_u16_le(bytes: List, offset: int) -> int {
+    let b0 = read_u8(bytes, offset);
+    let b1 = read_u8(bytes, offset + 1);
+    return b0 + (b1 * 256);
+}
+
+func read_u32_le(bytes: List, offset: int) -> int {
+    let b0 = read_u8(bytes, offset);
+    let b1 = read_u8(bytes, offset + 1);
+    let b2 = read_u8(bytes, offset + 2);
+    let b3 = read_u8(bytes, offset + 3);
+    return b0 + (b1 * 256) + (b2 * 65536) + (b3 * 16777216);
+}
+
+func read_u64_le(bytes: List, offset: int) -> int {
+    let low = read_u32_le(bytes, offset);
+    let high = read_u32_le(bytes, offset + 4);
+    return low + (high * 4294967296);
+}
+
+func slice_bytes(bytes: List, start: int, len: int) -> List {
+    let res = list_new();
+    let b_len = list_length(bytes);
+    let mut_i = 0;
+    while mut_i < len {
+        let idx = start + mut_i;
+        if idx >= 0 && idx < b_len {
+            let b: int = list_get(bytes, idx);
+            list_push(res, b);
+        } else {
+            list_push(res, 0);
+        }
+        mut_i = mut_i + 1;
+    }
+    return res;
+}
+
+func hex_digit_char(val: int) -> string {
+    let d = val % 16;
+    if d == 0 { return "0"; }
+    if d == 1 { return "1"; }
+    if d == 2 { return "2"; }
+    if d == 3 { return "3"; }
+    if d == 4 { return "4"; }
+    if d == 5 { return "5"; }
+    if d == 6 { return "6"; }
+    if d == 7 { return "7"; }
+    if d == 8 { return "8"; }
+    if d == 9 { return "9"; }
+    if d == 10 { return "a"; }
+    if d == 11 { return "b"; }
+    if d == 12 { return "c"; }
+    if d == 13 { return "d"; }
+    if d == 14 { return "e"; }
+    if d == 15 { return "f"; }
+    return "0";
+}
+
+func int_to_hex(val: int) -> string {
+    if val == 0 { return "0x0"; }
+    let mut_v = val;
+    let mut_res = "";
+    while mut_v > 0 {
+        let rem = mut_v % 16;
+        mut_res = hex_digit_char(rem) + mut_res;
+        mut_v = mut_v / 16;
+    }
+    return "0x" + mut_res;
+}
+
 // ============================================================================
 // Section 2: Memory Pattern & Wildcard Search Engine
 // ============================================================================
@@ -853,53 +990,113 @@ func sandbox_step(harness: SandboxHarness) -> bool {
         return true;
     }
     
-    // PUSH rax (0x50 = 80)
-    if b0 == 80 {
-        sandbox_push(harness, harness.cpu.rax);
+    // LEAVE (0xC9 = 201: mov rsp, rbp; pop rbp)
+    if b0 == 201 {
+        harness.cpu.rsp = harness.cpu.rbp;
+        harness.cpu.rbp = sandbox_pop(harness);
         harness.cpu.rip = harness.cpu.rip + 1;
         harness.steps_executed = harness.steps_executed + 1;
         return true;
     }
     
-    // POP rbx (0x5B = 91)
-    if b0 == 91 {
-        harness.cpu.rbx = sandbox_pop(harness);
+    // SYSCALL (0x0F 0x05)
+    if b0 == 15 {
+        let b1 = sandbox_read_byte(harness, harness.cpu.rip + 1);
+        if b1 == 5 {
+            harness.halted = true;
+            harness.halt_reason = "Syscall executed safely in sandbox";
+            harness.cpu.rip = harness.cpu.rip + 2;
+            harness.steps_executed = harness.steps_executed + 1;
+            return true;
+        }
+    }
+    
+    // PUSH reg (0x50 - 0x57 = 80 - 87)
+    if b0 >= 80 && b0 <= 87 {
+        let reg_idx = b0 - 80;
+        let mut_val = 0;
+        if reg_idx == 0 { mut_val = harness.cpu.rax; }
+        else if reg_idx == 1 { mut_val = harness.cpu.rcx; }
+        else if reg_idx == 2 { mut_val = harness.cpu.rdx; }
+        else if reg_idx == 3 { mut_val = harness.cpu.rbx; }
+        else if reg_idx == 4 { mut_val = harness.cpu.rsp; }
+        else if reg_idx == 5 { mut_val = harness.cpu.rbp; }
+        else if reg_idx == 6 { mut_val = harness.cpu.rsi; }
+        else if reg_idx == 7 { mut_val = harness.cpu.rdi; }
+        sandbox_push(harness, mut_val);
         harness.cpu.rip = harness.cpu.rip + 1;
         harness.steps_executed = harness.steps_executed + 1;
         return true;
     }
     
-    // MOV eax, imm32 (0xB8 = 184)
-    if b0 == 184 {
+    // POP reg (0x58 - 0x5F = 88 - 95)
+    if b0 >= 88 && b0 <= 95 {
+        let reg_idx = b0 - 88;
+        let p_val = sandbox_pop(harness);
+        if reg_idx == 0 { harness.cpu.rax = p_val; }
+        else if reg_idx == 1 { harness.cpu.rcx = p_val; }
+        else if reg_idx == 2 { harness.cpu.rdx = p_val; }
+        else if reg_idx == 3 { harness.cpu.rbx = p_val; }
+        else if reg_idx == 4 { harness.cpu.rsp = p_val; }
+        else if reg_idx == 5 { harness.cpu.rbp = p_val; }
+        else if reg_idx == 6 { harness.cpu.rsi = p_val; }
+        else if reg_idx == 7 { harness.cpu.rdi = p_val; }
+        harness.cpu.rip = harness.cpu.rip + 1;
+        harness.steps_executed = harness.steps_executed + 1;
+        return true;
+    }
+    
+    // MOV reg, imm32 (0xB8 - 0xBF = 184 - 191)
+    if b0 >= 184 && b0 <= 191 {
+        let reg_idx = b0 - 184;
         let b1 = sandbox_read_byte(harness, harness.cpu.rip + 1);
         let b2 = sandbox_read_byte(harness, harness.cpu.rip + 2);
         let b3 = sandbox_read_byte(harness, harness.cpu.rip + 3);
         let b4 = sandbox_read_byte(harness, harness.cpu.rip + 4);
-        harness.cpu.rax = b1 + (b2 * 256) + (b3 * 65536) + (b4 * 16777216);
+        let imm_val = b1 + (b2 * 256) + (b3 * 65536) + (b4 * 16777216);
+        if reg_idx == 0 { harness.cpu.rax = imm_val; }
+        else if reg_idx == 1 { harness.cpu.rcx = imm_val; }
+        else if reg_idx == 2 { harness.cpu.rdx = imm_val; }
+        else if reg_idx == 3 { harness.cpu.rbx = imm_val; }
+        else if reg_idx == 4 { harness.cpu.rsp = imm_val; }
+        else if reg_idx == 5 { harness.cpu.rbp = imm_val; }
+        else if reg_idx == 6 { harness.cpu.rsi = imm_val; }
+        else if reg_idx == 7 { harness.cpu.rdi = imm_val; }
         harness.cpu.rip = harness.cpu.rip + 5;
         harness.steps_executed = harness.steps_executed + 1;
         return true;
     }
     
-    // MOV ebx, imm32 (0xBB = 187)
-    if b0 == 187 {
+    // XOR reg32, reg32 (0x31 ModR/M = 49)
+    if b0 == 49 {
         let b1 = sandbox_read_byte(harness, harness.cpu.rip + 1);
-        let b2 = sandbox_read_byte(harness, harness.cpu.rip + 2);
-        let b3 = sandbox_read_byte(harness, harness.cpu.rip + 3);
-        let b4 = sandbox_read_byte(harness, harness.cpu.rip + 4);
-        harness.cpu.rbx = b1 + (b2 * 256) + (b3 * 65536) + (b4 * 16777216);
-        harness.cpu.rip = harness.cpu.rip + 5;
+        if b1 == 192 { harness.cpu.rax = 0; } // xor eax, eax
+        else if b1 == 219 { harness.cpu.rbx = 0; } // xor ebx, ebx
+        else if b1 == 201 { harness.cpu.rcx = 0; } // xor ecx, ecx
+        else if b1 == 210 { harness.cpu.rdx = 0; } // xor edx, edx
+        else if b1 == 246 { harness.cpu.rsi = 0; } // xor esi, esi
+        else if b1 == 255 { harness.cpu.rdi = 0; } // xor edi, edi
+        harness.cpu.rip = harness.cpu.rip + 2;
         harness.steps_executed = harness.steps_executed + 1;
         return true;
     }
     
-    // ADD rsp, imm8 (0x48 0x83 0xC4 imm8)
-    if b0 == 72 { // 0x48 REX.W
+    // REX.W (0x48 = 72)
+    if b0 == 72 {
         let b1 = sandbox_read_byte(harness, harness.cpu.rip + 1);
         let b2 = sandbox_read_byte(harness, harness.cpu.rip + 2);
-        if b1 == 131 && b2 == 196 { // 0x83 0xC4
+        // ADD rsp, imm8 (48 83 C4 imm)
+        if b1 == 131 && b2 == 196 {
             let imm = sandbox_read_byte(harness, harness.cpu.rip + 3);
             harness.cpu.rsp = harness.cpu.rsp + imm;
+            harness.cpu.rip = harness.cpu.rip + 4;
+            harness.steps_executed = harness.steps_executed + 1;
+            return true;
+        }
+        // SUB rsp, imm8 (48 83 EC imm)
+        if b1 == 131 && b2 == 236 {
+            let imm = sandbox_read_byte(harness, harness.cpu.rip + 3);
+            harness.cpu.rsp = harness.cpu.rsp - imm;
             harness.cpu.rip = harness.cpu.rip + 4;
             harness.steps_executed = harness.steps_executed + 1;
             return true;
@@ -907,6 +1104,48 @@ func sandbox_step(harness: SandboxHarness) -> bool {
         // XOR rax, rax (48 31 C0)
         if b1 == 49 && b2 == 192 {
             harness.cpu.rax = 0;
+            harness.cpu.rip = harness.cpu.rip + 3;
+            harness.steps_executed = harness.steps_executed + 1;
+            return true;
+        }
+        // MOV rbp, rsp (48 89 E5)
+        if b1 == 137 && b2 == 229 {
+            harness.cpu.rbp = harness.cpu.rsp;
+            harness.cpu.rip = harness.cpu.rip + 3;
+            harness.steps_executed = harness.steps_executed + 1;
+            return true;
+        }
+        // MOV rsp, rbp (48 89 EC)
+        if b1 == 137 && b2 == 236 {
+            harness.cpu.rsp = harness.cpu.rbp;
+            harness.cpu.rip = harness.cpu.rip + 3;
+            harness.steps_executed = harness.steps_executed + 1;
+            return true;
+        }
+        // MOV rdi, rax (48 89 C7)
+        if b1 == 137 && b2 == 199 {
+            harness.cpu.rdi = harness.cpu.rax;
+            harness.cpu.rip = harness.cpu.rip + 3;
+            harness.steps_executed = harness.steps_executed + 1;
+            return true;
+        }
+        // MOV rsi, rbx (48 89 DE)
+        if b1 == 137 && b2 == 222 {
+            harness.cpu.rsi = harness.cpu.rbx;
+            harness.cpu.rip = harness.cpu.rip + 3;
+            harness.steps_executed = harness.steps_executed + 1;
+            return true;
+        }
+        // INC rax (48 FF C0)
+        if b1 == 255 && b2 == 192 {
+            harness.cpu.rax = harness.cpu.rax + 1;
+            harness.cpu.rip = harness.cpu.rip + 3;
+            harness.steps_executed = harness.steps_executed + 1;
+            return true;
+        }
+        // DEC rax (48 FF C8)
+        if b1 == 255 && b2 == 200 {
+            harness.cpu.rax = harness.cpu.rax - 1;
             harness.cpu.rip = harness.cpu.rip + 3;
             harness.steps_executed = harness.steps_executed + 1;
             return true;
@@ -943,6 +1182,23 @@ func sandbox_get_register(harness: SandboxHarness, reg_name: string) -> int {
     if reg_name == "rsp" { return harness.cpu.rsp; }
     if reg_name == "rip" { return harness.cpu.rip; }
     return 0;
+}
+
+class CpuRegisters {
+    rax: int,
+    rbx: int,
+    rcx: int,
+    rdx: int,
+    rsi: int,
+    rdi: int,
+    rbp: int,
+    rsp: int,
+    rip: int,
+    rflags: int,
+}
+
+func cpu_registers_new() -> CpuRegisters {
+    return new CpuRegisters(0, 0, 0, 0, 0, 0, 0, 0, 0, 514);
 }
 
 // ============================================================================
@@ -1033,4 +1289,640 @@ func forensic_report_format_table(report: ForensicReport) -> string {
     }
     out = out + "================================================================================\n";
     return out;
+}
+
+func forensic_report_to_json(report: ForensicReport) -> string {
+    let out = "{\n";
+    out = out + "  \"pid\": " + int_to_str(report.pid) + ",\n";
+    out = out + "  \"target_name\": \"" + report.target_name + "\",\n";
+    out = out + "  \"region_count\": " + int_to_str(report.region_count) + ",\n";
+    out = out + "  \"total_memory_bytes\": " + int_to_str(report.total_memory_bytes) + ",\n";
+    out = out + "  \"anomalies\": [\n";
+    let a_len = list_length(report.anomalies);
+    let mut_i = 0;
+    while mut_i < a_len {
+        let a: MemoryAnomaly = list_get(report.anomalies, mut_i);
+        out = out + "    {\n";
+        out = out + "      \"start_addr\": " + int_to_str(a.start_addr) + ",\n";
+        out = out + "      \"size\": " + int_to_str(a.size) + ",\n";
+        out = out + "      \"anomaly_type\": \"" + a.anomaly_type + "\",\n";
+        out = out + "      \"severity\": \"" + a.severity + "\",\n";
+        out = out + "      \"description\": \"" + a.description + "\"\n";
+        out = out + "    }";
+        if mut_i + 1 < a_len {
+            out = out + ",";
+        }
+        out = out + "\n";
+        mut_i = mut_i + 1;
+    }
+    out = out + "  ]\n";
+    out = out + "}";
+    return out;
+}
+
+func forensic_report_to_csv(report: ForensicReport) -> string {
+    let out = "severity,start_addr,size,anomaly_type,description\n";
+    let a_len = list_length(report.anomalies);
+    let mut_i = 0;
+    while mut_i < a_len {
+        let a: MemoryAnomaly = list_get(report.anomalies, mut_i);
+        out = out + a.severity + "," + int_to_str(a.start_addr) + "," + int_to_str(a.size) + "," + a.anomaly_type + ",\"" + a.description + "\"\n";
+        mut_i = mut_i + 1;
+    }
+    return out;
+}
+
+// ============================================================================
+// Section 9: ELF Core Dump & Windows Memory Minidump Parsers
+// ============================================================================
+
+class ElfCoreNote {
+    note_type: int,
+    name: string,
+    desc_size: int,
+}
+
+class ElfCorePrStatus {
+    pid: int,
+    signal: int,
+    rax: int,
+    rbx: int,
+    rcx: int,
+    rdx: int,
+    rsi: int,
+    rdi: int,
+    rbp: int,
+    rsp: int,
+    rip: int,
+}
+
+class ElfCoreDump {
+    is_valid: bool,
+    pr_status: ElfCorePrStatus,
+    regions: List,
+    notes: List,
+}
+
+func is_elf_core(bytes: List) -> bool {
+    let b_len = list_length(bytes);
+    if b_len < 64 { return false; }
+    let b0 = read_u8(bytes, 0);
+    let b1 = read_u8(bytes, 1);
+    let b2 = read_u8(bytes, 2);
+    let b3 = read_u8(bytes, 3);
+    if b0 != 127 || b1 != 69 || b2 != 76 || b3 != 70 { return false; }
+    let e_type = read_u16_le(bytes, 16);
+    return e_type == 4; // ET_CORE
+}
+
+func parse_elf_core_dump(bytes: List) -> ElfCoreDump {
+    let regions = list_new();
+    let notes = list_new();
+    let default_pr = new ElfCorePrStatus(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    
+    if !is_elf_core(bytes) {
+        return new ElfCoreDump(false, default_pr, regions, notes);
+    }
+    
+    let e_phoff = read_u64_le(bytes, 32);
+    let e_phentsize = read_u16_le(bytes, 54);
+    if e_phentsize == 0 { e_phentsize = 56; }
+    let e_phnum = read_u16_le(bytes, 56);
+    
+    let mut_pr = default_pr;
+    let b_len = list_length(bytes);
+    let mut_i = 0;
+    while mut_i < e_phnum {
+        let ph_off = e_phoff + (mut_i * e_phentsize);
+        if ph_off + e_phentsize <= b_len {
+            let p_type = read_u32_le(bytes, ph_off);
+            let p_flags = read_u32_le(bytes, ph_off + 4);
+            let p_offset = read_u64_le(bytes, ph_off + 8);
+            let p_vaddr = read_u64_le(bytes, ph_off + 16);
+            let p_filesz = read_u64_le(bytes, ph_off + 32);
+            let p_memsz = read_u64_le(bytes, ph_off + 40);
+            
+            // PT_LOAD segment (type 1)
+            if p_type == 1 {
+                let perms = "";
+                if (p_flags / 4) % 2 == 1 { perms = perms + "r"; } else { perms = perms + "-"; }
+                if (p_flags / 2) % 2 == 1 { perms = perms + "w"; } else { perms = perms + "-"; }
+                if (p_flags % 2) == 1 { perms = perms + "x"; } else { perms = perms + "-"; }
+                perms = perms + "p";
+                list_push(regions, memory_region_new(p_vaddr, p_vaddr + p_memsz, perms, p_offset, "[pt_load]"));
+            }
+            
+            // PT_NOTE segment (type 4)
+            if p_type == 4 {
+                let mut_note_cur = p_offset;
+                let note_limit = p_offset + p_filesz;
+                if note_limit > b_len { note_limit = b_len; }
+                while mut_note_cur + 12 <= note_limit {
+                    let note_start = mut_note_cur;
+                    let namesz = read_u32_le(bytes, mut_note_cur);
+                    let descsz = read_u32_le(bytes, mut_note_cur + 4);
+                    let ntype = read_u32_le(bytes, mut_note_cur + 8);
+                    mut_note_cur = mut_note_cur + 12;
+                    
+                    let mut_namesz_pad = namesz;
+                    if (namesz % 4) != 0 { mut_namesz_pad = namesz + (4 - (namesz % 4)); }
+                    
+                    let note_name = "";
+                    let mut_k = 0;
+                    while mut_k < namesz && mut_note_cur + mut_k < b_len {
+                        let c_code = read_u8(bytes, mut_note_cur + mut_k);
+                        if c_code != 0 {
+                            note_name = note_name + ascii_char(c_code);
+                        }
+                        mut_k = mut_k + 1;
+                    }
+                    list_push(notes, new ElfCoreNote(ntype, note_name, descsz));
+                    
+                    let desc_off = mut_note_cur + mut_namesz_pad;
+                    // NT_PRSTATUS (type 1)
+                    if ntype == 1 && desc_off + 160 <= b_len {
+                        let cursig = read_u16_le(bytes, desc_off + 12);
+                        let pid = read_u32_le(bytes, desc_off + 32);
+                        if pid == 0 { pid = read_u32_le(bytes, desc_off + 24); }
+                        let rax = read_u64_le(bytes, desc_off + 192);
+                        let rcx = read_u64_le(bytes, desc_off + 200);
+                        let rdx = read_u64_le(bytes, desc_off + 208);
+                        let rsi = read_u64_le(bytes, desc_off + 216);
+                        let rdi = read_u64_le(bytes, desc_off + 224);
+                        let rbp = read_u64_le(bytes, desc_off + 144);
+                        let rbx = read_u64_le(bytes, desc_off + 152);
+                        let rip = read_u64_le(bytes, desc_off + 240);
+                        let rsp = read_u64_le(bytes, desc_off + 264);
+                        mut_pr = new ElfCorePrStatus(pid, cursig, rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp, rip);
+                    }
+                    
+                    let mut_descsz_pad = descsz;
+                    if (descsz % 4) != 0 { mut_descsz_pad = descsz + (4 - (descsz % 4)); }
+                    let next_note_off = desc_off + mut_descsz_pad;
+                    if next_note_off <= note_start {
+                        mut_note_cur = note_start + 12;
+                    } else {
+                        mut_note_cur = next_note_off;
+                    }
+                }
+            }
+        }
+        mut_i = mut_i + 1;
+    }
+    return new ElfCoreDump(true, mut_pr, regions, notes);
+}
+
+class MinidumpStream {
+    stream_type: int,
+    data_size: int,
+    rva: int,
+}
+
+class MinidumpModule {
+    base_of_image: int,
+    size_of_image: int,
+    name: string,
+}
+
+class WindowsMinidump {
+    is_valid: bool,
+    stream_count: int,
+    streams: List,
+    modules: List,
+    regions: List,
+}
+
+func is_windows_minidump(bytes: List) -> bool {
+    let b_len = list_length(bytes);
+    if b_len < 32 { return false; }
+    let b0 = read_u8(bytes, 0);
+    let b1 = read_u8(bytes, 1);
+    let b2 = read_u8(bytes, 2);
+    let b3 = read_u8(bytes, 3);
+    return b0 == 77 && b1 == 68 && b2 == 77 && b3 == 80;
+}
+
+func parse_windows_minidump(bytes: List) -> WindowsMinidump {
+    let streams = list_new();
+    let modules = list_new();
+    let regions = list_new();
+    
+    if !is_windows_minidump(bytes) {
+        return new WindowsMinidump(false, 0, streams, modules, regions);
+    }
+    
+    let b_len = list_length(bytes);
+    let num_streams = read_u32_le(bytes, 8);
+    let dir_rva = read_u32_le(bytes, 12);
+    
+    let mut_s = 0;
+    while mut_s < num_streams {
+        let entry_off = dir_rva + (mut_s * 12);
+        if entry_off + 12 <= b_len {
+            let stype = read_u32_le(bytes, entry_off);
+            let dsize = read_u32_le(bytes, entry_off + 4);
+            let rva = read_u32_le(bytes, entry_off + 8);
+            list_push(streams, new MinidumpStream(stype, dsize, rva));
+            
+            // ModuleListStream (4)
+            if stype == 4 && rva + 4 <= b_len {
+                let num_mods = read_u32_le(bytes, rva);
+                let mut_m = 0;
+                while mut_m < num_mods {
+                    let mod_off = rva + 4 + (mut_m * 108);
+                    if mod_off + 24 <= b_len {
+                        let base_img = read_u64_le(bytes, mod_off);
+                        let size_img = read_u32_le(bytes, mod_off + 8);
+                        let name_rva = read_u32_le(bytes, mod_off + 20);
+                        
+                        let mod_name = "";
+                        if name_rva > 0 && name_rva + 4 <= b_len {
+                            let str_len = read_u32_le(bytes, name_rva);
+                            let mut_ci = 0;
+                            while mut_ci < str_len && name_rva + 4 + mut_ci < b_len {
+                                let c_code = read_u8(bytes, name_rva + 4 + mut_ci);
+                                if c_code != 0 {
+                                    mod_name = mod_name + ascii_char(c_code);
+                                }
+                                mut_ci = mut_ci + 2;
+                            }
+                        }
+                        list_push(modules, new MinidumpModule(base_img, size_img, mod_name));
+                        list_push(regions, memory_region_new(base_img, base_img + size_img, "r-xp", 0, mod_name));
+                    }
+                    mut_m = mut_m + 1;
+                }
+            }
+            
+            // MemoryListStream (5)
+            if stype == 5 && rva + 4 <= b_len {
+                let num_ranges = read_u32_le(bytes, rva);
+                let mut_r = 0;
+                while mut_r < num_ranges {
+                    let range_off = rva + 4 + (mut_r * 16);
+                    if range_off + 16 <= b_len {
+                        let start_mem = read_u64_le(bytes, range_off);
+                        let data_sz = read_u32_le(bytes, range_off + 8);
+                        list_push(regions, memory_region_new(start_mem, start_mem + data_sz, "rw-p", 0, "[minidump_memory]"));
+                    }
+                    mut_r = mut_r + 1;
+                }
+            }
+            
+            // Memory64ListStream (9)
+            if stype == 9 && rva + 16 <= b_len {
+                let num_ranges64 = read_u64_le(bytes, rva);
+                let mut_r64 = 0;
+                while mut_r64 < num_ranges64 {
+                    let r64_off = rva + 16 + (mut_r64 * 16);
+                    if r64_off + 16 <= b_len {
+                        let start_mem64 = read_u64_le(bytes, r64_off);
+                        let data_sz64 = read_u64_le(bytes, r64_off + 8);
+                        list_push(regions, memory_region_new(start_mem64, start_mem64 + data_sz64, "rw-p", 0, "[minidump_memory64]"));
+                    }
+                    mut_r64 = mut_r64 + 1;
+                }
+            }
+        }
+        mut_s = mut_s + 1;
+    }
+    return new WindowsMinidump(true, num_streams, streams, modules, regions);
+}
+
+// ============================================================================
+// Section 10: ROP Gadget Harvester & Stack Pivot Detection
+// ============================================================================
+
+class RopGadget {
+    address: int,
+    instruction: string,
+    category: string,
+    length: int,
+}
+
+func rop_harvest_gadgets(bytes: List, base_addr: int) -> List {
+    let gadgets = list_new();
+    let b_len = list_length(bytes);
+    if b_len < 2 { return gadgets; }
+    
+    let mut_i = 0;
+    while mut_i < b_len {
+        let b = read_u8(bytes, mut_i);
+        if b == 195 { // 0xC3: ret
+            if mut_i >= 1 {
+                let p1 = read_u8(bytes, mut_i - 1);
+                if p1 == 95 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 1, "pop rdi; ret", "register_control", 2));
+                } else if p1 == 94 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 1, "pop rsi; ret", "register_control", 2));
+                } else if p1 == 90 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 1, "pop rdx; ret", "register_control", 2));
+                } else if p1 == 89 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 1, "pop rcx; ret", "register_control", 2));
+                } else if p1 == 88 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 1, "pop rax; ret", "register_control", 2));
+                } else if p1 == 91 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 1, "pop rbx; ret", "register_control", 2));
+                } else if p1 == 93 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 1, "pop rbp; ret", "register_control", 2));
+                } else if p1 == 92 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 1, "pop rsp; ret", "stack_pivot", 2));
+                } else if p1 == 201 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 1, "leave; ret", "stack_pivot", 2));
+                }
+            }
+            
+            if mut_i >= 2 {
+                let p2_0 = read_u8(bytes, mut_i - 2);
+                let p2_1 = read_u8(bytes, mut_i - 1);
+                if p2_0 == 15 && p2_1 == 5 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 2, "syscall; ret", "syscall", 3));
+                } else if p2_0 == 49 && p2_1 == 192 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 2, "xor eax, eax; ret", "arithmetic", 3));
+                } else if p2_0 == 49 && p2_1 == 219 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 2, "xor ebx, ebx; ret", "arithmetic", 3));
+                } else if p2_0 == 49 && p2_1 == 201 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 2, "xor ecx, ecx; ret", "arithmetic", 3));
+                } else if p2_0 == 49 && p2_1 == 210 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 2, "xor edx, edx; ret", "arithmetic", 3));
+                } else if p2_0 == 255 && p2_1 == 224 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 2, "jmp rax; ret", "control_flow", 3));
+                } else if p2_0 == 255 && p2_1 == 208 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 2, "call rax; ret", "control_flow", 3));
+                }
+            }
+            
+            if mut_i >= 3 {
+                let p3_0 = read_u8(bytes, mut_i - 3);
+                let p3_1 = read_u8(bytes, mut_i - 2);
+                let p3_2 = read_u8(bytes, mut_i - 1);
+                if p3_0 == 72 && p3_1 == 49 && p3_2 == 192 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 3, "xor rax, rax; ret", "arithmetic", 4));
+                } else if p3_0 == 72 && p3_1 == 135 && p3_2 == 224 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 3, "xchg rsp, rax; ret", "stack_pivot", 4));
+                } else if p3_0 == 72 && p3_1 == 137 && p3_2 == 236 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 3, "mov rsp, rbp; ret", "stack_pivot", 4));
+                } else if p3_0 == 72 && p3_1 == 137 && p3_2 == 199 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 3, "mov rdi, rax; ret", "register_control", 4));
+                } else if p3_0 == 72 && p3_1 == 137 && p3_2 == 222 {
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 3, "mov rsi, rbx; ret", "register_control", 4));
+                }
+            }
+            
+            if mut_i >= 4 {
+                let p4_0 = read_u8(bytes, mut_i - 4);
+                let p4_1 = read_u8(bytes, mut_i - 3);
+                let p4_2 = read_u8(bytes, mut_i - 2);
+                let p4_3 = read_u8(bytes, mut_i - 1);
+                if p4_0 == 72 && p4_1 == 131 && p4_2 == 196 {
+                    let ins_str = "add rsp, " + int_to_hex(p4_3) + "; ret";
+                    list_push(gadgets, new RopGadget(base_addr + mut_i - 4, ins_str, "stack_pivot", 5));
+                }
+            }
+        }
+        mut_i = mut_i + 1;
+    }
+    return gadgets;
+}
+
+func rop_filter_by_category(gadgets: List, category: string) -> List {
+    let filtered = list_new();
+    let g_len = list_length(gadgets);
+    let mut_i = 0;
+    while mut_i < g_len {
+        let g: RopGadget = list_get(gadgets, mut_i);
+        if g.category == category {
+            list_push(filtered, g);
+        }
+        mut_i = mut_i + 1;
+    }
+    return filtered;
+}
+
+func rop_filter_stack_pivots(gadgets: List) -> List {
+    return rop_filter_by_category(gadgets, "stack_pivot");
+}
+
+func detect_stack_pivots(bytes: List, base_addr: int) -> List {
+    let gadgets = rop_harvest_gadgets(bytes, base_addr);
+    return rop_filter_stack_pivots(gadgets);
+}
+
+// ============================================================================
+// Section 11: Defensive Heap Metadata Forensics
+// ============================================================================
+
+class HeapChunk {
+    address: int,
+    size: int,
+    flags: int,
+    is_prev_inuse: bool,
+    is_mmapped: bool,
+    fd: int,
+    bk: int,
+    is_corrupted: bool,
+    corruption_reason: string,
+}
+
+func parse_heap_chunk(arena_bytes: List, offset: int, base_addr: int) -> HeapChunk {
+    let b_len = list_length(arena_bytes);
+    if offset + 16 > b_len {
+        return new HeapChunk(base_addr + offset, 0, 0, false, false, 0, 0, true, "Chunk header truncated outside arena bounds");
+    }
+    let prev_sz = read_u64_le(arena_bytes, offset);
+    let raw_sz = read_u64_le(arena_bytes, offset + 8);
+    let flags = raw_sz % 8;
+    let size = raw_sz - flags;
+    
+    let is_prev_inuse = (flags % 2) == 1;
+    let is_mmapped = ((flags / 2) % 2) == 1;
+    
+    let fd = 0;
+    let bk = 0;
+    if offset + 24 <= b_len {
+        fd = read_u64_le(arena_bytes, offset + 16);
+    }
+    if offset + 32 <= b_len {
+        bk = read_u64_le(arena_bytes, offset + 24);
+    }
+    
+    let is_corrupted = false;
+    let reason = "";
+    
+    if (size % 8) != 0 || size < 16 {
+        is_corrupted = true;
+        reason = "Invalid chunk size or unaligned: " + int_to_str(size);
+    } else if offset + size > b_len {
+        is_corrupted = true;
+        reason = "Chunk size exceeds arena bounds: offset " + int_to_str(offset) + " + size " + int_to_str(size) + " > " + int_to_str(b_len);
+    } else if fd == base_addr + offset {
+        is_corrupted = true;
+        reason = "Double-free circular self-pointer in fastbin fd";
+    }
+    
+    return new HeapChunk(base_addr + offset, size, flags, is_prev_inuse, is_mmapped, fd, bk, is_corrupted, reason);
+}
+
+func audit_heap_arena(arena_bytes: List, base_addr: int) -> List {
+    let anomalies = list_new();
+    let b_len = list_length(arena_bytes);
+    if b_len < 16 { return anomalies; }
+    
+    let mut_offset = 0;
+    let mut_prev_size = 0;
+    let mut_prev_free = false;
+    
+    while mut_offset + 16 <= b_len {
+        let chunk = parse_heap_chunk(arena_bytes, mut_offset, base_addr);
+        if chunk.is_corrupted {
+            let anom = memory_anomaly_new(
+                chunk.address,
+                chunk.size,
+                "HEAP_CORRUPTION_DETECTED",
+                "CRITICAL",
+                chunk.corruption_reason
+            );
+            list_push(anomalies, anom);
+            if chunk.size <= 0 {
+                return anomalies;
+            }
+        }
+        
+        let raw_prev_sz = read_u64_le(arena_bytes, mut_offset);
+        if !chunk.is_prev_inuse && mut_prev_free && raw_prev_sz != mut_prev_size {
+            let anom = memory_anomaly_new(
+                chunk.address,
+                chunk.size,
+                "HEAP_PREV_SIZE_MISMATCH",
+                "HIGH",
+                "Prev_size header (" + int_to_str(raw_prev_sz) + ") does not match actual preceding chunk size (" + int_to_str(mut_prev_size) + ")"
+            );
+            list_push(anomalies, anom);
+        }
+        
+        if chunk.fd == chunk.address {
+            let anom = memory_anomaly_new(
+                chunk.address,
+                chunk.size,
+                "DOUBLE_FREE_CYCLE_DETECTED",
+                "CRITICAL",
+                "Chunk fd pointer forms a circular self-loop to chunk address"
+            );
+            list_push(anomalies, anom);
+        }
+        
+        mut_prev_size = chunk.size;
+        mut_prev_free = !chunk.is_prev_inuse;
+        
+        let step = chunk.size;
+        if step < 16 { step = 16; }
+        mut_offset = mut_offset + step;
+    }
+    return anomalies;
+}
+
+// ============================================================================
+// Section 12: Sliding-Window Entropy Scanner
+// ============================================================================
+
+class EntropyRegion {
+    offset: int,
+    length: int,
+    entropy_scaled: int,
+    is_packed: bool,
+}
+
+func detect_packed_entropy_regions(bytes: List, window_size: int, step_size: int, threshold_scaled: int) -> List {
+    let regions = list_new();
+    let b_len = list_length(bytes);
+    if b_len < window_size || window_size <= 0 || step_size <= 0 {
+        return regions;
+    }
+    
+    let mut_offset = 0;
+    while mut_offset + window_size <= b_len {
+        let ent = calculate_entropy_scaled(bytes, mut_offset, window_size);
+        let is_packed = ent >= threshold_scaled;
+        list_push(regions, new EntropyRegion(mut_offset, window_size, ent, is_packed));
+        mut_offset = mut_offset + step_size;
+    }
+    return regions;
+}
+
+// ============================================================================
+// Section 13: High-Level Unified API (roze.sec.forensics)
+// ============================================================================
+
+func sec_forensics_parse_maps(content: string) -> List {
+    return parse_proc_maps(content);
+}
+
+func sec_forensics_audit_regions(regions: List) -> List {
+    return audit_memory_regions(regions);
+}
+
+func sec_forensics_audit_proc_maps(maps_content: string) -> ForensicReport {
+    let regions = parse_proc_maps(maps_content);
+    let anomalies = audit_memory_regions(regions);
+    return forensic_report_new(0, "proc_maps_audit", regions, anomalies);
+}
+
+func sec_forensics_parse_elf_core(bytes: List) -> ElfCoreDump {
+    return parse_elf_core_dump(bytes);
+}
+
+func sec_forensics_parse_minidump(bytes: List) -> WindowsMinidump {
+    return parse_windows_minidump(bytes);
+}
+
+func sec_forensics_harvest_rop(bytes: List, base_addr: int) -> List {
+    return rop_harvest_gadgets(bytes, base_addr);
+}
+
+func sec_forensics_detect_pivots(bytes: List, base_addr: int) -> List {
+    return detect_stack_pivots(bytes, base_addr);
+}
+
+func sec_forensics_audit_heap(arena_bytes: List, base_addr: int) -> List {
+    return audit_heap_arena(arena_bytes, base_addr);
+}
+
+func sec_forensics_detect_packed(bytes: List, window_size: int, step_size: int, threshold_scaled: int) -> List {
+    return detect_packed_entropy_regions(bytes, window_size, step_size, threshold_scaled);
+}
+
+func sec_forensics_entropy(bytes: List) -> int {
+    return calculate_entropy_scaled(bytes, 0, list_length(bytes));
+}
+
+func sec_forensics_emulate(initial_regs: CpuRegisters, code_bytes: List, max_steps: int) -> SandboxHarness {
+    let mem_size = 4096;
+    let base_addr = initial_regs.rip;
+    let harness = sandbox_new(mem_size, base_addr);
+    harness.cpu.rax = initial_regs.rax;
+    harness.cpu.rbx = initial_regs.rbx;
+    harness.cpu.rcx = initial_regs.rcx;
+    harness.cpu.rdx = initial_regs.rdx;
+    harness.cpu.rsi = initial_regs.rsi;
+    harness.cpu.rdi = initial_regs.rdi;
+    harness.cpu.rbp = initial_regs.rbp;
+    harness.cpu.rsp = initial_regs.rsp;
+    harness.cpu.rip = initial_regs.rip;
+    harness.cpu.rflags = initial_regs.rflags;
+    
+    sandbox_load_bytes(harness, code_bytes, base_addr);
+    sandbox_run(harness, max_steps);
+    return harness;
+}
+
+func sec_forensics_create_report(pid: int, target_name: string, regions: List, anomalies: List) -> ForensicReport {
+    return forensic_report_new(pid, target_name, regions, anomalies);
+}
+
+func sec_forensics_export_json(report: ForensicReport) -> string {
+    return forensic_report_to_json(report);
+}
+
+func sec_forensics_export_csv(report: ForensicReport) -> string {
+    return forensic_report_to_csv(report);
 }

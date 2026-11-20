@@ -1,0 +1,496 @@
+// Roze Test Suite: Memory Forensics & Defensive Heap Analysis (M9-T05)
+// Module: roze.sec.forensics
+// Validates live process memory auditing, ELF core dump & Windows minidump parsing,
+// Shannon entropy analysis, memory protection violation auditing, ROP gadget harvesting,
+// stack pivot detection, heap arena consistency checking, and sandboxed CPU emulation.
+
+import "roze.sec.forensics";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("[ASSERTION FAILED]: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Suite 1: Live Process Memory Auditing (/proc/<pid>/maps & VirtualQueryEx)
+// ----------------------------------------------------------------------------
+func test_process_memory_auditing() {
+    println("=== Suite 1: Live Process Memory Auditing ===");
+    let maps_content = "00400000-00452000 r-xp 00000000 fd:00 123456 /usr/bin/daemon\n" +
+                       "00652000-00653000 rw-p 00052000 fd:00 123456 /usr/bin/daemon\n" +
+                       "01a00000-01a21000 rwxp 00000000 00:00 0 [heap]\n" +
+                       "7ffde000-7ffdf000 r-xp 00000000 00:00 0 [stack]\n" +
+                       "7ffff000-80000000 rwxp 00000000 00:00 0 \n";
+    
+    let regions = sec_forensics_parse_maps(maps_content);
+    assert(list_length(regions) == 5, "parse_proc_maps region count mismatch");
+    
+    let r0: MemoryRegion = list_get(regions, 0);
+    assert(r0.start_addr == 4194304, "region 0 start_addr mismatch");
+    assert(r0.end_addr == 4530176, "region 0 end_addr mismatch");
+    assert(r0.is_r && !r0.is_w && r0.is_x, "region 0 perms mismatch");
+    assert(r0.pathname == "/usr/bin/daemon", "region 0 pathname mismatch");
+    
+    // Windows VirtualQueryEx emulation
+    // 0x1000 MEM_COMMIT = 4096, 0x40 PAGE_EXECUTE_READWRITE = 64, 0x20000 MEM_PRIVATE = 131072
+    let mbi = new MemoryBasicInformation(5368709120, 5368709120, 64, 65536, 4096, 64, 131072);
+    let win_reg = virtual_query_to_region(mbi);
+    assert(win_reg.start_addr == 5368709120, "win_reg start mismatch");
+    assert(win_reg.end_addr == 5368774656, "win_reg end mismatch");
+    assert(memory_region_is_rwx(win_reg), "win_reg rwx mismatch");
+    assert(win_reg.pathname == "[private]", "win_reg pathname mismatch");
+    
+    println("Suite 1 passed: /proc/<pid>/maps and VirtualQueryEx parsing verified.");
+}
+
+// ----------------------------------------------------------------------------
+// Suite 2: ELF Core Dump Parser (PT_NOTE, NT_PRSTATUS, PT_LOAD)
+// ----------------------------------------------------------------------------
+func test_elf_core_dump_parser() {
+    println("=== Suite 2: ELF Core Dump Parser ===");
+    let buf = list_new();
+    let mut_i = 0;
+    while mut_i < 600 {
+        list_push(buf, 0);
+        mut_i = mut_i + 1;
+    }
+    
+    // ELF Header (64 bytes)
+    list_set(buf, 0, 127); // 0x7F
+    list_set(buf, 1, 69);  // 'E'
+    list_set(buf, 2, 76);  // 'L'
+    list_set(buf, 3, 70);  // 'F'
+    list_set(buf, 4, 2);   // 64-bit
+    list_set(buf, 5, 1);   // LSB
+    list_set(buf, 6, 1);   // EV_CURRENT
+    list_set(buf, 16, 4);  // e_type = 4 (ET_CORE)
+    list_set(buf, 17, 0);
+    list_set(buf, 32, 64); // e_phoff = 64
+    list_set(buf, 54, 56); // e_phentsize = 56
+    list_set(buf, 56, 2);  // e_phnum = 2
+    
+    // Program Header 0: PT_NOTE (offset 64)
+    list_set(buf, 64, 4);   // p_type = 4 (PT_NOTE)
+    list_set(buf, 72, 176); // p_offset = 176
+    list_set(buf, 96, 200); // p_filesz = 200
+    list_set(buf, 97, 1);   // 200 + 256 = 456
+    
+    // Program Header 1: PT_LOAD (offset 120)
+    list_set(buf, 120, 1);  // p_type = 1 (PT_LOAD)
+    list_set(buf, 124, 7);  // p_flags = 7 (PF_R | PF_W | PF_X)
+    list_set(buf, 128, 200); // p_offset = 200
+    list_set(buf, 136, 0);   // p_vaddr = 0x400000 (4194304)
+    list_set(buf, 137, 0);
+    list_set(buf, 138, 64);
+    list_set(buf, 160, 0);   // p_memsz = 4096 (0x1000)
+    list_set(buf, 161, 16);
+    
+    // Note Data at offset 176:
+    // namesz = 5 ("CORE\0")
+    list_set(buf, 176, 5);
+    // descsz = 336 (0x150)
+    list_set(buf, 180, 80);
+    list_set(buf, 181, 1);
+    // ntype = 1 (NT_PRSTATUS)
+    list_set(buf, 184, 1);
+    // Note Name at 188: "CORE"
+    list_set(buf, 188, 67); // 'C'
+    list_set(buf, 189, 79); // 'O'
+    list_set(buf, 190, 82); // 'R'
+    list_set(buf, 191, 69); // 'E'
+    list_set(buf, 192, 0);
+    // namesz 5 padded to 8 bytes -> descriptor at 176 + 12 + 8 = 196
+    // cursig at 196 + 12 = 208
+    list_set(buf, 208, 11); // SIGSEGV (11)
+    // pid at 196 + 32 = 228
+    list_set(buf, 228, 146); // 146 + (16 * 256) = 4242
+    list_set(buf, 229, 16);
+    // registers:
+    // rax at 196 + 192 = 388
+    list_set(buf, 388, 55); // 0x1337 = 4919 -> 55 + (19 * 256)
+    list_set(buf, 389, 19);
+    // rbx at 196 + 152 = 348
+    list_set(buf, 348, 0);  // 0x2000 = 8192 -> 32 * 256
+    list_set(buf, 349, 32);
+    // rip at 196 + 240 = 436
+    list_set(buf, 436, 0);  // 0x401000 = 4198400 -> 16 + (64 * 65536)
+    list_set(buf, 437, 16);
+    list_set(buf, 438, 64);
+    
+    assert(is_elf_core(buf), "is_elf_core check mismatch");
+    let core = parse_elf_core_dump(buf);
+    assert(core.is_valid, "core dump validity mismatch");
+    assert(list_length(core.notes) >= 1, "core dump notes count mismatch");
+    assert(list_length(core.regions) == 1, "core dump regions count mismatch");
+    
+    let note0: ElfCoreNote = list_get(core.notes, 0);
+    assert(note0.note_type == 1, "note type mismatch");
+    assert(note0.name == "CORE", "note name mismatch");
+    
+    assert(core.pr_status.pid == 4242, "pr_status pid mismatch");
+    assert(core.pr_status.signal == 11, "pr_status signal mismatch");
+    assert(core.pr_status.rax == 4919, "pr_status rax mismatch");
+    assert(core.pr_status.rbx == 8192, "pr_status rbx mismatch");
+    assert(core.pr_status.rip == 4198400, "pr_status rip mismatch");
+    
+    let reg0: MemoryRegion = list_get(core.regions, 0);
+    assert(reg0.start_addr == 4194304, "core region start_addr mismatch");
+    assert(reg0.end_addr == 4198400, "core region end_addr mismatch");
+    assert(reg0.is_r && reg0.is_w && reg0.is_x, "core region rwx flags mismatch");
+    
+    println("Suite 2 passed: ELF core dump parsing verified.");
+}
+
+// ----------------------------------------------------------------------------
+// Suite 3: Windows Minidump Parser (MDMP, Module & Memory Streams)
+// ----------------------------------------------------------------------------
+func test_windows_minidump_parser() {
+    println("=== Suite 3: Windows Minidump Parser ===");
+    let buf = list_new();
+    let mut_i = 0;
+    while mut_i < 300 {
+        list_push(buf, 0);
+        mut_i = mut_i + 1;
+    }
+    
+    // Header (32 bytes)
+    list_set(buf, 0, 77); // 'M'
+    list_set(buf, 1, 68); // 'D'
+    list_set(buf, 2, 77); // 'M'
+    list_set(buf, 3, 80); // 'P'
+    list_set(buf, 8, 2);  // NumberOfStreams = 2
+    list_set(buf, 12, 32); // StreamDirectoryRva = 32
+    
+    // Stream 0: ModuleListStream (type 4, size 112, rva 56)
+    list_set(buf, 32, 4);
+    list_set(buf, 36, 112);
+    list_set(buf, 40, 56);
+    
+    // Stream 1: MemoryListStream (type 5, size 20, rva 176)
+    list_set(buf, 44, 5);
+    list_set(buf, 48, 20);
+    list_set(buf, 52, 176);
+    
+    // Module stream data at offset 56:
+    list_set(buf, 56, 1); // num_modules = 1
+    // module 0 at offset 60:
+    // BaseOfImage = 0x400000 (4194304)
+    list_set(buf, 60, 0);
+    list_set(buf, 61, 0);
+    list_set(buf, 62, 64);
+    // SizeOfImage = 65536
+    list_set(buf, 68, 0);
+    list_set(buf, 69, 0);
+    list_set(buf, 70, 1);
+    // ModuleNameRva = 200
+    list_set(buf, 80, 200);
+    
+    // Module name string at offset 200 (MINIDUMP_STRING):
+    list_set(buf, 200, 18); // length in bytes: 9 chars * 2 = 18
+    // "ntdll.dll" in UTF-16LE:
+    list_set(buf, 204, 110); list_set(buf, 205, 0); // 'n'
+    list_set(buf, 206, 116); list_set(buf, 207, 0); // 't'
+    list_set(buf, 208, 100); list_set(buf, 209, 0); // 'd'
+    list_set(buf, 210, 108); list_set(buf, 211, 0); // 'l'
+    list_set(buf, 212, 108); list_set(buf, 213, 0); // 'l'
+    list_set(buf, 214, 46);  list_set(buf, 215, 0); // '.'
+    list_set(buf, 216, 100); list_set(buf, 217, 0); // 'd'
+    list_set(buf, 218, 108); list_set(buf, 219, 0); // 'l'
+    list_set(buf, 220, 108); list_set(buf, 221, 0); // 'l'
+    
+    // Memory stream data at offset 176:
+    list_set(buf, 176, 1); // num_ranges = 1
+    // range 0 at offset 180:
+    // StartOfMemoryRange = 0x100000 (1048576)
+    list_set(buf, 180, 0);
+    list_set(buf, 181, 0);
+    list_set(buf, 182, 16);
+    // DataSize = 8192 (0x2000)
+    list_set(buf, 188, 0);
+    list_set(buf, 189, 32);
+    
+    assert(is_windows_minidump(buf), "is_windows_minidump mismatch");
+    let mdmp = parse_windows_minidump(buf);
+    assert(mdmp.is_valid, "minidump is_valid mismatch");
+    assert(mdmp.stream_count == 2, "minidump stream_count mismatch");
+    assert(list_length(mdmp.modules) == 1, "minidump module count mismatch");
+    assert(list_length(mdmp.regions) == 2, "minidump regions count mismatch");
+    
+    let mod0: MinidumpModule = list_get(mdmp.modules, 0);
+    assert(mod0.base_of_image == 4194304, "mod0 base_of_image mismatch");
+    assert(mod0.size_of_image == 65536, "mod0 size_of_image mismatch");
+    assert(mod0.name == "ntdll.dll", "mod0 name mismatch");
+    
+    println("Suite 3 passed: Windows minidump parsing verified.");
+}
+
+// ----------------------------------------------------------------------------
+// Suite 4: Shannon Entropy & Sliding-Window Packed Region Scanner
+// ----------------------------------------------------------------------------
+func test_shannon_entropy_scanner() {
+    println("=== Suite 4: Shannon Entropy & Sliding-Window Scanner ===");
+    let data = list_new();
+    // Block 1: 256 zero bytes (low entropy: 0)
+    let mut_i = 0;
+    while mut_i < 256 {
+        list_push(data, 0);
+        mut_i = mut_i + 1;
+    }
+    // Block 2: 256 highly diverse bytes (high entropy: ~8000)
+    let mut_j = 0;
+    while mut_j < 256 {
+        list_push(data, mut_j);
+        mut_j = mut_j + 1;
+    }
+    
+    let ent_all = sec_forensics_entropy(data);
+    assert(ent_all > 3000, "overall entropy mismatch");
+    
+    let packed_regions = detect_packed_entropy_regions(data, 256, 128, 7000);
+    assert(list_length(packed_regions) >= 2, "packed regions count mismatch");
+    
+    let r0: EntropyRegion = list_get(packed_regions, 0);
+    assert(r0.offset == 0, "r0 offset mismatch");
+    assert(!r0.is_packed, "r0 is_packed false positive");
+    assert(r0.entropy_scaled == 0, "r0 entropy zero mismatch");
+    
+    // The second block starting at 256 should be detected as packed
+    let r_packed: EntropyRegion = list_get(packed_regions, list_length(packed_regions) - 1);
+    assert(r_packed.is_packed, "diverse block not detected as packed");
+    assert(r_packed.entropy_scaled >= 7000, "diverse block entropy scaled mismatch");
+    
+    println("Suite 4 passed: Shannon entropy and packed region detection verified.");
+}
+
+// ----------------------------------------------------------------------------
+// Suite 5: Memory Permission Violations & Security Auditing
+// ----------------------------------------------------------------------------
+func test_memory_security_auditor() {
+    println("=== Suite 5: Memory Permission Violations & Auditing ===");
+    let regions = list_new();
+    list_push(regions, memory_region_new(4194304, 4200000, "r-xp", 0, "/usr/bin/daemon"));
+    list_push(regions, memory_region_new(5000000, 5004096, "rwxp", 0, "/usr/bin/daemon")); // RWX backed
+    list_push(regions, memory_region_new(6000000, 6008192, "r-xp", 0, "[stack]"));         // Executable stack
+    list_push(regions, memory_region_new(7000000, 7004096, "r-xp", 0, "[heap]"));          // Executable heap
+    list_push(regions, memory_region_new(8000000, 8004096, "r-xp", 0, ""));                // Unbacked executable
+    
+    let anomalies = sec_forensics_audit_regions(regions);
+    assert(list_length(anomalies) == 4, "expected 4 anomalies");
+    
+    let a0: MemoryAnomaly = list_get(anomalies, 0);
+    assert(a0.anomaly_type == "RWX_PERMISSION_VIOLATION", "a0 type mismatch");
+    assert(a0.severity == "CRITICAL", "a0 severity mismatch");
+    
+    let a1: MemoryAnomaly = list_get(anomalies, 1);
+    assert(a1.anomaly_type == "EXECUTABLE_STACK_DETECTED", "a1 type mismatch");
+    assert(a1.severity == "CRITICAL", "a1 severity mismatch");
+    
+    let a2: MemoryAnomaly = list_get(anomalies, 2);
+    assert(a2.anomaly_type == "EXECUTABLE_HEAP_DETECTED", "a2 type mismatch");
+    
+    let a3: MemoryAnomaly = list_get(anomalies, 3);
+    assert(a3.anomaly_type == "UNBACKED_EXECUTABLE_MEMORY", "a3 type mismatch");
+    
+    println("Suite 5 passed: defensive memory protection auditing verified.");
+}
+
+// ----------------------------------------------------------------------------
+// Suite 6: ROP Gadget Harvester & Stack Pivot Sequence Detector
+// ----------------------------------------------------------------------------
+func test_rop_gadgets_and_pivots() {
+    println("=== Suite 6: ROP Gadget Harvester & Stack Pivots ===");
+    let code = list_new();
+    
+    // 1. pop rdi; ret [95, 195]
+    list_push(code, 95);
+    list_push(code, 195);
+    
+    // 2. pop rsp; ret [92, 195] (stack pivot)
+    list_push(code, 92);
+    list_push(code, 195);
+    
+    // 3. syscall; ret [15, 5, 195]
+    list_push(code, 15);
+    list_push(code, 5);
+    list_push(code, 195);
+    
+    // 4. xor eax, eax; ret [49, 192, 195]
+    list_push(code, 49);
+    list_push(code, 192);
+    list_push(code, 195);
+    
+    // 5. leave; ret [201, 195] (stack pivot)
+    list_push(code, 201);
+    list_push(code, 195);
+    
+    // 6. xchg rsp, rax; ret [72, 135, 224, 195] (stack pivot)
+    list_push(code, 72);
+    list_push(code, 135);
+    list_push(code, 224);
+    list_push(code, 195);
+    
+    // 7. add rsp, 0x20; ret [72, 131, 196, 32, 195] (stack pivot)
+    list_push(code, 72);
+    list_push(code, 131);
+    list_push(code, 196);
+    list_push(code, 32);
+    list_push(code, 195);
+    
+    let all_gadgets = sec_forensics_harvest_rop(code, 4194304);
+    assert(list_length(all_gadgets) >= 7, "harvested gadgets count mismatch");
+    
+    let reg_gadgets = rop_filter_by_category(all_gadgets, "register_control");
+    assert(list_length(reg_gadgets) >= 1, "reg gadgets count mismatch");
+    let g_reg: RopGadget = list_get(reg_gadgets, 0);
+    assert(g_reg.instruction == "pop rdi; ret", "g_reg instruction mismatch");
+    
+    let pivots = sec_forensics_detect_pivots(code, 4194304);
+    assert(list_length(pivots) == 4, "stack pivots count mismatch");
+    
+    let p0: RopGadget = list_get(pivots, 0);
+    assert(p0.instruction == "pop rsp; ret", "p0 instruction mismatch");
+    
+    let p1: RopGadget = list_get(pivots, 1);
+    assert(p1.instruction == "leave; ret", "p1 instruction mismatch");
+    
+    let p2: RopGadget = list_get(pivots, 2);
+    assert(p2.instruction == "xchg rsp, rax; ret", "p2 instruction mismatch");
+    
+    let p3: RopGadget = list_get(pivots, 3);
+    assert(p3.instruction == "add rsp, 0x20; ret", "p3 instruction mismatch");
+    
+    println("Suite 6 passed: ROP gadget harvesting and stack pivot detection verified.");
+}
+
+// ----------------------------------------------------------------------------
+// Suite 7: Defensive Heap Arena Forensics (Corruption & Double-Free)
+// ----------------------------------------------------------------------------
+func test_defensive_heap_forensics() {
+    println("=== Suite 7: Defensive Heap Arena Forensics ===");
+    let arena = list_new();
+    let mut_i = 0;
+    while mut_i < 128 {
+        list_push(arena, 0);
+        mut_i = mut_i + 1;
+    }
+    
+    let base_addr = 65536;
+    
+    // Chunk 0 at offset 0 (address base_addr):
+    // prev_size = 0, size_and_flags = 33 (size 32, PREV_INUSE = 1)
+    list_set(arena, 8, 33);
+    
+    // Chunk 1 at offset 32 (address base_addr + 32):
+    // prev_size = 32, size_and_flags = 33 (size 32, PREV_INUSE = 1)
+    // Double-Free cycle: fd points to its own address (base_addr + 32 = 65568)
+    list_set(arena, 32, 32);
+    list_set(arena, 40, 33);
+    list_set(arena, 48, 32); // 65568 = 32 + (256 * 256)
+    list_set(arena, 49, 0);
+    list_set(arena, 50, 1);
+    
+    // Chunk 2 at offset 64 (address base_addr + 64):
+    // prev_size = 16 (CORRUPTED! Previous chunk was size 32, not 16)
+    // size_and_flags = 32 (size 32, PREV_INUSE = 0)
+    list_set(arena, 64, 16);
+    list_set(arena, 72, 32);
+    
+    let c0 = parse_heap_chunk(arena, 0, base_addr);
+    assert(c0.size == 32, "c0 size mismatch");
+    assert(c0.is_prev_inuse, "c0 prev_inuse mismatch");
+    assert(!c0.is_corrupted, "c0 corruption false positive");
+    
+    let c1 = parse_heap_chunk(arena, 32, base_addr);
+    assert(c1.is_corrupted, "c1 double-free should be detected as corrupted");
+    assert(c1.fd == base_addr + 32, "c1 fd self-reference mismatch");
+    
+    let heap_anomalies = sec_forensics_audit_heap(arena, base_addr);
+    assert(list_length(heap_anomalies) >= 2, "heap anomalies count mismatch");
+    
+    println("Suite 7 passed: defensive heap arena corruption checks verified.");
+}
+
+// ----------------------------------------------------------------------------
+// Suite 8: Sandboxed CPU State Emulator (Zero Host Execution)
+// ----------------------------------------------------------------------------
+func test_sandboxed_cpu_emulator() {
+    println("=== Suite 8: Sandboxed CPU State Emulator ===");
+    let code = list_new();
+    // 1. mov eax, 100 [184, 100, 0, 0, 0]
+    list_push(code, 184); list_push(code, 100); list_push(code, 0); list_push(code, 0); list_push(code, 0);
+    // 2. mov rdi, rax [72, 137, 199]
+    list_push(code, 72); list_push(code, 137); list_push(code, 199);
+    // 3. xor eax, eax [49, 192]
+    list_push(code, 49); list_push(code, 192);
+    // 4. inc rax [72, 255, 192]
+    list_push(code, 72); list_push(code, 255); list_push(code, 192);
+    // 5. push rax [80]
+    list_push(code, 80);
+    // 6. pop rbx [91]
+    list_push(code, 91);
+    // 7. ret [195]
+    list_push(code, 195);
+    
+    let regs = cpu_registers_new();
+    regs.rip = 4194304;
+    regs.rsp = 4194304 + 4096 - 64;
+    regs.rbp = regs.rsp;
+    
+    let harness = sandbox_new(4096, 4194304);
+    sandbox_load_bytes(harness, code, 4194304);
+    // Push return address target
+    sandbox_push(harness, 4198400);
+    
+    let steps = sandbox_run(harness, 20);
+    assert(steps == 7, "emulated steps count mismatch");
+    assert(harness.cpu.rax == 1, "rax register value mismatch (should be 1)");
+    assert(harness.cpu.rdi == 100, "rdi register value mismatch (should be 100)");
+    assert(harness.cpu.rbx == 1, "rbx register value mismatch (should be 1)");
+    assert(harness.cpu.rip == 4198400, "rip return target mismatch");
+    
+    println("Suite 8 passed: pure software sandboxed CPU emulation verified.");
+}
+
+// ----------------------------------------------------------------------------
+// Suite 9: Forensic Reporting & Structured Exports (JSON / CSV)
+// ----------------------------------------------------------------------------
+func test_forensic_reporting_and_exports() {
+    println("=== Suite 9: Forensic Reporting & Structured Exports ===");
+    let regions = list_new();
+    list_push(regions, memory_region_new(4194304, 4200000, "r-xp", 0, "/usr/bin/daemon"));
+    list_push(regions, memory_region_new(5000000, 5004096, "rwxp", 0, ""));
+    
+    let anomalies = sec_forensics_audit_regions(regions);
+    let report = sec_forensics_create_report(9999, "daemon_worker", regions, anomalies);
+    
+    let json = sec_forensics_export_json(report);
+    assert(str_contains(json, "\"pid\": 9999"), "json pid mismatch");
+    assert(str_contains(json, "\"target_name\": \"daemon_worker\""), "json target_name mismatch");
+    assert(str_contains(json, "\"anomaly_type\": \"RWX_PERMISSION_VIOLATION\""), "json anomaly type mismatch");
+    
+    let csv = sec_forensics_export_csv(report);
+    assert(str_contains(csv, "severity,start_addr,size,anomaly_type,description"), "csv header mismatch");
+    assert(str_contains(csv, "CRITICAL,5000000,4096,RWX_PERMISSION_VIOLATION"), "csv anomaly row mismatch");
+    
+    println("Suite 9 passed: JSON and CSV forensic reporting verified.");
+}
+
+func main() {
+    println("================================================================================");
+    println(" Roze M9-T05: Defensive Memory Forensics & Exploit Analysis Test Suite");
+    println("================================================================================");
+    test_process_memory_auditing();
+    test_elf_core_dump_parser();
+    test_windows_minidump_parser();
+    test_shannon_entropy_scanner();
+    test_memory_security_auditor();
+    test_rop_gadgets_and_pivots();
+    test_defensive_heap_forensics();
+    test_sandboxed_cpu_emulator();
+    test_forensic_reporting_and_exports();
+    println("================================================================================");
+    println(" ALL 9 MEMORY FORENSICS TEST SUITES PASSED! [100% SUCCESS]");
+    println("================================================================================");
+}

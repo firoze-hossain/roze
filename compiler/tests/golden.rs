@@ -2387,6 +2387,15 @@ fn sec_disasm_engine_suite() {
     assert!(stdout.contains("[CI-PASS] ALL MULTI-ARCH DISASSEMBLER & BINARY INSPECTION TESTS PASSED (M9-T04)"));
 }
 
+#[test]
+fn sec_memory_forensics_suite() {
+    let (stdout, stderr, ok) = run_fixture("sec_memory_forensics.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== Roze M9-T05 Defensive Memory Forensics Fixture ==="));
+    assert!(stdout.contains("Memory forensics golden verification passed!"));
+}
+
+
 
 
 

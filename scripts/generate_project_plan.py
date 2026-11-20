@@ -744,7 +744,7 @@ s1_rows = [
         ("M9-T05", 8), ("Month 9", 24), ("Sprint 18 (W37-W38)", 8), "Memory Forensics", "Defensive Heap Forensics & Exploit Analysis (roze.sec.forensics)",
         "Memory forensics suite: live process memory auditing (/proc/<pid>/maps, VirtualQueryEx), ELF core dump and Windows memory dump parser, Shannon entropy calculation for packed/encrypted malware detection, RWX / W+X memory permission violation auditor, ROP gadget harvester, stack pivot sequence detector, and sandboxed CPU emulator.",
         "Meets and exceeds capabilities of Volatility and memory analysis frameworks.",
-        "Incident Response, Blue Teaming, Threat Hunting", "8 Days", ("High", 14), ("Planned", 12)
+        "Incident Response, Blue Teaming, Threat Hunting", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M9-T06", 8), ("Month 9", 24), ("Sprint 18 (W37-W38)", 8), "Milestone Gate M9", "Full-Spectrum Cybersecurity & Penetration Testing Gate",

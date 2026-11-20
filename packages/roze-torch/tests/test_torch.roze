@@ -2048,9 +2048,88 @@ func test_suite_42_accelerated_transformer_and_benchmark() {
     println("SUITE 42 PASSED: roze-torch accelerated LLM inference engine with sub-10ms token generation latency");
 }
 
+func test_suite_43_standard_model_architectures_resnet_transformer() {
+    println("--- Test 43: ResNet & Transformer Architectures Training Convergence ---");
+    let models = models_init();
+    let nn = nn_init();
+    let optim = optim_init();
+    let l_fn = nn.MSELoss();
+
+    // 1. ResNet architecture verification & training
+    let resnet = models.ResNet(1, 2, 4, 4);
+    assert_true(resnet.is_training(), "ResNet initializes in training mode");
+    let img = tensor_ones_4d(2, 1, 4, 4);
+    let target_res = tensor_zeros_2d(2, 2);
+    target_res.set_2d(0, 0, 1.0);
+    target_res.set_2d(1, 1, 1.0);
+
+    let out_res_0 = resnet.forward(img);
+    assert_true(out_res_0.shape.dim0 == 2 && out_res_0.shape.dim1 == 2, "ResNet output shape is (2, 2)");
+    let loss_res_0 = l_fn.forward(out_res_0, target_res);
+    let init_loss_res = loss_res_0.item();
+
+    let opt_res = optim.AdamW(resnet.parameters(), 0.08, 0.9, 0.999, 0.00000001, 0.001);
+    let iter = 0;
+    while iter < 15 {
+        opt_res.zero_grad();
+        resnet.zero_grad();
+        let out = resnet.forward(img);
+        let loss = l_fn.forward(out, target_res);
+        loss.backward();
+        opt_res.step();
+        iter = iter + 1;
+    }
+    let out_res_final = resnet.forward(img);
+    let loss_res_final = l_fn.forward(out_res_final, target_res);
+    let final_loss_res = loss_res_final.item();
+    assert_true(final_loss_res < init_loss_res, "ResNet loss converges with AdamW optimizer");
+
+    resnet.eval();
+    assert_true(!resnet.is_training(), "ResNet switches to eval mode");
+
+    // 2. Transformer architecture verification & training
+    let transformer = models.Transformer(16, 4, 8, 2, 16, 2);
+    assert_true(transformer.is_training(), "Transformer initializes in training mode");
+    let tokens = tensor_zeros_1d(4);
+    tokens.set_1d(0, 1.0);
+    tokens.set_1d(1, 3.0);
+    tokens.set_1d(2, 5.0);
+    tokens.set_1d(3, 7.0);
+
+    let target_tf = tensor_zeros_2d(1, 2);
+    target_tf.set_2d(0, 0, 1.0);
+    target_tf.set_2d(0, 1, 0.0);
+
+    let out_tf_0 = transformer.forward(tokens);
+    assert_true(out_tf_0.shape.dim0 == 1 && out_tf_0.shape.dim1 == 2, "Transformer output shape is (1, 2)");
+    let loss_tf_0 = l_fn.forward(out_tf_0, target_tf);
+    let init_loss_tf = loss_tf_0.item();
+
+    let opt_tf = optim.AdamW(transformer.parameters(), 0.05, 0.9, 0.999, 0.00000001, 0.001);
+    iter = 0;
+    while iter < 12 {
+        opt_tf.zero_grad();
+        transformer.zero_grad();
+        let out = transformer.forward(tokens);
+        let loss = l_fn.forward(out, target_tf);
+        loss.backward();
+        opt_tf.step();
+        iter = iter + 1;
+    }
+    let out_tf_final = transformer.forward(tokens);
+    let loss_tf_final = l_fn.forward(out_tf_final, target_tf);
+    let final_loss_tf = loss_tf_final.item();
+    assert_true(final_loss_tf < init_loss_tf * 0.5, "Transformer loss decreases by >50%");
+
+    transformer.eval();
+    assert_true(!transformer.is_training(), "Transformer switches to eval mode");
+
+    println("SUITE 43 PASSED: roze-torch standard model architectures (ResNet & Transformer) end-to-end training and convergence");
+}
+
 func main() {
     println("=================================================");
-    println("   Roze-Torch M8-T01 to M8-T06 Acceleration Suite");
+    println("   Roze-Torch M8-T01 to M8-T07 Acceleration Suite");
     println("=================================================");
 
     test_shapes_and_strides();
@@ -2106,7 +2185,10 @@ func main() {
     test_suite_41_hardware_simd_cpu();
     test_suite_42_accelerated_transformer_and_benchmark();
 
+    // M8-T07 Standard Model Architectures (ResNet & Transformer)
+    test_suite_43_standard_model_architectures_resnet_transformer();
+
     println("=================================================");
-    println("✅ 100% Roze-Torch M8-T01 to M8-T06 Passed! 🎉");
+    println("✅ 100% Roze-Torch M8-T01 to M8-T07 Passed! 🎉");
     println("=================================================");
 }

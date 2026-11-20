@@ -828,6 +828,14 @@ impl Tensor {
         tensor_storage_write_float(this.storage, off, this.dtype_id, val);
     }
 
+    func get_flat(idx: int) -> float {
+        return tensor_storage_read_float(this.storage, this.offset + idx, this.dtype_id);
+    }
+
+    func set_flat(idx: int, val: float) {
+        tensor_storage_write_float(this.storage, this.offset + idx, this.dtype_id, val);
+    }
+
     // 2D Access
     func get_2d(r: int, c: int) -> float {
         let off = this.compute_offset_2d(r, c);
@@ -2004,6 +2012,18 @@ func tensor_sum_dim(t: Tensor, dim: int, keepdim: bool) -> Tensor {
         out.grad_fn = autograd_node_param(op_sum_dim(), "<SumDimBackward0>", t, null, 0.0, axis);
     }
     return out;
+}
+
+func tensor_mean_dim(t: Tensor, dim: int, keepdim: bool) -> Tensor {
+    let count = 1;
+    let axis = dim;
+    if axis < 0 { axis = t.rank() + axis; }
+    if axis == 0 { count = t.shape.dim0; }
+    else if axis == 1 { count = t.shape.dim1; }
+    else if axis == 2 { count = t.shape.dim2; }
+    else if axis == 3 { count = t.shape.dim3; }
+    let s = tensor_sum_dim(t, dim, keepdim);
+    return tensor_scale(s, 1.0 / (count * 1.0));
 }
 
 // ==============================================================================
@@ -7373,6 +7393,7 @@ func simd_matmul_2d(a: Tensor, b: Tensor) -> Tensor {
 
 func simd_rmsnorm(x: Tensor, weight: Tensor, eps: float) -> Tensor {
     let contig = tensor_contiguous(x);
+    let contig_w = tensor_contiguous(weight);
     let out = tensor_zeros(contig.shape, contig.dtype_id);
     let n = contig.numel();
     let dim = contig.shape.dim1;
@@ -7389,49 +7410,49 @@ func simd_rmsnorm(x: Tensor, weight: Tensor, eps: float) -> Tensor {
         while c_idx < chunks {
             let off = base_idx + (c_idx * 8);
             let vx = Vec8f(
-                contig.get_1d(off), contig.get_1d(off + 1), contig.get_1d(off + 2), contig.get_1d(off + 3),
-                contig.get_1d(off + 4), contig.get_1d(off + 5), contig.get_1d(off + 6), contig.get_1d(off + 7)
+                contig.get_flat(off), contig.get_flat(off + 1), contig.get_flat(off + 2), contig.get_flat(off + 3),
+                contig.get_flat(off + 4), contig.get_flat(off + 5), contig.get_flat(off + 6), contig.get_flat(off + 7)
             );
             sum_sq = sum_sq + vx.dot(vx);
             c_idx = c_idx + 1;
         }
         let rem = chunks * 8;
         while rem < dim {
-            let val = contig.get_1d(base_idx + rem);
+            let val = contig.get_flat(base_idx + rem);
             sum_sq = sum_sq + (val * val);
             rem = rem + 1;
         }
-        let rms = torch_sqrt((sum_sq / int_to_float(dim)) + eps);
+        let rms = torch_sqrt((sum_sq / (dim * 1.0)) + eps);
         let inv_rms = 1.0 / rms;
         c_idx = 0;
         while c_idx < chunks {
             let off = base_idx + (c_idx * 8);
             let w_off = c_idx * 8;
             let vx = Vec8f(
-                contig.get_1d(off), contig.get_1d(off + 1), contig.get_1d(off + 2), contig.get_1d(off + 3),
-                contig.get_1d(off + 4), contig.get_1d(off + 5), contig.get_1d(off + 6), contig.get_1d(off + 7)
+                contig.get_flat(off), contig.get_flat(off + 1), contig.get_flat(off + 2), contig.get_flat(off + 3),
+                contig.get_flat(off + 4), contig.get_flat(off + 5), contig.get_flat(off + 6), contig.get_flat(off + 7)
             );
             let vw = Vec8f(
-                weight.get_1d(w_off), weight.get_1d(w_off + 1), weight.get_1d(w_off + 2), weight.get_1d(w_off + 3),
-                weight.get_1d(w_off + 4), weight.get_1d(w_off + 5), weight.get_1d(w_off + 6), weight.get_1d(w_off + 7)
+                contig_w.get_flat(w_off), contig_w.get_flat(w_off + 1), contig_w.get_flat(w_off + 2), contig_w.get_flat(w_off + 3),
+                contig_w.get_flat(w_off + 4), contig_w.get_flat(w_off + 5), contig_w.get_flat(w_off + 6), contig_w.get_flat(w_off + 7)
             );
             let v_scale = Vec8f_splat(inv_rms);
             let v_norm = (vx * v_scale) * vw;
-            out.set_1d(off, v_norm.get(0));
-            out.set_1d(off + 1, v_norm.get(1));
-            out.set_1d(off + 2, v_norm.get(2));
-            out.set_1d(off + 3, v_norm.get(3));
-            out.set_1d(off + 4, v_norm.get(4));
-            out.set_1d(off + 5, v_norm.get(5));
-            out.set_1d(off + 6, v_norm.get(6));
-            out.set_1d(off + 7, v_norm.get(7));
+            out.set_flat(off, v_norm.get(0));
+            out.set_flat(off + 1, v_norm.get(1));
+            out.set_flat(off + 2, v_norm.get(2));
+            out.set_flat(off + 3, v_norm.get(3));
+            out.set_flat(off + 4, v_norm.get(4));
+            out.set_flat(off + 5, v_norm.get(5));
+            out.set_flat(off + 6, v_norm.get(6));
+            out.set_flat(off + 7, v_norm.get(7));
             c_idx = c_idx + 1;
         }
         rem = chunks * 8;
         while rem < dim {
-            let val = contig.get_1d(base_idx + rem);
-            let w = weight.get_1d(rem);
-            out.set_1d(base_idx + rem, (val * inv_rms) * w);
+            let val = contig.get_flat(base_idx + rem);
+            let w = contig_w.get_flat(rem);
+            out.set_flat(base_idx + rem, (val * inv_rms) * w);
             rem = rem + 1;
         }
         r = r + 1;
@@ -7514,5 +7535,377 @@ func accel_init() -> AccelEngine {
 impl LlamaTransformer {
     func generate_accelerated(prompt_tokens: list, max_new_tokens: int, temperature: float, top_p: float, device: Device) -> list {
         return this.generate(prompt_tokens, max_new_tokens, temperature, top_p);
+    }
+}
+
+// ==============================================================================
+// SECTION 38: Standard Deep Learning Architectures (ResNet & Transformer Models)
+// ==============================================================================
+// Sprint 16 (W33-W34) Milestone Gate M8 Deliverable: M8-T07
+// Verified End-to-End Training of ResNet & Transformer Architectures
+// ==============================================================================
+
+class ResNetBlock {
+    conv1: Conv2d,
+    bn1: BatchNorm2d,
+    conv2: Conv2d,
+    bn2: BatchNorm2d,
+    downsample: Conv2d,
+    has_downsample: bool,
+    params: list,
+    training: bool
+}
+
+func resnet_block_new(in_channels: int, out_channels: int, stride: int) -> ResNetBlock {
+    let conv1 = nn_conv2d(in_channels, out_channels, 3, stride, 1, false);
+    let bn1 = nn_batch_norm2d(out_channels, 0.00001, 0.1);
+    let conv2 = nn_conv2d(out_channels, out_channels, 3, 1, 1, false);
+    let bn2 = nn_batch_norm2d(out_channels, 0.00001, 0.1);
+
+    let downsample: Conv2d = null;
+    let has_downsample = false;
+    if stride != 1 || in_channels != out_channels {
+        downsample = nn_conv2d(in_channels, out_channels, 1, stride, 0, false);
+        has_downsample = true;
+    }
+
+    let params = list_new();
+    let p1 = conv1.parameters();
+    let i = 0;
+    while i < list_length(p1) { list_push(params, list_get(p1, i)); i = i + 1; }
+    let p2 = bn1.parameters();
+    i = 0;
+    while i < list_length(p2) { list_push(params, list_get(p2, i)); i = i + 1; }
+    let p3 = conv2.parameters();
+    i = 0;
+    while i < list_length(p3) { list_push(params, list_get(p3, i)); i = i + 1; }
+    let p4 = bn2.parameters();
+    i = 0;
+    while i < list_length(p4) { list_push(params, list_get(p4, i)); i = i + 1; }
+    if has_downsample {
+        let p_down = downsample.parameters();
+        i = 0;
+        while i < list_length(p_down) { list_push(params, list_get(p_down, i)); i = i + 1; }
+    }
+
+    return new ResNetBlock(conv1, bn1, conv2, bn2, downsample, has_downsample, params, true);
+}
+
+impl ResNetBlock {
+    func forward(x: Tensor) -> Tensor {
+        let residual = x;
+        if this.has_downsample {
+            residual = this.downsample.forward(x);
+        }
+        let out = this.conv1.forward(x);
+        out = this.bn1.forward(out);
+        out = tensor_relu(out);
+        out = this.conv2.forward(out);
+        out = this.bn2.forward(out);
+        out = tensor_add(out, residual);
+        return tensor_relu(out);
+    }
+
+    func parameters() -> list { return this.params; }
+
+    func zero_grad() {
+        this.conv1.zero_grad();
+        this.bn1.zero_grad();
+        this.conv2.zero_grad();
+        this.bn2.zero_grad();
+        if this.has_downsample {
+            this.downsample.zero_grad();
+        }
+    }
+
+    func train() {
+        this.training = true;
+        this.conv1.train();
+        this.bn1.train();
+        this.conv2.train();
+        this.bn2.train();
+        if this.has_downsample {
+            this.downsample.train();
+        }
+    }
+
+    func eval() {
+        this.training = false;
+        this.conv1.eval();
+        this.bn1.eval();
+        this.conv2.eval();
+        this.bn2.eval();
+        if this.has_downsample {
+            this.downsample.eval();
+        }
+    }
+
+    func is_training() -> bool { return this.training; }
+}
+
+class ResNet {
+    stem_conv: Conv2d,
+    stem_bn: BatchNorm2d,
+    layer1: ResNetBlock,
+    layer2: ResNetBlock,
+    fc: Linear,
+    flat_dim: int,
+    params: list,
+    training: bool
+}
+
+func resnet_mini(in_channels: int, num_classes: int, in_h: int, in_w: int) -> ResNet {
+    let stem_conv = nn_conv2d(in_channels, 4, 3, 1, 1, false);
+    let stem_bn = nn_batch_norm2d(4, 0.00001, 0.1);
+    let layer1 = resnet_block_new(4, 4, 1);
+    let layer2 = resnet_block_new(4, 8, 2);
+    let h_down = in_h / 2;
+    let w_down = in_w / 2;
+    let flat_dim = 8 * h_down * w_down;
+    let fc = nn_linear(flat_dim, num_classes, true);
+
+    let params = list_new();
+    let p_stem = stem_conv.parameters();
+    let i = 0;
+    while i < list_length(p_stem) { list_push(params, list_get(p_stem, i)); i = i + 1; }
+    let p_stem_bn = stem_bn.parameters();
+    i = 0;
+    while i < list_length(p_stem_bn) { list_push(params, list_get(p_stem_bn, i)); i = i + 1; }
+    let p_l1 = layer1.parameters();
+    i = 0;
+    while i < list_length(p_l1) { list_push(params, list_get(p_l1, i)); i = i + 1; }
+    let p_l2 = layer2.parameters();
+    i = 0;
+    while i < list_length(p_l2) { list_push(params, list_get(p_l2, i)); i = i + 1; }
+    let p_fc = fc.parameters();
+    i = 0;
+    while i < list_length(p_fc) { list_push(params, list_get(p_fc, i)); i = i + 1; }
+
+    return new ResNet(stem_conv, stem_bn, layer1, layer2, fc, flat_dim, params, true);
+}
+
+impl ResNet {
+    func forward(x: Tensor) -> Tensor {
+        let stem = this.stem_conv.forward(x);
+        stem = this.stem_bn.forward(stem);
+        stem = tensor_relu(stem);
+
+        let l1 = this.layer1.forward(stem);
+        let l2 = this.layer2.forward(l1);
+
+        let n = l2.shape.dim0;
+        let flat = tensor_reshape(l2, shape_2d(n, this.flat_dim));
+        return this.fc.forward(flat);
+    }
+
+    func parameters() -> list { return this.params; }
+
+    func zero_grad() {
+        this.stem_conv.zero_grad();
+        this.stem_bn.zero_grad();
+        this.layer1.zero_grad();
+        this.layer2.zero_grad();
+        this.fc.zero_grad();
+    }
+
+    func train() {
+        this.training = true;
+        this.stem_conv.train();
+        this.stem_bn.train();
+        this.layer1.train();
+        this.layer2.train();
+        this.fc.train();
+    }
+
+    func eval() {
+        this.training = false;
+        this.stem_conv.eval();
+        this.stem_bn.eval();
+        this.layer1.eval();
+        this.layer2.eval();
+        this.fc.eval();
+    }
+
+    func is_training() -> bool { return this.training; }
+}
+
+class TransformerBlock {
+    attn: MultiheadAttention,
+    ln1: LayerNorm,
+    linear1: Linear,
+    linear2: Linear,
+    ln2: LayerNorm,
+    params: list,
+    training: bool
+}
+
+func transformer_block_new(dim: int, num_heads: int, ffn_dim: int) -> TransformerBlock {
+    let attn = nn_multihead_attention(dim, num_heads, 0.0, true);
+    let ln1 = nn_layer_norm(dim, 0.00001);
+    let linear1 = nn_linear(dim, ffn_dim, true);
+    let linear2 = nn_linear(ffn_dim, dim, true);
+    let ln2 = nn_layer_norm(dim, 0.00001);
+
+    let params = list_new();
+    let p_a = attn.parameters();
+    let i = 0;
+    while i < list_length(p_a) { list_push(params, list_get(p_a, i)); i = i + 1; }
+    let p_ln1 = ln1.parameters();
+    i = 0;
+    while i < list_length(p_ln1) { list_push(params, list_get(p_ln1, i)); i = i + 1; }
+    let p_l1 = linear1.parameters();
+    i = 0;
+    while i < list_length(p_l1) { list_push(params, list_get(p_l1, i)); i = i + 1; }
+    let p_l2 = linear2.parameters();
+    i = 0;
+    while i < list_length(p_l2) { list_push(params, list_get(p_l2, i)); i = i + 1; }
+    let p_ln2 = ln2.parameters();
+    i = 0;
+    while i < list_length(p_ln2) { list_push(params, list_get(p_ln2, i)); i = i + 1; }
+
+    return new TransformerBlock(attn, ln1, linear1, linear2, ln2, params, true);
+}
+
+impl TransformerBlock {
+    func forward(x: Tensor) -> Tensor {
+        let a = this.attn.forward(x);
+        let x1 = this.ln1.forward(tensor_add(x, a));
+        let ffn_in = this.linear1.forward(x1);
+        let ffn = this.linear2.forward(tensor_gelu(ffn_in));
+        let x2 = this.ln2.forward(tensor_add(x1, ffn));
+        return x2;
+    }
+
+    func parameters() -> list { return this.params; }
+
+    func zero_grad() {
+        this.attn.zero_grad();
+        this.ln1.zero_grad();
+        this.linear1.zero_grad();
+        this.linear2.zero_grad();
+        this.ln2.zero_grad();
+    }
+
+    func train() {
+        this.training = true;
+        this.attn.train();
+        this.ln1.train();
+        this.linear1.train();
+        this.linear2.train();
+        this.ln2.train();
+    }
+
+    func eval() {
+        this.training = false;
+        this.attn.eval();
+        this.ln1.eval();
+        this.linear1.eval();
+        this.linear2.eval();
+        this.ln2.eval();
+    }
+
+    func is_training() -> bool { return this.training; }
+}
+
+class TransformerModel {
+    embed: Embedding,
+    pos_embed: Parameter,
+    block1: TransformerBlock,
+    block2: TransformerBlock,
+    head: Linear,
+    vocab_size: int,
+    dim: int,
+    seq_len: int,
+    params: list,
+    training: bool
+}
+
+func transformer_model_new(vocab_size: int, seq_len: int, dim: int, num_heads: int, ffn_dim: int, num_classes: int) -> TransformerModel {
+    let embed = nn_embedding(vocab_size, dim);
+    let pos_t = tensor_randn_2d(seq_len, dim, 0.02);
+    let pos_embed = nn_parameter(pos_t);
+    let block1 = transformer_block_new(dim, num_heads, ffn_dim);
+    let block2 = transformer_block_new(dim, num_heads, ffn_dim);
+    let head = nn_linear(dim, num_classes, true);
+
+    let params = list_new();
+    let p_emb = embed.parameters();
+    let i = 0;
+    while i < list_length(p_emb) { list_push(params, list_get(p_emb, i)); i = i + 1; }
+    list_push(params, pos_embed);
+    let p_b1 = block1.parameters();
+    i = 0;
+    while i < list_length(p_b1) { list_push(params, list_get(p_b1, i)); i = i + 1; }
+    let p_b2 = block2.parameters();
+    i = 0;
+    while i < list_length(p_b2) { list_push(params, list_get(p_b2, i)); i = i + 1; }
+    let p_h = head.parameters();
+    i = 0;
+    while i < list_length(p_h) { list_push(params, list_get(p_h, i)); i = i + 1; }
+
+    return new TransformerModel(embed, pos_embed, block1, block2, head, vocab_size, dim, seq_len, params, true);
+}
+
+impl TransformerModel {
+    func forward(token_ids: Tensor) -> Tensor {
+        let emb = this.embed.forward(token_ids);
+        let x = tensor_add(emb, this.pos_embed.data);
+        let h1 = this.block1.forward(x);
+        let h2 = this.block2.forward(h1);
+        let pooled = tensor_mean_dim(h2, 0, false);
+        let pooled_2d = tensor_reshape(pooled, shape_2d(1, this.dim));
+        return this.head.forward(pooled_2d);
+    }
+
+    func parameters() -> list { return this.params; }
+
+    func zero_grad() {
+        this.embed.zero_grad();
+        this.pos_embed.zero_grad();
+        this.block1.zero_grad();
+        this.block2.zero_grad();
+        this.head.zero_grad();
+    }
+
+    func train() {
+        this.training = true;
+        this.embed.train();
+        this.block1.train();
+        this.block2.train();
+        this.head.train();
+    }
+
+    func eval() {
+        this.training = false;
+        this.embed.eval();
+        this.block1.eval();
+        this.block2.eval();
+        this.head.eval();
+    }
+
+    func is_training() -> bool { return this.training; }
+}
+
+class ModelsNamespace {}
+
+func models_init() -> ModelsNamespace {
+    return new ModelsNamespace();
+}
+
+impl ModelsNamespace {
+    func ResNetBlock(in_channels: int, out_channels: int, stride: int) -> ResNetBlock {
+        return resnet_block_new(in_channels, out_channels, stride);
+    }
+
+    func ResNet(in_channels: int, num_classes: int, in_h: int, in_w: int) -> ResNet {
+        return resnet_mini(in_channels, num_classes, in_h, in_w);
+    }
+
+    func TransformerBlock(dim: int, num_heads: int, ffn_dim: int) -> TransformerBlock {
+        return transformer_block_new(dim, num_heads, ffn_dim);
+    }
+
+    func Transformer(vocab_size: int, seq_len: int, dim: int, num_heads: int, ffn_dim: int, num_classes: int) -> TransformerModel {
+        return transformer_model_new(vocab_size, seq_len, dim, num_heads, ffn_dim, num_classes);
     }
 }

@@ -251,7 +251,8 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         | "torch::cuda" | "roze::torch::cuda" | "roze-torch::cuda" | "roze_torch::cuda" | "cuda" | "torch_cuda"
         | "torch::blas" | "roze::torch::blas" | "roze-torch::blas" | "roze_torch::blas" | "blas" | "torch_blas" | "openblas"
         | "torch::simd" | "roze::torch::simd" | "roze-torch::simd" | "roze_torch::simd" | "simd_accel" | "torch_simd"
-        | "torch::accel" | "roze::torch::accel" | "roze-torch::accel" | "roze_torch::accel" | "accel" => {
+        | "torch::accel" | "roze::torch::accel" | "roze-torch::accel" | "roze_torch::accel" | "accel"
+        | "torch::models" | "roze::torch::models" | "roze-torch::models" | "models" | "torch_models" => {
             Some("roze-torch/src/lib.roze".to_string())
         }
         "game" | "roze::game" | "roze-game" | "roze_game" | "raylib_game" | "gamedev" | "engine" => {

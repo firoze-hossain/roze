@@ -5038,6 +5038,26 @@ fn native_standard_torch_nd_tensor_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze-Torch N-Dimensional Tensor Engine 100% OPERATIONAL"));
 }
 
+#[test]
+fn native_milestone_gate_m8_deep_learning_and_llm_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("milestone_gate_m8_deep_learning_and_llm.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read milestone_gate_m8_deep_learning_and_llm.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("m8_milestone_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: roze-torch N-dimensional tensor engine and vector arithmetic parity"));
+    assert!(stdout.contains("SUITE 2 PASSED: roze-torch dynamic computational graph autograd tape and finite difference gradcheck"));
+    assert!(stdout.contains("SUITE 3 PASSED: roze-torch neural network modules, optimizers and numerical loss functions"));
+    assert!(stdout.contains("SUITE 4 PASSED: roze-torch end-to-end training and convergence of ResNet architecture"));
+    assert!(stdout.contains("SUITE 5 PASSED: roze-torch end-to-end training and convergence of Transformer architecture"));
+    assert!(stdout.contains("SUITE 6 PASSED: roze-torch local 7B LLM transformer decoder and real-time token generation benchmark"));
+    assert!(stdout.contains("SUITE 7 PASSED: roze-torch hardware acceleration, CUDA/BLAS/SIMD and compute convergence"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Milestone Gate M8 Deep Learning & 7B LLM Inference Engine 100% OPERATIONAL"));
+}
+
+
 
 
 

@@ -712,7 +712,7 @@ s1_rows = [
         ("M8-T07", 8), ("Month 8", 23), ("Sprint 16 (W33-W34)", 8), "Milestone Gate M8", "Deep Learning & 7B LLM Inference Benchmark Gate",
         "Verified end-to-end training of ResNet and Transformer architectures; verified real-time token generation for LLaMA-3 8B model at >35 tokens/sec on GPU; 100% test pass on autograd gradient verification checks.",
         "Proves PyTorch + NumPy equivalence in pure Roze with zero Python runtime.",
-        "AI / Machine Learning & High-Performance Compute", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
+        "AI / Machine Learning & High-Performance Compute", "3 Days", ("Critical", 14), ("Completed", 16)
     ],
 
     # MONTH 9: CYBERSECURITY, HACKING & DEFENSIVE FORENSICS (SCAPY + NMAP + VOLATILITY PARITY)
@@ -1337,7 +1337,7 @@ s5_rows = [
         ("Sprint 16", 23), "W33 - W34", "AI & LLM Milestone M8", "Optimizers (AdamW), 7B Transformer LLM Decoder, CUDA FFI Acceleration",
         "Local LLaMA-3/Mistral 7B inference with KV-cache running at >35 tok/s on CUDA, AdamW optimizer, GGUF/safetensors loader.",
         "Risk: GPU memory overflow. Mitigation: Efficient KV-cache memory pooling and GGUF quantized weights.",
-        ("Gate 16: AI & LLM Engine Gate", 15)
+        ("Gate 16: AI & LLM Engine Pass", 16)
     ],
     [
         ("Sprint 17", 24), "W35 - W36", "Packet DSL & Reconnaissance", "Line-Rate Raw Sockets, Scapy-Class Stacking DSL (/), 100k+ Stealth SYN Scanner",

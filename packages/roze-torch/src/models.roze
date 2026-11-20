@@ -1,0 +1,8 @@
+// ==============================================================================
+// 🌹 Roze-Torch: Standard Model Architectures (roze-torch::models)
+// ==============================================================================
+// Sprint 16 (W33-W34) Milestone Gate M8 Deliverable: M8-T07
+// ResNet & Transformer Architectures with End-to-End Training & Inference
+// ==============================================================================
+
+import "lib.roze";

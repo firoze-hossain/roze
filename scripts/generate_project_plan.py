@@ -738,7 +738,7 @@ s1_rows = [
         ("M9-T04", 8), ("Month 9", 24), ("Sprint 18 (W37-W38)", 8), "Multi-Arch Disassembler", "Static Binary Analysis & Instruction Decoders (roze.sec.disasm)",
         "Static binary inspection engine: ELF (32/64-bit), PE/COFF (PE32/PE32+), Mach-O (64-bit), and WebAssembly binary modules. Instruction decoders for x86_64 (prefixes, ModR/M, SIB, REX, AVX/SSE), ARM64 (AArch64), RISC-V (RV32I/RV64I), and WASM bytecode. High-precision symbol demangling (Itanium C++ ABI, Rust v0, Roze namespaces).",
         "Matches capabilities of radare2 and Capstone disassembler in pure Roze.",
-        "Reverse Engineering, Malware Analysis, Binary Auditing", "8 Days", ("High", 14), ("Planned", 12)
+        "Reverse Engineering, Malware Analysis, Binary Auditing", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M9-T05", 8), ("Month 9", 24), ("Sprint 18 (W37-W38)", 8), "Memory Forensics", "Defensive Heap Forensics & Exploit Analysis (roze.sec.forensics)",

@@ -1733,6 +1733,14 @@ func x86_reg_64(idx: int) -> string {
     return "rax";
 }
 
+func x86_reg_xmm(idx: int) -> string {
+    return "xmm" + int_to_str(idx);
+}
+
+func x86_reg_ymm(idx: int) -> string {
+    return "ymm" + int_to_str(idx);
+}
+
 func x86_reg_32(idx: int) -> string {
     if idx == 0 { return "eax"; }
     if idx == 1 { return "ecx"; }
@@ -1915,7 +1923,8 @@ func x86_decode_modrm(bytes: List, offset: int, rex_r: int, rex_b: int, rex_x: i
 func slice_bytes(bytes: List, start: int, len: int) -> List {
     let res = list_new();
     let mut_i = 0;
-    while mut_i < len {
+    let b_len = list_length(bytes);
+    while mut_i < len && (start + mut_i) < b_len {
         list_push(res, list_get(bytes, start + mut_i));
         mut_i = mut_i + 1;
     }
@@ -1972,6 +1981,7 @@ func disassemble_x86_64_one(bytes: List, offset: int, address: int) -> Instructi
     let has_prefix_66 = false;
     let has_lock = false;
     let has_rep = false;
+    let has_prefix_f2 = false;
 
     // 1. Prefix decoding loop
     let mut_prefix_done = false;
@@ -1984,7 +1994,10 @@ func disassemble_x86_64_one(bytes: List, offset: int, address: int) -> Instructi
         } else if p_byte == 240 { // 0xF0 lock
             has_lock = true;
             mut_cur = mut_cur + 1;
-        } else if p_byte == 243 { // 0xF3 rep
+        } else if p_byte == 242 { // 0xF2 repne / SSE double
+            has_prefix_f2 = true;
+            mut_cur = mut_cur + 1;
+        } else if p_byte == 243 { // 0xF3 rep / SSE single
             has_rep = true;
             mut_cur = mut_cur + 1;
         } else if p_byte >= 64 && p_byte <= 79 { // 0x40 - 0x4F REX prefix
@@ -2004,6 +2017,155 @@ func disassemble_x86_64_one(bytes: List, offset: int, address: int) -> Instructi
 
     let opcode = read_u8(bytes, mut_cur);
     mut_cur = mut_cur + 1;
+
+    // VEX 2-Byte Prefix (0xC5) for AVX
+    if opcode == 197 && mut_cur + 1 < b_len {
+        let b1 = read_u8(bytes, mut_cur);
+        mut_cur = mut_cur + 1;
+        let vex_r = 1 - bit_shr(b1, 7);
+        let vvvv = bit_and(bit_not(bit_shr(b1, 3)), 15);
+        let is_256 = (bit_and(b1, 4) != 0);
+        let vex_pp = bit_and(b1, 3);
+
+        let vex_op = read_u8(bytes, mut_cur);
+        mut_cur = mut_cur + 1;
+        let modrm = x86_decode_modrm(bytes, mut_cur, vex_r, 0, 0, 8, address + (mut_cur - offset), false);
+        mut_cur = mut_cur + modrm.total_bytes;
+
+        let mnem = "vaddps";
+        if vex_op == 88 {
+            if vex_pp == 1 { mnem = "vaddpd"; }
+            else if vex_pp == 2 { mnem = "vaddss"; }
+            else if vex_pp == 3 { mnem = "vaddsd"; }
+            else { mnem = "vaddps"; }
+        } else if vex_op == 89 {
+            if vex_pp == 1 { mnem = "vmulpd"; }
+            else if vex_pp == 2 { mnem = "vmulss"; }
+            else if vex_pp == 3 { mnem = "vmulsd"; }
+            else { mnem = "vmulps"; }
+        } else if vex_op == 92 {
+            if vex_pp == 1 { mnem = "vsubpd"; }
+            else if vex_pp == 2 { mnem = "vsubss"; }
+            else if vex_pp == 3 { mnem = "vsubsd"; }
+            else { mnem = "vsubps"; }
+        } else if vex_op == 94 {
+            if vex_pp == 1 { mnem = "vdivpd"; }
+            else if vex_pp == 2 { mnem = "vdivss"; }
+            else if vex_pp == 3 { mnem = "vdivsd"; }
+            else { mnem = "vdivps"; }
+        } else if vex_op == 87 {
+            if vex_pp == 1 { mnem = "vxorpd"; }
+            else { mnem = "vxorps"; }
+        } else if vex_op == 84 {
+            if vex_pp == 1 { mnem = "vandpd"; }
+            else { mnem = "vandps"; }
+        } else if vex_op == 40 {
+            if vex_pp == 1 { mnem = "vmovapd"; }
+            else { mnem = "vmovaps"; }
+        } else if vex_op == 16 {
+            if vex_pp == 1 { mnem = "vmovupd"; }
+            else if vex_pp == 2 { mnem = "vmovss"; }
+            else if vex_pp == 3 { mnem = "vmovsd"; }
+            else { mnem = "vmovups"; }
+        }
+
+        let dst_reg = "";
+        let src1_reg = "";
+        let src2_str = "";
+        if is_256 {
+            dst_reg = x86_reg_ymm(modrm.reg);
+            src1_reg = x86_reg_ymm(vvvv);
+            if modrm.is_direct_reg { src2_str = x86_reg_ymm(modrm.rm); } else { src2_str = modrm.mem_operand; }
+        } else {
+            dst_reg = x86_reg_xmm(modrm.reg);
+            src1_reg = x86_reg_xmm(vvvv);
+            if modrm.is_direct_reg { src2_str = x86_reg_xmm(modrm.rm); } else { src2_str = modrm.mem_operand; }
+        }
+
+        let ops = dst_reg + ", " + src1_reg + ", " + src2_str;
+        if vex_op == 40 || vex_op == 16 {
+            ops = dst_reg + ", " + src2_str;
+        }
+
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, mnem, ops, "x86_64", "avx", false, false, false, false);
+    }
+
+    // VEX 3-Byte Prefix (0xC4) for AVX
+    if opcode == 196 && mut_cur + 2 < b_len {
+        let b1 = read_u8(bytes, mut_cur);
+        let b2 = read_u8(bytes, mut_cur + 1);
+        mut_cur = mut_cur + 2;
+        let vex_r = 1 - bit_shr(b1, 7);
+        let vex_x = 1 - bit_and(bit_shr(b1, 6), 1);
+        let vex_b = 1 - bit_and(bit_shr(b1, 5), 1);
+        let vvvv = bit_and(bit_not(bit_shr(b2, 3)), 15);
+        let is_256 = (bit_and(b2, 4) != 0);
+        let vex_pp = bit_and(b2, 3);
+
+        let vex_op = read_u8(bytes, mut_cur);
+        mut_cur = mut_cur + 1;
+        let modrm = x86_decode_modrm(bytes, mut_cur, vex_r, vex_b, vex_x, 8, address + (mut_cur - offset), false);
+        mut_cur = mut_cur + modrm.total_bytes;
+
+        let mnem = "vaddps";
+        if vex_op == 88 {
+            if vex_pp == 1 { mnem = "vaddpd"; }
+            else if vex_pp == 2 { mnem = "vaddss"; }
+            else if vex_pp == 3 { mnem = "vaddsd"; }
+            else { mnem = "vaddps"; }
+        } else if vex_op == 89 {
+            if vex_pp == 1 { mnem = "vmulpd"; }
+            else if vex_pp == 2 { mnem = "vmulss"; }
+            else if vex_pp == 3 { mnem = "vmulsd"; }
+            else { mnem = "vmulps"; }
+        } else if vex_op == 92 {
+            if vex_pp == 1 { mnem = "vsubpd"; }
+            else if vex_pp == 2 { mnem = "vsubss"; }
+            else if vex_pp == 3 { mnem = "vsubsd"; }
+            else { mnem = "vsubps"; }
+        } else if vex_op == 94 {
+            if vex_pp == 1 { mnem = "vdivpd"; }
+            else if vex_pp == 2 { mnem = "vdivss"; }
+            else if vex_pp == 3 { mnem = "vdivsd"; }
+            else { mnem = "vdivps"; }
+        } else if vex_op == 87 {
+            if vex_pp == 1 { mnem = "vxorpd"; }
+            else { mnem = "vxorps"; }
+        } else if vex_op == 84 {
+            if vex_pp == 1 { mnem = "vandpd"; }
+            else { mnem = "vandps"; }
+        } else if vex_op == 40 {
+            if vex_pp == 1 { mnem = "vmovapd"; }
+            else { mnem = "vmovaps"; }
+        } else if vex_op == 16 {
+            if vex_pp == 1 { mnem = "vmovupd"; }
+            else if vex_pp == 2 { mnem = "vmovss"; }
+            else if vex_pp == 3 { mnem = "vmovsd"; }
+            else { mnem = "vmovups"; }
+        }
+
+        let dst_reg = "";
+        let src1_reg = "";
+        let src2_str = "";
+        if is_256 {
+            dst_reg = x86_reg_ymm(modrm.reg);
+            src1_reg = x86_reg_ymm(vvvv);
+            if modrm.is_direct_reg { src2_str = x86_reg_ymm(modrm.rm); } else { src2_str = modrm.mem_operand; }
+        } else {
+            dst_reg = x86_reg_xmm(modrm.reg);
+            src1_reg = x86_reg_xmm(vvvv);
+            if modrm.is_direct_reg { src2_str = x86_reg_xmm(modrm.rm); } else { src2_str = modrm.mem_operand; }
+        }
+
+        let ops = dst_reg + ", " + src1_reg + ", " + src2_str;
+        if vex_op == 40 || vex_op == 16 {
+            ops = dst_reg + ", " + src2_str;
+        }
+
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, mnem, ops, "x86_64", "avx", false, false, false, false);
+    }
 
     // 2. Simple Single-Byte Instructions
     if opcode == 144 { // 0x90 NOP
@@ -2149,6 +2311,101 @@ func disassemble_x86_64_one(bytes: List, offset: int, address: int) -> Instructi
             let reg_str = x86_reg_name(modrm.reg, op_size, has_rex);
             let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
             return instruction_new(address, ins_bytes, "imul", reg_str + ", " + modrm.mem_operand, "x86_64", "arithmetic", false, false, false, false);
+        }
+
+        // SSE MOVAPS / MOVAPD: 0x28 (load/reg) and 0x29 (store)
+        if op2 == 40 { // 0x28
+            let modrm = x86_decode_modrm(bytes, mut_cur, rex_r, rex_b, rex_x, 8, address + (mut_cur - offset), has_rex);
+            mut_cur = mut_cur + modrm.total_bytes;
+            let mnem = "movaps";
+            if has_prefix_66 { mnem = "movapd"; }
+            let dst_reg = x86_reg_xmm(modrm.reg);
+            let src_str = "";
+            if modrm.is_direct_reg { src_str = x86_reg_xmm(modrm.rm); } else { src_str = modrm.mem_operand; }
+            let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+            return instruction_new(address, ins_bytes, mnem, dst_reg + ", " + src_str, "x86_64", "sse", false, false, false, false);
+        }
+        if op2 == 41 { // 0x29
+            let modrm = x86_decode_modrm(bytes, mut_cur, rex_r, rex_b, rex_x, 8, address + (mut_cur - offset), has_rex);
+            mut_cur = mut_cur + modrm.total_bytes;
+            let mnem = "movaps";
+            if has_prefix_66 { mnem = "movapd"; }
+            let src_reg = x86_reg_xmm(modrm.reg);
+            let dst_str = "";
+            if modrm.is_direct_reg { dst_str = x86_reg_xmm(modrm.rm); } else { dst_str = modrm.mem_operand; }
+            let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+            return instruction_new(address, ins_bytes, mnem, dst_str + ", " + src_reg, "x86_64", "sse", false, false, false, false);
+        }
+
+        // SSE MOVUPS / MOVUPD / MOVSS / MOVSD: 0x10 and 0x11
+        if op2 == 16 { // 0x10
+            let modrm = x86_decode_modrm(bytes, mut_cur, rex_r, rex_b, rex_x, 8, address + (mut_cur - offset), has_rex);
+            mut_cur = mut_cur + modrm.total_bytes;
+            let mnem = "movups";
+            if has_rep { mnem = "movss"; }
+            else if has_prefix_f2 { mnem = "movsd"; }
+            else if has_prefix_66 { mnem = "movupd"; }
+            let dst_reg = x86_reg_xmm(modrm.reg);
+            let src_str = "";
+            if modrm.is_direct_reg { src_str = x86_reg_xmm(modrm.rm); } else { src_str = modrm.mem_operand; }
+            let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+            return instruction_new(address, ins_bytes, mnem, dst_reg + ", " + src_str, "x86_64", "sse", false, false, false, false);
+        }
+        if op2 == 17 { // 0x11
+            let modrm = x86_decode_modrm(bytes, mut_cur, rex_r, rex_b, rex_x, 8, address + (mut_cur - offset), has_rex);
+            mut_cur = mut_cur + modrm.total_bytes;
+            let mnem = "movups";
+            if has_rep { mnem = "movss"; }
+            else if has_prefix_f2 { mnem = "movsd"; }
+            else if has_prefix_66 { mnem = "movupd"; }
+            let src_reg = x86_reg_xmm(modrm.reg);
+            let dst_str = "";
+            if modrm.is_direct_reg { dst_str = x86_reg_xmm(modrm.rm); } else { dst_str = modrm.mem_operand; }
+            let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+            return instruction_new(address, ins_bytes, mnem, dst_str + ", " + src_reg, "x86_64", "sse", false, false, false, false);
+        }
+
+        // SSE Arithmetic & Logic: 0x58 (ADD), 0x59 (MUL), 0x5C (SUB), 0x5E (DIV), 0x57 (XOR), 0x54 (AND), 0x56 (OR)
+        if op2 == 88 || op2 == 89 || op2 == 92 || op2 == 94 || op2 == 87 || op2 == 84 || op2 == 86 {
+            let modrm = x86_decode_modrm(bytes, mut_cur, rex_r, rex_b, rex_x, 8, address + (mut_cur - offset), has_rex);
+            mut_cur = mut_cur + modrm.total_bytes;
+            let mnem = "addps";
+            if op2 == 88 {
+                if has_rep { mnem = "addss"; }
+                else if has_prefix_f2 { mnem = "addsd"; }
+                else if has_prefix_66 { mnem = "addpd"; }
+                else { mnem = "addps"; }
+            } else if op2 == 89 {
+                if has_rep { mnem = "mulss"; }
+                else if has_prefix_f2 { mnem = "mulsd"; }
+                else if has_prefix_66 { mnem = "mulpd"; }
+                else { mnem = "mulps"; }
+            } else if op2 == 92 {
+                if has_rep { mnem = "subss"; }
+                else if has_prefix_f2 { mnem = "subsd"; }
+                else if has_prefix_66 { mnem = "subpd"; }
+                else { mnem = "subps"; }
+            } else if op2 == 94 {
+                if has_rep { mnem = "divss"; }
+                else if has_prefix_f2 { mnem = "divsd"; }
+                else if has_prefix_66 { mnem = "divpd"; }
+                else { mnem = "divps"; }
+            } else if op2 == 87 {
+                if has_prefix_66 { mnem = "xorpd"; }
+                else { mnem = "xorps"; }
+            } else if op2 == 84 {
+                if has_prefix_66 { mnem = "andpd"; }
+                else { mnem = "andps"; }
+            } else if op2 == 86 {
+                if has_prefix_66 { mnem = "orpd"; }
+                else { mnem = "orps"; }
+            }
+
+            let dst_reg = x86_reg_xmm(modrm.reg);
+            let src_str = "";
+            if modrm.is_direct_reg { src_str = x86_reg_xmm(modrm.rm); } else { src_str = modrm.mem_operand; }
+            let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+            return instruction_new(address, ins_bytes, mnem, dst_reg + ", " + src_str, "x86_64", "sse", false, false, false, false);
         }
     }
 
@@ -2595,7 +2852,708 @@ func disassemble_arm64(bytes: List, offset: int, length: int, base_addr: int) ->
 }
 
 // ==============================================================================
-// 9. Unified BinaryFile Architecture
+// 9. RISC-V Disassembler Engine (RV32I / RV64I / RV32M / RV64M)
+// ==============================================================================
+
+func riscv_reg_name(idx: int) -> string {
+    if idx == 0 { return "zero"; }
+    if idx == 1 { return "ra"; }
+    if idx == 2 { return "sp"; }
+    if idx == 3 { return "gp"; }
+    if idx == 4 { return "tp"; }
+    if idx == 5 { return "t0"; }
+    if idx == 6 { return "t1"; }
+    if idx == 7 { return "t2"; }
+    if idx == 8 { return "s0"; }
+    if idx == 9 { return "s1"; }
+    if idx == 10 { return "a0"; }
+    if idx == 11 { return "a1"; }
+    if idx == 12 { return "a2"; }
+    if idx == 13 { return "a3"; }
+    if idx == 14 { return "a4"; }
+    if idx == 15 { return "a5"; }
+    if idx == 16 { return "a6"; }
+    if idx == 17 { return "a7"; }
+    if idx == 18 { return "s2"; }
+    if idx == 19 { return "s3"; }
+    if idx == 20 { return "s4"; }
+    if idx == 21 { return "s5"; }
+    if idx == 22 { return "s6"; }
+    if idx == 23 { return "s7"; }
+    if idx == 24 { return "s8"; }
+    if idx == 25 { return "s9"; }
+    if idx == 26 { return "s10"; }
+    if idx == 27 { return "s11"; }
+    if idx == 28 { return "t3"; }
+    if idx == 29 { return "t4"; }
+    if idx == 30 { return "t5"; }
+    if idx == 31 { return "t6"; }
+    return "x" + int_to_str(idx);
+}
+
+func disassemble_riscv_one(bytes: List, offset: int, address: int) -> Instruction {
+    let b_len = list_length(bytes);
+    if offset + 4 > b_len {
+        let empty_list = list_new();
+        return instruction_new(address, empty_list, "invalid", "", "riscv", "unknown", false, false, false, false);
+    }
+
+    let w = read_u32_le(bytes, offset);
+    let raw_bytes = slice_bytes(bytes, offset, 4);
+
+    let opcode = bit_and(w, 127);
+    let rd = bit_and(bit_shr(w, 7), 31);
+    let funct3 = bit_and(bit_shr(w, 12), 7);
+    let rs1 = bit_and(bit_shr(w, 15), 31);
+    let rs2 = bit_and(bit_shr(w, 20), 31);
+    let funct7 = bit_and(bit_shr(w, 25), 127);
+
+    // Immediate decoding
+    let imm_i = bit_and(bit_shr(w, 20), 4095);
+    let s_imm_i = imm_i;
+    if bit_and(imm_i, 2048) != 0 { s_imm_i = imm_i - 4096; }
+
+    let imm_s = bit_or(bit_shl(funct7, 5), rd);
+    let s_imm_s = imm_s;
+    if bit_and(imm_s, 2048) != 0 { s_imm_s = imm_s - 4096; }
+
+    let b_bit12 = bit_and(bit_shr(w, 31), 1);
+    let b_bit11 = bit_and(bit_shr(w, 7), 1);
+    let b_bits10_5 = bit_and(bit_shr(w, 25), 63);
+    let b_bits4_1 = bit_and(bit_shr(w, 8), 15);
+    let imm_b = bit_or(bit_shl(b_bit12, 12), bit_or(bit_shl(b_bit11, 11), bit_or(bit_shl(b_bits10_5, 5), bit_shl(b_bits4_1, 1))));
+    let s_imm_b = imm_b;
+    if bit_and(imm_b, 4096) != 0 { s_imm_b = imm_b - 8192; }
+
+    let imm_u = bit_shr(w, 12);
+
+    let j_bit20 = bit_and(bit_shr(w, 31), 1);
+    let j_bits19_12 = bit_and(bit_shr(w, 12), 255);
+    let j_bit11 = bit_and(bit_shr(w, 20), 1);
+    let j_bits10_1 = bit_and(bit_shr(w, 21), 1023);
+    let imm_j = bit_or(bit_shl(j_bit20, 20), bit_or(bit_shl(j_bits19_12, 12), bit_or(bit_shl(j_bit11, 11), bit_shl(j_bits10_1, 1))));
+    let s_imm_j = imm_j;
+    if bit_and(imm_j, 1048576) != 0 { s_imm_j = imm_j - 2097152; }
+
+    // Pseudo-instructions / Special cases
+    if w == 19 { // addi x0, x0, 0
+        return instruction_new(address, raw_bytes, "nop", "", "riscv", "system", false, false, false, false);
+    }
+    if w == 53715 { // jalr x0, ra, 0 (ret)
+        return instruction_new(address, raw_bytes, "ret", "", "riscv", "return", false, false, true, false);
+    }
+    if w == 115 { // ecall
+        return instruction_new(address, raw_bytes, "ecall", "", "riscv", "system", false, false, false, true);
+    }
+    if w == 1048691 { // ebreak
+        return instruction_new(address, raw_bytes, "ebreak", "", "riscv", "system", false, false, false, false);
+    }
+
+    // LUI (0x37)
+    if opcode == 55 {
+        let ops = riscv_reg_name(rd) + ", 0x" + int_to_hex(imm_u, 5);
+        return instruction_new(address, raw_bytes, "lui", ops, "riscv", "data_transfer", false, false, false, false);
+    }
+
+    // AUIPC (0x17)
+    if opcode == 23 {
+        let ops = riscv_reg_name(rd) + ", 0x" + int_to_hex(imm_u, 5);
+        return instruction_new(address, raw_bytes, "auipc", ops, "riscv", "data_transfer", false, false, false, false);
+    }
+
+    // JAL (0x6F)
+    if opcode == 111 {
+        let target = address + s_imm_j;
+        if rd == 0 {
+            return instruction_new(address, raw_bytes, "j", "0x" + int_to_hex(target, 8), "riscv", "branch", true, false, false, false);
+        }
+        if rd == 1 {
+            return instruction_new(address, raw_bytes, "jal", "0x" + int_to_hex(target, 8), "riscv", "call", false, true, false, false);
+        }
+        let ops = riscv_reg_name(rd) + ", 0x" + int_to_hex(target, 8);
+        return instruction_new(address, raw_bytes, "jal", ops, "riscv", "branch", true, false, false, false);
+    }
+
+    // JALR (0x67)
+    if opcode == 103 {
+        let is_call = (rd == 1);
+        if rd == 0 && rs1 == 1 && s_imm_i == 0 {
+            return instruction_new(address, raw_bytes, "ret", "", "riscv", "return", false, false, true, false);
+        }
+        if rd == 0 && s_imm_i == 0 {
+            return instruction_new(address, raw_bytes, "jr", riscv_reg_name(rs1), "riscv", "branch", true, false, false, false);
+        }
+        let ops = riscv_reg_name(rd) + ", " + int_to_str(s_imm_i) + "(" + riscv_reg_name(rs1) + ")";
+        return instruction_new(address, raw_bytes, "jalr", ops, "riscv", "branch", true, is_call, false, false);
+    }
+
+    // BRANCH (0x63: BEQ, BNE, BLT, BGE, BLTU, BGEU)
+    if opcode == 99 {
+        let target = address + s_imm_b;
+        let mnem = "beq";
+        if funct3 == 1 { mnem = "bne"; }
+        else if funct3 == 4 { mnem = "blt"; }
+        else if funct3 == 5 { mnem = "bge"; }
+        else if funct3 == 6 { mnem = "bltu"; }
+        else if funct3 == 7 { mnem = "bgeu"; }
+        let ops = riscv_reg_name(rs1) + ", " + riscv_reg_name(rs2) + ", 0x" + int_to_hex(target, 8);
+        return instruction_new(address, raw_bytes, mnem, ops, "riscv", "branch", true, false, false, false);
+    }
+
+    // LOAD (0x03: LB, LH, LW, LD, LBU, LHU, LWU)
+    if opcode == 3 {
+        let mnem = "lw";
+        if funct3 == 0 { mnem = "lb"; }
+        else if funct3 == 1 { mnem = "lh"; }
+        else if funct3 == 2 { mnem = "lw"; }
+        else if funct3 == 3 { mnem = "ld"; }
+        else if funct3 == 4 { mnem = "lbu"; }
+        else if funct3 == 5 { mnem = "lhu"; }
+        else if funct3 == 6 { mnem = "lwu"; }
+        let ops = riscv_reg_name(rd) + ", " + int_to_str(s_imm_i) + "(" + riscv_reg_name(rs1) + ")";
+        return instruction_new(address, raw_bytes, mnem, ops, "riscv", "data_transfer", false, false, false, false);
+    }
+
+    // STORE (0x23: SB, SH, SW, SD)
+    if opcode == 35 {
+        let mnem = "sw";
+        if funct3 == 0 { mnem = "sb"; }
+        else if funct3 == 1 { mnem = "sh"; }
+        else if funct3 == 2 { mnem = "sw"; }
+        else if funct3 == 3 { mnem = "sd"; }
+        let ops = riscv_reg_name(rs2) + ", " + int_to_str(s_imm_s) + "(" + riscv_reg_name(rs1) + ")";
+        return instruction_new(address, raw_bytes, mnem, ops, "riscv", "data_transfer", false, false, false, false);
+    }
+
+    // OP-IMM (0x13: ADDI, SLLI, SLTI, SLTIU, XORI, SRLI, SRAI, ORI, ANDI)
+    if opcode == 19 {
+        let mnem = "addi";
+        let is_shift = false;
+        if funct3 == 0 { mnem = "addi"; }
+        else if funct3 == 1 { mnem = "slli"; is_shift = true; }
+        else if funct3 == 2 { mnem = "slti"; }
+        else if funct3 == 3 { mnem = "sltiu"; }
+        else if funct3 == 4 { mnem = "xori"; }
+        else if funct3 == 5 {
+            if funct7 == 32 { mnem = "srai"; } else { mnem = "srli"; }
+            is_shift = true;
+        }
+        else if funct3 == 6 { mnem = "ori"; }
+        else if funct3 == 7 { mnem = "andi"; }
+
+        let imm_str = int_to_str(s_imm_i);
+        if is_shift { imm_str = int_to_str(bit_and(imm_i, 63)); }
+        let ops = riscv_reg_name(rd) + ", " + riscv_reg_name(rs1) + ", " + imm_str;
+        return instruction_new(address, raw_bytes, mnem, ops, "riscv", "arithmetic", false, false, false, false);
+    }
+
+    // OP (0x33: ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND, MUL, DIV, REM)
+    if opcode == 51 {
+        let mnem = "add";
+        if funct7 == 0 {
+            if funct3 == 0 { mnem = "add"; }
+            else if funct3 == 1 { mnem = "sll"; }
+            else if funct3 == 2 { mnem = "slt"; }
+            else if funct3 == 3 { mnem = "sltu"; }
+            else if funct3 == 4 { mnem = "xor"; }
+            else if funct3 == 5 { mnem = "srl"; }
+            else if funct3 == 6 { mnem = "or"; }
+            else if funct3 == 7 { mnem = "and"; }
+        } else if funct7 == 32 {
+            if funct3 == 0 { mnem = "sub"; }
+            else if funct3 == 5 { mnem = "sra"; }
+        } else if funct7 == 1 { // RV32M / RV64M Extension
+            if funct3 == 0 { mnem = "mul"; }
+            else if funct3 == 1 { mnem = "mulh"; }
+            else if funct3 == 2 { mnem = "mulhsu"; }
+            else if funct3 == 3 { mnem = "mulhu"; }
+            else if funct3 == 4 { mnem = "div"; }
+            else if funct3 == 5 { mnem = "divu"; }
+            else if funct3 == 6 { mnem = "rem"; }
+            else if funct3 == 7 { mnem = "remu"; }
+        }
+        let ops = riscv_reg_name(rd) + ", " + riscv_reg_name(rs1) + ", " + riscv_reg_name(rs2);
+        return instruction_new(address, raw_bytes, mnem, ops, "riscv", "arithmetic", false, false, false, false);
+    }
+
+    // OP-IMM-32 (0x1B: ADDIW, SLLIW, SRLIW, SRAIW - RV64)
+    if opcode == 27 {
+        let mnem = "addiw";
+        if funct3 == 1 { mnem = "slliw"; }
+        else if funct3 == 5 {
+            if funct7 == 32 { mnem = "sraiw"; } else { mnem = "srliw"; }
+        }
+        let ops = riscv_reg_name(rd) + ", " + riscv_reg_name(rs1) + ", " + int_to_str(s_imm_i);
+        return instruction_new(address, raw_bytes, mnem, ops, "riscv", "arithmetic", false, false, false, false);
+    }
+
+    // OP-32 (0x3B: ADDW, SUBW, SLLW, SRLW, SRAW, MULW, DIVW, REMW - RV64)
+    if opcode == 59 {
+        let mnem = "addw";
+        if funct7 == 0 {
+            if funct3 == 0 { mnem = "addw"; }
+            else if funct3 == 1 { mnem = "sllw"; }
+            else if funct3 == 5 { mnem = "srlw"; }
+        } else if funct7 == 32 {
+            if funct3 == 0 { mnem = "subw"; }
+            else if funct3 == 5 { mnem = "sraw"; }
+        } else if funct7 == 1 {
+            if funct3 == 0 { mnem = "mulw"; }
+            else if funct3 == 4 { mnem = "divw"; }
+            else if funct3 == 5 { mnem = "divuw"; }
+            else if funct3 == 6 { mnem = "remw"; }
+            else if funct3 == 7 { mnem = "remuw"; }
+        }
+        let ops = riscv_reg_name(rd) + ", " + riscv_reg_name(rs1) + ", " + riscv_reg_name(rs2);
+        return instruction_new(address, raw_bytes, mnem, ops, "riscv", "arithmetic", false, false, false, false);
+    }
+
+    // SYSTEM (0x73: CSRRW, CSRRS, CSRRC)
+    if opcode == 115 {
+        let mnem = "csrrw";
+        if funct3 == 1 { mnem = "csrrw"; }
+        else if funct3 == 2 { mnem = "csrrs"; }
+        else if funct3 == 3 { mnem = "csrrc"; }
+        let ops = riscv_reg_name(rd) + ", 0x" + int_to_hex(imm_i, 3) + ", " + riscv_reg_name(rs1);
+        return instruction_new(address, raw_bytes, mnem, ops, "riscv", "system", false, false, false, false);
+    }
+
+    // Fallback: raw 32-bit word
+    return instruction_new(address, raw_bytes, ".word 0x" + int_to_hex(w, 8), "", "riscv", "unknown", false, false, false, false);
+}
+
+func disassemble_riscv(bytes: List, offset: int, length: int, base_addr: int) -> List {
+    let result = list_new();
+    let mut_cur = offset;
+    let end_off = offset + length;
+    let b_len = list_length(bytes);
+    if end_off > b_len { end_off = b_len; }
+
+    while mut_cur + 4 <= end_off {
+        let vaddr = base_addr + (mut_cur - offset);
+        let ins = disassemble_riscv_one(bytes, mut_cur, vaddr);
+        list_push(result, ins);
+        mut_cur = mut_cur + 4;
+    }
+    return result;
+}
+
+// ==============================================================================
+// 10. WebAssembly Binary Module Parser & Bytecode Disassembler Engine
+// ==============================================================================
+
+class Leb128Result {
+    value: int,
+    bytes_read: int,
+}
+
+func read_uleb128(bytes: List, offset: int) -> Leb128Result {
+    let result = 0;
+    let shift = 0;
+    let cur = offset;
+    let b_len = list_length(bytes);
+    let done = false;
+    while !done && cur < b_len {
+        let b = read_u8(bytes, cur);
+        cur = cur + 1;
+        let val = bit_and(b, 127);
+        result = bit_or(result, bit_shl(val, shift));
+        shift = shift + 7;
+        if bit_and(b, 128) == 0 {
+            done = true;
+        }
+    }
+    return new Leb128Result(result, cur - offset);
+}
+
+func read_sleb128(bytes: List, offset: int) -> Leb128Result {
+    let result = 0;
+    let shift = 0;
+    let cur = offset;
+    let b_len = list_length(bytes);
+    let done = false;
+    let last_b = 0;
+    while !done && cur < b_len {
+        last_b = read_u8(bytes, cur);
+        cur = cur + 1;
+        let val = bit_and(last_b, 127);
+        result = bit_or(result, bit_shl(val, shift));
+        shift = shift + 7;
+        if bit_and(last_b, 128) == 0 {
+            done = true;
+        }
+    }
+    if shift < 32 && bit_and(last_b, 64) != 0 {
+        result = result - bit_shl(1, shift);
+    }
+    return new Leb128Result(result, cur - offset);
+}
+
+func is_wasm(bytes: List) -> bool {
+    if list_length(bytes) < 8 { return false; }
+    return read_u8(bytes, 0) == 0 &&
+           read_u8(bytes, 1) == 97 &&
+           read_u8(bytes, 2) == 115 &&
+           read_u8(bytes, 3) == 109 &&
+           read_u32_le(bytes, 4) == 1;
+}
+
+func wasm_section_name(id: int) -> string {
+    if id == 0 { return "custom"; }
+    if id == 1 { return "type"; }
+    if id == 2 { return "import"; }
+    if id == 3 { return "function"; }
+    if id == 4 { return "table"; }
+    if id == 5 { return "memory"; }
+    if id == 6 { return "global"; }
+    if id == 7 { return "export"; }
+    if id == 8 { return "start"; }
+    if id == 9 { return "element"; }
+    if id == 10 { return "code"; }
+    if id == 11 { return "data"; }
+    if id == 12 { return "datacount"; }
+    return "section_" + int_to_str(id);
+}
+
+class WasmSection {
+    id: int,
+    name: string,
+    offset: int,
+    size: int,
+}
+
+class WasmExport {
+    name: string,
+    kind: int,
+    index: int,
+}
+
+class WasmFunction {
+    type_index: int,
+    code_offset: int,
+    code_size: int,
+}
+
+class WasmModule {
+    version: int,
+    sections: List,
+    exports: List,
+    functions: List,
+}
+
+func wasm_parse(bytes: List) -> WasmModule {
+    let sections = list_new();
+    let exports = list_new();
+    let functions = list_new();
+    let b_len = list_length(bytes);
+    if b_len < 8 {
+        return new WasmModule(0, sections, exports, functions);
+    }
+
+    let version = read_u32_le(bytes, 4);
+    let cur = 8;
+    while cur < b_len {
+        let sec_id = read_u8(bytes, cur);
+        cur = cur + 1;
+        let sec_size_res = read_uleb128(bytes, cur);
+        cur = cur + sec_size_res.bytes_read;
+        let payload_offset = cur;
+        let payload_size = sec_size_res.value;
+        let s_name = wasm_section_name(sec_id);
+        list_push(sections, new WasmSection(sec_id, s_name, payload_offset, payload_size));
+
+        if sec_id == 7 { // Export section
+            let exp_cur = payload_offset;
+            let exp_count_res = read_uleb128(bytes, exp_cur);
+            exp_cur = exp_cur + exp_count_res.bytes_read;
+            let mut_e = 0;
+            while mut_e < exp_count_res.value && exp_cur < payload_offset + payload_size {
+                let name_len_res = read_uleb128(bytes, exp_cur);
+                exp_cur = exp_cur + name_len_res.bytes_read;
+                let exp_name = "";
+                let mut_nc = 0;
+                while mut_nc < name_len_res.value && exp_cur < b_len {
+                    exp_name = exp_name + ascii_char(read_u8(bytes, exp_cur));
+                    exp_cur = exp_cur + 1;
+                    mut_nc = mut_nc + 1;
+                }
+                let exp_kind = read_u8(bytes, exp_cur);
+                exp_cur = exp_cur + 1;
+                let exp_idx_res = read_uleb128(bytes, exp_cur);
+                exp_cur = exp_cur + exp_idx_res.bytes_read;
+                list_push(exports, new WasmExport(exp_name, exp_kind, exp_idx_res.value));
+                mut_e = mut_e + 1;
+            }
+        } else if sec_id == 10 { // Code section
+            let code_cur = payload_offset;
+            let func_count_res = read_uleb128(bytes, code_cur);
+            code_cur = code_cur + func_count_res.bytes_read;
+            let mut_f = 0;
+            while mut_f < func_count_res.value && code_cur < payload_offset + payload_size {
+                let body_size_res = read_uleb128(bytes, code_cur);
+                code_cur = code_cur + body_size_res.bytes_read;
+                let body_offset = code_cur;
+                list_push(functions, new WasmFunction(mut_f, body_offset, body_size_res.value));
+                code_cur = code_cur + body_size_res.value;
+                mut_f = mut_f + 1;
+            }
+        }
+
+        cur = payload_offset + payload_size;
+    }
+
+    return new WasmModule(version, sections, exports, functions);
+}
+
+func wasm_valtype_name(vt: int) -> string {
+    if vt == 127 { return "i32"; }
+    if vt == 126 { return "i64"; }
+    if vt == 125 { return "f32"; }
+    if vt == 124 { return "f64"; }
+    if vt == 123 { return "v128"; }
+    if vt == 112 { return "funcref"; }
+    if vt == 111 { return "externref"; }
+    if vt == 64 { return ""; }
+    return "";
+}
+
+func disassemble_wasm_one(bytes: List, offset: int, address: int) -> Instruction {
+    let b_len = list_length(bytes);
+    if offset >= b_len {
+        let empty_list = list_new();
+        return instruction_new(address, empty_list, "invalid", "", "wasm", "unknown", false, false, false, false);
+    }
+
+    let mut_cur = offset;
+    let op = read_u8(bytes, mut_cur);
+    mut_cur = mut_cur + 1;
+
+    // Control flow
+    if op == 0 { // unreachable
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "unreachable", "", "wasm", "control", false, false, false, false);
+    }
+    if op == 1 { // nop
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "nop", "", "wasm", "control", false, false, false, false);
+    }
+    if op == 2 { // block
+        let bt = read_u8(bytes, mut_cur);
+        mut_cur = mut_cur + 1;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "block", wasm_valtype_name(bt), "wasm", "control", false, false, false, false);
+    }
+    if op == 3 { // loop
+        let bt = read_u8(bytes, mut_cur);
+        mut_cur = mut_cur + 1;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "loop", wasm_valtype_name(bt), "wasm", "control", false, false, false, false);
+    }
+    if op == 4 { // if
+        let bt = read_u8(bytes, mut_cur);
+        mut_cur = mut_cur + 1;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "if", wasm_valtype_name(bt), "wasm", "control", true, false, false, false);
+    }
+    if op == 5 { // else
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "else", "", "wasm", "control", false, false, false, false);
+    }
+    if op == 11 { // end
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "end", "", "wasm", "control", false, false, false, false);
+    }
+    if op == 12 { // br
+        let idx_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + idx_res.bytes_read;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "br", int_to_str(idx_res.value), "wasm", "control", true, false, false, false);
+    }
+    if op == 13 { // br_if
+        let idx_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + idx_res.bytes_read;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "br_if", int_to_str(idx_res.value), "wasm", "control", true, false, false, false);
+    }
+    if op == 15 { // return
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "return", "", "wasm", "return", false, false, true, false);
+    }
+    if op == 16 { // call
+        let idx_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + idx_res.bytes_read;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "call", int_to_str(idx_res.value), "wasm", "call", false, true, false, false);
+    }
+    if op == 17 { // call_indirect
+        let type_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + type_res.bytes_read;
+        let tbl_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + tbl_res.bytes_read;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "call_indirect", int_to_str(type_res.value) + ", " + int_to_str(tbl_res.value), "wasm", "call", false, true, false, false);
+    }
+
+    // Parametric & Variable
+    if op == 26 { // drop
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "drop", "", "wasm", "variable", false, false, false, false);
+    }
+    if op == 27 { // select
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "select", "", "wasm", "variable", false, false, false, false);
+    }
+    if op == 32 { // local.get
+        let idx_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + idx_res.bytes_read;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "local.get", int_to_str(idx_res.value), "wasm", "variable", false, false, false, false);
+    }
+    if op == 33 { // local.set
+        let idx_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + idx_res.bytes_read;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "local.set", int_to_str(idx_res.value), "wasm", "variable", false, false, false, false);
+    }
+    if op == 34 { // local.tee
+        let idx_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + idx_res.bytes_read;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "local.tee", int_to_str(idx_res.value), "wasm", "variable", false, false, false, false);
+    }
+    if op == 35 { // global.get
+        let idx_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + idx_res.bytes_read;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "global.get", int_to_str(idx_res.value), "wasm", "variable", false, false, false, false);
+    }
+    if op == 36 { // global.set
+        let idx_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + idx_res.bytes_read;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "global.set", int_to_str(idx_res.value), "wasm", "variable", false, false, false, false);
+    }
+
+    // Memory: loads & stores
+    if op >= 40 && op <= 47 {
+        let align_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + align_res.bytes_read;
+        let off_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + off_res.bytes_read;
+
+        let mnem = "i32.load";
+        if op == 41 { mnem = "i64.load"; }
+        else if op == 42 { mnem = "f32.load"; }
+        else if op == 43 { mnem = "f64.load"; }
+        else if op == 44 { mnem = "i32.load8_s"; }
+        else if op == 45 { mnem = "i32.load8_u"; }
+        else if op == 46 { mnem = "i32.load16_s"; }
+        else if op == 47 { mnem = "i32.load16_u"; }
+
+        let ops = "offset=" + int_to_str(off_res.value) + " align=" + int_to_str(align_res.value);
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, mnem, ops, "wasm", "memory", false, false, false, false);
+    }
+    if op >= 54 && op <= 59 {
+        let align_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + align_res.bytes_read;
+        let off_res = read_uleb128(bytes, mut_cur);
+        mut_cur = mut_cur + off_res.bytes_read;
+
+        let mnem = "i32.store";
+        if op == 55 { mnem = "i64.store"; }
+        else if op == 56 { mnem = "f32.store"; }
+        else if op == 57 { mnem = "f64.store"; }
+        else if op == 58 { mnem = "i32.store8"; }
+        else if op == 59 { mnem = "i32.store16"; }
+
+        let ops = "offset=" + int_to_str(off_res.value) + " align=" + int_to_str(align_res.value);
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, mnem, ops, "wasm", "memory", false, false, false, false);
+    }
+
+    // Constants
+    if op == 65 { // i32.const
+        let c_res = read_sleb128(bytes, mut_cur);
+        mut_cur = mut_cur + c_res.bytes_read;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "i32.const", int_to_str(c_res.value), "wasm", "constant", false, false, false, false);
+    }
+    if op == 66 { // i64.const
+        let c_res = read_sleb128(bytes, mut_cur);
+        mut_cur = mut_cur + c_res.bytes_read;
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, "i64.const", int_to_str(c_res.value), "wasm", "constant", false, false, false, false);
+    }
+
+    // Comparisons
+    if op >= 69 && op <= 82 {
+        let mnem = "i32.eqz";
+        if op == 70 { mnem = "i32.eq"; }
+        else if op == 71 { mnem = "i32.ne"; }
+        else if op == 72 { mnem = "i32.lt_s"; }
+        else if op == 73 { mnem = "i32.lt_u"; }
+        else if op == 74 { mnem = "i32.gt_s"; }
+        else if op == 75 { mnem = "i32.gt_u"; }
+        else if op == 76 { mnem = "i32.le_s"; }
+        else if op == 77 { mnem = "i32.le_u"; }
+        else if op == 78 { mnem = "i32.ge_s"; }
+        else if op == 79 { mnem = "i32.ge_u"; }
+        else if op == 80 { mnem = "i64.eqz"; }
+        else if op == 81 { mnem = "i64.eq"; }
+        else if op == 82 { mnem = "i64.ne"; }
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, mnem, "", "wasm", "comparison", false, false, false, false);
+    }
+
+    // Arithmetic
+    if op >= 106 && op <= 127 {
+        let mnem = "i32.add";
+        if op == 107 { mnem = "i32.sub"; }
+        else if op == 108 { mnem = "i32.mul"; }
+        else if op == 109 { mnem = "i32.div_s"; }
+        else if op == 110 { mnem = "i32.div_u"; }
+        else if op == 111 { mnem = "i32.rem_s"; }
+        else if op == 112 { mnem = "i32.rem_u"; }
+        else if op == 113 { mnem = "i32.and"; }
+        else if op == 114 { mnem = "i32.or"; }
+        else if op == 115 { mnem = "i32.xor"; }
+        else if op == 116 { mnem = "i32.shl"; }
+        else if op == 117 { mnem = "i32.shr_s"; }
+        else if op == 118 { mnem = "i32.shr_u"; }
+        else if op == 124 { mnem = "i64.add"; }
+        else if op == 125 { mnem = "i64.sub"; }
+        else if op == 126 { mnem = "i64.mul"; }
+        else if op == 127 { mnem = "i64.div_s"; }
+        let ins_bytes = slice_bytes(bytes, offset, mut_cur - offset);
+        return instruction_new(address, ins_bytes, mnem, "", "wasm", "arithmetic", false, false, false, false);
+    }
+
+    // Fallback: raw bytecode
+    let ins_bytes = slice_bytes(bytes, offset, 1);
+    return instruction_new(address, ins_bytes, "wasm.0x" + byte_to_hex(op), "", "wasm", "unknown", false, false, false, false);
+}
+
+func disassemble_wasm(bytes: List, offset: int, length: int, base_addr: int) -> List {
+    let result = list_new();
+    let mut_cur = offset;
+    let end_off = offset + length;
+    let b_len = list_length(bytes);
+    if end_off > b_len { end_off = b_len; }
+
+    while mut_cur < end_off {
+        let vaddr = base_addr + (mut_cur - offset);
+        let ins = disassemble_wasm_one(bytes, mut_cur, vaddr);
+        list_push(result, ins);
+        let sz = ins.size;
+        if sz <= 0 { sz = 1; }
+        mut_cur = mut_cur + sz;
+    }
+    return result;
+}
+
+// ==============================================================================
+// 11. Unified BinaryFile Architecture
 // ==============================================================================
 
 class BinarySection {
@@ -2659,8 +3617,14 @@ func binary_file_disassemble(bf: BinaryFile, offset: int, length: int, vaddr: in
     if bf.arch == "x86_64" || bf.arch == "i386" {
         return disassemble_x86_64(bf.raw_bytes, offset, length, vaddr);
     }
-    if bf.arch == "arm64" || bf.arch == "arm" {
+    if bf.arch == "arm64" || bf.arch == "arm" || bf.arch == "aarch64" {
         return disassemble_arm64(bf.raw_bytes, offset, length, vaddr);
+    }
+    if bf.arch == "riscv" || bf.arch == "riscv64" || bf.arch == "riscv32" || bf.arch == "rv64" || bf.arch == "rv32" {
+        return disassemble_riscv(bf.raw_bytes, offset, length, vaddr);
+    }
+    if bf.arch == "wasm" || bf.arch == "webassembly" {
+        return disassemble_wasm(bf.raw_bytes, offset, length, vaddr);
     }
     return disassemble_x86_64(bf.raw_bytes, offset, length, vaddr);
 }
@@ -2846,6 +3810,36 @@ func binary_parse(bytes: List) -> BinaryFile {
                               macho.header.is_little_endian, sections, symbols, imports, empty_exports, bytes);
     }
 
+    if is_wasm(bytes) {
+        let wasm = wasm_parse(bytes);
+        let sections = list_new();
+        let mut_i = 0;
+        let s_count = list_length(wasm.sections);
+        while mut_i < s_count {
+            let ws: WasmSection = list_get(wasm.sections, mut_i);
+            let is_x = (ws.id == 10);
+            let is_w = (ws.id == 11);
+            let is_r = true;
+            let bs = new BinarySection(ws.name, ws.offset, ws.offset, ws.size, is_x, is_w, is_r);
+            list_push(sections, bs);
+            mut_i = mut_i + 1;
+        }
+
+        let exports = list_new();
+        let mut_j = 0;
+        let exp_count = list_length(wasm.exports);
+        while mut_j < exp_count {
+            let we: WasmExport = list_get(wasm.exports, mut_j);
+            list_push(exports, new BinaryExport(we.name, we.index, 0));
+            mut_j = mut_j + 1;
+        }
+
+        let empty_symbols = list_new();
+        let empty_imports = list_new();
+        return new BinaryFile("WASM", "wasm", 0, false, true,
+                              sections, empty_symbols, empty_imports, exports, bytes);
+    }
+
     // Raw shellcode / instruction sequence
     let empty_list = list_new();
     let raw_sec = new BinarySection(".raw", 0, 0, list_length(bytes), true, false, true);
@@ -2855,12 +3849,59 @@ func binary_parse(bytes: List) -> BinaryFile {
 }
 
 func disassemble_bytes(bytes: List, arch: string, base_addr: int) -> List {
-    if arch == "arm64" || arch == "arm" {
+    if arch == "arm64" || arch == "arm" || arch == "aarch64" {
         return disassemble_arm64(bytes, 0, list_length(bytes), base_addr);
+    }
+    if arch == "riscv" || arch == "riscv64" || arch == "riscv32" || arch == "rv64" || arch == "rv32" {
+        return disassemble_riscv(bytes, 0, list_length(bytes), base_addr);
+    }
+    if arch == "wasm" || arch == "webassembly" {
+        return disassemble_wasm(bytes, 0, list_length(bytes), base_addr);
     }
     return disassemble_x86_64(bytes, 0, list_length(bytes), base_addr);
 }
 
 func disassembly_to_string(instructions: List) -> string {
     return disassembly_format_table(instructions);
+}
+
+// ==============================================================================
+// 12. roze.sec.disasm High-Level Multi-Arch Disassembly & Inspection API
+// ==============================================================================
+
+func binary_file_open(bytes: List) -> BinaryFile {
+    return binary_parse(bytes);
+}
+
+func sec_disasm_open(bytes: List) -> BinaryFile {
+    return binary_parse(bytes);
+}
+
+func sec_disasm_instruction(bytes: List, offset: int, addr: int, arch: string) -> Instruction {
+    if arch == "arm64" || arch == "arm" || arch == "aarch64" {
+        return disassemble_arm64_one(bytes, offset, addr);
+    }
+    if arch == "riscv" || arch == "riscv64" || arch == "riscv32" || arch == "rv64" || arch == "rv32" {
+        return disassemble_riscv_one(bytes, offset, addr);
+    }
+    if arch == "wasm" || arch == "webassembly" {
+        return disassemble_wasm_one(bytes, offset, addr);
+    }
+    return disassemble_x86_64_one(bytes, offset, addr);
+}
+
+func sec_disasm_buffer(bytes: List, arch: string, base_addr: int) -> List {
+    return disassemble_bytes(bytes, arch, base_addr);
+}
+
+func sec_disasm_demangle(mangled: string) -> string {
+    return demangle_symbol(mangled);
+}
+
+func sec_disasm_format(instructions: List) -> string {
+    return disassembly_format_table(instructions);
+}
+
+func sec_disasm_parse_wasm(bytes: List) -> WasmModule {
+    return wasm_parse(bytes);
 }

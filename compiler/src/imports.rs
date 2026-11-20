@@ -410,7 +410,8 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "drivers" || path == "uart" || path == "keyboard" || path == "mouse" || path == "ps2" || path == "timer" || path == "pit" || path == "hpet" || path == "gop" || path == "framebuffer" {
         return Ok((DRIVERS_SOURCE.to_string(), DRIVERS_DISPLAY_NAME.to_string()));
     }
-    if path == "binary" || path == "roze::binary" || path == "disasm" || path == "roze::disasm" || path == "elf" || path == "pe" || path == "macho" {
+    if path == "binary" || path == "roze::binary" || path == "disasm" || path == "roze::disasm" || path == "elf" || path == "pe" || path == "macho"
+        || path == "roze.sec.disasm" || path == "roze::sec::disasm" || path == "roze-sec::disasm" || path == "roze_sec_disasm" || path == "sec.disasm" || path == "sec::disasm" || path == "sec_disasm" || path == "wasm" || path == "riscv" {
         return Ok((BINARY_SOURCE.to_string(), BINARY_DISPLAY_NAME.to_string()));
     }
     if path == "forensics" || path == "roze::forensics" || path == "mem_forensics" || path == "memory_forensics" || path == "rop" {

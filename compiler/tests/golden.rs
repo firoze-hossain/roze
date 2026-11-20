@@ -2372,6 +2372,21 @@ fn sec_recon_scanner_suite() {
     assert!(stdout.contains("[CI-PASS] ALL DEFENSIVE NETWORK DISCOVERY & ASSET AUDIT TESTS PASSED (M9-T03)"));
 }
 
+#[test]
+fn sec_disasm_engine_suite() {
+    let (stdout, stderr, ok) = run_fixture("sec_disasm_engine.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== ROZE-SEC MULTI-ARCHITECTURE DISASSEMBLER & BINARY INSPECTION ENGINE (M9-T04) ==="));
+    assert!(stdout.contains("[PASS] Test 1: Static binary inspection across ELF, PE/COFF, Mach-O, and WASM modules"));
+    assert!(stdout.contains("[PASS] Test 2: x86_64 instruction decoder with SSE and AVX VEX vector extensions"));
+    assert!(stdout.contains("[PASS] Test 3: ARM64 (AArch64) branch, ALU, load/store, and syscall decoders"));
+    assert!(stdout.contains("[PASS] Test 4: RISC-V RV32I/RV64I and M-extension hardware instruction decoders"));
+    assert!(stdout.contains("[PASS] Test 5: WebAssembly LEB128 decoding and multi-section bytecode disassembler"));
+    assert!(stdout.contains("[PASS] Test 6: High-precision symbol demangling (Itanium C++, Rust v0, Roze namespaces)"));
+    assert!(stdout.contains("[PASS] Test 7: Aligned disassembly table formatting and inspection reporting"));
+    assert!(stdout.contains("[CI-PASS] ALL MULTI-ARCH DISASSEMBLER & BINARY INSPECTION TESTS PASSED (M9-T04)"));
+}
+
 
 
 

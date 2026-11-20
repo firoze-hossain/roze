@@ -1,0 +1,368 @@
+// packages/roze-net/tests/test_disasm.roze
+// ==============================================================================
+// 🌹 Roze-Sec: Multi-Architecture Disassembler & Binary Inspection Engine (M9-T04)
+// ==============================================================================
+// Test Suite: ELF/PE/Mach-O/WASM Formats, x86_64 AVX/SSE, ARM64, RISC-V, WASM,
+// Symbol Demangling (Itanium C++, Rust v0, Roze) & Table Formatting
+// ==============================================================================
+
+import "roze.sec.disasm";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("❌ Assertion failed: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+func make_elf64_sample() -> List {
+    let b = list_new();
+    // 0x00: Magic \x7fELF
+    list_push(b, 127); list_push(b, 69); list_push(b, 76); list_push(b, 70);
+    // 0x04: Class (2 = 64-bit), Data (1 = little-endian), Version (1), OS/ABI (0)
+    list_push(b, 2); list_push(b, 1); list_push(b, 1); list_push(b, 0);
+    // 0x08: Pad 8 bytes
+    let mut_p = 0;
+    while mut_p < 8 { list_push(b, 0); mut_p = mut_p + 1; }
+    // 0x10: e_type (2 = EXEC, u16 le)
+    list_push(b, 2); list_push(b, 0);
+    // 0x12: e_machine (62 = 0x3E x86_64, u16 le)
+    list_push(b, 62); list_push(b, 0);
+    // 0x14: e_version (1, u32 le)
+    list_push(b, 1); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    // 0x18: e_entry (0x401000, u64 le)
+    list_push(b, 0); list_push(b, 16); list_push(b, 64); list_push(b, 0);
+    list_push(b, 0); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    // 0x20: e_phoff (64, u64 le)
+    list_push(b, 64); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    list_push(b, 0); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    // 0x28: e_shoff (128, u64 le)
+    list_push(b, 128); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    list_push(b, 0); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    // Pad to 64 bytes header
+    while list_length(b) < 64 { list_push(b, 0); }
+    return b;
+}
+
+func make_pe64_sample() -> List {
+    let b = list_new();
+    // 0x00: 'MZ' header
+    list_push(b, 77); list_push(b, 90);
+    while list_length(b) < 60 { list_push(b, 0); }
+    // 0x3C: e_lfanew -> PE header at offset 64
+    list_push(b, 64); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    // 0x40: 'PE\0\0' signature
+    list_push(b, 80); list_push(b, 69); list_push(b, 0); list_push(b, 0);
+    // COFF header: Machine (0x8664 = x86_64)
+    list_push(b, 100); list_push(b, 134);
+    // NumberOfSections (0)
+    list_push(b, 0); list_push(b, 0);
+    while list_length(b) < 88 { list_push(b, 0); }
+    // OptionalHeader: Magic 0x020B (PE32+)
+    list_push(b, 11); list_push(b, 2);
+    // AddressOfEntryPoint at offset 16 from opt header (offset 104)
+    while list_length(b) < 104 { list_push(b, 0); }
+    list_push(b, 0); list_push(b, 16); list_push(b, 0); list_push(b, 0); // 0x1000
+    while list_length(b) < 128 { list_push(b, 0); }
+    return b;
+}
+
+func make_macho64_sample() -> List {
+    let b = list_new();
+    // 0x00: MH_MAGIC_64 (0xFEEDFACF le: CF FA ED FE)
+    list_push(b, 207); list_push(b, 250); list_push(b, 237); list_push(b, 254);
+    // 0x04: cputype = 0x01000007 (CPU_TYPE_X86_64)
+    list_push(b, 7); list_push(b, 0); list_push(b, 0); list_push(b, 1);
+    // 0x08: cpusubtype = 3
+    list_push(b, 3); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    // 0x0C: filetype = 2 (MH_EXECUTE)
+    list_push(b, 2); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    // 0x10: ncmds = 0, sizeofcmds = 0
+    list_push(b, 0); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    list_push(b, 0); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    // 0x18: flags = 0, reserved = 0
+    list_push(b, 0); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    list_push(b, 0); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    return b;
+}
+
+func make_wasm_sample() -> List {
+    let b = list_new();
+    // \0asm magic
+    list_push(b, 0); list_push(b, 97); list_push(b, 115); list_push(b, 109);
+    // version 1
+    list_push(b, 1); list_push(b, 0); list_push(b, 0); list_push(b, 0);
+    // Section 1: Type section (size 4, 1 type () -> ())
+    list_push(b, 1); list_push(b, 4); list_push(b, 1); list_push(b, 96); list_push(b, 0); list_push(b, 0);
+    // Section 3: Function section (size 2, 1 func type 0)
+    list_push(b, 3); list_push(b, 2); list_push(b, 1); list_push(b, 0);
+    // Section 7: Export section (size 8, 1 export "run", func 0)
+    list_push(b, 7); list_push(b, 7); list_push(b, 1); list_push(b, 3);
+    list_push(b, 114); list_push(b, 117); list_push(b, 110); // "run"
+    list_push(b, 0); list_push(b, 0); // kind 0 (func), index 0
+    // Section 10: Code section (size 8, 1 body)
+    list_push(b, 10); list_push(b, 7); list_push(b, 1); list_push(b, 5); list_push(b, 0); // body size 5, 0 locals
+    list_push(b, 65); list_push(b, 42); // i32.const 42
+    list_push(b, 15); // return
+    list_push(b, 11); // end
+    return b;
+}
+
+func main() {
+    println("================================================================================");
+    println("🌹 Roze-Sec: Multi-Architecture Disassembler & Binary Inspection Engine (M9-T04)");
+    println("================================================================================");
+
+    // --------------------------------------------------------------------------
+    // 1. Static Binary Module Inspection (ELF, PE, Mach-O, WASM)
+    // --------------------------------------------------------------------------
+    println("--- 1. Testing Static Binary Module Inspection ---");
+    let elf_bytes = make_elf64_sample();
+    let elf_file = sec_disasm_open(elf_bytes);
+    assert(elf_file.format == "ELF", "ELF format detected");
+    assert(elf_file.arch == "x86_64", "ELF x86_64 machine detected");
+    assert(elf_file.entry_point == 4198400, "ELF entry point 0x401000 matched");
+
+    let pe_bytes = make_pe64_sample();
+    let pe_file = sec_disasm_open(pe_bytes);
+    assert(pe_file.format == "PE", "PE format detected");
+    assert(pe_file.arch == "x86_64", "PE machine x86_64 detected");
+    assert(pe_file.entry_point == 4096, "PE entry point 0x1000 matched");
+
+    let macho_bytes = make_macho64_sample();
+    let macho_file = sec_disasm_open(macho_bytes);
+    assert(macho_file.format == "Mach-O", "Mach-O format detected");
+    assert(macho_file.arch == "x86_64", "Mach-O cpu x86_64 detected");
+
+    let wasm_bytes = make_wasm_sample();
+    let wasm_file = sec_disasm_open(wasm_bytes);
+    assert(wasm_file.format == "WASM", "WASM format detected");
+    assert(wasm_file.arch == "wasm", "WASM arch detected");
+    assert(list_length(wasm_file.sections) == 4, "WASM 4 sections parsed");
+    assert(list_length(wasm_file.exports) == 1, "WASM 1 export parsed");
+    let exp0: BinaryExport = list_get(wasm_file.exports, 0);
+    assert(exp0.name == "run", "Export name is run");
+
+    let wasm_mod = sec_disasm_parse_wasm(wasm_bytes);
+    assert(wasm_mod.version == 1, "WASM version 1");
+    assert(list_length(wasm_mod.functions) == 1, "WASM 1 function in code section");
+    println("✅ Static binary inspection for ELF, PE, Mach-O, and WASM verified");
+
+    // --------------------------------------------------------------------------
+    // 2. x86_64 Disassembler & SSE / AVX Extensions
+    // --------------------------------------------------------------------------
+    println("--- 2. Testing x86_64 Base, SSE & AVX Disassembly ---");
+    // NOP (0x90), RET (0xC3), SYSCALL (0x0F 0x05)
+    let x86_nop = list_new();
+    list_push(x86_nop, 144);
+    let ins_nop = sec_disasm_instruction(x86_nop, 0, 4198400, "x86_64");
+    assert(ins_nop.mnemonic == "nop", "x86 NOP matched");
+
+    // movaps xmm0, xmm1: 0x0F 0x28 0xC1
+    let sse_movaps = list_new();
+    list_push(sse_movaps, 15); list_push(sse_movaps, 40); list_push(sse_movaps, 193);
+    let ins_movaps = sec_disasm_instruction(sse_movaps, 0, 4198400, "x86_64");
+    assert(ins_movaps.mnemonic == "movaps", "Mnemonic movaps matched");
+    assert(ins_movaps.operands == "xmm0, xmm1", "Operands xmm0, xmm1 matched");
+
+    // movss xmm0, xmm1: 0xF3 0x0F 0x10 0xC1
+    let sse_movss = list_new();
+    list_push(sse_movss, 243); list_push(sse_movss, 15); list_push(sse_movss, 16); list_push(sse_movss, 193);
+    let ins_movss = sec_disasm_instruction(sse_movss, 0, 4198400, "x86_64");
+    assert(ins_movss.mnemonic == "movss", "Mnemonic movss matched");
+    assert(ins_movss.operands == "xmm0, xmm1", "Operands xmm0, xmm1 matched");
+
+    // addps xmm0, xmm1: 0x0F 0x58 0xC1
+    let sse_addps = list_new();
+    list_push(sse_addps, 15); list_push(sse_addps, 88); list_push(sse_addps, 193);
+    let ins_addps = sec_disasm_instruction(sse_addps, 0, 4198400, "x86_64");
+    assert(ins_addps.mnemonic == "addps", "Mnemonic addps matched");
+    assert(ins_addps.operands == "xmm0, xmm1", "Operands xmm0, xmm1 matched");
+
+    // xorps xmm0, xmm0: 0x0F 0x57 0xC0
+    let sse_xorps = list_new();
+    list_push(sse_xorps, 15); list_push(sse_xorps, 87); list_push(sse_xorps, 192);
+    let ins_xorps = sec_disasm_instruction(sse_xorps, 0, 4198400, "x86_64");
+    assert(ins_xorps.mnemonic == "xorps", "Mnemonic xorps matched");
+
+    // AVX vaddps xmm0, xmm0, xmm1: 0xC5 0xF8 0x58 0xC1
+    let avx_vaddps = list_new();
+    list_push(avx_vaddps, 197); list_push(avx_vaddps, 248); list_push(avx_vaddps, 88); list_push(avx_vaddps, 193);
+    let ins_vaddps = sec_disasm_instruction(avx_vaddps, 0, 4198400, "x86_64");
+    assert(ins_vaddps.mnemonic == "vaddps", "Mnemonic vaddps matched");
+    assert(ins_vaddps.operands == "xmm0, xmm0, xmm1", "Operands xmm0, xmm0, xmm1 matched");
+
+    // AVX vmulps ymm0, ymm0, ymm1: 0xC5 0xFC 0x59 0xC1
+    let avx_vmulps = list_new();
+    list_push(avx_vmulps, 197); list_push(avx_vmulps, 252); list_push(avx_vmulps, 89); list_push(avx_vmulps, 193);
+    let ins_vmulps = sec_disasm_instruction(avx_vmulps, 0, 4198400, "x86_64");
+    assert(ins_vmulps.mnemonic == "vmulps", "Mnemonic vmulps matched");
+    assert(ins_vmulps.operands == "ymm0, ymm0, ymm1", "Operands ymm0, ymm0, ymm1 matched");
+    println("✅ x86_64 base, SSE vector, and AVX VEX instruction decoders verified");
+
+    // --------------------------------------------------------------------------
+    // 3. ARM64 (AArch64) Instruction Decoder
+    // --------------------------------------------------------------------------
+    println("--- 3. Testing ARM64 (AArch64) Instruction Decoder ---");
+    // NOP: 0x1F, 0x20, 0x03, 0xD5
+    let arm_nop = list_new();
+    list_push(arm_nop, 31); list_push(arm_nop, 32); list_push(arm_nop, 3); list_push(arm_nop, 213);
+    let ins_arm_nop = sec_disasm_instruction(arm_nop, 0, 65536, "arm64");
+    assert(ins_arm_nop.mnemonic == "nop", "ARM64 NOP matched");
+
+    // RET: 0xC0, 0x03, 0x5F, 0xD6
+    let arm_ret = list_new();
+    list_push(arm_ret, 192); list_push(arm_ret, 3); list_push(arm_ret, 95); list_push(arm_ret, 214);
+    let ins_arm_ret = sec_disasm_instruction(arm_ret, 0, 65536, "arm64");
+    assert(ins_arm_ret.mnemonic == "ret", "ARM64 RET matched");
+    assert(ins_arm_ret.is_return, "is_return true");
+
+    // SVC #0: 0x01, 0x00, 0x00, 0xD4
+    let arm_svc = list_new();
+    list_push(arm_svc, 1); list_push(arm_svc, 0); list_push(arm_svc, 0); list_push(arm_svc, 212);
+    let ins_arm_svc = sec_disasm_instruction(arm_svc, 0, 65536, "arm64");
+    assert(ins_arm_svc.mnemonic == "svc", "ARM64 SVC matched");
+    assert(ins_arm_svc.is_syscall, "is_syscall true");
+    println("✅ ARM64 (AArch64) decoder verified");
+
+    // --------------------------------------------------------------------------
+    // 4. RISC-V (RV32I / RV64I / RV32M) Disassembler
+    // --------------------------------------------------------------------------
+    println("--- 4. Testing RISC-V Disassembler ---");
+    // NOP: addi x0, x0, 0 (0x13, 0x00, 0x00, 0x00)
+    let rv_nop = list_new();
+    list_push(rv_nop, 19); list_push(rv_nop, 0); list_push(rv_nop, 0); list_push(rv_nop, 0);
+    let ins_rv_nop = sec_disasm_instruction(rv_nop, 0, 2048, "riscv");
+    assert(ins_rv_nop.mnemonic == "nop", "RISC-V NOP matched");
+
+    // RET: jalr x0, ra, 0 (0x67, 0x80, 0x00, 0x00)
+    let rv_ret = list_new();
+    list_push(rv_ret, 103); list_push(rv_ret, 128); list_push(rv_ret, 0); list_push(rv_ret, 0);
+    let ins_rv_ret = sec_disasm_instruction(rv_ret, 0, 2048, "riscv");
+    assert(ins_rv_ret.mnemonic == "ret", "RISC-V RET matched");
+    assert(ins_rv_ret.is_return, "is_return true");
+
+    // ECALL: 0x73, 0x00, 0x00, 0x00
+    let rv_ecall = list_new();
+    list_push(rv_ecall, 115); list_push(rv_ecall, 0); list_push(rv_ecall, 0); list_push(rv_ecall, 0);
+    let ins_rv_ecall = sec_disasm_instruction(rv_ecall, 0, 2048, "riscv");
+    assert(ins_rv_ecall.mnemonic == "ecall", "RISC-V ECALL matched");
+    assert(ins_rv_ecall.is_syscall, "is_syscall true");
+
+    // addi a1, zero, 42: [147, 5, 160, 2]
+    let rv_addi = list_new();
+    list_push(rv_addi, 147); list_push(rv_addi, 5); list_push(rv_addi, 160); list_push(rv_addi, 2);
+    let ins_rv_addi = sec_disasm_instruction(rv_addi, 0, 2048, "riscv");
+    assert(ins_rv_addi.mnemonic == "addi", "RISC-V ADDI matched");
+    assert(ins_rv_addi.operands == "a1, zero, 42", "Operands a1, zero, 42 matched");
+
+    // add a1, a0, a1: [179, 5, 181, 0]
+    let rv_add = list_new();
+    list_push(rv_add, 179); list_push(rv_add, 5); list_push(rv_add, 181); list_push(rv_add, 0);
+    let ins_rv_add = sec_disasm_instruction(rv_add, 0, 2048, "riscv");
+    assert(ins_rv_add.mnemonic == "add", "RISC-V ADD matched");
+    assert(ins_rv_add.operands == "a1, a0, a1", "Operands a1, a0, a1 matched");
+
+    // mul a0, a0, a1: [51, 5, 181, 2]
+    let rv_mul = list_new();
+    list_push(rv_mul, 51); list_push(rv_mul, 5); list_push(rv_mul, 181); list_push(rv_mul, 2);
+    let ins_rv_mul = sec_disasm_instruction(rv_mul, 0, 2048, "riscv");
+    assert(ins_rv_mul.mnemonic == "mul", "RISC-V MUL matched");
+    assert(ins_rv_mul.operands == "a0, a0, a1", "Operands a0, a0, a1 matched");
+
+    // lui a0, 0x1: [55, 21, 0, 0]
+    let rv_lui = list_new();
+    list_push(rv_lui, 55); list_push(rv_lui, 21); list_push(rv_lui, 0); list_push(rv_lui, 0);
+    let ins_rv_lui = sec_disasm_instruction(rv_lui, 0, 2048, "riscv");
+    assert(ins_rv_lui.mnemonic == "lui", "RISC-V LUI matched");
+
+    // lw a1, 0(a0): [131, 37, 5, 0]
+    let rv_lw = list_new();
+    list_push(rv_lw, 131); list_push(rv_lw, 37); list_push(rv_lw, 5); list_push(rv_lw, 0);
+    let ins_rv_lw = sec_disasm_instruction(rv_lw, 0, 2048, "riscv");
+    assert(ins_rv_lw.mnemonic == "lw", "RISC-V LW matched");
+    assert(ins_rv_lw.operands == "a1, 0(a0)", "Operands a1, 0(a0) matched");
+
+    // sw a1, 0(a0): [35, 32, 181, 0]
+    let rv_sw = list_new();
+    list_push(rv_sw, 35); list_push(rv_sw, 32); list_push(rv_sw, 181); list_push(rv_sw, 0);
+    let ins_rv_sw = sec_disasm_instruction(rv_sw, 0, 2048, "riscv");
+    assert(ins_rv_sw.mnemonic == "sw", "RISC-V SW matched");
+    assert(ins_rv_sw.operands == "a1, 0(a0)", "Operands a1, 0(a0) matched");
+    println("✅ RISC-V RV32I/RV64I and M-extension decoders verified");
+
+    // --------------------------------------------------------------------------
+    // 5. WebAssembly Bytecode Disassembler
+    // --------------------------------------------------------------------------
+    println("--- 5. Testing WebAssembly Bytecode Disassembler ---");
+    let wasm_code = list_new();
+    list_push(wasm_code, 65); list_push(wasm_code, 42); // i32.const 42
+    list_push(wasm_code, 32); list_push(wasm_code, 0);  // local.get 0
+    list_push(wasm_code, 106);                          // i32.add
+    list_push(wasm_code, 16); list_push(wasm_code, 1);  // call 1
+    list_push(wasm_code, 15);                           // return
+    list_push(wasm_code, 11);                           // end
+
+    let wasm_ins_list = sec_disasm_buffer(wasm_code, "wasm", 0);
+    assert(list_length(wasm_ins_list) == 6, "6 WASM instructions disassembled");
+    let wi0: Instruction = list_get(wasm_ins_list, 0);
+    assert(wi0.mnemonic == "i32.const", "WASM i32.const matched");
+    assert(wi0.operands == "42", "WASM const operand 42 matched");
+
+    let wi1: Instruction = list_get(wasm_ins_list, 1);
+    assert(wi1.mnemonic == "local.get", "WASM local.get matched");
+    assert(wi1.operands == "0", "Local index 0");
+
+    let wi2: Instruction = list_get(wasm_ins_list, 2);
+    assert(wi2.mnemonic == "i32.add", "WASM i32.add matched");
+
+    let wi3: Instruction = list_get(wasm_ins_list, 3);
+    assert(wi3.mnemonic == "call", "WASM call matched");
+    assert(wi3.operands == "1", "Call funcidx 1");
+    assert(wi3.is_call, "is_call true");
+
+    let wi4: Instruction = list_get(wasm_ins_list, 4);
+    assert(wi4.mnemonic == "return", "WASM return matched");
+    assert(wi4.is_return, "is_return true");
+
+    let wi5: Instruction = list_get(wasm_ins_list, 5);
+    assert(wi5.mnemonic == "end", "WASM end matched");
+    println("✅ WebAssembly bytecode instruction decoder verified");
+
+    // --------------------------------------------------------------------------
+    // 6. High-Precision Symbol Demangling (Itanium C++, Rust v0, Roze)
+    // --------------------------------------------------------------------------
+    println("--- 6. Testing High-Precision Symbol Demangling ---");
+    // Itanium C++ ABI
+    let cpp_sym = "_ZN3foo3barEi";
+    let dm_cpp = sec_disasm_demangle(cpp_sym);
+    assert(dm_cpp == "foo::bar(int)", "C++ demangling matched: foo::bar(int)");
+
+    let cpp_add = "_Z3addii";
+    let dm_add = sec_disasm_demangle(cpp_add);
+    assert(dm_add == "add(int, int)", "C++ demangling matched: add(int, int)");
+
+    // Rust v0 ABI
+    let rust_sym = "_RNvCs123_4core3ptr";
+    let dm_rust = sec_disasm_demangle(rust_sym);
+    assert(dm_rust == "core::ptr", "Rust demangling matched: core::ptr");
+
+    // Roze namespaces
+    let roze_sym = "_Roze_sec_disasm_open";
+    let dm_roze = sec_disasm_demangle(roze_sym);
+    assert(dm_roze == "roze::sec::disasm::open", "Roze demangling matched: roze::sec::disasm::open");
+    println("✅ Itanium C++, Rust v0, and Roze namespace demanglers verified");
+
+    // --------------------------------------------------------------------------
+    // 7. Table Formatting Output
+    // --------------------------------------------------------------------------
+    println("--- 7. Testing Disassembly Table Formatter ---");
+    let formatted = sec_disasm_format(wasm_ins_list);
+    assert(string_length(formatted) > 50, "Formatted disassembly table not empty");
+    println(formatted);
+    println("✅ Disassembly table format verified");
+
+    println("================================================================================");
+    println("🎉 [CI-PASS] ALL MULTI-ARCH DISASSEMBLER & BINARY INSPECTION TESTS PASSED (M9-T04)");
+    println("================================================================================");
+}

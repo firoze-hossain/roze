@@ -1,0 +1,207 @@
+// packages/roze-net/tests/test_raw.roze
+// ==============================================================================
+// 🌹 Roze-Sec: Low-Level Frame Engine & Promiscuous Raw Sockets (roze.sec.raw)
+// ==============================================================================
+// Sprint 17 (W35-W36) Deliverable: M9-T01
+// Promiscuous Raw Sockets, PACKET_MMAP Ring Buffers & Line-Rate Packet Injection
+// ==============================================================================
+
+import "roze.sec.raw";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("❌ Assertion failed: " + msg);
+        let crash = 1 / 0;
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func test_hardware_interfaces() {
+    println("--- Testing Hardware Interface Enumeration & Flags ---");
+    let ifaces = interface_list();
+    assert(list_length(ifaces) >= 4, "Must enumerate at least 4 network interfaces");
+
+    let lo: NetworkInterface = list_get(ifaces, 0);
+    assert(lo.name == "lo", "Interface 0 must be lo");
+    assert(lo.is_loopback, "lo must have is_loopback = true");
+    assert(lo.is_up, "lo must have is_up = true");
+    assert(lo.mtu == 65536, "lo MTU must be 65536");
+    assert(bit_and(lo.flags, iff_loopback()) != 0, "lo flags must contain IFF_LOOPBACK");
+
+    let eth0: NetworkInterface = interface_find("eth0");
+    assert(eth0.name == "eth0", "Found interface must be eth0");
+    assert(eth0.speed_mbps == 10000, "eth0 must be 10GbE (10000 Mbps)");
+    assert(bit_and(eth0.flags, iff_broadcast()) != 0, "eth0 must have IFF_BROADCAST flag");
+
+    let if_str = interface_to_string(eth0);
+    assert(str_contains(if_str, "eth0"), "interface_to_string must contain name");
+    assert(str_contains(if_str, "10000Mbps"), "interface_to_string must contain speed");
+
+    let promisc_ok = interface_set_promiscuous("eth0", true);
+    assert(promisc_ok, "interface_set_promiscuous on eth0 must succeed");
+}
+
+func test_hardware_timestamping() {
+    println("--- Testing Hardware & Software Timestamping Engine ---");
+    let ts1 = hardware_timestamp_now();
+    assert(ts1.clock_id == clock_monotonic(), "hardware_timestamp_now must use CLOCK_MONOTONIC");
+    assert(ts1.nsec >= 0 && ts1.nsec < 1000000000, "nanoseconds must be in [0, 1e9)");
+
+    let ns1 = hardware_timestamp_to_nanos(ts1);
+    assert(ns1 > 0, "hardware_timestamp_to_nanos must be positive");
+
+    let ts2 = hardware_timestamp_new(ts1.sec + 1, ts1.nsec + 500, clock_hardware());
+    let delta = hardware_timestamp_delta_nanos(ts1, ts2);
+    assert(delta == 1000000500, "Timestamp delta must equal 1_000_000_500 ns");
+
+    let jitter = hardware_timestamp_jitter(ts1, ts2, 1000000000);
+    assert(jitter == 500, "Jitter relative to 1s period must be 500 ns");
+
+    let str_ts = hardware_timestamp_to_string(ts2);
+    assert(str_contains(str_ts, "s"), "Timestamp string must end with 's'");
+}
+
+func test_packet_mmap_circular_ring() {
+    println("--- Testing Linux PACKET_MMAP Circular Ring Buffers ---");
+    // Allocate RX ring buffer with 4 blocks of 65536 bytes, 2048-byte frames -> 128 frames
+    let ring = packet_mmap_ring_new(packet_rx_ring(), tpacket_v2(), 65536, 4, 2048, 128);
+    assert(ring.frame_nr == 128, "Ring buffer must have 128 frames");
+    assert(ring.head == 0 && ring.tail == 0, "Initial head and tail must be 0");
+    assert(ring.is_active, "Ring buffer must be active");
+
+    // Craft a test packet
+    let src_mac = mac_new(0, 12, 41, 67, 142, 222);
+    let dst_mac = mac_broadcast();
+    let src_ip = ipv4_new(192, 168, 1, 10);
+    let dst_ip = ipv4_new(192, 168, 1, 1);
+    let test_pkt = craft_icmp_ping(src_mac, dst_mac, src_ip, dst_ip, 123, 1, "MmapRingZeroCopyTest");
+
+    let ts = hardware_timestamp_now();
+    let push_ok = mmap_ring_push_frame(ring, test_pkt.ptr, test_pkt.length, ts);
+    assert(push_ok, "mmap_ring_push_frame must succeed");
+    assert(ring.total_packets == 1, "Total packets in ring must be 1");
+    assert(ring.tail == 1, "Tail pointer must advance to 1");
+
+    // Peek frame zero-copy
+    let frame = mmap_ring_peek_frame(ring);
+    assert(frame.status == tp_status_user(), "Peeked frame status must be TP_STATUS_USER");
+    assert(frame.wire_len == test_pkt.length, "Wire length must match pushed frame");
+    assert(frame.captured_len == test_pkt.length, "Captured length must match pushed frame");
+
+    // Release frame back to kernel
+    mmap_ring_release_frame(ring, frame);
+    assert(frame.status == tp_status_kernel(), "Released frame status must be TP_STATUS_KERNEL");
+    assert(ring.head == 1, "Head pointer must advance to 1");
+
+    // Test ring buffer saturation & drop detection
+    let small_ring = packet_mmap_ring_new(packet_rx_ring(), tpacket_v1(), 4096, 1, 1024, 4);
+    let mut_i = 0;
+    while mut_i < 4 {
+        let ok = mmap_ring_push_frame(small_ring, test_pkt.ptr, test_pkt.length, ts);
+        assert(ok, "Small ring slot must be accepted");
+        mut_i = mut_i + 1;
+    }
+    // 5th push should be dropped because ring is full
+    let drop_push = mmap_ring_push_frame(small_ring, test_pkt.ptr, test_pkt.length, ts);
+    assert(!drop_push, "5th push on full ring must fail");
+    assert(small_ring.dropped_packets == 1, "dropped_packets must be incremented to 1");
+
+    // Cleanup rings
+    mmap_ring_free(ring);
+    mmap_ring_free(small_ring);
+    raw_packet_free(test_pkt);
+    assert(!ring.is_active, "Freed ring must be inactive");
+}
+
+func test_bpf_and_npcap_abstractions() {
+    println("--- Testing Berkeley Packet Filter (BPF) & Windows Npcap ---");
+    assert(biocsetif() == 2149603948, "BIOCSETIF constant must be 0x8020426c");
+    assert(biocpromisc() == 536887913, "BIOCPROMISC constant must be 0x20004269");
+    assert(bpf_alignment() == 4, "BPF alignment boundary must be 4 bytes");
+
+    let bpf_hdr = bpf_header_new(1700000000, 500, 64, 64, 18);
+    assert(bpf_hdr.bh_tstamp_sec == 1700000000, "BPF timestamp sec match");
+    assert(bpf_hdr.bh_caplen == 64, "BPF captured len match");
+
+    assert(bpf_align(18) == 20, "18 bytes aligned to 4 must be 20");
+    assert(bpf_align(16) == 16, "16 bytes aligned to 4 must be 16");
+
+    assert(pcap_openflag_promiscuous() == 1, "PCAP_OPENFLAG_PROMISCUOUS must be 1");
+    assert(pcap_openflag_max_responsiveness() == 16, "PCAP_OPENFLAG_MAX_RESPONSIVENESS must be 16");
+}
+
+func test_line_rate_injector_and_libpcap() {
+    println("--- Testing Line-Rate Frame Injector & Libpcap Parity ---");
+    let sock = raw_socket_open_iface("eth0", true);
+    assert(sock.is_open, "Raw socket must open successfully");
+
+    let src_mac = mac_new(2, 66, 172, 17, 0, 2);
+    let dst_mac = mac_broadcast();
+    let src_ip = ipv4_new(192, 168, 1, 100);
+    let dst_ip = ipv4_new(192, 168, 1, 200);
+
+    let frame = craft_udp(src_mac, dst_mac, src_ip, dst_ip, 5000, 6000, "HighRateLineInjectionEngine");
+    assert(frame.length > 0, "Crafted UDP frame must have valid length");
+
+    // 1. Single packet injection
+    let sent1 = raw_inject(sock, frame);
+    assert(sent1 == frame.length, "raw_inject must transmit full frame bytes");
+
+    // 2. Batch frame injection
+    let batch = list_new();
+    list_push(batch, frame);
+    list_push(batch, frame);
+    list_push(batch, frame);
+    let sent_batch = raw_send_batch(sock, batch);
+    assert(sent_batch == 3, "raw_send_batch must send all 3 frames");
+
+    // 3. Line-rate fast flooding benchmark
+    let injector = line_rate_injector_new(sock, 1000000, 64);
+    let pps = injector_benchmark_rate(injector, frame, 10000);
+    println("⚡ Line-rate benchmark throughput: " + int_to_str(pps) + " pkts/sec");
+    assert(pps > 10000, "Injector throughput must exceed 10,000 pkts/sec");
+    assert(injector.packets_sent >= 10000, "Packets sent must reflect benchmark count");
+
+    raw_socket_close_channel(sock);
+
+    // 4. Libpcap 1:1 Parity Interface
+    let pcap = pcap_open_live("eth0", 65535, true, 1000);
+    assert(pcap.is_active, "PcapLiveHandle must be active");
+    assert(pcap.promisc, "PcapLiveHandle must be promiscuous");
+
+    let inj_res = pcap_inject(pcap, frame);
+    assert(inj_res == frame.length, "pcap_inject must succeed");
+
+    let stats = pcap_stats(pcap);
+    assert(stats.ps_recv >= 0, "pcap_stats ps_recv valid");
+
+    let filter = packet_filter_new();
+    packet_filter_set_protocol(filter, ipproto_udp());
+    let filter_ok = pcap_setfilter(pcap, filter);
+    assert(filter_ok, "pcap_setfilter must succeed");
+
+    let next_pkt = pcap_next_ex(pcap);
+    assert(next_pkt.length == frame.length, "pcap_next_ex must retrieve injected packet");
+
+    pcap_close(pcap);
+    assert(!pcap.is_active, "pcap_close must deactivate handle");
+
+    raw_packet_free(frame);
+}
+
+func main() {
+    println("==================================================================");
+    println("🧪 Running Roze-Sec Low-Level Frame Engine Tests (M9-T01)");
+    println("==================================================================");
+
+    test_hardware_interfaces();
+    test_hardware_timestamping();
+    test_packet_mmap_circular_ring();
+    test_bpf_and_npcap_abstractions();
+    test_line_rate_injector_and_libpcap();
+
+    println("==================================================================");
+    println("🎉 ALL ROZE-SEC RAW ENGINE TESTS PASSED (M9-T01)");
+    println("==================================================================");
+}

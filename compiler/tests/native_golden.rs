@@ -5057,6 +5057,26 @@ fn native_milestone_gate_m8_deep_learning_and_llm_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze Milestone Gate M8 Deep Learning & 7B LLM Inference Engine 100% OPERATIONAL"));
 }
 
+#[test]
+fn native_sec_raw_frame_engine_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("sec_raw_frame_engine.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read sec_raw_frame_engine.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("sec_raw_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== ROZE-SEC LOW-LEVEL FRAME ENGINE & RAW SOCKETS (M9-T01) ==="));
+    assert!(stdout.contains("[PASS] Test 1: Hardware interfaces enumerated and promiscuous binding verified"));
+    assert!(stdout.contains("[PASS] Test 2: Nanosecond hardware timestamping and inter-arrival jitter calculated"));
+    assert!(stdout.contains("[PASS] Test 3: Linux PACKET_MMAP circular ring buffer with zero-copy extraction verified"));
+    assert!(stdout.contains("[PASS] Test 4: macOS/BSD BPF headers and Windows Npcap driver constants verified"));
+    assert!(stdout.contains("[PASS] Test 5: Line-rate frame injection engine benchmarked"));
+    assert!(stdout.contains("[PASS] Test 6: libpcap 1:1 API parity (pcap_open_live, inject, next_ex, stats, filter, close) verified"));
+    assert!(stdout.contains("[CI-PASS] ALL PROMISCUOUS RAW SOCKETS & PACKET INJECTION TESTS PASSED (M9-T01)"));
+}
+
+
 
 
 

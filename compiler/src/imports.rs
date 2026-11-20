@@ -238,7 +238,9 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
             Some("roze-orm/src/lib.roze".to_string())
         }
         "raw_net" | "net" | "packet" | "pcap" | "roze::net::raw" | "packet_crafting" | "protocol" | "dissector" | "dns" | "dhcp"
-        | "scanner" | "port_scanner" | "net_scan" | "roze::net::scanner" | "roze-net" | "roze_net" => {
+        | "scanner" | "port_scanner" | "net_scan" | "roze::net::scanner" | "roze-net" | "roze_net"
+        | "roze.sec.raw" | "roze::sec::raw" | "roze-sec::raw" | "roze_sec_raw" | "sec.raw" | "sec::raw" | "sec_raw"
+        | "roze.sec" | "roze::sec" | "sec" | "security_sec" => {
             Some("roze-net/src/lib.roze".to_string())
         }
         "crypto" | "roze::crypto" | "roze-crypto" | "roze_crypto" | "tls" | "sha" | "aes" | "chacha" | "rsa" => {

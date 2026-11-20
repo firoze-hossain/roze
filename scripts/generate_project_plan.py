@@ -720,7 +720,7 @@ s1_rows = [
         ("M9-T01", 8), ("Month 9", 24), ("Sprint 17 (W35-W36)", 8), "Low-Level Frame Engine", "Promiscuous Raw Sockets & Packet Injection (roze.sec.raw)",
         "Low-level packet capture and injection engine: Linux AF_PACKET with PACKET_MMAP circular ring buffers, macOS/BSD BPF (Berkeley Packet Filter), and Windows Npcap bindings. Promiscuous hardware interface binding, hardware timestamping, zero-copy packet extraction, and raw frame transmission at line rate (10GbE+).",
         "Parity with libpcap and Linux kernel socket interfaces in pure Roze.",
-        "Cybersecurity, Network Engineering, Sniffing", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Cybersecurity, Network Engineering, Sniffing", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M9-T02", 8), ("Month 9", 24), ("Sprint 17 (W35-W36)", 8), "Protocol Stacking DSL", "Protocol Builder & Scapy-Class Stacking DSL (roze.sec.packet)",

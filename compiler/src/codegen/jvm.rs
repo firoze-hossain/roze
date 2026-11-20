@@ -8521,6 +8521,20 @@ impl JavaSourceGenerator {
                     source.push_str(", ");
                     self.generate_expression(source, right)?;
                     source.push(')');
+                } else if matches!(operator, BinaryOperator::Divide) && left.type_.is_packet_layer() {
+                    if right.type_ == Type::String {
+                        source.push_str("packet_stack_raw(");
+                        self.generate_expression(source, left)?;
+                        source.push_str(", ");
+                        self.generate_expression(source, right)?;
+                        source.push(')');
+                    } else {
+                        source.push_str("packet_stack(");
+                        self.generate_expression(source, left)?;
+                        source.push_str(", ");
+                        self.generate_expression(source, right)?;
+                        source.push(')');
+                    }
                 } else {
                     let is_string_concat = matches!(operator, BinaryOperator::Add)
                         && (left.type_ == Type::String || right.type_ == Type::String);

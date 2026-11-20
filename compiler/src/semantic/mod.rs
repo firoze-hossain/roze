@@ -91,6 +91,19 @@ impl Type {
         matches!(self, Type::Vec4f | Type::Vec8f | Type::Vec4i | Type::Vec16u8)
     }
 
+    pub fn is_packet_layer(&self) -> bool {
+        match self {
+            Type::Class(name) => matches!(
+                name.as_str(),
+                "Packet" | "RawPacket" | "PacketLayer"
+                | "Ether" | "Dot1Q" | "VLAN" | "ARP" | "IP" | "IPv4" | "IPv6"
+                | "ICMP" | "ICMPv6" | "TCP" | "UDP" | "DNS" | "DHCP" | "NTP"
+                | "SNMP" | "HTTP" | "TLSClientHello" | "Raw"
+            ),
+            _ => false,
+        }
+    }
+
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
@@ -4318,13 +4331,30 @@ impl TypeChecker {
                             ).into());
                         }
                     }
-                    BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => {
+                    BinaryOperator::Subtract | BinaryOperator::Multiply | BinaryOperator::Modulo => {
                         if left_type.is_simd_vector() {
                             left_type.clone()
                         } else if right_type.is_simd_vector() {
                             right_type.clone()
                         } else if let Some(numeric_type) = numeric_binary_result_type(left_type, right_type) {
                             numeric_type
+                        } else {
+                            return Err(RozeError::type_error(
+                                format!("Cannot perform arithmetic on {} and {}", left_type, right_type),
+                                location.line,
+                                location.column,
+                            ).into());
+                        }
+                    }
+                    BinaryOperator::Divide => {
+                        if left_type.is_simd_vector() {
+                            left_type.clone()
+                        } else if right_type.is_simd_vector() {
+                            right_type.clone()
+                        } else if let Some(numeric_type) = numeric_binary_result_type(left_type, right_type) {
+                            numeric_type
+                        } else if left_type.is_packet_layer() && (right_type.is_packet_layer() || *right_type == Type::String) {
+                            Type::Class("Packet".to_string())
                         } else {
                             return Err(RozeError::type_error(
                                 format!("Cannot perform arithmetic on {} and {}", left_type, right_type),
@@ -4364,6 +4394,68 @@ impl TypeChecker {
                 }
 
                 if let Expression::Identifier { name, .. } = function.as_ref() {
+                    let mut name_buf = name.clone();
+                    if name == "Ether" && typed_arguments.len() == 2 {
+                        name_buf = "Ether_macs".to_string();
+                    } else if name == "Ether" && typed_arguments.len() == 3 {
+                        name_buf = "Ether_custom".to_string();
+                    } else if (name == "Dot1Q" || name == "VLAN") && typed_arguments.len() == 1 {
+                        name_buf = "Dot1Q_vlan".to_string();
+                    } else if (name == "Dot1Q" || name == "VLAN") && typed_arguments.is_empty() {
+                        name_buf = "Dot1Q".to_string();
+                    } else if (name == "Dot1Q" || name == "VLAN") && typed_arguments.len() == 3 {
+                        name_buf = "Dot1Q_custom".to_string();
+                    } else if name == "ARP" && typed_arguments.len() == 2 {
+                        name_buf = "ARP_ips".to_string();
+                    } else if name == "ARP" && typed_arguments.len() == 5 {
+                        name_buf = "ARP_custom".to_string();
+                    } else if (name == "IP" || name == "IPv4") && typed_arguments.is_empty() {
+                        name_buf = "IP".to_string();
+                    } else if (name == "IP" || name == "IPv4") && typed_arguments.len() == 2 {
+                        name_buf = "IP_addrs".to_string();
+                    } else if (name == "IP" || name == "IPv4") && typed_arguments.len() == 4 {
+                        name_buf = "IP_custom".to_string();
+                    } else if name == "IPv6" && typed_arguments.len() == 2 {
+                        name_buf = "IPv6_addrs".to_string();
+                    } else if name == "IPv6" && typed_arguments.len() == 4 {
+                        name_buf = "IPv6_custom".to_string();
+                    } else if name == "ICMP" && typed_arguments.len() == 2 {
+                        name_buf = "ICMP_Echo".to_string();
+                    } else if name == "ICMP" && typed_arguments.len() == 4 {
+                        name_buf = "ICMP_custom".to_string();
+                    } else if name == "ICMPv6" && typed_arguments.len() == 2 {
+                        name_buf = "ICMPv6_Echo".to_string();
+                    } else if name == "ICMPv6" && typed_arguments.len() == 4 {
+                        name_buf = "ICMPv6_custom".to_string();
+                    } else if name == "TCP" && typed_arguments.len() == 2 {
+                        name_buf = "TCP_ports".to_string();
+                    } else if name == "TCP" && typed_arguments.len() == 3 {
+                        name_buf = "TCP_flags".to_string();
+                    } else if name == "TCP" && typed_arguments.len() == 5 {
+                        name_buf = "TCP_custom".to_string();
+                    } else if name == "UDP" && typed_arguments.len() == 2 {
+                        name_buf = "UDP_ports".to_string();
+                    } else if name == "DNS" && typed_arguments.len() == 1 {
+                        name_buf = "DNS_Query_default".to_string();
+                    } else if name == "DNS" && typed_arguments.len() == 2 {
+                        name_buf = "DNS_Query".to_string();
+                    } else if name == "DNS" && typed_arguments.len() == 4 {
+                        name_buf = "DNS_Response".to_string();
+                    } else if name == "DHCP" && typed_arguments.len() == 2 {
+                        name_buf = "DHCP_Discover".to_string();
+                    } else if name == "SNMP" && typed_arguments.len() == 3 {
+                        name_buf = "SNMP_Get".to_string();
+                    } else if name == "HTTP" && typed_arguments.len() == 2 {
+                        name_buf = "HTTP_Get".to_string();
+                    } else if name == "HTTP" && typed_arguments.len() == 3 {
+                        name_buf = "HTTP_Post".to_string();
+                    } else if name == "TLSClientHello" && typed_arguments.len() == 1 {
+                        name_buf = "TLSClientHello_sni".to_string();
+                    } else if name == "Raw" && typed_arguments.is_empty() {
+                        name_buf = "Raw_empty".to_string();
+                    }
+                    let name = &name_buf;
+
                     if name == "struct_size" && typed_arguments.len() == 1 {
                         if let TypedExpressionKind::String(ref ty_name) = typed_arguments[0].kind {
                             let (sz, _) = self.compute_type_layout(ty_name)?;

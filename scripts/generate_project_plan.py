@@ -726,7 +726,7 @@ s1_rows = [
         ("M9-T02", 8), ("Month 9", 24), ("Sprint 17 (W35-W36)", 8), "Protocol Stacking DSL", "Protocol Builder & Scapy-Class Stacking DSL (roze.sec.packet)",
         "Fluent protocol stacking DSL utilizing the '/' operator (Ether() / IP() / TCP() / Raw()): full support for Ethernet II, 802.1Q VLAN, ARP, IPv4, IPv6, ICMP, ICMPv6, TCP (custom flags SYN/ACK/FIN/RST/PSH/URG/ECE/CWR), UDP, DNS, DHCP, NTP, SNMP, HTTP/1.1, TLS 1.3 ClientHello. Automated RFC 1071 internet checksum recalculation.",
         "Direct parity with Python Scapy protocol stacking DSL with native compiled performance.",
-        "Penetration Testing, Exploit Construction, Network Protocol Security", "9 Days", ("Critical", 14), ("Planned", 12)
+        "Penetration Testing, Exploit Construction, Network Protocol Security", "9 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M9-T03", 8), ("Month 9", 24), ("Sprint 17 (W35-W36)", 8), "Stealth Reconnaissance", "Distributed Multi-Core Stealth Network Scanner (roze.sec.scan)",

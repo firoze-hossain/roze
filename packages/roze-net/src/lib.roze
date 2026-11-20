@@ -459,6 +459,23 @@ func raw_packet_write_string(pkt: RawPacket, offset: int, s: string) -> int {
     return len;
 }
 
+// Reads an ASCII string payload from the packet buffer
+func raw_packet_read_string(pkt: RawPacket, offset: int, length: int) -> string {
+    let ascii_table = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+    let mut_s = "";
+    let mut_i = 0;
+    while mut_i < length && offset + mut_i < pkt.length {
+        let ch = raw_packet_get_u8(pkt, offset + mut_i);
+        if ch >= 32 && ch <= 126 {
+            mut_s = mut_s + substring(ascii_table, ch - 32, ch - 31);
+        } else {
+            mut_s = mut_s + ".";
+        }
+        mut_i = mut_i + 1;
+    }
+    return mut_s;
+}
+
 // ==============================================================================
 // 4. RFC 1071 16-Bit Internet Checksum Engine
 // ==============================================================================
@@ -3988,5 +4005,1415 @@ func sec_raw_send_batch(sock: RawSocket, frames: List) -> int {
 }
 func sec_raw_flood(sock: RawSocket, frame_template: RawPacket, count: int, batch_size: int) -> int {
     return raw_fast_flood(sock, frame_template, count, batch_size);
+}
+
+
+// ==============================================================================
+// 14. Fluent Protocol Stacking DSL & Scapy-Class Builder (roze.sec.packet)
+// ==============================================================================
+
+// Layer ID Constants
+func layer_id_ether() -> int { return 1; }
+func layer_id_dot1q() -> int { return 2; }
+func layer_id_arp() -> int { return 3; }
+func layer_id_ipv4() -> int { return 4; }
+func layer_id_ipv6() -> int { return 5; }
+func layer_id_icmp() -> int { return 6; }
+func layer_id_icmpv6() -> int { return 7; }
+func layer_id_tcp() -> int { return 8; }
+func layer_id_udp() -> int { return 9; }
+func layer_id_dns() -> int { return 10; }
+func layer_id_dhcp() -> int { return 11; }
+func layer_id_ntp() -> int { return 12; }
+func layer_id_snmp() -> int { return 13; }
+func layer_id_http() -> int { return 14; }
+func layer_id_tls() -> int { return 15; }
+func layer_id_raw() -> int { return 16; }
+
+// TCP Flag Constants
+func tcp_flag_fin() -> int { return 1; }
+func tcp_flag_syn() -> int { return 2; }
+func tcp_flag_rst() -> int { return 4; }
+func tcp_flag_psh() -> int { return 8; }
+func tcp_flag_ack() -> int { return 16; }
+func tcp_flag_urg() -> int { return 32; }
+func tcp_flag_ece() -> int { return 64; }
+func tcp_flag_cwr() -> int { return 128; }
+
+// PacketLayer class representing a single protocol layer
+class PacketLayer {
+    layer_id: int,
+    name: string,
+    i1: int,
+    i2: int,
+    i3: int,
+    i4: int,
+    i5: int,
+    i6: int,
+    i7: int,
+    i8: int,
+    s1: string,
+    s2: string,
+    s3: string,
+    s4: string,
+    s5: string,
+    raw_bytes: RawPacket,
+}
+
+// Packet class representing stacked protocol layers and cached wire frame
+class Packet {
+    layers: List,
+    cached_raw: RawPacket,
+    is_built: bool,
+}
+
+func packet_layer_new(layer_id: int, name: string, i1: int, i2: int, i3: int, i4: int, i5: int, i6: int, i7: int, i8: int, s1: string, s2: string, s3: string, s4: string, s5: string, raw_bytes: RawPacket) -> PacketLayer {
+    return new PacketLayer(layer_id, name, i1, i2, i3, i4, i5, i6, i7, i8, s1, s2, s3, s4, s5, raw_bytes);
+}
+
+func packet_empty() -> Packet {
+    let empty_raw = raw_packet_new(64);
+    return new Packet(list_new(), empty_raw, false);
+}
+
+func packet_from_single_layer(layer: PacketLayer) -> Packet {
+    let layers = list_new();
+    list_push(layers, layer);
+    let pkt = new Packet(layers, raw_packet_new(64), false);
+    packet_rebuild_and_bind(pkt);
+    return pkt;
+}
+
+// Address Parsing Helpers
+func hex_digit_val(c: int) -> int {
+    if c >= 48 && c <= 57 { return c - 48; }
+    if c >= 97 && c <= 102 { return c - 97 + 10; }
+    if c >= 65 && c <= 70 { return c - 65 + 10; }
+    return 0;
+}
+
+func hex_byte_parse(s: string, offset: int) -> int {
+    if offset + 1 >= string_length(s) { return 0; }
+    let h = hex_digit_val(string_char_at(s, offset));
+    let l = hex_digit_val(string_char_at(s, offset + 1));
+    return bit_or(bit_shl(h, 4), l);
+}
+
+func mac_parse(s: string) -> MacAddress {
+    if string_length(s) < 17 {
+        return mac_broadcast();
+    }
+    let b0 = hex_byte_parse(s, 0);
+    let b1 = hex_byte_parse(s, 3);
+    let b2 = hex_byte_parse(s, 6);
+    let b3 = hex_byte_parse(s, 9);
+    let b4 = hex_byte_parse(s, 12);
+    let b5 = hex_byte_parse(s, 15);
+    return mac_new(b0, b1, b2, b3, b4, b5);
+}
+
+func ipv4_parse(s: string) -> Ipv4Address {
+    let len = string_length(s);
+    let mut_b0 = 0;
+    let mut_b1 = 0;
+    let mut_b2 = 0;
+    let mut_b3 = 0;
+    let mut_part = 0;
+    let mut_curr = 0;
+    let mut_i = 0;
+    while mut_i < len {
+        let c = string_char_at(s, mut_i);
+        if c >= 48 && c <= 57 {
+            mut_curr = mut_curr * 10 + (c - 48);
+        } else if c == 46 { // '.'
+            if mut_part == 0 { mut_b0 = mut_curr; }
+            else if mut_part == 1 { mut_b1 = mut_curr; }
+            else if mut_part == 2 { mut_b2 = mut_curr; }
+            mut_part = mut_part + 1;
+            mut_curr = 0;
+        }
+        mut_i = mut_i + 1;
+    }
+    if mut_part == 3 {
+        mut_b3 = mut_curr;
+    }
+    return ipv4_new(mut_b0, mut_b1, mut_b2, mut_b3);
+}
+
+func ipv6_parse(s: string) -> Ipv6Address {
+    if s == "::1" || s == "::" {
+        return ipv6_loopback();
+    }
+    if s == "fe80::1" {
+        return ipv6_new(254, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
+    }
+    if s == "fe80::2" {
+        return ipv6_new(254, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2);
+    }
+    return ipv6_loopback();
+}
+
+func tcp_parse_flags(f_str: string) -> int {
+    let len = string_length(f_str);
+    let mut_flags = 0;
+    let mut_i = 0;
+    while mut_i < len {
+        let c = string_char_at(f_str, mut_i);
+        if c == 70 || c == 102 { mut_flags = bit_or(mut_flags, tcp_flag_fin()); }
+        else if c == 83 || c == 115 { mut_flags = bit_or(mut_flags, tcp_flag_syn()); }
+        else if c == 82 || c == 114 { mut_flags = bit_or(mut_flags, tcp_flag_rst()); }
+        else if c == 80 || c == 112 { mut_flags = bit_or(mut_flags, tcp_flag_psh()); }
+        else if c == 65 || c == 97 { mut_flags = bit_or(mut_flags, tcp_flag_ack()); }
+        else if c == 85 || c == 117 { mut_flags = bit_or(mut_flags, tcp_flag_urg()); }
+        else if c == 69 || c == 101 { mut_flags = bit_or(mut_flags, tcp_flag_ece()); }
+        else if c == 67 || c == 99 { mut_flags = bit_or(mut_flags, tcp_flag_cwr()); }
+        mut_i = mut_i + 1;
+    }
+    return mut_flags;
+}
+
+func tcp_flags_to_string(flags: int) -> string {
+    let mut_s = "";
+    if bit_and(flags, tcp_flag_cwr()) != 0 { mut_s = mut_s + "C"; }
+    if bit_and(flags, tcp_flag_ece()) != 0 { mut_s = mut_s + "E"; }
+    if bit_and(flags, tcp_flag_urg()) != 0 { mut_s = mut_s + "U"; }
+    if bit_and(flags, tcp_flag_ack()) != 0 { mut_s = mut_s + "A"; }
+    if bit_and(flags, tcp_flag_psh()) != 0 { mut_s = mut_s + "P"; }
+    if bit_and(flags, tcp_flag_rst()) != 0 { mut_s = mut_s + "R"; }
+    if bit_and(flags, tcp_flag_syn()) != 0 { mut_s = mut_s + "S"; }
+    if bit_and(flags, tcp_flag_fin()) != 0 { mut_s = mut_s + "F"; }
+    return mut_s;
+}
+
+// ==============================================================================
+// Scapy Layer Constructors
+// ==============================================================================
+
+// 1. Ethernet II
+func Ether() -> Packet {
+    return Ether_custom("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", 2048); // 0x0800
+}
+func Ether_macs(dst: string, src: string) -> Packet {
+    return Ether_custom(dst, src, 2048);
+}
+func Ether_custom(dst: string, src: string, ethertype: int) -> Packet {
+    let layer = packet_layer_new(layer_id_ether(), "Ether", ethertype, 0, 0, 0, 0, 0, 0, 0, dst, src, "", "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 2. 802.1Q VLAN
+func Dot1Q() -> Packet {
+    return Dot1Q_vlan(1);
+}
+func Dot1Q_vlan(vlan: int) -> Packet {
+    return Dot1Q_custom(vlan, 0, 2048);
+}
+func Dot1Q_custom(vlan: int, prio: int, ethertype: int) -> Packet {
+    let layer = packet_layer_new(layer_id_dot1q(), "Dot1Q", vlan, prio, 33024, ethertype, 0, 0, 0, 0, "", "", "", "", "", raw_packet_new(0)); // 0x8100
+    return packet_from_single_layer(layer);
+}
+func VLAN(vlan: int) -> Packet {
+    return Dot1Q_vlan(vlan);
+}
+
+// 3. ARP
+func ARP() -> Packet {
+    return ARP_ips("0.0.0.0", "0.0.0.0");
+}
+func ARP_ips(psrc: string, pdst: string) -> Packet {
+    return ARP_custom(1, "00:00:00:00:00:00", psrc, "00:00:00:00:00:00", pdst);
+}
+func ARP_custom(op: int, hwsrc: string, psrc: string, hwdst: string, pdst: string) -> Packet {
+    let layer = packet_layer_new(layer_id_arp(), "ARP", op, 0, 0, 0, 0, 0, 0, 0, hwsrc, psrc, hwdst, pdst, "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 4. IPv4
+func IP() -> Packet {
+    return IP_addrs("127.0.0.1", "127.0.0.1");
+}
+func IPv4() -> Packet {
+    return IP();
+}
+func IP_addrs(src: string, dst: string) -> Packet {
+    return IP_custom(src, dst, 6, 64); // default TCP proto=6, ttl=64
+}
+func IP_custom(src: string, dst: string, proto: int, ttl: int) -> Packet {
+    let layer = packet_layer_new(layer_id_ipv4(), "IP", proto, ttl, 1, 0, 20, 0, 0, 0, src, dst, "", "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 5. IPv6
+func IPv6() -> Packet {
+    return IPv6_addrs("::1", "::1");
+}
+func IPv6_addrs(src: string, dst: string) -> Packet {
+    return IPv6_custom(src, dst, 6, 64);
+}
+func IPv6_custom(src: string, dst: string, next_hdr: int, hop_limit: int) -> Packet {
+    let layer = packet_layer_new(layer_id_ipv6(), "IPv6", next_hdr, hop_limit, 0, 0, 0, 0, 0, 0, src, dst, "", "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 6. ICMP
+func ICMP() -> Packet {
+    return ICMP_Echo(0, 0);
+}
+func ICMP_Echo(id: int, seq: int) -> Packet {
+    return ICMP_custom(8, 0, id, seq); // 8 = Echo Request
+}
+func ICMP_custom(msg_type: int, code: int, id: int, seq: int) -> Packet {
+    let layer = packet_layer_new(layer_id_icmp(), "ICMP", msg_type, code, id, seq, 0, 0, 0, 0, "", "", "", "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 7. ICMPv6
+func ICMPv6() -> Packet {
+    return ICMPv6_Echo(0, 0);
+}
+func ICMPv6_Echo(id: int, seq: int) -> Packet {
+    return ICMPv6_custom(128, 0, id, seq); // 128 = Echo Request
+}
+func ICMPv6_custom(msg_type: int, code: int, id: int, seq: int) -> Packet {
+    let layer = packet_layer_new(layer_id_icmpv6(), "ICMPv6", msg_type, code, id, seq, 0, 0, 0, 0, "", "", "", "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 8. TCP
+func TCP() -> Packet {
+    return TCP_flags(12345, 80, "S");
+}
+func TCP_ports(sport: int, dport: int) -> Packet {
+    return TCP_flags(sport, dport, "S");
+}
+func TCP_flags(sport: int, dport: int, flags: string) -> Packet {
+    let f_mask = tcp_parse_flags(flags);
+    return TCP_custom(sport, dport, 1000, 0, f_mask);
+}
+func TCP_custom(sport: int, dport: int, seq: int, ack: int, flags: int) -> Packet {
+    let f_str = tcp_flags_to_string(flags);
+    let layer = packet_layer_new(layer_id_tcp(), "TCP", sport, dport, seq, ack, flags, 65535, 0, 0, f_str, "", "", "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 9. UDP
+func UDP() -> Packet {
+    return UDP_ports(53, 53);
+}
+func UDP_ports(sport: int, dport: int) -> Packet {
+    let layer = packet_layer_new(layer_id_udp(), "UDP", sport, dport, 8, 0, 0, 0, 0, 0, "", "", "", "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 10. DNS
+func DNS() -> Packet {
+    return DNS_Query("example.com", 1);
+}
+func DNS_Query_default(qname: string) -> Packet {
+    return DNS_Query(qname, 1);
+}
+func DNS_Query(qname: string, qtype: int) -> Packet {
+    let layer = packet_layer_new(layer_id_dns(), "DNS", 4660, 0, qtype, 0, 0, 0, 0, 0, qname, "", "", "", "", raw_packet_new(0)); // 0x1234
+    return packet_from_single_layer(layer);
+}
+func DNS_Response(id: int, qname: string, ip: string, ttl: int) -> Packet {
+    let layer = packet_layer_new(layer_id_dns(), "DNS", id, 1, 1, ttl, 0, 0, 0, 0, qname, ip, "", "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 11. DHCP
+func DHCP() -> Packet {
+    return DHCP_Discover(305419896, "00:00:00:00:00:00");
+}
+func DHCP_Discover(xid: int, client_mac: string) -> Packet {
+    let layer = packet_layer_new(layer_id_dhcp(), "DHCP", 1, xid, 0, 0, 0, 0, 0, 0, client_mac, "", "", "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+func DHCP_Offer(xid: int, client_mac: string, yiaddr: string, server_id: string, lease: int) -> Packet {
+    let layer = packet_layer_new(layer_id_dhcp(), "DHCP", 2, xid, lease, 0, 0, 0, 0, 0, client_mac, yiaddr, server_id, "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+func DHCP_Request(xid: int, client_mac: string, req_ip: string, server_id: string) -> Packet {
+    let layer = packet_layer_new(layer_id_dhcp(), "DHCP", 3, xid, 0, 0, 0, 0, 0, 0, client_mac, req_ip, server_id, "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+func DHCP_Ack(xid: int, client_mac: string, yiaddr: string, server_id: string, lease: int, subnet: string, router: string, dns: string) -> Packet {
+    let layer = packet_layer_new(layer_id_dhcp(), "DHCP", 5, xid, lease, 0, 0, 0, 0, 0, client_mac, yiaddr, server_id, subnet, router, raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 12. NTP (RFC 5905)
+func NTP() -> Packet {
+    return NTP_ClientRequest();
+}
+func NTP_ClientRequest() -> Packet {
+    let layer = packet_layer_new(layer_id_ntp(), "NTP", 0, 4, 3, 0, 6, 236, 0, 0, "LOCL", "", "", "", "", raw_packet_new(0)); // leap=0, v=4, mode=3, stratum=0
+    return packet_from_single_layer(layer);
+}
+func NTP_ServerResponse(stratum: int, ref_id: string) -> Packet {
+    let layer = packet_layer_new(layer_id_ntp(), "NTP", 0, 4, 4, stratum, 6, 236, 0, 0, ref_id, "", "", "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+func NTP_custom(leap: int, version: int, mode: int, stratum: int, poll: int, precision: int) -> Packet {
+    let layer = packet_layer_new(layer_id_ntp(), "NTP", leap, version, mode, stratum, poll, precision, 0, 0, "LOCL", "", "", "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 13. SNMP (RFC 1157 / RFC 1905)
+func SNMP() -> Packet {
+    return SNMP_Get("public", "1.3.6.1.2.1.1.1.0", 1);
+}
+func SNMP_Get(community: string, oid: string, req_id: int) -> Packet {
+    let layer = packet_layer_new(layer_id_snmp(), "SNMP", 1, 160, req_id, 0, 0, 0, 0, 0, community, oid, "", "", "", raw_packet_new(0)); // 160 = 0xA0 GetRequest
+    return packet_from_single_layer(layer);
+}
+func SNMP_Response(community: string, oid: string, val: string, req_id: int) -> Packet {
+    let layer = packet_layer_new(layer_id_snmp(), "SNMP", 1, 162, req_id, 0, 0, 0, 0, 0, community, oid, val, "", "", raw_packet_new(0)); // 162 = 0xA2 Response
+    return packet_from_single_layer(layer);
+}
+func SNMP_custom(version: int, community: string, pdu_type: int, req_id: int, oid: string, val: string) -> Packet {
+    let layer = packet_layer_new(layer_id_snmp(), "SNMP", version, pdu_type, req_id, 0, 0, 0, 0, 0, community, oid, val, "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 14. HTTP/1.1
+func HTTP() -> Packet {
+    return HTTP_Get("/", "localhost");
+}
+func HTTP_Get(path: string, host: string) -> Packet {
+    return HTTP_custom("GET", path, host, "", "", 0);
+}
+func HTTP_Post(path: string, host: string, body: string) -> Packet {
+    return HTTP_custom("POST", path, host, "", body, 0);
+}
+func HTTP_Response_200(body: string) -> Packet {
+    return HTTP_custom("", "", "", "", body, 200);
+}
+func HTTP_custom(method: string, path: string, host: string, headers: string, body: string, status_code: int) -> Packet {
+    let layer = packet_layer_new(layer_id_http(), "HTTP", status_code, 0, 0, 0, 0, 0, 0, 0, method, path, host, headers, body, raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+
+// 15. TLS 1.3 ClientHello (RFC 8446)
+func TLSClientHello() -> Packet {
+    return TLSClientHello_sni("localhost");
+}
+func TLSClientHello_sni(sni: string) -> Packet {
+    return TLSClientHello_custom(sni, 4865); // 0x1301 TLS_AES_128_GCM_SHA256
+}
+func TLSClientHello_custom(sni: string, cipher_suite: int) -> Packet {
+    let layer = packet_layer_new(layer_id_tls(), "TLSClientHello", cipher_suite, 772, 0, 0, 0, 0, 0, 0, sni, "", "", "", "", raw_packet_new(0)); // 772 = 0x0304 TLS 1.3
+    return packet_from_single_layer(layer);
+}
+
+// 16. Raw Payload
+func Raw(data: string) -> Packet {
+    let layer = packet_layer_new(layer_id_raw(), "Raw", 0, 0, 0, 0, 0, 0, 0, 0, data, "", "", "", "", raw_packet_new(0));
+    return packet_from_single_layer(layer);
+}
+func Raw_empty() -> Packet {
+    return Raw("");
+}
+func RawBytes(raw_pkt: RawPacket) -> Packet {
+    let layer = packet_layer_new(layer_id_raw(), "Raw", 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", raw_pkt);
+    return packet_from_single_layer(layer);
+}
+
+// ==============================================================================
+// Layer Encoders and Wire Writers
+// ==============================================================================
+
+func dot1q_write(dst: MacAddress, src: MacAddress, vlan_id: int, prio: int, inner_ethertype: int, ptr: *raw u8, offset: int) {
+    mac_write(dst, ptr, offset);
+    mac_write(src, ptr, offset + 6);
+    unsafe {
+        ptr_write_u8_at(ptr, offset + 12, 129); // 0x81
+        ptr_write_u8_at(ptr, offset + 13, 0);   // 0x00
+        let tci = bit_or(bit_shl(bit_and(prio, 7), 13), bit_and(vlan_id, 4095));
+        ptr_write_u8_at(ptr, offset + 14, bit_shr(tci, 8));
+        ptr_write_u8_at(ptr, offset + 15, bit_and(tci, 255));
+        ptr_write_u8_at(ptr, offset + 16, bit_shr(inner_ethertype, 8));
+        ptr_write_u8_at(ptr, offset + 17, bit_and(inner_ethertype, 255));
+    }
+}
+
+func ntp_write(leap: int, version: int, mode: int, stratum: int, poll: int, precision: int, ref_id: string, ptr: *raw u8, offset: int) {
+    unsafe {
+        mem_set(ptr_add(ptr, offset), 0, 48);
+        let li_vn_mode = bit_or(bit_or(bit_shl(bit_and(leap, 3), 6), bit_shl(bit_and(version, 7), 3)), bit_and(mode, 7));
+        ptr_write_u8_at(ptr, offset, li_vn_mode);
+        ptr_write_u8_at(ptr, offset + 1, bit_and(stratum, 255));
+        ptr_write_u8_at(ptr, offset + 2, bit_and(poll, 255));
+        ptr_write_u8_at(ptr, offset + 3, bit_and(precision, 255));
+        let rlen = string_length(ref_id);
+        let mut_k = 0;
+        while mut_k < 4 && mut_k < rlen {
+            ptr_write_u8_at(ptr, offset + 12 + mut_k, string_char_at(ref_id, mut_k));
+            mut_k = mut_k + 1;
+        }
+        ptr_write_u8_at(ptr, offset + 40, 222);
+        ptr_write_u8_at(ptr, offset + 41, 11);
+        ptr_write_u8_at(ptr, offset + 42, 107);
+        ptr_write_u8_at(ptr, offset + 43, 58);
+    }
+}
+
+func snmp_write(version: int, community: string, pdu_type: int, req_id: int, oid: string, val: string, ptr: *raw u8, offset: int) -> int {
+    let comm_len = string_length(community);
+    let oid_len = string_length(oid);
+    let val_len = string_length(val);
+    let mut_val_ber_len = 2;
+    if val_len > 0 { mut_val_ber_len = 2 + val_len; }
+    let vb_len = 2 + oid_len + mut_val_ber_len;
+    let vblist_len = 2 + vb_len;
+    let pdu_len = 6 + 3 + 3 + 2 + vblist_len;
+    let total_seq_len = 3 + (2 + comm_len) + (2 + pdu_len);
+
+    let mut_pos = offset;
+    unsafe {
+        ptr_write_u8_at(ptr, mut_pos, 48);
+        ptr_write_u8_at(ptr, mut_pos + 1, total_seq_len);
+        mut_pos = mut_pos + 2;
+
+        ptr_write_u8_at(ptr, mut_pos, 2);
+        ptr_write_u8_at(ptr, mut_pos + 1, 1);
+        ptr_write_u8_at(ptr, mut_pos + 2, version);
+        mut_pos = mut_pos + 3;
+
+        ptr_write_u8_at(ptr, mut_pos, 4);
+        ptr_write_u8_at(ptr, mut_pos + 1, comm_len);
+        mut_pos = mut_pos + 2;
+        let mut_c = 0;
+        while mut_c < comm_len {
+            ptr_write_u8_at(ptr, mut_pos, string_char_at(community, mut_c));
+            mut_pos = mut_pos + 1;
+            mut_c = mut_c + 1;
+        }
+
+        ptr_write_u8_at(ptr, mut_pos, pdu_type);
+        ptr_write_u8_at(ptr, mut_pos + 1, pdu_len);
+        mut_pos = mut_pos + 2;
+
+        ptr_write_u8_at(ptr, mut_pos, 2);
+        ptr_write_u8_at(ptr, mut_pos + 1, 4);
+        ptr_write_u8_at(ptr, mut_pos + 2, bit_and(bit_shr(req_id, 24), 255));
+        ptr_write_u8_at(ptr, mut_pos + 3, bit_and(bit_shr(req_id, 16), 255));
+        ptr_write_u8_at(ptr, mut_pos + 4, bit_and(bit_shr(req_id, 8), 255));
+        ptr_write_u8_at(ptr, mut_pos + 5, bit_and(req_id, 255));
+        mut_pos = mut_pos + 6;
+
+        ptr_write_u8_at(ptr, mut_pos, 2);
+        ptr_write_u8_at(ptr, mut_pos + 1, 1);
+        ptr_write_u8_at(ptr, mut_pos + 2, 0);
+        mut_pos = mut_pos + 3;
+
+        ptr_write_u8_at(ptr, mut_pos, 2);
+        ptr_write_u8_at(ptr, mut_pos + 1, 1);
+        ptr_write_u8_at(ptr, mut_pos + 2, 0);
+        mut_pos = mut_pos + 3;
+
+        ptr_write_u8_at(ptr, mut_pos, 48);
+        ptr_write_u8_at(ptr, mut_pos + 1, vblist_len);
+        mut_pos = mut_pos + 2;
+
+        ptr_write_u8_at(ptr, mut_pos, 48);
+        ptr_write_u8_at(ptr, mut_pos + 1, vb_len);
+        mut_pos = mut_pos + 2;
+
+        ptr_write_u8_at(ptr, mut_pos, 6);
+        ptr_write_u8_at(ptr, mut_pos + 1, oid_len);
+        mut_pos = mut_pos + 2;
+        let mut_o = 0;
+        while mut_o < oid_len {
+            ptr_write_u8_at(ptr, mut_pos, string_char_at(oid, mut_o));
+            mut_pos = mut_pos + 1;
+            mut_o = mut_o + 1;
+        }
+
+        if val_len > 0 {
+            ptr_write_u8_at(ptr, mut_pos, 4);
+            ptr_write_u8_at(ptr, mut_pos + 1, val_len);
+            mut_pos = mut_pos + 2;
+            let mut_v = 0;
+            while mut_v < val_len {
+                ptr_write_u8_at(ptr, mut_pos, string_char_at(val, mut_v));
+                mut_pos = mut_pos + 1;
+                mut_v = mut_v + 1;
+            }
+        } else {
+            ptr_write_u8_at(ptr, mut_pos, 5);
+            ptr_write_u8_at(ptr, mut_pos + 1, 0);
+            mut_pos = mut_pos + 2;
+        }
+    }
+    return mut_pos - offset;
+}
+
+func http_format_string(method: string, path: string, host: string, headers: string, body: string, status_code: int) -> string {
+    if status_code > 0 {
+        let mut_res = "HTTP/1.1 " + to_string(status_code) + " OK\r\n";
+        let body_len = string_length(body);
+        if body_len > 0 {
+            mut_res = mut_res + "Content-Length: " + to_string(body_len) + "\r\n";
+        }
+        if string_length(headers) > 0 {
+            mut_res = mut_res + headers + "\r\n";
+        }
+        mut_res = mut_res + "\r\n" + body;
+        return mut_res;
+    } else {
+        let mut_req = method + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: Roze-Sec/1.0\r\n";
+        let body_len = string_length(body);
+        if body_len > 0 {
+            mut_req = mut_req + "Content-Length: " + to_string(body_len) + "\r\n";
+        }
+        if string_length(headers) > 0 {
+            mut_req = mut_req + headers + "\r\n";
+        }
+        mut_req = mut_req + "\r\n" + body;
+        return mut_req;
+    }
+}
+
+func tls_client_hello_length(sni: string) -> int {
+    let sni_len = string_length(sni);
+    let sni_ext_len = 9 + sni_len;
+    let ver_ext_len = 7;
+    let extensions_len = sni_ext_len + ver_ext_len;
+    let handshake_body_len = 43 + extensions_len;
+    let handshake_total_len = 4 + handshake_body_len;
+    return 5 + handshake_total_len;
+}
+
+func tls_client_hello_write(sni: string, cipher_suite: int, ptr: *raw u8, offset: int) -> int {
+    let sni_len = string_length(sni);
+    let sni_ext_len = 9 + sni_len;
+    let ver_ext_len = 7;
+    let extensions_len = sni_ext_len + ver_ext_len;
+    let handshake_body_len = 43 + extensions_len;
+    let handshake_total_len = 4 + handshake_body_len;
+
+    let mut_pos = offset;
+    unsafe {
+        ptr_write_u8_at(ptr, mut_pos, 22);
+        ptr_write_u8_at(ptr, mut_pos + 1, 3);
+        ptr_write_u8_at(ptr, mut_pos + 2, 1);
+        ptr_write_u8_at(ptr, mut_pos + 3, bit_shr(handshake_total_len, 8));
+        ptr_write_u8_at(ptr, mut_pos + 4, bit_and(handshake_total_len, 255));
+        mut_pos = mut_pos + 5;
+
+        ptr_write_u8_at(ptr, mut_pos, 1);
+        ptr_write_u8_at(ptr, mut_pos + 1, bit_and(bit_shr(handshake_body_len, 16), 255));
+        ptr_write_u8_at(ptr, mut_pos + 2, bit_and(bit_shr(handshake_body_len, 8), 255));
+        ptr_write_u8_at(ptr, mut_pos + 3, bit_and(handshake_body_len, 255));
+        mut_pos = mut_pos + 4;
+
+        ptr_write_u8_at(ptr, mut_pos, 3);
+        ptr_write_u8_at(ptr, mut_pos + 1, 3);
+        mut_pos = mut_pos + 2;
+
+        let mut_r = 0;
+        while mut_r < 32 {
+            ptr_write_u8_at(ptr, mut_pos, bit_and(mut_r * 7 + 13, 255));
+            mut_pos = mut_pos + 1;
+            mut_r = mut_r + 1;
+        }
+
+        ptr_write_u8_at(ptr, mut_pos, 0);
+        mut_pos = mut_pos + 1;
+
+        let mut_cs = cipher_suite;
+        if mut_cs == 0 { mut_cs = 4865; }
+        ptr_write_u8_at(ptr, mut_pos, 0);
+        ptr_write_u8_at(ptr, mut_pos + 1, 2);
+        ptr_write_u8_at(ptr, mut_pos + 2, bit_shr(mut_cs, 8));
+        ptr_write_u8_at(ptr, mut_pos + 3, bit_and(mut_cs, 255));
+        mut_pos = mut_pos + 4;
+
+        ptr_write_u8_at(ptr, mut_pos, 1);
+        ptr_write_u8_at(ptr, mut_pos + 1, 0);
+        mut_pos = mut_pos + 2;
+
+        ptr_write_u8_at(ptr, mut_pos, bit_shr(extensions_len, 8));
+        ptr_write_u8_at(ptr, mut_pos + 1, bit_and(extensions_len, 255));
+        mut_pos = mut_pos + 2;
+
+        ptr_write_u8_at(ptr, mut_pos, 0);
+        ptr_write_u8_at(ptr, mut_pos + 1, 0);
+        let sni_ext_data_len = sni_ext_len - 4;
+        ptr_write_u8_at(ptr, mut_pos + 2, bit_shr(sni_ext_data_len, 8));
+        ptr_write_u8_at(ptr, mut_pos + 3, bit_and(sni_ext_data_len, 255));
+        let sni_list_len = sni_len + 3;
+        ptr_write_u8_at(ptr, mut_pos + 4, bit_shr(sni_list_len, 8));
+        ptr_write_u8_at(ptr, mut_pos + 5, bit_and(sni_list_len, 255));
+        ptr_write_u8_at(ptr, mut_pos + 6, 0);
+        ptr_write_u8_at(ptr, mut_pos + 7, bit_shr(sni_len, 8));
+        ptr_write_u8_at(ptr, mut_pos + 8, bit_and(sni_len, 255));
+        mut_pos = mut_pos + 9;
+        let mut_s = 0;
+        while mut_s < sni_len {
+            ptr_write_u8_at(ptr, mut_pos, string_char_at(sni, mut_s));
+            mut_pos = mut_pos + 1;
+            mut_s = mut_s + 1;
+        }
+
+        ptr_write_u8_at(ptr, mut_pos, 0);
+        ptr_write_u8_at(ptr, mut_pos + 1, 43);
+        ptr_write_u8_at(ptr, mut_pos + 2, 0);
+        ptr_write_u8_at(ptr, mut_pos + 3, 3);
+        ptr_write_u8_at(ptr, mut_pos + 4, 2);
+        ptr_write_u8_at(ptr, mut_pos + 5, 3);
+        ptr_write_u8_at(ptr, mut_pos + 6, 4);
+        mut_pos = mut_pos + 7;
+    }
+    return mut_pos - offset;
+}
+
+// ==============================================================================
+// Protocol Rebuilding & Stacking Engine
+// ==============================================================================
+
+func packet_rebuild_and_bind(pkt: Packet) {
+    let n = list_length(pkt.layers);
+    if n == 0 { return; }
+
+    // First Pass: Next-Header Bindings and L7 length calculation
+    let mut_eth_idx = -1;
+    let mut_dot1q_idx = -1;
+    let mut_arp_idx = -1;
+    let mut_ipv4_idx = -1;
+    let mut_ipv6_idx = -1;
+    let mut_icmp_idx = -1;
+    let mut_icmpv6_idx = -1;
+    let mut_tcp_idx = -1;
+    let mut_udp_idx = -1;
+
+    let mut_l2_len = 0;
+    let mut_l3_len = 0;
+    let mut_l4_len = 0;
+    let mut_l7_len = 0;
+
+    let mut_i = 0;
+    while mut_i < n {
+        let l: PacketLayer = list_get(pkt.layers, mut_i);
+        let id = l.layer_id;
+        if id == layer_id_ether() {
+            mut_eth_idx = mut_i;
+            mut_l2_len = mut_l2_len + 14;
+        } else if id == layer_id_dot1q() {
+            mut_dot1q_idx = mut_i;
+            mut_l2_len = mut_l2_len + 4;
+        } else if id == layer_id_arp() {
+            mut_arp_idx = mut_i;
+            mut_l3_len = 28;
+        } else if id == layer_id_ipv4() {
+            mut_ipv4_idx = mut_i;
+            mut_l3_len = 20;
+        } else if id == layer_id_ipv6() {
+            mut_ipv6_idx = mut_i;
+            mut_l3_len = 40;
+        } else if id == layer_id_icmp() {
+            mut_icmp_idx = mut_i;
+            mut_l4_len = 8;
+        } else if id == layer_id_icmpv6() {
+            mut_icmpv6_idx = mut_i;
+            mut_l4_len = 8;
+        } else if id == layer_id_tcp() {
+            mut_tcp_idx = mut_i;
+            mut_l4_len = 20;
+        } else if id == layer_id_udp() {
+            mut_udp_idx = mut_i;
+            mut_l4_len = 8;
+        } else if id == layer_id_dns() {
+            if l.i2 == 1 {
+                mut_l7_len = mut_l7_len + 12 + dns_name_wire_length(l.s1) + 4 + 16;
+            } else {
+                mut_l7_len = mut_l7_len + 12 + dns_name_wire_length(l.s1) + 4;
+            }
+        } else if id == layer_id_dhcp() {
+            if l.i1 == 1 { mut_l7_len = mut_l7_len + 244; }
+            else if l.i1 == 2 { mut_l7_len = mut_l7_len + 274; }
+            else if l.i1 == 3 { mut_l7_len = mut_l7_len + 256; }
+            else if l.i1 == 5 { mut_l7_len = mut_l7_len + 274; }
+            else { mut_l7_len = mut_l7_len + 244; }
+        } else if id == layer_id_ntp() {
+            mut_l7_len = mut_l7_len + 48;
+        } else if id == layer_id_snmp() {
+            let comm_len = string_length(l.s1);
+            let oid_len = string_length(l.s2);
+            let val_len = string_length(l.s3);
+            let mut_vlen = 2;
+            if val_len > 0 { mut_vlen = 2 + val_len; }
+            let vb_len = 2 + oid_len + mut_vlen;
+            let vblist_len = 2 + vb_len;
+            let pdu_len = 6 + 3 + 3 + 2 + vblist_len;
+            let total_seq_len = 3 + (2 + comm_len) + (2 + pdu_len);
+            mut_l7_len = mut_l7_len + (2 + total_seq_len);
+        } else if id == layer_id_http() {
+            let http_str = http_format_string(l.s1, l.s2, l.s3, l.s4, l.s5, l.i1);
+            mut_l7_len = mut_l7_len + string_length(http_str);
+        } else if id == layer_id_tls() {
+            mut_l7_len = mut_l7_len + tls_client_hello_length(l.s1);
+        } else if id == layer_id_raw() {
+            if l.raw_bytes.length > 0 {
+                mut_l7_len = mut_l7_len + l.raw_bytes.length;
+            } else {
+                mut_l7_len = mut_l7_len + string_length(l.s1);
+            }
+        }
+        mut_i = mut_i + 1;
+    }
+
+    // Protocol Next-Header Bindings
+    if mut_eth_idx >= 0 {
+        let eth: PacketLayer = list_get(pkt.layers, mut_eth_idx);
+        if mut_dot1q_idx >= 0 {
+            eth.i1 = 33024; // 0x8100
+        } else if mut_arp_idx >= 0 {
+            eth.i1 = 2054; // 0x0806
+        } else if mut_ipv4_idx >= 0 {
+            eth.i1 = 2048; // 0x0800
+        } else if mut_ipv6_idx >= 0 {
+            eth.i1 = 34525; // 0x86DD
+        }
+    }
+
+    if mut_dot1q_idx >= 0 {
+        let dot1q: PacketLayer = list_get(pkt.layers, mut_dot1q_idx);
+        if mut_arp_idx >= 0 {
+            dot1q.i4 = 2054;
+        } else if mut_ipv4_idx >= 0 {
+            dot1q.i4 = 2048;
+        } else if mut_ipv6_idx >= 0 {
+            dot1q.i4 = 34525;
+        }
+    }
+
+    if mut_ipv4_idx >= 0 {
+        let ip: PacketLayer = list_get(pkt.layers, mut_ipv4_idx);
+        if mut_tcp_idx >= 0 { ip.i1 = 6; }
+        else if mut_udp_idx >= 0 { ip.i1 = 17; }
+        else if mut_icmp_idx >= 0 { ip.i1 = 1; }
+        ip.i5 = 20 + mut_l4_len + mut_l7_len;
+    }
+
+    if mut_ipv6_idx >= 0 {
+        let ipv6: PacketLayer = list_get(pkt.layers, mut_ipv6_idx);
+        if mut_tcp_idx >= 0 { ipv6.i1 = 6; }
+        else if mut_udp_idx >= 0 { ipv6.i1 = 17; }
+        else if mut_icmpv6_idx >= 0 { ipv6.i1 = 58; }
+        ipv6.i5 = mut_l4_len + mut_l7_len;
+    }
+
+    if mut_udp_idx >= 0 {
+        let udp: PacketLayer = list_get(pkt.layers, mut_udp_idx);
+        udp.i3 = 8 + mut_l7_len;
+    }
+
+    // Allocate Wire Frame Buffer
+    let total_frame_len = mut_l2_len + mut_l3_len + mut_l4_len + mut_l7_len;
+    let wire_raw = raw_packet_new(total_frame_len + 64);
+    wire_raw.length = total_frame_len;
+
+    // Second Pass: Serialize Layers into Contiguous Wire Frame
+    let mut_curr_offset = 0;
+    let mut_l3_offset = 0;
+    let mut_l4_offset = 0;
+    let mut_l7_offset = 0;
+
+    let mut_j = 0;
+    while mut_j < n {
+        let l: PacketLayer = list_get(pkt.layers, mut_j);
+        let id = l.layer_id;
+
+        if id == layer_id_ether() {
+            if mut_dot1q_idx >= 0 {
+                let dot1q: PacketLayer = list_get(pkt.layers, mut_dot1q_idx);
+                dot1q_write(mac_parse(l.s1), mac_parse(l.s2), dot1q.i1, dot1q.i2, dot1q.i4, wire_raw.ptr, mut_curr_offset);
+                mut_curr_offset = mut_curr_offset + 18;
+            } else {
+                let eth_hdr = ethernet_header_new(mac_parse(l.s1), mac_parse(l.s2), l.i1);
+                ethernet_write(eth_hdr, wire_raw.ptr, mut_curr_offset);
+                mut_curr_offset = mut_curr_offset + 14;
+            }
+        } else if id == layer_id_dot1q() {
+            // Already handled with Ethernet if Ether is present, otherwise standalone tag
+            if mut_eth_idx < 0 {
+                dot1q_write(mac_broadcast(), mac_zero(), l.i1, l.i2, l.i4, wire_raw.ptr, mut_curr_offset);
+                mut_curr_offset = mut_curr_offset + 18;
+            }
+        } else if id == layer_id_arp() {
+            let arp_hdr = arp_header_new(l.i1, mac_parse(l.s1), ipv4_parse(l.s2), mac_parse(l.s3), ipv4_parse(l.s4));
+            arp_write(arp_hdr, wire_raw.ptr, mut_curr_offset);
+            mut_curr_offset = mut_curr_offset + 28;
+        } else if id == layer_id_ipv4() {
+            mut_l3_offset = mut_curr_offset;
+            let ip_hdr = ipv4_header_new(l.i1, ipv4_parse(l.s1), ipv4_parse(l.s2), mut_l4_len + mut_l7_len);
+            ip_hdr.ttl = l.i2;
+            ip_hdr.id = l.i3;
+            ip_hdr.dscp = bit_shr(l.i4, 2);
+            ip_hdr.ecn = bit_and(l.i4, 3);
+            ip_hdr.total_len = l.i5;
+            ipv4_header_write(ip_hdr, wire_raw.ptr, mut_curr_offset);
+            mut_curr_offset = mut_curr_offset + 20;
+        } else if id == layer_id_ipv6() {
+            mut_l3_offset = mut_curr_offset;
+            let ip6_hdr = ipv6_header_new(ipv6_parse(l.s1), ipv6_parse(l.s2), l.i1, l.i2, l.i5);
+            ipv6_header_write(ip6_hdr, wire_raw.ptr, mut_curr_offset);
+            mut_curr_offset = mut_curr_offset + 40;
+        } else if id == layer_id_icmp() {
+            mut_l4_offset = mut_curr_offset;
+            let icmp_hdr = icmp_header_new(l.i1, l.i2, l.i3, l.i4);
+            icmp_write(icmp_hdr, wire_raw.ptr, mut_curr_offset);
+            mut_curr_offset = mut_curr_offset + 8;
+        } else if id == layer_id_icmpv6() {
+            mut_l4_offset = mut_curr_offset;
+            let icmp6_hdr = icmpv6_header_new(l.i1, l.i2, l.i3, l.i4);
+            icmpv6_write(icmp6_hdr, wire_raw.ptr, mut_curr_offset);
+            mut_curr_offset = mut_curr_offset + 8;
+        } else if id == layer_id_tcp() {
+            mut_l4_offset = mut_curr_offset;
+            let tcp_hdr = tcp_header_new(l.i1, l.i2, l.i3, l.i4, l.i5, l.i6);
+            tcp_write(tcp_hdr, wire_raw.ptr, mut_curr_offset);
+            mut_curr_offset = mut_curr_offset + 20;
+        } else if id == layer_id_udp() {
+            mut_l4_offset = mut_curr_offset;
+            let udp_hdr = udp_header_new(l.i1, l.i2, l.i3);
+            udp_write(udp_hdr, wire_raw.ptr, mut_curr_offset);
+            mut_curr_offset = mut_curr_offset + 8;
+        } else if id == layer_id_dns() {
+            mut_l7_offset = mut_curr_offset;
+            if l.i2 == 1 {
+                let d_len = dns_craft_response_a_payload(l.i1, l.s1, ipv4_parse(l.s2), l.i4, wire_raw.ptr, mut_curr_offset);
+                mut_curr_offset = mut_curr_offset + d_len;
+            } else {
+                let d_len = dns_craft_query_payload(l.i1, l.s1, l.i3, wire_raw.ptr, mut_curr_offset);
+                mut_curr_offset = mut_curr_offset + d_len;
+            }
+        } else if id == layer_id_dhcp() {
+            mut_l7_offset = mut_curr_offset;
+            if l.i1 == 1 {
+                dhcp_craft_discover_payload(l.i2, mac_parse(l.s1), wire_raw.ptr, mut_curr_offset);
+                mut_curr_offset = mut_curr_offset + 244;
+            } else if l.i1 == 2 {
+                dhcp_craft_offer_payload(l.i2, mac_parse(l.s1), ipv4_parse(l.s2), ipv4_parse(l.s3), l.i3, ipv4_broadcast(), ipv4_loopback(), ipv4_loopback(), wire_raw.ptr, mut_curr_offset);
+                mut_curr_offset = mut_curr_offset + 274;
+            } else if l.i1 == 3 {
+                dhcp_craft_request_payload(l.i2, mac_parse(l.s1), ipv4_parse(l.s2), ipv4_parse(l.s3), wire_raw.ptr, mut_curr_offset);
+                mut_curr_offset = mut_curr_offset + 256;
+            } else if l.i1 == 5 {
+                dhcp_craft_ack_payload(l.i2, mac_parse(l.s1), ipv4_parse(l.s2), ipv4_parse(l.s3), l.i3, ipv4_parse(l.s4), ipv4_parse(l.s5), ipv4_loopback(), wire_raw.ptr, mut_curr_offset);
+                mut_curr_offset = mut_curr_offset + 274;
+            } else {
+                dhcp_craft_discover_payload(l.i2, mac_parse(l.s1), wire_raw.ptr, mut_curr_offset);
+                mut_curr_offset = mut_curr_offset + 244;
+            }
+        } else if id == layer_id_ntp() {
+            mut_l7_offset = mut_curr_offset;
+            ntp_write(l.i1, l.i2, l.i3, l.i4, l.i5, l.i6, l.s1, wire_raw.ptr, mut_curr_offset);
+            mut_curr_offset = mut_curr_offset + 48;
+        } else if id == layer_id_snmp() {
+            mut_l7_offset = mut_curr_offset;
+            let snmp_len = snmp_write(l.i1, l.s1, l.i2, l.i3, l.s2, l.s3, wire_raw.ptr, mut_curr_offset);
+            mut_curr_offset = mut_curr_offset + snmp_len;
+        } else if id == layer_id_http() {
+            mut_l7_offset = mut_curr_offset;
+            let http_str = http_format_string(l.s1, l.s2, l.s3, l.s4, l.s5, l.i1);
+            let hlen = raw_packet_write_string(wire_raw, mut_curr_offset, http_str);
+            mut_curr_offset = mut_curr_offset + hlen;
+        } else if id == layer_id_tls() {
+            mut_l7_offset = mut_curr_offset;
+            let tls_len = tls_client_hello_write(l.s1, l.i1, wire_raw.ptr, mut_curr_offset);
+            mut_curr_offset = mut_curr_offset + tls_len;
+        } else if id == layer_id_raw() {
+            mut_l7_offset = mut_curr_offset;
+            if l.raw_bytes.length > 0 {
+                unsafe {
+                    mem_copy(ptr_add(wire_raw.ptr, mut_curr_offset), l.raw_bytes.ptr, l.raw_bytes.length);
+                }
+                mut_curr_offset = mut_curr_offset + l.raw_bytes.length;
+            } else {
+                let slen = raw_packet_write_string(wire_raw, mut_curr_offset, l.s1);
+                mut_curr_offset = mut_curr_offset + slen;
+            }
+        }
+
+        mut_j = mut_j + 1;
+    }
+
+    // Third Pass: Automated RFC 1071 / 793 / 768 Checksum Recalculation
+    if mut_ipv4_idx >= 0 {
+        let ip_layer: PacketLayer = list_get(pkt.layers, mut_ipv4_idx);
+        let src_ip = ipv4_parse(ip_layer.s1);
+        let dst_ip = ipv4_parse(ip_layer.s2);
+
+        // 1. IPv4 Header Checksum
+        let ip_csum = ipv4_header_checksum(wire_raw.ptr, mut_l3_offset, 20);
+        ip_layer.i6 = ip_csum;
+        unsafe {
+            ptr_write_u8_at(wire_raw.ptr, mut_l3_offset + 10, bit_shr(ip_csum, 8));
+            ptr_write_u8_at(wire_raw.ptr, mut_l3_offset + 11, bit_and(ip_csum, 255));
+        }
+
+        // 2. L4 Checksum over IPv4 Pseudo Header
+        if mut_tcp_idx >= 0 {
+            let tcp_layer: PacketLayer = list_get(pkt.layers, mut_tcp_idx);
+            let tcp_tot_len = mut_l4_len + mut_l7_len;
+            let t_csum = tcp_checksum(src_ip, dst_ip, wire_raw.ptr, mut_l4_offset, tcp_tot_len);
+            tcp_layer.i7 = t_csum;
+            unsafe {
+                ptr_write_u8_at(wire_raw.ptr, mut_l4_offset + 16, bit_shr(t_csum, 8));
+                ptr_write_u8_at(wire_raw.ptr, mut_l4_offset + 17, bit_and(t_csum, 255));
+            }
+        } else if mut_udp_idx >= 0 {
+            let udp_layer: PacketLayer = list_get(pkt.layers, mut_udp_idx);
+            let udp_tot_len = mut_l4_len + mut_l7_len;
+            let u_csum = udp_checksum(src_ip, dst_ip, wire_raw.ptr, mut_l4_offset, udp_tot_len);
+            udp_layer.i4 = u_csum;
+            unsafe {
+                ptr_write_u8_at(wire_raw.ptr, mut_l4_offset + 6, bit_shr(u_csum, 8));
+                ptr_write_u8_at(wire_raw.ptr, mut_l4_offset + 7, bit_and(u_csum, 255));
+            }
+        } else if mut_icmp_idx >= 0 {
+            let icmp_layer: PacketLayer = list_get(pkt.layers, mut_icmp_idx);
+            let icmp_tot_len = mut_l4_len + mut_l7_len;
+            let icmp_csum = icmp_checksum(wire_raw.ptr, mut_l4_offset, icmp_tot_len);
+            icmp_layer.i5 = icmp_csum;
+            unsafe {
+                ptr_write_u8_at(wire_raw.ptr, mut_l4_offset + 2, bit_shr(icmp_csum, 8));
+                ptr_write_u8_at(wire_raw.ptr, mut_l4_offset + 3, bit_and(icmp_csum, 255));
+            }
+        }
+    } else if mut_ipv6_idx >= 0 {
+        let ip6_layer: PacketLayer = list_get(pkt.layers, mut_ipv6_idx);
+        let src_ip6 = ipv6_parse(ip6_layer.s1);
+        let dst_ip6 = ipv6_parse(ip6_layer.s2);
+        let l4_tot_len = mut_l4_len + mut_l7_len;
+
+        if mut_tcp_idx >= 0 {
+            let tcp_layer: PacketLayer = list_get(pkt.layers, mut_tcp_idx);
+            let t6_csum = ipv6_pseudo_checksum(src_ip6, dst_ip6, 6, l4_tot_len, wire_raw.ptr, mut_l4_offset);
+            tcp_layer.i7 = t6_csum;
+            unsafe {
+                ptr_write_u8_at(wire_raw.ptr, mut_l4_offset + 16, bit_shr(t6_csum, 8));
+                ptr_write_u8_at(wire_raw.ptr, mut_l4_offset + 17, bit_and(t6_csum, 255));
+            }
+        } else if mut_udp_idx >= 0 {
+            let udp_layer: PacketLayer = list_get(pkt.layers, mut_udp_idx);
+            let u6_csum = ipv6_pseudo_checksum(src_ip6, dst_ip6, 17, l4_tot_len, wire_raw.ptr, mut_l4_offset);
+            udp_layer.i4 = u6_csum;
+            unsafe {
+                ptr_write_u8_at(wire_raw.ptr, mut_l4_offset + 6, bit_shr(u6_csum, 8));
+                ptr_write_u8_at(wire_raw.ptr, mut_l4_offset + 7, bit_and(u6_csum, 255));
+            }
+        } else if mut_icmpv6_idx >= 0 {
+            let icmp6_layer: PacketLayer = list_get(pkt.layers, mut_icmpv6_idx);
+            let ic6_csum = icmpv6_checksum(src_ip6, dst_ip6, wire_raw.ptr, mut_l4_offset, l4_tot_len);
+            icmp6_layer.i5 = ic6_csum;
+            unsafe {
+                ptr_write_u8_at(wire_raw.ptr, mut_l4_offset + 2, bit_shr(ic6_csum, 8));
+                ptr_write_u8_at(wire_raw.ptr, mut_l4_offset + 3, bit_and(ic6_csum, 255));
+            }
+        }
+    }
+
+    pkt.cached_raw = wire_raw;
+    pkt.is_built = true;
+}
+
+// Fluent Stacking DSL Implementations for '/' operator
+func packet_stack(left: Packet, right: Packet) -> Packet {
+    let merged = list_new();
+    let l_len = list_length(left.layers);
+    let mut_i = 0;
+    while mut_i < l_len {
+        list_push(merged, list_get(left.layers, mut_i));
+        mut_i = mut_i + 1;
+    }
+    let r_len = list_length(right.layers);
+    let mut_j = 0;
+    while mut_j < r_len {
+        list_push(merged, list_get(right.layers, mut_j));
+        mut_j = mut_j + 1;
+    }
+    let pkt = new Packet(merged, raw_packet_new(64), false);
+    packet_rebuild_and_bind(pkt);
+    return pkt;
+}
+
+func packet_stack_raw(left: Packet, payload: string) -> Packet {
+    let r = Raw(payload);
+    return packet_stack(left, r);
+}
+
+// ==============================================================================
+// Scapy Inspection and Utility Functions
+// ==============================================================================
+
+func packet_haslayer(pkt: Packet, layer_name: string) -> bool {
+    let n = list_length(pkt.layers);
+    let mut_i = 0;
+    while mut_i < n {
+        let l: PacketLayer = list_get(pkt.layers, mut_i);
+        if l.name == layer_name {
+            return true;
+        }
+        mut_i = mut_i + 1;
+    }
+    return false;
+}
+
+func packet_getlayer(pkt: Packet, layer_name: string) -> PacketLayer {
+    let n = list_length(pkt.layers);
+    let mut_i = 0;
+    while mut_i < n {
+        let l: PacketLayer = list_get(pkt.layers, mut_i);
+        if l.name == layer_name {
+            return l;
+        }
+        mut_i = mut_i + 1;
+    }
+    return packet_layer_new(0, "None", 0, 0, 0, 0, 0, 0, 0, 0, "", "", "", "", "", raw_packet_new(0));
+}
+
+func packet_to_raw(pkt: Packet) -> RawPacket {
+    if !pkt.is_built {
+        packet_rebuild_and_bind(pkt);
+    }
+    return pkt.cached_raw;
+}
+
+func packet_build(pkt: Packet) -> RawPacket {
+    return packet_to_raw(pkt);
+}
+
+func packet_summary(pkt: Packet) -> string {
+    let n = list_length(pkt.layers);
+    let mut_summary = "";
+    let mut_i = 0;
+    while mut_i < n {
+        let l: PacketLayer = list_get(pkt.layers, mut_i);
+        if mut_i > 0 {
+            mut_summary = mut_summary + " / ";
+        }
+        if l.layer_id == layer_id_ether() {
+            mut_summary = mut_summary + "Ether";
+        } else if l.layer_id == layer_id_dot1q() {
+            mut_summary = mut_summary + "802.1Q VLAN " + to_string(l.i1);
+        } else if l.layer_id == layer_id_arp() {
+            if l.i1 == 1 {
+                mut_summary = mut_summary + "ARP who has " + l.s4 + " says " + l.s2;
+            } else {
+                mut_summary = mut_summary + "ARP " + l.s2 + " is at " + l.s1;
+            }
+        } else if l.layer_id == layer_id_ipv4() {
+            mut_summary = mut_summary + "IP " + l.s1 + " > " + l.s2;
+        } else if l.layer_id == layer_id_ipv6() {
+            mut_summary = mut_summary + "IPv6 " + l.s1 + " > " + l.s2;
+        } else if l.layer_id == layer_id_icmp() {
+            if l.i1 == 8 {
+                mut_summary = mut_summary + "ICMP Echo Request (id=" + to_string(l.i3) + ", seq=" + to_string(l.i4) + ")";
+            } else {
+                mut_summary = mut_summary + "ICMP type " + to_string(l.i1);
+            }
+        } else if l.layer_id == layer_id_icmpv6() {
+            mut_summary = mut_summary + "ICMPv6 type " + to_string(l.i1);
+        } else if l.layer_id == layer_id_tcp() {
+            mut_summary = mut_summary + "TCP :" + to_string(l.i1) + " > :" + to_string(l.i2) + " [" + l.s1 + "]";
+        } else if l.layer_id == layer_id_udp() {
+            mut_summary = mut_summary + "UDP :" + to_string(l.i1) + " > :" + to_string(l.i2);
+        } else if l.layer_id == layer_id_dns() {
+            if l.i2 == 1 {
+                mut_summary = mut_summary + "DNS Ans " + l.s1 + " -> " + l.s2;
+            } else {
+                mut_summary = mut_summary + "DNS Qry " + l.s1;
+            }
+        } else if l.layer_id == layer_id_dhcp() {
+            if l.i1 == 1 { mut_summary = mut_summary + "DHCP Discover"; }
+            else if l.i1 == 2 { mut_summary = mut_summary + "DHCP Offer"; }
+            else if l.i1 == 3 { mut_summary = mut_summary + "DHCP Request"; }
+            else if l.i1 == 5 { mut_summary = mut_summary + "DHCP Ack"; }
+            else { mut_summary = mut_summary + "DHCP"; }
+        } else if l.layer_id == layer_id_ntp() {
+            mut_summary = mut_summary + "NTP v" + to_string(l.i2) + " mode " + to_string(l.i3);
+        } else if l.layer_id == layer_id_snmp() {
+            mut_summary = mut_summary + "SNMP " + l.s1 + " " + l.s2;
+        } else if l.layer_id == layer_id_http() {
+            if l.i1 > 0 {
+                mut_summary = mut_summary + "HTTP/1.1 " + to_string(l.i1) + " OK";
+            } else {
+                mut_summary = mut_summary + "HTTP " + l.s1 + " " + l.s2;
+            }
+        } else if l.layer_id == layer_id_tls() {
+            mut_summary = mut_summary + "TLS 1.3 ClientHello (sni=" + l.s1 + ")";
+        } else if l.layer_id == layer_id_raw() {
+            if string_length(l.s1) > 0 {
+                mut_summary = mut_summary + "Raw (\"" + l.s1 + "\")";
+            } else {
+                mut_summary = mut_summary + "Raw (" + to_string(l.raw_bytes.length) + " bytes)";
+            }
+        }
+        mut_i = mut_i + 1;
+    }
+    return mut_summary;
+}
+
+func packet_show(pkt: Packet) {
+    let n = list_length(pkt.layers);
+    let mut_i = 0;
+    while mut_i < n {
+        let l: PacketLayer = list_get(pkt.layers, mut_i);
+        println("###[ " + l.name + " ]###");
+        if l.layer_id == layer_id_ether() {
+            println("  dst       = " + l.s1);
+            println("  src       = " + l.s2);
+            println("  type      = 0x" + byte_to_hex_str(bit_shr(l.i1, 8)) + byte_to_hex_str(bit_and(l.i1, 255)));
+        } else if l.layer_id == layer_id_dot1q() {
+            println("  vlan      = " + to_string(l.i1));
+            println("  prio      = " + to_string(l.i2));
+            println("  type      = 0x" + byte_to_hex_str(bit_shr(l.i4, 8)) + byte_to_hex_str(bit_and(l.i4, 255)));
+        } else if l.layer_id == layer_id_arp() {
+            println("  op        = " + to_string(l.i1));
+            println("  hwsrc     = " + l.s1);
+            println("  psrc      = " + l.s2);
+            println("  hwdst     = " + l.s3);
+            println("  pdst      = " + l.s4);
+        } else if l.layer_id == layer_id_ipv4() {
+            println("  version   = 4");
+            println("  ihl       = 5");
+            println("  tos       = 0x" + byte_to_hex_str(l.i4));
+            println("  len       = " + to_string(l.i5));
+            println("  id        = " + to_string(l.i3));
+            println("  ttl       = " + to_string(l.i2));
+            println("  proto     = " + to_string(l.i1));
+            println("  chksum    = 0x" + byte_to_hex_str(bit_shr(l.i6, 8)) + byte_to_hex_str(bit_and(l.i6, 255)));
+            println("  src       = " + l.s1);
+            println("  dst       = " + l.s2);
+        } else if l.layer_id == layer_id_ipv6() {
+            println("  version   = 6");
+            println("  next_hdr  = " + to_string(l.i1));
+            println("  hop_limit = " + to_string(l.i2));
+            println("  src       = " + l.s1);
+            println("  dst       = " + l.s2);
+        } else if l.layer_id == layer_id_icmp() {
+            println("  type      = " + to_string(l.i1));
+            println("  code      = " + to_string(l.i2));
+            println("  chksum    = 0x" + byte_to_hex_str(bit_shr(l.i5, 8)) + byte_to_hex_str(bit_and(l.i5, 255)));
+            println("  id        = " + to_string(l.i3));
+            println("  seq       = " + to_string(l.i4));
+        } else if l.layer_id == layer_id_tcp() {
+            println("  sport     = " + to_string(l.i1));
+            println("  dport     = " + to_string(l.i2));
+            println("  seq       = " + to_string(l.i3));
+            println("  ack       = " + to_string(l.i4));
+            println("  flags     = " + l.s1);
+            println("  window    = " + to_string(l.i6));
+            println("  chksum    = 0x" + byte_to_hex_str(bit_shr(l.i7, 8)) + byte_to_hex_str(bit_and(l.i7, 255)));
+        } else if l.layer_id == layer_id_udp() {
+            println("  sport     = " + to_string(l.i1));
+            println("  dport     = " + to_string(l.i2));
+            println("  len       = " + to_string(l.i3));
+            println("  chksum    = 0x" + byte_to_hex_str(bit_shr(l.i4, 8)) + byte_to_hex_str(bit_and(l.i4, 255)));
+        } else if l.layer_id == layer_id_dns() {
+            println("  id        = " + to_string(l.i1));
+            println("  qname     = " + l.s1);
+            println("  qtype     = " + to_string(l.i3));
+        } else if l.layer_id == layer_id_dhcp() {
+            println("  msg_type  = " + to_string(l.i1));
+            println("  xid       = " + to_string(l.i2));
+            println("  client_mac= " + l.s1);
+        } else if l.layer_id == layer_id_ntp() {
+            println("  version   = " + to_string(l.i2));
+            println("  mode      = " + to_string(l.i3));
+            println("  stratum   = " + to_string(l.i4));
+            println("  ref_id    = " + l.s1);
+        } else if l.layer_id == layer_id_snmp() {
+            println("  community = " + l.s1);
+            println("  oid       = " + l.s2);
+            println("  req_id    = " + to_string(l.i3));
+        } else if l.layer_id == layer_id_http() {
+            println("  method    = " + l.s1);
+            println("  path      = " + l.s2);
+            println("  host      = " + l.s3);
+        } else if l.layer_id == layer_id_tls() {
+            println("  sni       = " + l.s1);
+            println("  version   = 0x0304 (TLS 1.3)");
+        } else if l.layer_id == layer_id_raw() {
+            if string_length(l.s1) > 0 {
+                println("  load      = \"" + l.s1 + "\"");
+            } else {
+                println("  load      = <" + to_string(l.raw_bytes.length) + " bytes>");
+            }
+        }
+        mut_i = mut_i + 1;
+    }
+}
+
+func packet_hexdump(pkt: Packet) {
+    let raw_pkt = packet_to_raw(pkt);
+    let len = raw_pkt.length;
+    let mut_line = 0;
+    while mut_line < len {
+        let mut_out = "";
+        let off_hi = bit_shr(mut_line, 8);
+        let off_lo = bit_and(mut_line, 255);
+        mut_out = byte_to_hex_str(off_hi) + byte_to_hex_str(off_lo) + "  ";
+
+        let mut_col = 0;
+        while mut_col < 16 {
+            let idx = mut_line + mut_col;
+            if idx < len {
+                let b = raw_packet_get_u8(raw_pkt, idx);
+                mut_out = mut_out + byte_to_hex_str(b) + " ";
+            } else {
+                mut_out = mut_out + "   ";
+            }
+            if mut_col == 7 {
+                mut_out = mut_out + " ";
+            }
+            mut_col = mut_col + 1;
+        }
+
+        mut_out = mut_out + " ";
+        let ascii_table = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+        let mut_ascii_col = 0;
+        while mut_ascii_col < 16 {
+            let idx = mut_line + mut_ascii_col;
+            if idx < len {
+                let b = raw_packet_get_u8(raw_pkt, idx);
+                if b >= 32 && b <= 126 {
+                    mut_out = mut_out + substring(ascii_table, b - 32, b - 31);
+                } else {
+                    mut_out = mut_out + ".";
+                }
+            }
+            mut_ascii_col = mut_ascii_col + 1;
+        }
+
+        println(mut_out);
+        mut_line = mut_line + 16;
+    }
+}
+
+// Dissects a raw wire frame back into structured Scapy Packet layers
+func packet_from_raw(raw_pkt: RawPacket) -> Packet {
+    let pkt = packet_empty();
+    if raw_pkt.length < 14 {
+        return pkt;
+    }
+
+    let dst_mac = mac_read(raw_pkt.ptr, 0);
+    let src_mac = mac_read(raw_pkt.ptr, 6);
+    let mut_ethertype = raw_packet_get_u16(raw_pkt, 12);
+    let mut_offset = 14;
+
+    list_push(pkt.layers, packet_layer_new(layer_id_ether(), "Ether", mut_ethertype, 0, 0, 0, 0, 0, 0, 0, mac_to_string(dst_mac), mac_to_string(src_mac), "", "", "", raw_packet_new(0)));
+
+    // 802.1Q VLAN Tag
+    if mut_ethertype == 33024 { // 0x8100
+        if raw_pkt.length >= mut_offset + 4 {
+            let tci = raw_packet_get_u16(raw_pkt, mut_offset);
+            let vlan = bit_and(tci, 4095);
+            let prio = bit_shr(tci, 13);
+            mut_ethertype = raw_packet_get_u16(raw_pkt, mut_offset + 2);
+            list_push(pkt.layers, packet_layer_new(layer_id_dot1q(), "Dot1Q", vlan, prio, 33024, mut_ethertype, 0, 0, 0, 0, "", "", "", "", "", raw_packet_new(0)));
+            mut_offset = mut_offset + 4;
+        }
+    }
+
+    // ARP
+    if mut_ethertype == 2054 { // 0x0806
+        if raw_pkt.length >= mut_offset + 28 {
+            let arp_hdr = arp_read(raw_pkt.ptr, mut_offset);
+            list_push(pkt.layers, packet_layer_new(layer_id_arp(), "ARP", arp_hdr.opcode, 0, 0, 0, 0, 0, 0, 0, mac_to_string(arp_hdr.sender_mac), ipv4_to_string(arp_hdr.sender_ip), mac_to_string(arp_hdr.target_mac), ipv4_to_string(arp_hdr.target_ip), "", raw_packet_new(0)));
+            mut_offset = mut_offset + 28;
+        }
+    } else if mut_ethertype == 2048 { // 0x0800 IPv4
+        if raw_pkt.length >= mut_offset + 20 {
+            let ip_hdr = ipv4_header_read(raw_pkt.ptr, mut_offset);
+            let ip_tos = bit_or(bit_shl(ip_hdr.dscp, 2), ip_hdr.ecn);
+            list_push(pkt.layers, packet_layer_new(layer_id_ipv4(), "IP", ip_hdr.protocol, ip_hdr.ttl, ip_hdr.id, ip_tos, ip_hdr.total_len, ip_hdr.checksum, 0, 0, ipv4_to_string(ip_hdr.src), ipv4_to_string(ip_hdr.dst), "", "", "", raw_packet_new(0)));
+            mut_offset = mut_offset + 20;
+
+            if ip_hdr.protocol == 6 { // TCP
+                if raw_pkt.length >= mut_offset + 20 {
+                    let tcp_hdr = tcp_read(raw_pkt.ptr, mut_offset);
+                    let f_str = tcp_flags_to_string(tcp_hdr.flags);
+                    list_push(pkt.layers, packet_layer_new(layer_id_tcp(), "TCP", tcp_hdr.src_port, tcp_hdr.dst_port, tcp_hdr.seq_num, tcp_hdr.ack_num, tcp_hdr.flags, tcp_hdr.window_size, tcp_hdr.checksum, 0, f_str, "", "", "", "", raw_packet_new(0)));
+                    mut_offset = mut_offset + 20;
+                }
+            } else if ip_hdr.protocol == 17 { // UDP
+                if raw_pkt.length >= mut_offset + 8 {
+                    let udp_hdr = udp_read(raw_pkt.ptr, mut_offset);
+                    list_push(pkt.layers, packet_layer_new(layer_id_udp(), "UDP", udp_hdr.src_port, udp_hdr.dst_port, udp_hdr.length, udp_hdr.checksum, 0, 0, 0, 0, "", "", "", "", "", raw_packet_new(0)));
+                    mut_offset = mut_offset + 8;
+                }
+            } else if ip_hdr.protocol == 1 { // ICMP
+                if raw_pkt.length >= mut_offset + 8 {
+                    let icmp_hdr = icmp_read(raw_pkt.ptr, mut_offset);
+                    list_push(pkt.layers, packet_layer_new(layer_id_icmp(), "ICMP", icmp_hdr.icmp_type, icmp_hdr.code, icmp_hdr.id, icmp_hdr.seq, icmp_hdr.checksum, 0, 0, 0, "", "", "", "", "", raw_packet_new(0)));
+                    mut_offset = mut_offset + 8;
+                }
+            }
+        }
+    } else if mut_ethertype == 34525 { // 0x86DD IPv6
+        if raw_pkt.length >= mut_offset + 40 {
+            let ip6_hdr = ipv6_header_read(raw_pkt.ptr, mut_offset);
+            list_push(pkt.layers, packet_layer_new(layer_id_ipv6(), "IPv6", ip6_hdr.next_header, ip6_hdr.hop_limit, 0, 0, ip6_hdr.payload_length, 0, 0, 0, ipv6_to_string(ip6_hdr.src), ipv6_to_string(ip6_hdr.dst), "", "", "", raw_packet_new(0)));
+            mut_offset = mut_offset + 40;
+
+            if ip6_hdr.next_header == 6 { // TCP
+                if raw_pkt.length >= mut_offset + 20 {
+                    let tcp_hdr = tcp_read(raw_pkt.ptr, mut_offset);
+                    let f_str = tcp_flags_to_string(tcp_hdr.flags);
+                    list_push(pkt.layers, packet_layer_new(layer_id_tcp(), "TCP", tcp_hdr.src_port, tcp_hdr.dst_port, tcp_hdr.seq_num, tcp_hdr.ack_num, tcp_hdr.flags, tcp_hdr.window_size, tcp_hdr.checksum, 0, f_str, "", "", "", "", raw_packet_new(0)));
+                    mut_offset = mut_offset + 20;
+                }
+            } else if ip6_hdr.next_header == 17 { // UDP
+                if raw_pkt.length >= mut_offset + 8 {
+                    let udp_hdr = udp_read(raw_pkt.ptr, mut_offset);
+                    list_push(pkt.layers, packet_layer_new(layer_id_udp(), "UDP", udp_hdr.src_port, udp_hdr.dst_port, udp_hdr.length, udp_hdr.checksum, 0, 0, 0, 0, "", "", "", "", "", raw_packet_new(0)));
+                    mut_offset = mut_offset + 8;
+                }
+            } else if ip6_hdr.next_header == 58 { // ICMPv6
+                if raw_pkt.length >= mut_offset + 8 {
+                    let icmp6_hdr = icmpv6_read(raw_pkt.ptr, mut_offset);
+                    list_push(pkt.layers, packet_layer_new(layer_id_icmpv6(), "ICMPv6", icmp6_hdr.type_, icmp6_hdr.code, icmp6_hdr.id, icmp6_hdr.seq, icmp6_hdr.checksum, 0, 0, 0, "", "", "", "", "", raw_packet_new(0)));
+                    mut_offset = mut_offset + 8;
+                }
+            }
+        }
+    }
+
+    // Remaining Payload
+    if raw_pkt.length > mut_offset {
+        let ascii_table = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+        let rem_len = raw_pkt.length - mut_offset;
+        let mut_payload = "";
+        let mut_k = 0;
+        while mut_k < rem_len {
+            let b = raw_packet_get_u8(raw_pkt, mut_offset + mut_k);
+            if b >= 32 && b <= 126 {
+                mut_payload = mut_payload + substring(ascii_table, b - 32, b - 31);
+            }
+            mut_k = mut_k + 1;
+        }
+        list_push(pkt.layers, packet_layer_new(layer_id_raw(), "Raw", 0, 0, 0, 0, 0, 0, 0, 0, mut_payload, "", "", "", "", raw_packet_new(0)));
+    }
+
+    pkt.cached_raw = raw_pkt;
+    pkt.is_built = true;
+    return pkt;
+}
+
+// Packet class method implementations
+impl Packet {
+    func summary() -> string { return packet_summary(this); }
+    func show() { packet_show(this); }
+    func hexdump() { packet_hexdump(this); }
+    func haslayer(name: string) -> bool { return packet_haslayer(this, name); }
+    func getlayer(name: string) -> PacketLayer { return packet_getlayer(this, name); }
+    func to_raw() -> RawPacket { return packet_to_raw(this); }
+    func build() -> RawPacket { return packet_build(this); }
 }
 

@@ -9438,6 +9438,15 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             _ => {}
         }
 
+        if matches!(operator, BinaryOperator::Divide) && left.type_.is_packet_layer() {
+            let fn_name = if right.type_ == Type::String {
+                "packet_stack_raw"
+            } else {
+                "packet_stack"
+            };
+            return self.compile_call(fn_name, &[left.clone(), right.clone()], &Type::Class("Packet".to_string()), &left.location);
+        }
+
         let is_string_op = left.type_ == Type::String && right.type_ == Type::String;
         let is_float_op = !is_string_op && (left.type_.is_float() || right.type_.is_float());
 

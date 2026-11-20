@@ -5076,6 +5076,28 @@ fn native_sec_raw_frame_engine_suite() {
     assert!(stdout.contains("[CI-PASS] ALL PROMISCUOUS RAW SOCKETS & PACKET INJECTION TESTS PASSED (M9-T01)"));
 }
 
+#[test]
+fn native_sec_packet_dsl_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("sec_packet_dsl.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read sec_packet_dsl.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("sec_packet_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("=== ROZE-SEC PROTOCOL STACKING DSL & SCAPY-CLASS BUILDER (M9-T02) ==="));
+    assert!(stdout.contains("[PASS] Test 1: Fluent protocol stacking DSL with '/' operator (Ether / IP / TCP / Raw)"));
+    assert!(stdout.contains("[PASS] Test 2: 802.1Q VLAN encapsulation and inner next-header resolution"));
+    assert!(stdout.contains("[PASS] Test 3: ARP protocol stacking and wire encoding"));
+    assert!(stdout.contains("[PASS] Test 4: IPv6 and ICMPv6 protocol stacking and pseudo-header checksum"));
+    assert!(stdout.contains("[PASS] Test 5: TCP custom flags (SYN/ACK/FIN/RST/PSH/URG/ECE/CWR) and automated RFC 793 checksum"));
+    assert!(stdout.contains("[PASS] Test 6: UDP and Application layer protocols (DNS, DHCP, NTP, SNMP, HTTP/1.1, TLS 1.3 ClientHello)"));
+    assert!(stdout.contains("[PASS] Test 7: Automated RFC 1071 internet checksum recalculation"));
+    assert!(stdout.contains("[PASS] Test 8: Wire frame dissection roundtrip and Scapy inspection parity (summary, show, hexdump)"));
+    assert!(stdout.contains("[CI-PASS] ALL PROTOCOL STACKING DSL & PACKET BUILDER TESTS PASSED (M9-T02)"));
+}
+
+
 
 
 

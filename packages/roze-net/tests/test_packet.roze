@@ -1,0 +1,265 @@
+// packages/roze-net/tests/test_packet.roze
+// ==============================================================================
+// 🌹 Roze-Sec: Protocol Stacking DSL & Scapy-Class Builder (roze.sec.packet)
+// ==============================================================================
+// Sprint 17 (W35-W36) Deliverable: M9-T02
+// Fluent Protocol Stacking DSL utilizing '/' operator (Ether() / IP() / TCP() / Raw())
+// ==============================================================================
+
+import "roze.sec.packet";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("❌ Assertion failed: " + msg);
+        let crash = 1 / 0;
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func test_scapy_operator_stacking() {
+    println("--- 1. Testing Scapy-Class '/' Operator Stacking ---");
+    let pkt = Ether() / IP() / TCP() / "GET /index.html HTTP/1.1\r\n\r\n";
+
+    assert(list_length(pkt.layers) == 4, "Stacked packet must contain exactly 4 layers");
+    assert(pkt.haslayer("Ether"), "Packet must have Ether layer");
+    assert(pkt.haslayer("IP"), "Packet must have IP layer");
+    assert(pkt.haslayer("TCP"), "Packet must have TCP layer");
+    assert(pkt.haslayer("Raw"), "Packet must have Raw payload layer");
+
+    let summary = pkt.summary();
+    println("Summary: " + summary);
+    assert(str_contains(summary, "Ether"), "Summary must contain Ether");
+    assert(str_contains(summary, "IP"), "Summary must contain IP");
+    assert(str_contains(summary, "TCP"), "Summary must contain TCP");
+    assert(str_contains(summary, "Raw"), "Summary must contain Raw");
+
+    let wire_raw = pkt.to_raw();
+    assert(wire_raw.length > 54, "Wire frame length must exceed 54 bytes (14 L2 + 20 L3 + 20 L4 + payload)");
+}
+
+func test_vlan_8021q_stacking() {
+    println("--- 2. Testing 802.1Q VLAN Tagging & Stacking ---");
+    let pkt = Ether() / Dot1Q(100) / IP("192.168.1.10", "192.168.1.1") / UDP(12345, 53) / DNS_Query("example.com", 1);
+
+    assert(list_length(pkt.layers) == 5, "VLAN packet must contain 5 layers");
+    assert(pkt.haslayer("Dot1Q"), "Packet must have Dot1Q layer");
+    assert(pkt.haslayer("DNS"), "Packet must have DNS layer");
+
+    let eth: PacketLayer = pkt.getlayer("Ether");
+    assert(eth.i1 == 33024, "Ether ethertype must be 0x8100 (33024) for 802.1Q");
+
+    let dot1q: PacketLayer = pkt.getlayer("Dot1Q");
+    assert(dot1q.i1 == 100, "VLAN VID must be 100");
+    assert(dot1q.i4 == 2048, "Encapsulated ethertype must be 0x0800 for IPv4");
+
+    let wire_raw = pkt.to_raw();
+    // Verify TPID at offset 12 is 0x8100
+    assert(raw_packet_get_u16(wire_raw, 12) == 33024, "Wire TPID must be 0x8100");
+    // Verify TCI at offset 14 has VID = 100
+    assert(bit_and(raw_packet_get_u16(wire_raw, 14), 4095) == 100, "Wire TCI must encode VID 100");
+    // Verify inner EtherType at offset 16 is 0x0800
+    assert(raw_packet_get_u16(wire_raw, 16) == 2048, "Wire inner EtherType must be 0x0800");
+}
+
+func test_arp_stacking() {
+    println("--- 3. Testing ARP Request Stacking ---");
+    let pkt = Ether("ff:ff:ff:ff:ff:ff", "02:42:ac:11:00:02") / ARP("192.168.1.100", "192.168.1.1");
+
+    assert(list_length(pkt.layers) == 2, "ARP packet must contain 2 layers");
+    assert(pkt.haslayer("ARP"), "Packet must have ARP layer");
+
+    let eth: PacketLayer = pkt.getlayer("Ether");
+    assert(eth.i1 == 2054, "Ether ethertype must be 0x0806 (2054) for ARP");
+
+    let wire_raw = pkt.to_raw();
+    assert(wire_raw.length == 42, "Ether / ARP wire frame length must be exactly 42 bytes (14 + 28)");
+    assert(raw_packet_get_u16(wire_raw, 12) == 2054, "Wire EtherType must be 0x0806");
+    assert(raw_packet_get_u16(wire_raw, 20) == 1, "ARP operation must be 1 (who-has request)");
+}
+
+func test_ipv6_and_icmpv6_stacking() {
+    println("--- 4. Testing IPv6 & ICMPv6 Stacking ---");
+    let pkt = Ether() / IPv6("fe80::1", "fe80::2") / ICMPv6(10, 1);
+
+    assert(list_length(pkt.layers) == 3, "IPv6 packet must contain 3 layers");
+    assert(pkt.haslayer("IPv6"), "Packet must have IPv6 layer");
+    assert(pkt.haslayer("ICMPv6"), "Packet must have ICMPv6 layer");
+
+    let eth: PacketLayer = pkt.getlayer("Ether");
+    assert(eth.i1 == 34525, "Ether ethertype must be 0x86DD (34525) for IPv6");
+
+    let ip6: PacketLayer = pkt.getlayer("IPv6");
+    assert(ip6.i1 == 58, "IPv6 next_header must be 58 for ICMPv6");
+    assert(ip6.i5 == 8, "IPv6 payload length must be 8 for ICMPv6 header");
+
+    let icmp6: PacketLayer = pkt.getlayer("ICMPv6");
+    assert(icmp6.i1 == 128, "ICMPv6 type must be 128 (Echo Request)");
+    assert(icmp6.i5 != 0, "ICMPv6 pseudo-header checksum must be non-zero");
+
+    let wire_raw = pkt.to_raw();
+    assert(wire_raw.length == 62, "Ether / IPv6 / ICMPv6 wire frame length must be 62 bytes (14 + 40 + 8)");
+}
+
+func test_tcp_flags_and_checksum() {
+    println("--- 5. Testing TCP Custom Flags & Automated RFC 793 Checksum ---");
+    // Test SYN-ACK packet
+    let synack_pkt = Ether() / IP("10.0.0.1", "10.0.0.2") / TCP(80, 54321, "SA") / Raw("ack-syn-data");
+
+    assert(synack_pkt.haslayer("TCP"), "Must have TCP layer");
+    let tcp: PacketLayer = synack_pkt.getlayer("TCP");
+    assert(tcp.i1 == 80, "TCP sport must be 80");
+    assert(tcp.i2 == 54321, "TCP dport must be 54321");
+    assert(bit_and(tcp.i5, tcp_flag_syn()) != 0, "Flags must have SYN bit");
+    assert(bit_and(tcp.i5, tcp_flag_ack()) != 0, "Flags must have ACK bit");
+    assert(tcp.i7 != 0, "TCP RFC 793 checksum must be non-zero");
+
+    let ip: PacketLayer = synack_pkt.getlayer("IP");
+    assert(ip.i1 == 6, "IP proto must be 6 for TCP");
+    assert(ip.i6 != 0, "IPv4 RFC 1071 header checksum must be non-zero");
+
+    let wire_raw = synack_pkt.to_raw();
+    // Validate IPv4 Header Checksum via RFC 1071 over wire bytes
+    let ip_csum_verify = internet_checksum(wire_raw.ptr, 14, 20);
+    assert(ip_csum_verify == 0, "RFC 1071 checksum over valid IPv4 header must equal 0");
+}
+
+func test_dhcp_protocol_stacking() {
+    println("--- 6. Testing DHCP Discover Stacking ---");
+    let pkt = Ether("ff:ff:ff:ff:ff:ff", "02:42:ac:11:00:02") / IP("0.0.0.0", "255.255.255.255") / UDP(68, 67) / DHCP_Discover(999999, "02:42:ac:11:00:02");
+
+    assert(pkt.haslayer("DHCP"), "Packet must have DHCP layer");
+    let dhcp: PacketLayer = pkt.getlayer("DHCP");
+    assert(dhcp.i1 == 1, "DHCP msg_type must be 1 (Discover)");
+    assert(dhcp.i2 == 999999, "DHCP xid must be 999999");
+
+    let wire_raw = pkt.to_raw();
+    assert(wire_raw.length >= 286, "DHCP wire frame length must be at least 286 bytes (14 + 20 + 8 + 244)");
+}
+
+func test_ntp_protocol_stacking() {
+    println("--- 7. Testing NTP Client Request Stacking (RFC 5905) ---");
+    let pkt = Ether() / IP("192.168.1.100", "129.6.15.28") / UDP(12345, 123) / NTP_ClientRequest();
+
+    assert(pkt.haslayer("NTP"), "Packet must have NTP layer");
+    let ntp: PacketLayer = pkt.getlayer("NTP");
+    assert(ntp.i2 == 4, "NTP version must be 4");
+    assert(ntp.i3 == 3, "NTP mode must be 3 (Client)");
+
+    let wire_raw = pkt.to_raw();
+    assert(wire_raw.length == 90, "Ether / IP / UDP / NTP frame must be 90 bytes (14 + 20 + 8 + 48)");
+
+    // Wire offset of NTP payload is 14 + 20 + 8 = 42
+    let li_vn_mode = raw_packet_get_u8(wire_raw, 42);
+    // (0 << 6) | (4 << 3) | 3 = 0x23 = 35
+    assert(li_vn_mode == 35, "NTP li_vn_mode byte must be 0x23 (35)");
+}
+
+func test_snmp_protocol_stacking() {
+    println("--- 8. Testing SNMP v2c GetRequest ASN.1 BER Stacking ---");
+    let pkt = Ether() / IP("10.0.0.1", "10.0.0.254") / UDP(12345, 161) / SNMP_Get("public", "1.3.6.1.2.1.1.1.0", 42);
+
+    assert(pkt.haslayer("SNMP"), "Packet must have SNMP layer");
+    let snmp: PacketLayer = pkt.getlayer("SNMP");
+    assert(snmp.s1 == "public", "SNMP community must be 'public'");
+    assert(snmp.s2 == "1.3.6.1.2.1.1.1.0", "SNMP OID must match sysDescr");
+    assert(snmp.i3 == 42, "SNMP request_id must be 42");
+
+    let wire_raw = pkt.to_raw();
+    // Offset of SNMP ASN.1 BER sequence is 14 + 20 + 8 = 42
+    assert(raw_packet_get_u8(wire_raw, 42) == 48, "SNMP payload must start with ASN.1 SEQUENCE (0x30)");
+}
+
+func test_http_protocol_stacking() {
+    println("--- 9. Testing HTTP/1.1 Protocol Stacking ---");
+    let pkt = Ether() / IP("192.168.1.100", "93.184.216.34") / TCP(54321, 80, "PA") / HTTP_Get("/api/v1/status", "example.com");
+
+    assert(pkt.haslayer("HTTP"), "Packet must have HTTP layer");
+    let http: PacketLayer = pkt.getlayer("HTTP");
+    assert(http.s1 == "GET", "HTTP method must be GET");
+    assert(http.s2 == "/api/v1/status", "HTTP path must match");
+    assert(http.s3 == "example.com", "HTTP host must match");
+
+    let wire_raw = pkt.to_raw();
+    let http_str = raw_packet_read_string(wire_raw, 54, wire_raw.length - 54);
+    assert(str_contains(http_str, "GET /api/v1/status HTTP/1.1"), "Wire frame must contain HTTP GET request line");
+    assert(str_contains(http_str, "Host: example.com"), "Wire frame must contain Host header");
+}
+
+func test_tls_client_hello_stacking() {
+    println("--- 10. Testing TLS 1.3 ClientHello (RFC 8446) Stacking ---");
+    let pkt = Ether() / IP("192.168.1.100", "93.184.216.34") / TCP(54321, 443, "PA") / TLSClientHello_sni("secure.example.com");
+
+    assert(pkt.haslayer("TLSClientHello"), "Packet must have TLSClientHello layer");
+    let tls: PacketLayer = pkt.getlayer("TLSClientHello");
+    assert(tls.s1 == "secure.example.com", "TLS SNI must be secure.example.com");
+
+    let wire_raw = pkt.to_raw();
+    // TLS Record begins at offset 54 (14 Ether + 20 IP + 20 TCP)
+    assert(raw_packet_get_u8(wire_raw, 54) == 22, "TLS Record ContentType must be 0x16 (Handshake)");
+    assert(raw_packet_get_u16(wire_raw, 55) == 769, "TLS Legacy Record Version must be 0x0301 (TLS 1.0)");
+    assert(raw_packet_get_u8(wire_raw, 59) == 1, "Handshake Type must be 0x01 (ClientHello)");
+
+    let payload_str = raw_packet_read_string(wire_raw, 54, wire_raw.length - 54);
+    assert(str_contains(payload_str, "secure.example.com"), "ClientHello payload must contain SNI hostname");
+}
+
+func test_packet_dissection_roundtrip() {
+    println("--- 11. Testing Packet Wire Dissection Roundtrip ---");
+    let orig = Ether("AA:BB:CC:DD:EE:FF", "11:22:33:44:55:66") / IP("192.168.1.50", "8.8.8.8") / UDP(1234, 53) / "DNS_WIRE_PAYLOAD";
+    let wire_raw = orig.to_raw();
+
+    let parsed = packet_from_raw(wire_raw);
+    assert(parsed.haslayer("Ether"), "Parsed packet must have Ether layer");
+    assert(parsed.haslayer("IP"), "Parsed packet must have IP layer");
+    assert(parsed.haslayer("UDP"), "Parsed packet must have UDP layer");
+    assert(parsed.haslayer("Raw"), "Parsed packet must have Raw layer");
+
+    let eth: PacketLayer = parsed.getlayer("Ether");
+    assert(eth.s1 == "AA:BB:CC:DD:EE:FF", "Parsed dst MAC must match original");
+    assert(eth.s2 == "11:22:33:44:55:66", "Parsed src MAC must match original");
+
+    let ip: PacketLayer = parsed.getlayer("IP");
+    assert(ip.s1 == "192.168.1.50", "Parsed src IP must match original");
+    assert(ip.s2 == "8.8.8.8", "Parsed dst IP must match original");
+
+    let udp: PacketLayer = parsed.getlayer("UDP");
+    assert(udp.i1 == 1234, "Parsed UDP sport must match original");
+    assert(udp.i2 == 53, "Parsed UDP dport must match original");
+
+    let raw_layer: PacketLayer = parsed.getlayer("Raw");
+    assert(raw_layer.s1 == "DNS_WIRE_PAYLOAD", "Parsed payload must match original");
+}
+
+func test_scapy_hexdump_and_show() {
+    println("--- 12. Testing packet_show and packet_hexdump ---");
+    let pkt = Ether() / IP() / TCP() / "Hello Roze Security!";
+    println("=== Packet Show Output ===");
+    pkt.show();
+    println("=== Packet Hexdump Output ===");
+    pkt.hexdump();
+    println("✅ Show and hexdump executed cleanly");
+}
+
+func main() {
+    println("================================================================================");
+    println("🌹 Roze-Sec: Protocol Stacking DSL & Scapy-Class Builder (M9-T02) Verification");
+    println("================================================================================");
+
+    test_scapy_operator_stacking();
+    test_vlan_8021q_stacking();
+    test_arp_stacking();
+    test_ipv6_and_icmpv6_stacking();
+    test_tcp_flags_and_checksum();
+    test_dhcp_protocol_stacking();
+    test_ntp_protocol_stacking();
+    test_snmp_protocol_stacking();
+    test_http_protocol_stacking();
+    test_tls_client_hello_stacking();
+    test_packet_dissection_roundtrip();
+    test_scapy_hexdump_and_show();
+
+    println("================================================================================");
+    println("🎉 ALL 12 PROTOCOL STACKING DSL SUITES PASSED SUCCESSFULLY!");
+    println("================================================================================");
+}

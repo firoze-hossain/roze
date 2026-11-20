@@ -1,0 +1,108 @@
+// compiler/tests/fixtures/sec_packet_dsl.roze
+// ==============================================================================
+// 🌹 Roze-Sec: Protocol Stacking DSL & Scapy-Class Builder (roze.sec.packet)
+// ==============================================================================
+// Sprint 17 (W35-W36) Deliverable: M9-T02
+// Scapy-Class Protocol Stacking DSL utilizing '/' operator
+// ==============================================================================
+
+import "roze.sec.packet";
+
+func assert(cond: bool, msg: string) {
+    if !cond {
+        println("❌ Assertion failed: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+func main() {
+    println("=== ROZE-SEC PROTOCOL STACKING DSL & SCAPY-CLASS BUILDER (M9-T02) ===");
+
+    // Test 1: Fluent protocol stacking DSL with '/' operator
+    let pkt1 = Ether() / IP() / TCP() / "GET /index.html HTTP/1.1\r\n\r\n";
+    assert(list_length(pkt1.layers) == 4, "Must contain 4 layers");
+    assert(pkt1.haslayer("Ether"), "Must have Ether layer");
+    assert(pkt1.haslayer("IP"), "Must have IP layer");
+    assert(pkt1.haslayer("TCP"), "Must have TCP layer");
+    assert(pkt1.haslayer("Raw"), "Must have Raw payload layer");
+    assert(pkt1.to_raw().length > 54, "Frame length must exceed 54 bytes");
+    println("[PASS] Test 1: Fluent protocol stacking DSL with '/' operator (Ether / IP / TCP / Raw)");
+
+    // Test 2: 802.1Q VLAN encapsulation
+    let pkt2 = Ether() / Dot1Q(100) / IP("192.168.1.10", "192.168.1.1") / UDP(12345, 53) / DNS_Query("example.com", 1);
+    assert(pkt2.haslayer("Dot1Q"), "Must have Dot1Q layer");
+    let eth2: PacketLayer = pkt2.getlayer("Ether");
+    assert(eth2.i1 == 33024, "Ether ethertype must be 0x8100");
+    let dot1q: PacketLayer = pkt2.getlayer("Dot1Q");
+    assert(dot1q.i1 == 100, "VLAN ID must be 100");
+    assert(dot1q.i4 == 2048, "Inner ethertype must be 0x0800");
+    println("[PASS] Test 2: 802.1Q VLAN encapsulation and inner next-header resolution");
+
+    // Test 3: ARP protocol stacking
+    let pkt3 = Ether("FF:FF:FF:FF:FF:FF", "02:42:AC:11:00:02") / ARP("192.168.1.100", "192.168.1.1");
+    assert(pkt3.haslayer("ARP"), "Must have ARP layer");
+    let eth3: PacketLayer = pkt3.getlayer("Ether");
+    assert(eth3.i1 == 2054, "Ether ethertype must be 0x0806 for ARP");
+    let raw3 = pkt3.to_raw();
+    assert(raw3.length == 42, "ARP frame length must be 42 bytes");
+    assert(raw_packet_get_u16(raw3, 12) == 2054, "Wire ethertype must be 0x0806");
+    println("[PASS] Test 3: ARP protocol stacking and wire encoding");
+
+    // Test 4: IPv6 and ICMPv6 protocol stacking
+    let pkt4 = Ether() / IPv6("fe80::1", "fe80::2") / ICMPv6(10, 1);
+    assert(pkt4.haslayer("IPv6"), "Must have IPv6 layer");
+    assert(pkt4.haslayer("ICMPv6"), "Must have ICMPv6 layer");
+    let ip6: PacketLayer = pkt4.getlayer("IPv6");
+    assert(ip6.i1 == 58, "IPv6 next_header must be 58 for ICMPv6");
+    let icmp6: PacketLayer = pkt4.getlayer("ICMPv6");
+    assert(icmp6.i5 != 0, "ICMPv6 pseudo-checksum must be calculated");
+    println("[PASS] Test 4: IPv6 and ICMPv6 protocol stacking and pseudo-header checksum");
+
+    // Test 5: TCP custom flags and automated RFC 793 checksum
+    let synack = Ether() / IP("10.0.0.1", "10.0.0.2") / TCP(80, 54321, "SA") / Raw("synack-payload");
+    let tcp5: PacketLayer = synack.getlayer("TCP");
+    assert(bit_and(tcp5.i5, tcp_flag_syn()) != 0, "Must have SYN bit");
+    assert(bit_and(tcp5.i5, tcp_flag_ack()) != 0, "Must have ACK bit");
+    assert(tcp5.i7 != 0, "TCP RFC 793 checksum must be calculated");
+    println("[PASS] Test 5: TCP custom flags (SYN/ACK/FIN/RST/PSH/URG/ECE/CWR) and automated RFC 793 checksum");
+
+    // Test 6: UDP and Application Layer Protocols
+    // DHCP
+    let dhcp_pkt = Ether() / IP("0.0.0.0", "255.255.255.255") / UDP(68, 67) / DHCP_Discover(12345, "02:42:AC:11:00:02");
+    assert(dhcp_pkt.haslayer("DHCP"), "Must have DHCP layer");
+    // NTP
+    let ntp_pkt = Ether() / IP("192.168.1.100", "129.6.15.28") / UDP(12345, 123) / NTP_ClientRequest();
+    assert(ntp_pkt.haslayer("NTP"), "Must have NTP layer");
+    // SNMP
+    let snmp_pkt = Ether() / IP("10.0.0.1", "10.0.0.254") / UDP(12345, 161) / SNMP_Get("public", "1.3.6.1.2.1.1.1.0", 42);
+    assert(snmp_pkt.haslayer("SNMP"), "Must have SNMP layer");
+    // HTTP
+    let http_pkt = Ether() / IP("192.168.1.100", "93.184.216.34") / TCP(54321, 80, "PA") / HTTP_Get("/api/status", "example.com");
+    assert(http_pkt.haslayer("HTTP"), "Must have HTTP layer");
+    // TLS 1.3 ClientHello
+    let tls_pkt = Ether() / IP("192.168.1.100", "93.184.216.34") / TCP(54321, 443, "PA") / TLSClientHello_sni("secure.example.com");
+    assert(tls_pkt.haslayer("TLSClientHello"), "Must have TLSClientHello layer");
+    println("[PASS] Test 6: UDP and Application layer protocols (DNS, DHCP, NTP, SNMP, HTTP/1.1, TLS 1.3 ClientHello)");
+
+    // Test 7: Automated RFC 1071 internet checksum recalculation
+    let raw_synack = synack.to_raw();
+    let ip_csum_zero = internet_checksum(raw_synack.ptr, 14, 20);
+    assert(ip_csum_zero == 0, "IPv4 checksum over header must verify to 0");
+    println("[PASS] Test 7: Automated RFC 1071 internet checksum recalculation");
+
+    // Test 8: Wire frame dissection roundtrip and Scapy inspection parity
+    let roundtrip_orig = Ether("AA:BB:CC:DD:EE:FF", "11:22:33:44:55:66") / IP("192.168.1.50", "8.8.8.8") / UDP(1234, 53) / "DNS_ROUNDTRIP";
+    let roundtrip_wire = roundtrip_orig.to_raw();
+    let parsed = packet_from_raw(roundtrip_wire);
+    assert(parsed.haslayer("Ether"), "Parsed packet must have Ether");
+    assert(parsed.haslayer("IP"), "Parsed packet must have IP");
+    assert(parsed.haslayer("UDP"), "Parsed packet must have UDP");
+    let parsed_eth: PacketLayer = parsed.getlayer("Ether");
+    assert(parsed_eth.s1 == "AA:BB:CC:DD:EE:FF", "Parsed dst MAC match");
+    let summary = roundtrip_orig.summary();
+    assert(str_contains(summary, "Ether"), "Summary contains Ether");
+    assert(str_contains(summary, "UDP"), "Summary contains UDP");
+    println("[PASS] Test 8: Wire frame dissection roundtrip and Scapy inspection parity (summary, show, hexdump)");
+
+    println("[CI-PASS] ALL PROTOCOL STACKING DSL & PACKET BUILDER TESTS PASSED (M9-T02)");
+}

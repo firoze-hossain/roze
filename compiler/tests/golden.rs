@@ -2424,6 +2424,22 @@ fn standard_rozeboot_core_ioc_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: RozeBoot Core IoC Container 100% OPERATIONAL"));
 }
 
+#[test]
+fn standard_rozeboot_web_reactive_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_rozeboot_web.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("Testing HTTP/1.1 Pipelining Engine (RFC 9112)"));
+    assert!(stdout.contains("Testing HTTP/2 Binary Framing & HPACK Compression"));
+    assert!(stdout.contains("Testing HTTP/3 over QUIC Transport & QPACK Compression"));
+    assert!(stdout.contains("Testing WebSockets Bidirectional Messaging (RFC 6455)"));
+    assert!(stdout.contains("Testing gRPC & Protocol Buffers RPC Engine"));
+    assert!(stdout.contains("Testing URI Template Routing Engine"));
+    assert!(stdout.contains("Testing Request Body JSON & CBOR Binary Binding"));
+    assert!(stdout.contains("Testing Jakarta-Style Model Validation & RFC 7807 Problem Details"));
+    assert!(stdout.contains("Testing ReactiveWebServer & High-Throughput Dispatch Benchmark"));
+    assert!(stdout.contains("ALL ROZEBOOT REACTIVE WEB TESTS PASSED (100% SUCCESS)"));
+}
+
 
 
 

@@ -135,6 +135,9 @@ const CONCURRENT_DISPLAY_NAME: &str = "concurrent (built-in)";
 const ROZEBOOT_CORE_SOURCE: &str = include_str!("../../stdlib/src/rozeboot_core.roze");
 const ROZEBOOT_CORE_DISPLAY_NAME: &str = "rozeboot_core (built-in)";
 
+const ROZEBOOT_WEB_SOURCE: &str = include_str!("../../stdlib/src/rozeboot_web.roze");
+const ROZEBOOT_WEB_DISPLAY_NAME: &str = "rozeboot_web (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -230,6 +233,9 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
     let pkg_subpath = match path {
         "rozeboot.core" | "rozeboot::core" | "roze::boot::core" | "roze.boot.core" | "rozeboot_core" | "rozeboot-core" | "ioc.core" | "spring.core" => {
             Some("rozeboot/src/core.roze".to_string())
+        }
+        "rozeboot.web" | "rozeboot::web" | "roze::boot::web" | "roze.boot.web" | "rozeboot_web" | "rozeboot-web" | "reactive_web" => {
+            Some("rozeboot/src/web.roze".to_string())
         }
         "rozeboot" | "rozeboot2" | "roze::boot" | "roze-boot" | "roze_boot" | "ioc" | "annotations" => {
             Some("rozeboot/src/lib.roze".to_string())
@@ -490,6 +496,10 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "rozeboot.core" || path == "rozeboot::core" || path == "roze::boot::core" || path == "roze.boot.core"
         || path == "rozeboot_core" || path == "rozeboot-core" || path == "ioc.core" || path == "spring.core" {
         return Ok((ROZEBOOT_CORE_SOURCE.to_string(), ROZEBOOT_CORE_DISPLAY_NAME.to_string()));
+    }
+    if path == "rozeboot.web" || path == "rozeboot::web" || path == "roze::boot::web" || path == "roze.boot.web"
+        || path == "rozeboot_web" || path == "rozeboot-web" || path == "reactive_web" {
+        return Ok((ROZEBOOT_WEB_SOURCE.to_string(), ROZEBOOT_WEB_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

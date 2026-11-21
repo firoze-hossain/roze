@@ -1,0 +1,434 @@
+// ==============================================================================
+// 🌹 RozeBoot Web Test Suite - Reactive HTTP/2, HTTP/3, WebSockets & gRPC (M10-T02)
+// ==============================================================================
+
+import "rozeboot.web";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("❌ ASSERTION FAILED: " + msg);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_str(actual: string, expected: string, msg: string) {
+    if actual != expected {
+        println("❌ ASSERTION FAILED: " + msg);
+        println("   Expected: " + expected);
+        println("   Actual:   " + actual);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_int(actual: int, expected: int, msg: string) {
+    if actual != expected {
+        println("❌ ASSERTION FAILED: " + msg);
+        println("   Expected: " + to_string(expected));
+        println("   Actual:   " + to_string(actual));
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func test_http1_pipelining() {
+    println("--- Testing HTTP/1.1 Pipelining Engine (RFC 9112) ---");
+    let session = pipelined_session_new(101);
+    assert_eq_int(session.connection_id, 101, "Connection ID should match");
+    assert_true(session.keep_alive, "Session should default to keep-alive");
+    assert_eq_int(session.processed_count, 0, "Processed count should start at 0");
+
+    let req_headers = list_new();
+    list_push(req_headers, header_field_new("Host", "localhost:8080"));
+    list_push(req_headers, header_field_new("User-Agent", "Roze-TestClient/1.0"));
+
+    let req1 = pipelined_request_new(1, "GET", "/api/v1/health", req_headers, "");
+    let req2 = pipelined_request_new(2, "GET", "/api/v1/users", req_headers, "");
+    let req3 = pipelined_request_new(3, "POST", "/api/v1/orders", req_headers, "{\"item\":\"widget\"}");
+
+    pipelined_push_request(session, req1);
+    pipelined_push_request(session, req2);
+    pipelined_push_request(session, req3);
+    assert_eq_int(list_length(session.request_queue), 3, "Queue should hold 3 requests");
+
+    // Process pipelined requests sequentially
+    let resp1 = pipelined_process_next(session, 200, "OK", "{\"status\":\"healthy\"}");
+    assert_eq_int(resp1.request_id, 1, "Resp 1 should match req 1");
+    assert_eq_int(resp1.status_code, 200, "Resp 1 status should be 200");
+
+    let resp2 = pipelined_process_next(session, 200, "OK", "[{\"id\":1,\"name\":\"Alice\"}]");
+    assert_eq_int(resp2.request_id, 2, "Resp 2 should match req 2");
+
+    let resp3 = pipelined_process_next(session, 201, "Created", "{\"id\":42,\"status\":\"confirmed\"}");
+    assert_eq_int(resp3.request_id, 3, "Resp 3 should match req 3");
+    assert_eq_int(resp3.status_code, 201, "Resp 3 status should be 201");
+
+    assert_eq_int(session.processed_count, 3, "All 3 requests should be processed");
+    assert_eq_int(list_length(session.request_queue), 0, "Queue should now be empty");
+    assert_eq_int(list_length(session.response_queue), 3, "Response queue should hold 3 responses");
+
+    let serialized = pipelined_serialize_response(resp1);
+    assert_true(web_str_starts_with(serialized, "HTTP/1.1 200 OK\r\n"), "Serialized HTTP response format valid");
+    assert_true(web_str_contains(serialized, "RozeBoot-ReactiveWeb/3.0"), "Header Server present");
+    assert_true(web_str_contains(serialized, "{\"status\":\"healthy\"}"), "Body present");
+}
+
+func test_http2_framing_and_hpack() {
+    println("--- Testing HTTP/2 Binary Framing & HPACK Compression (RFC 7540 / 7541) ---");
+
+    // Frame types check
+    assert_eq_int(h2_frame_data(), 0, "DATA frame type 0");
+    assert_eq_int(h2_frame_headers(), 1, "HEADERS frame type 1");
+    assert_eq_int(h2_frame_settings(), 4, "SETTINGS frame type 4");
+    assert_eq_int(h2_frame_ping(), 6, "PING frame type 6");
+    assert_eq_int(h2_frame_goaway(), 7, "GOAWAY frame type 7");
+    assert_eq_int(h2_frame_window_update(), 8, "WINDOW_UPDATE frame type 8");
+
+    // Frame serialization and parsing
+    let payload = list_new();
+    list_push(payload, 10);
+    list_push(payload, 20);
+    list_push(payload, 30);
+    let frame = http2_frame_new(3, h2_frame_data(), h2_flag_end_stream(), 7, payload);
+
+    let raw_bytes = http2_serialize_frame(frame);
+    assert_eq_int(list_length(raw_bytes), 12, "Serialized frame length should be 9 + 3 = 12 bytes");
+
+    let parsed = http2_parse_frame_header(raw_bytes);
+    assert_true(parsed != null, "Parsed frame should not be null");
+    assert_eq_int(parsed.length, 3, "Parsed length should match");
+    assert_eq_int(parsed.frame_type, h2_frame_data(), "Parsed frame type should match DATA");
+    assert_eq_int(parsed.flags, h2_flag_end_stream(), "Parsed flags should match END_STREAM");
+    assert_eq_int(parsed.stream_id, 7, "Parsed stream ID should match 7");
+    assert_eq_int(list_length(parsed.payload), 3, "Parsed payload length should be 3");
+    let pb0: int = list_get(parsed.payload, 0);
+    let pb1: int = list_get(parsed.payload, 1);
+    let pb2: int = list_get(parsed.payload, 2);
+    assert_eq_int(pb0, 10, "Byte 0");
+    assert_eq_int(pb1, 20, "Byte 1");
+    assert_eq_int(pb2, 30, "Byte 2");
+
+    // HPACK Static Table Lookups
+    let hp_table = hpack_table_new();
+    let entry_method = hpack_lookup_static(hp_table, 2);
+    assert_true(entry_method != null, "Static entry 2 should exist");
+    assert_eq_str(entry_method.name, ":method", ":method");
+    assert_eq_str(entry_method.value, "GET", "GET");
+
+    let entry_status = hpack_lookup_static(hp_table, 8);
+    assert_true(entry_status != null, "Static entry 8 should exist");
+    assert_eq_str(entry_status.name, ":status", ":status");
+    assert_eq_str(entry_status.value, "200", "200");
+
+    let idx_post = hpack_find_static_index(hp_table, ":method", "POST");
+    assert_eq_int(idx_post, 3, "Static index for :method POST should be 3");
+
+    // HPACK Dynamic Table
+    hpack_add_dynamic(hp_table, "x-custom-trace", "trace-991");
+    assert_eq_int(list_length(hp_table.dynamic_entries), 1, "Dynamic table should have 1 entry");
+
+    // HTTP/2 Session and Stream Management
+    let session = http2_session_new(501);
+    let st1 = http2_open_stream(session, 1);
+    assert_eq_int(st1.stream_id, 1, "Stream ID 1");
+    assert_eq_int(st1.state, h2_stream_open(), "Stream should be OPEN");
+    assert_eq_int(st1.window_size, 65535, "Default initial window size 65535");
+
+    let found_st1 = http2_find_stream(session, 1);
+    assert_true(found_st1 != null && found_st1.stream_id == 1, "Stream 1 found in session");
+}
+
+func test_http3_quic_and_qpack() {
+    println("--- Testing HTTP/3 over QUIC Transport & QPACK Compression (RFC 9000 / 9114) ---");
+
+    // QUIC Variable-Length Integer Encoding (RFC 9000 Section 16)
+    assert_eq_int(quic_varint_len(25), 1, "25 fits in 1 byte");
+    assert_eq_int(quic_varint_len(1500), 2, "1500 fits in 2 bytes");
+    assert_eq_int(quic_varint_len(100000), 4, "100000 fits in 4 bytes");
+
+    let vi1 = quic_encode_varint(25);
+    assert_eq_int(list_length(vi1), 1, "Encoded 25 is 1 byte");
+    let vb0: int = list_get(vi1, 0);
+    assert_eq_int(vb0, 25, "Value 25");
+
+    let vi2 = quic_encode_varint(1500);
+    assert_eq_int(list_length(vi2), 2, "Encoded 1500 is 2 bytes");
+
+    // HTTP/3 Frame Serialization
+    let h3_payload = list_new();
+    list_push(h3_payload, 1);
+    list_push(h3_payload, 2);
+    let h3_frame = http3_frame_new(h3_frame_headers(), h3_payload);
+    let h3_bytes = http3_serialize_frame(h3_frame);
+    assert_true(list_length(h3_bytes) >= 4, "HTTP/3 serialized frame length >= 4");
+
+    // QPACK Static Table Lookup (RFC 9204)
+    let qpack = qpack_table_new();
+    let qp_get = qpack_lookup(qpack, 17);
+    assert_true(qp_get != null, "QPACK entry 17 exists");
+    assert_eq_str(qp_get.name, ":method", ":method");
+    assert_eq_str(qp_get.value, "GET", "GET");
+
+    let qp_status_ok = qpack_lookup(qpack, 25);
+    assert_true(qp_status_ok != null, "QPACK entry 25 exists");
+    assert_eq_str(qp_status_ok.name, ":status", ":status");
+    assert_eq_str(qp_status_ok.value, "200", "200");
+}
+
+func test_websockets() {
+    println("--- Testing WebSockets Bidirectional Messaging (RFC 6455) ---");
+
+    // RFC 6455 Handshake Accept Key
+    let accept_key = ws_compute_accept_key("dGhlIHNhbXBsZSBub25jZQ==");
+    assert_true(string_length(accept_key) > 0, "Accept key computed");
+
+    // WebSocket Session & Lifecycle
+    let ws_session = ws_session_new("ws-session-001");
+    assert_eq_int(ws_session.state, 1, "Session state should be OPEN (1)");
+
+    let txt_frame = ws_send_text(ws_session, "Hello RozeBoot");
+    assert_eq_int(txt_frame.opcode, ws_opcode_text(), "Opcode should be TEXT");
+    assert_true(txt_frame.fin, "FIN should be true");
+    assert_eq_str(txt_frame.text_payload, "Hello RozeBoot", "Payload should match");
+
+    let bin_data = list_new();
+    list_push(bin_data, 1);
+    list_push(bin_data, 2);
+    list_push(bin_data, 3);
+    let bin_frame = ws_send_binary(ws_session, bin_data);
+    assert_eq_int(bin_frame.opcode, ws_opcode_binary(), "Opcode should be BINARY");
+
+    let ping_frame = ws_send_ping(ws_session);
+    assert_eq_int(ping_frame.opcode, ws_opcode_ping(), "Opcode should be PING");
+
+    let pong_frame = ws_send_pong(ws_session);
+    assert_eq_int(pong_frame.opcode, ws_opcode_pong(), "Opcode should be PONG");
+
+    ws_close(ws_session);
+    assert_eq_int(ws_session.state, 2, "Session state should be CLOSED (2)");
+
+    // Frame serialization and parsing (unmasked server frame)
+    let raw_ws = ws_serialize_frame(txt_frame);
+    assert_eq_int(list_length(raw_ws), 2 + string_length("Hello RozeBoot"), "Serialized frame length");
+
+    // Parse masked client frame simulation
+    let client_bytes = list_new();
+    list_push(client_bytes, 129);
+    list_push(client_bytes, 132);
+    list_push(client_bytes, 1);
+    list_push(client_bytes, 2);
+    list_push(client_bytes, 3);
+    list_push(client_bytes, 4);
+    // Masked bytes for "test": 't'=116, 'e'=101, 's'=115, 't'=116
+    list_push(client_bytes, bit_xor(116, 1));
+    list_push(client_bytes, bit_xor(101, 2));
+    list_push(client_bytes, bit_xor(115, 3));
+    list_push(client_bytes, bit_xor(116, 4));
+
+    let parsed_ws = ws_parse_frame(client_bytes);
+    assert_true(parsed_ws != null, "Parsed WebSocket frame not null");
+    assert_true(parsed_ws.fin, "Parsed FIN is true");
+    assert_eq_int(parsed_ws.opcode, ws_opcode_text(), "Parsed opcode is TEXT");
+    assert_true(parsed_ws.masked, "Parsed masked is true");
+    assert_eq_str(parsed_ws.text_payload, "test", "Unmasked payload matches 'test'");
+}
+
+func test_grpc_protobuf() {
+    println("--- Testing gRPC & Protocol Buffers RPC Engine ---");
+
+    // Protobuf Varint Encoding / Decoding
+    let v1 = proto_encode_varint(1);
+    assert_eq_int(list_length(v1), 1, "Varint 1 is 1 byte");
+    assert_eq_int(proto_decode_varint(v1, 0), 1, "Decoded varint 1");
+
+    let v300 = proto_encode_varint(300);
+    assert_eq_int(list_length(v300), 2, "Varint 300 is 2 bytes");
+    assert_eq_int(proto_decode_varint(v300, 0), 300, "Decoded varint 300");
+
+    let v16384 = proto_encode_varint(16384);
+    assert_eq_int(proto_decode_varint(v16384, 0), 16384, "Decoded varint 16384");
+
+    // gRPC 5-Byte Framing
+    let rpc_msg = list_new();
+    list_push(rpc_msg, 8);
+    list_push(rpc_msg, 42);
+    let framed = grpc_frame_message(rpc_msg);
+    assert_eq_int(list_length(framed), 7, "Framed gRPC message length should be 5 + 2 = 7 bytes");
+    let fb0: int = list_get(framed, 0);
+    assert_eq_int(fb0, 0, "Compressed flag is 0");
+
+    let unframed = grpc_unframe_message(framed);
+    assert_eq_int(list_length(unframed), 2, "Unframed message length should be 2");
+    let ub0: int = list_get(unframed, 0);
+    let ub1: int = list_get(unframed, 1);
+    assert_eq_int(ub0, 8, "Unframed byte 0");
+    assert_eq_int(ub1, 42, "Unframed byte 1");
+
+    // GrpcService and Dispatcher
+    let svc = grpc_service_new("UserService");
+    grpc_service_add_method(svc, "GetUser", 1); // 1 = Unary
+    grpc_service_add_method(svc, "ListUsers", 2); // 2 = ServerStreaming
+
+    // Dispatch existing method
+    let call1 = grpc_dispatch_call(svc, "GetUser", rpc_msg);
+    assert_eq_int(call1.status_code, grpc_status_ok(), "Call 1 status should be OK");
+    assert_eq_str(call1.status_message, "OK", "Status message OK");
+    assert_true(list_length(call1.response_payload) > 0, "Response payload non-empty");
+
+    // Dispatch unimplemented method
+    let call2 = grpc_dispatch_call(svc, "DeleteUser", rpc_msg);
+    assert_eq_int(call2.status_code, grpc_status_unimplemented(), "Call 2 status should be UNIMPLEMENTED");
+}
+
+func test_uri_template_routing() {
+    println("--- Testing URI Template Routing Engine (/users/{id:[0-9]+}) ---");
+
+    let r_exact = reactive_route_new("GET", "/api/v1/health", "healthCheck");
+    let match1 = route_match_uri(r_exact, "GET", "/api/v1/health");
+    assert_true(match1.matched, "Exact route matches GET /api/v1/health");
+    assert_eq_str(match1.handler_name, "healthCheck", "Handler name matches");
+
+    let match1_mismatch = route_match_uri(r_exact, "POST", "/api/v1/health");
+    assert_true(!match1_mismatch.matched, "Method mismatch fails");
+
+    // Numeric Regex Pattern Route: /api/v1/users/{id:[0-9]+}
+    let r_numeric = reactive_route_new("GET", "/api/v1/users/{id:[0-9]+}", "getUserById");
+    let match2 = route_match_uri(r_numeric, "GET", "/api/v1/users/42");
+    assert_true(match2.matched, "Numeric pattern matches /api/v1/users/42");
+    assert_eq_str(match2.handler_name, "getUserById", "Handler name matches");
+    assert_eq_int(list_length(match2.params), 1, "Extracted 1 param");
+    let param1: RouteParam = list_get(match2.params, 0);
+    assert_eq_str(param1.key, "id", "param key 'id'");
+    assert_eq_str(param1.value, "42", "param value '42'");
+
+    // Invalid numeric pattern: contains alpha chars
+    let match2_invalid = route_match_uri(r_numeric, "GET", "/api/v1/users/abc");
+    assert_true(!match2_invalid.matched, "Numeric pattern rejects non-digits");
+
+    // Alpha Regex Pattern Route: /users/{username:[a-zA-Z_]+}
+    let r_alpha = reactive_route_new("GET", "/users/{username:[a-zA-Z_]+}", "getUserByUsername");
+    let match3 = route_match_uri(r_alpha, "GET", "/users/alice_bob");
+    assert_true(match3.matched, "Alpha pattern matches /users/alice_bob");
+    let param3: RouteParam = list_get(match3.params, 0);
+    assert_eq_str(param3.key, "username", "param key 'username'");
+    assert_eq_str(param3.value, "alice_bob", "param value 'alice_bob'");
+
+    let match3_invalid = route_match_uri(r_alpha, "GET", "/users/alice123");
+    assert_true(!match3_invalid.matched, "Alpha pattern rejects digits");
+}
+
+func test_cbor_binding() {
+    println("--- Testing Request Body JSON & CBOR Binary Binding (RFC 8949) ---");
+
+    // Small unsigned integer (< 24)
+    let cbor10 = cbor_encode_uint(10);
+    assert_eq_int(list_length(cbor10), 1, "CBOR uint 10 is 1 byte");
+    let c10_0: int = list_get(cbor10, 0);
+    assert_eq_int(c10_0, 10, "CBOR value 10");
+
+    // 1-byte extension integer (< 256)
+    let cbor200 = cbor_encode_uint(200);
+    assert_eq_int(list_length(cbor200), 2, "CBOR uint 200 is 2 bytes");
+    let c200_0: int = list_get(cbor200, 0);
+    let c200_1: int = list_get(cbor200, 1);
+    assert_eq_int(c200_0, 24, "CBOR header 24");
+    assert_eq_int(c200_1, 200, "CBOR value 200");
+
+    // Text String Encoding & Decoding
+    let test_str = "roze";
+    let encoded_txt = cbor_encode_text(test_str);
+    assert_eq_int(list_length(encoded_txt), 5, "CBOR text 'roze' is 5 bytes");
+    let decoded_txt = cbor_decode_text(encoded_txt, 0);
+    assert_eq_str(decoded_txt, "roze", "CBOR decoded text matches 'roze'");
+
+    // Map Header
+    let map_hdr = cbor_encode_map_header(3);
+    assert_eq_int(list_length(map_hdr), 1, "CBOR map header for 3 pairs is 1 byte");
+    let mh0: int = list_get(map_hdr, 0);
+    assert_eq_int(mh0, bit_or(bit_shl(5, 5), 3), "CBOR map major type 5 with count 3");
+}
+
+func test_jakarta_validation() {
+    println("--- Testing Jakarta-Style Model Validation & RFC 7807 Problem Details ---");
+
+    // Valid inputs
+    let res_valid = validation_result_new();
+    validate_not_null(res_valid, "username", "john_doe");
+    validate_not_blank(res_valid, "username", "john_doe");
+    validate_size(res_valid, "username", "john_doe", 3, 20);
+    validate_min(res_valid, "age", 25, 18);
+    validate_max(res_valid, "age", 25, 120);
+    validate_email(res_valid, "email", "john@example.com");
+    assert_true(res_valid.is_valid, "Validation should pass for valid inputs");
+    assert_eq_int(list_length(res_valid.violations), 0, "0 violations for valid inputs");
+
+    // Invalid inputs
+    let res_invalid = validation_result_new();
+    validate_not_null(res_invalid, "username", "");
+    validate_not_blank(res_invalid, "description", "   ");
+    validate_size(res_invalid, "tag", "ab", 3, 10);
+    validate_min(res_invalid, "age", 15, 18);
+    validate_max(res_invalid, "age", 150, 120);
+    validate_email(res_invalid, "email", "invalid-email");
+
+    assert_true(!res_invalid.is_valid, "Validation should fail for invalid inputs");
+    assert_eq_int(list_length(res_invalid.violations), 6, "Should record 6 violations");
+
+    let problem_json = validation_to_problem_details(res_invalid);
+    assert_true(web_str_contains(problem_json, "https://roze.dev/errors/validation-failed"), "RFC 7807 type URI");
+    assert_true(web_str_contains(problem_json, "Constraint Violation"), "RFC 7807 title");
+    assert_true(web_str_contains(problem_json, "400"), "RFC 7807 status 400");
+    assert_true(web_str_contains(problem_json, "username"), "Violation field username");
+    assert_true(web_str_contains(problem_json, "email"), "Violation field email");
+}
+
+func test_reactive_server_and_benchmark() {
+    println("--- Testing ReactiveWebServer & High-Throughput Dispatch Benchmark ---");
+
+    let server = reactive_web_server_new("RozeBoot-EdgeServer", 8080);
+    assert_eq_str(server.name, "RozeBoot-EdgeServer", "Server name");
+    assert_eq_int(server.port, 8080, "Server port");
+    assert_true(!server.is_running, "Server not running initially");
+
+    web_add_route(server, "GET", "/api/v1/health", "healthCheck");
+    web_add_route(server, "GET", "/api/v1/users/{id:[0-9]+}", "getUserById");
+    web_add_route(server, "POST", "/api/v1/users", "createUser");
+    assert_eq_int(list_length(server.routes), 3, "Server has 3 registered routes");
+
+    let svc = grpc_service_new("AccountService");
+    grpc_service_add_method(svc, "GetBalance", 1);
+    web_add_grpc_service(server, svc);
+    assert_eq_int(list_length(server.grpc_services), 1, "Server has 1 gRPC service");
+
+    web_start(server);
+    assert_true(server.is_running, "Server is running");
+
+    // Benchmark 100,000 dispatches
+    let processed = web_benchmark_dispatch(server, 100000);
+    assert_eq_int(processed, 100000, "Benchmark dispatched 100,000 requests");
+    assert_eq_int(server.requests_processed, 100000, "Server tracked 100,000 processed requests");
+
+    web_stop(server);
+    assert_true(!server.is_running, "Server is stopped");
+}
+
+func main() {
+    println("================================================================================");
+    println("🌹 RozeBoot Web Verification Suite - Reactive HTTP/2, HTTP/3, WebSockets & gRPC");
+    println("================================================================================");
+
+    test_http1_pipelining();
+    test_http2_framing_and_hpack();
+    test_http3_quic_and_qpack();
+    test_websockets();
+    test_grpc_protobuf();
+    test_uri_template_routing();
+    test_cbor_binding();
+    test_jakarta_validation();
+    test_reactive_server_and_benchmark();
+
+    println("================================================================================");
+    println("✨ ALL ROZEBOOT REACTIVE WEB TESTS PASSED (100% SUCCESS) ✨");
+    println("================================================================================");
+}

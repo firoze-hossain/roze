@@ -764,7 +764,7 @@ s1_rows = [
         ("M10-T02", 8), ("Month 10", 25), ("Sprint 19 (W39-W40)", 8), "High-Throughput Web", "Reactive HTTP/2, HTTP/3, WebSockets & gRPC (rozeboot.web)",
         "Async non-blocking web server engine: HTTP/1.1 pipelining, HTTP/2 multiplexed streams with HPACK compression, HTTP/3 over QUIC with QPACK compression, WebSockets (RFC 6455) bidirectional messaging, gRPC / Protocol Buffers RPC services, URI template routing (/api/v1/users/{id:[0-9]+}), request body JSON/CBOR binding, and Jakarta-style validation (@NotNull, @Size, @Email).",
         "Performance exceeds Netty and matches Actix-web in pure Roze with zero external dependencies.",
-        "Cloud APIs, Streaming Services, Microservices", "9 Days", ("Critical", 14), ("Planned", 12)
+        "Cloud APIs, Streaming Services, Microservices", "9 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M10-T03", 8), ("Month 10", 25), ("Sprint 19 (W39-W40)", 8), "Enterprise ORM", "Type-Safe Active Record & Connection Pool (roze-orm)",

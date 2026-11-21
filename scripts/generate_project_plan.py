@@ -770,7 +770,7 @@ s1_rows = [
         ("M10-T03", 8), ("Month 10", 25), ("Sprint 19 (W39-W40)", 8), "Enterprise ORM", "Type-Safe Active Record & Connection Pool (roze-orm)",
         "Relational persistence engine: @Entity, @Table, @Id, @Column, @OneToMany, @ManyToOne, @ManyToMany, @Version (optimistic locking). High-performance connection pool with borrow queues, health checks, leak detection telemetry. Type-safe SQL query builder, automated schema migrations (roze_schema_migrations), transaction manager (@Transactional with ACID isolation levels).",
         "1:1 architectural parity with Hibernate, Spring Data JPA, and HikariCP.",
-        "Enterprise Persistence, Banking Systems, Relational DBs", "9 Days", ("Critical", 14), ("Planned", 12)
+        "Enterprise Persistence, Banking Systems, Relational DBs", "9 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M10-T04", 8), ("Month 10", 25), ("Sprint 20 (W41-W42)", 8), "Enterprise Security", "Cloud Security Perimeter & OAuth2/JWT (rozeboot.security)",

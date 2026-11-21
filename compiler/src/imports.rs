@@ -138,6 +138,9 @@ const ROZEBOOT_CORE_DISPLAY_NAME: &str = "rozeboot_core (built-in)";
 const ROZEBOOT_WEB_SOURCE: &str = include_str!("../../stdlib/src/rozeboot_web.roze");
 const ROZEBOOT_WEB_DISPLAY_NAME: &str = "rozeboot_web (built-in)";
 
+const ORM_SOURCE: &str = include_str!("../../stdlib/src/orm.roze");
+const ORM_DISPLAY_NAME: &str = "orm (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -246,7 +249,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         "cloud_security" | "security" | "roze::security" | "oauth2" | "jwt" | "metrics" | "telemetry" | "openapi" | "swagger" => {
             Some("rozeboot/src/cloud_security.roze".to_string())
         }
-        "orm" | "roze::orm" | "roze-orm" | "roze_orm" | "sql_orm" | "jpa" | "diesel" | "seaorm" => {
+        "orm" | "roze::orm" | "roze.orm" | "roze-orm" | "roze_orm" | "sql_orm" | "jpa" | "diesel" | "seaorm" => {
             Some("roze-orm/src/lib.roze".to_string())
         }
         "raw_net" | "net" | "packet" | "pcap" | "roze::net::raw" | "packet_crafting" | "protocol" | "dissector" | "dns" | "dhcp"
@@ -500,6 +503,10 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "rozeboot.web" || path == "rozeboot::web" || path == "roze::boot::web" || path == "roze.boot.web"
         || path == "rozeboot_web" || path == "rozeboot-web" || path == "reactive_web" {
         return Ok((ROZEBOOT_WEB_SOURCE.to_string(), ROZEBOOT_WEB_DISPLAY_NAME.to_string()));
+    }
+    if path == "orm" || path == "roze::orm" || path == "roze.orm" || path == "roze-orm" || path == "roze_orm"
+        || path == "sql_orm" || path == "jpa" || path == "diesel" || path == "seaorm" {
+        return Ok((ORM_SOURCE.to_string(), ORM_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

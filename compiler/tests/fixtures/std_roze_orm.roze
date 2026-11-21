@@ -1,0 +1,474 @@
+// ==============================================================================
+// 🌹 Roze Data & High-Throughput ORM Suite (roze-orm / M10-T03)
+// Comprehensive Verification Test Suite
+// ==============================================================================
+
+import "roze-orm";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("❌ ASSERTION FAILED: " + msg);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_str(actual: string, expected: string, msg: string) {
+    if actual != expected {
+        println("❌ ASSERTION FAILED: " + msg);
+        println("   Expected: " + expected);
+        println("   Actual:   " + actual);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_int(actual: int, expected: int, msg: string) {
+    if actual != expected {
+        println("❌ ASSERTION FAILED: " + msg);
+        println("   Expected: " + to_string(expected));
+        println("   Actual:   " + to_string(actual));
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// TEST SUITE 1: Declarative Annotations & Entity Relationships
+// -----------------------------------------------------------------------------
+func test_annotations_and_relationships() {
+    println("--- SUITE 1: Declarative Annotations & Entity Relationships ---");
+
+    let em_cust = entity_meta_new("Customer", "customers", "id", "version");
+    entity_meta_add_col(em_cust, col_meta_new("id", "id", "int", true, false));
+    entity_meta_add_col(em_cust, col_meta_new("name", "name", "string", false, false));
+    entity_meta_add_col(em_cust, col_meta_new("email", "email", "string", false, false));
+    entity_meta_add_col(em_cust, col_meta_new("version", "version", "int", false, true));
+
+    // OneToMany: Customer has many BankAccounts mapped by "customer_id"
+    let rel_accs = rel_meta_one_to_many("accounts", "BankAccount", "customer_id", cascade_all());
+    entity_meta_add_rel(em_cust, rel_accs);
+
+    assert_eq_str(em_cust.entity_name, "Customer", "Customer entity name");
+    assert_eq_str(em_cust.table_name, "customers", "Customer table name");
+    assert_eq_str(em_cust.id_field, "id", "Customer PK field");
+    assert_eq_str(em_cust.version_field, "version", "Customer version field");
+    assert_eq_int(list_length(em_cust.columns), 4, "Customer column count");
+    assert_eq_int(list_length(em_cust.relationships), 1, "Customer relationship count");
+
+    let found_rel = entity_meta_find_rel(em_cust, "accounts");
+    assert_eq_int(found_rel.rel_type, rel_one_to_many(), "Relationship is OneToMany");
+    assert_eq_str(found_rel.target_entity, "BankAccount", "Target entity BankAccount");
+    assert_eq_str(found_rel.mapped_by, "customer_id", "MappedBy customer_id");
+
+    // ManyToOne: BankAccount belongs to Customer
+    let em_acc = entity_meta_new("BankAccount", "bank_accounts", "id", "version");
+    entity_meta_add_col(em_acc, col_meta_new("id", "id", "int", true, false));
+    entity_meta_add_col(em_acc, col_meta_new("account_no", "account_no", "string", false, false));
+    entity_meta_add_col(em_acc, col_meta_new("customer_id", "customer_id", "int", false, false));
+    entity_meta_add_col(em_acc, col_meta_new("balance_cents", "balance_cents", "int", false, false));
+    entity_meta_add_col(em_acc, col_meta_new("version", "version", "int", false, true));
+
+    let rel_cust = rel_meta_many_to_one("customer", "Customer", "customer_id", cascade_none());
+    entity_meta_add_rel(em_acc, rel_cust);
+
+    // ManyToMany: BankAccount <-> Roles via "account_roles" join table
+    let rel_roles = rel_meta_many_to_many("roles", "Role", "account_roles", "account_id", "role_id");
+    entity_meta_add_rel(em_acc, rel_roles);
+
+    assert_eq_int(list_length(em_acc.relationships), 2, "BankAccount has 2 relationships");
+    let found_m2o = entity_meta_find_rel(em_acc, "customer");
+    assert_eq_int(found_m2o.rel_type, rel_many_to_one(), "Relationship is ManyToOne");
+    assert_eq_str(found_m2o.join_column, "customer_id", "Join column customer_id");
+
+    let found_m2m = entity_meta_find_rel(em_acc, "roles");
+    assert_eq_int(found_m2m.rel_type, rel_many_to_many(), "Relationship is ManyToMany");
+    assert_eq_str(found_m2m.join_table, "account_roles", "Join table account_roles");
+    assert_eq_str(found_m2m.join_column, "account_id", "Join column account_id");
+    assert_eq_str(found_m2m.inverse_join_column, "role_id", "Inverse join column role_id");
+}
+
+// -----------------------------------------------------------------------------
+// TEST SUITE 2: High-Performance Connection Pool (HikariCP Parity)
+// -----------------------------------------------------------------------------
+func test_connection_pool() {
+    println("--- SUITE 2: High-Performance Connection Pool (HikariCP Parity) ---");
+
+    let pcfg = pool_config_new("jdbc:roze:banking_db", 3); // Max 3 conns, min_idle 2
+    pool_config_set_name(pcfg, "HikariCP-BankingPool");
+    pool_config_set_leak_threshold(pcfg, 100); // 100 ms leak threshold for test
+    pool_config_set_connection_timeout(pcfg, 500);
+
+    let pool = native_pool_create(pcfg);
+    let s0 = native_pool_get_stats(pool);
+    assert_eq_int(s0.active_connections, 0, "Initial active connections 0");
+    assert_eq_int(s0.idle_connections, 2, "Initial idle connections 2");
+    assert_eq_int(s0.max_pool_size, 3, "Max pool size 3");
+
+    // Borrow 1st connection
+    let c1 = native_pool_borrow_thread(pool, 1000, "thread-worker-1");
+    assert_eq_int(c1.conn_id, 2, "Borrowed conn 2 from idle list");
+    assert_true(!c1.is_closed, "Conn 1 is open");
+
+    // Borrow 2nd connection
+    let c2 = native_pool_borrow_thread(pool, 1000, "thread-worker-2");
+    assert_true(c2.conn_id > 0, "Conn 2 valid");
+
+    // Borrow 3rd connection (pool hits max_pool_size = 3)
+    let c3 = native_pool_borrow_thread(pool, 1000, "thread-worker-3");
+    assert_true(c3.conn_id > 0, "Conn 3 valid (pool maxed)");
+
+    let s_max = native_pool_get_stats(pool);
+    assert_eq_int(s_max.active_connections, 3, "Active connections 3 (saturated)");
+    assert_eq_int(s_max.idle_connections, 0, "Idle connections 0");
+
+    // Borrow 4th connection (pool saturated -> queues borrow request)
+    let c4 = native_pool_borrow_thread(pool, 1000, "thread-worker-4");
+    assert_eq_int(c4.conn_id, 0, "Conn 4 returned exhausted placeholder (queued)");
+    let s_queued = native_pool_get_stats(pool);
+    assert_eq_int(s_queued.threads_awaiting, 1, "Threads awaiting is 1");
+
+    // Detect leaks: current time 1200ms vs borrow time 1000ms (elapsed 200ms > threshold 100ms)
+    let leaks = native_pool_check_leaks(pool, 1200);
+    assert_eq_int(leaks, 3, "Detected 3 connection leak warnings");
+
+    // Release c1 -> should serve awaiting queue
+    native_pool_release(pool, c1);
+    let s_released = native_pool_get_stats(pool);
+    assert_eq_int(s_released.active_connections, 2, "Active connections down to 2");
+    assert_eq_int(s_released.idle_connections, 1, "Idle connections back to 1");
+    assert_eq_int(s_released.threads_awaiting, 0, "Awaiting borrower was served");
+
+    native_pool_release(pool, c2);
+    native_pool_release(pool, c3);
+    let s_all_idle = native_pool_get_stats(pool);
+    assert_eq_int(s_all_idle.active_connections, 0, "All connections returned");
+
+    native_pool_close(pool);
+    assert_true(pool.is_closed, "Pool closed successfully");
+}
+
+// -----------------------------------------------------------------------------
+// TEST SUITE 3: Type-Safe SQL Query Builder & Parameterized Compiler
+// -----------------------------------------------------------------------------
+func test_sql_query_builder() {
+    println("--- SUITE 3: Type-Safe SQL Query Builder (Diesel & SeaORM Parity) ---");
+
+    // SELECT with JOIN, WHERE, ORDER BY, GROUP BY, LIMIT, OFFSET
+    let qb = sql_select_from("bank_accounts");
+    sql_as(qb, "acc");
+    sql_col(qb, "acc.id");
+    sql_col(qb, "acc.account_no");
+    sql_col_as(qb, "acc.balance_cents", "balance");
+    sql_left_join(qb, "customers cust", "acc.customer_id = cust.id");
+    sql_where_eq(qb, "acc.status", "ACTIVE");
+    sql_where_int(qb, "acc.balance_cents", ">=", 5000);
+    sql_where_between(qb, "acc.id", 1, 1000);
+    sql_group_by(qb, "acc.id");
+    sql_order_by(qb, "acc.balance_cents", "DESC");
+    sql_limit(qb, 25);
+    sql_offset(qb, 50);
+
+    let sql_str = sql_to_string(qb);
+    assert_true(string_starts_with(sql_str, "SELECT acc.id, acc.account_no, acc.balance_cents AS balance FROM bank_accounts AS acc"), "SELECT clause valid");
+    assert_true(string_contains(sql_str, "LEFT JOIN customers cust ON acc.customer_id = cust.id"), "LEFT JOIN clause valid");
+    assert_true(string_contains(sql_str, "WHERE acc.status = 'ACTIVE' AND acc.balance_cents >= 5000 AND acc.id BETWEEN 1 AND 1000"), "WHERE clause valid");
+    assert_true(string_contains(sql_str, "GROUP BY acc.id"), "GROUP BY valid");
+    assert_true(string_contains(sql_str, "ORDER BY acc.balance_cents DESC"), "ORDER BY valid");
+    assert_true(string_contains(sql_str, "LIMIT 25 OFFSET 50"), "LIMIT OFFSET valid");
+
+    // Parameterized Query Compiler (Anti-SQL Injection)
+    let pq = sql_to_parameterized(qb);
+    assert_true(string_contains(pq.sql, "acc.status = ?"), "Prepared placeholder for status");
+    assert_true(string_contains(pq.sql, "acc.balance_cents >= ?"), "Prepared placeholder for balance");
+    assert_true(string_contains(pq.sql, "acc.id BETWEEN ? AND ?"), "Prepared placeholder for between");
+    assert_eq_int(pq.param_count, 4, "Total bound parameters count is 4");
+
+    // UPDATE Query
+    let u_qb = sql_update_table("bank_accounts");
+    sql_set_int(u_qb, "balance_cents", 75000);
+    sql_set_int(u_qb, "version", 2);
+    sql_where_int(u_qb, "id", "=", 101);
+    sql_where_int(u_qb, "version", "=", 1);
+    let u_sql = sql_to_string(u_qb);
+    assert_eq_str(u_sql, "UPDATE bank_accounts SET balance_cents = 75000, version = 2 WHERE id = 101 AND version = 1", "UPDATE SQL exact match");
+
+    // DELETE Query
+    let d_qb = sql_delete_from("transfer_ledger");
+    sql_where_eq(d_qb, "status", "CANCELLED");
+    let d_sql = sql_to_string(d_qb);
+    assert_eq_str(d_sql, "DELETE FROM transfer_ledger WHERE status = 'CANCELLED'", "DELETE SQL exact match");
+}
+
+// -----------------------------------------------------------------------------
+// TEST SUITE 4: Automated Schema Migrations Engine (roze_schema_migrations)
+// -----------------------------------------------------------------------------
+func test_schema_migrations() {
+    println("--- SUITE 4: Automated Schema Migrations Engine (roze_schema_migrations) ---");
+
+    // DDL Table Definition Builder
+    let t_accounts = ddl_create_table("bank_accounts");
+    ddl_add_col(t_accounts, ddl_col("id", "INT", true, true, true));
+    ddl_add_col(t_accounts, ddl_col("account_no", "VARCHAR(32)", false, false, true));
+    ddl_add_col(t_accounts, ddl_col("customer_id", "INT", false, false, true));
+    ddl_add_col(t_accounts, ddl_col("balance_cents", "BIGINT", false, false, true));
+    ddl_add_col(t_accounts, ddl_col("version", "INT", false, false, true));
+
+    let create_sql = ddl_to_create_sql(t_accounts);
+    assert_true(string_starts_with(create_sql, "CREATE TABLE bank_accounts (id INT PRIMARY KEY AUTO_INCREMENT NOT NULL"), "DDL CREATE TABLE syntax valid");
+
+    // Migration Runner & Versioning
+    let runner = migration_runner_new();
+    let m1 = migration_new(1, "V1__create_bank_accounts.sql", "Create bank accounts table", create_sql, ddl_drop_sql("bank_accounts"), "sha256_hash_v1_accounts");
+    let m2 = migration_new(2, "V2__create_transfer_ledger.sql", "Create transfer ledger table", "CREATE TABLE transfer_ledger (id INT PRIMARY KEY);", ddl_drop_sql("transfer_ledger"), "sha256_hash_v2_ledger");
+    let m3 = migration_new(3, "V3__create_account_roles.sql", "Create account roles join table", "CREATE TABLE account_roles (account_id INT, role_id INT);", ddl_drop_sql("account_roles"), "sha256_hash_v3_roles");
+
+    migration_register(runner, m1);
+    migration_register(runner, m2);
+    migration_register(runner, m3);
+
+    // Apply migrations
+    let applied = migration_apply_next(runner);
+    assert_eq_int(applied, 3, "All 3 pending migrations applied");
+    assert_eq_int(list_length(runner.applied), 3, "Schema tracking history contains 3 records");
+
+    // Verify cryptographic checksum integrity
+    let valid_checksum = migration_validate_checksums(runner);
+    assert_true(valid_checksum, "Checksum validation passed: no tampering detected");
+
+    // Rollback to version 1
+    let rolled_back = migration_rollback_to(runner, 1);
+    assert_eq_int(rolled_back, 2, "Rolled back V3 and V2 (2 migrations)");
+    assert_eq_int(list_length(runner.applied), 1, "Active schema version is now V1");
+}
+
+// -----------------------------------------------------------------------------
+// TEST SUITE 5: ACID Transaction Manager & Isolation Levels
+// -----------------------------------------------------------------------------
+func test_transaction_manager_and_isolation() {
+    println("--- SUITE 5: ACID Transaction Manager & Isolation Levels (@Transactional) ---");
+
+    // ANSI SQL Isolation Levels verification
+    assert_eq_int(isolation_read_uncommitted(), 1, "Isolation READ UNCOMMITTED = 1");
+    assert_eq_int(isolation_read_committed(), 2, "Isolation READ COMMITTED = 2");
+    assert_eq_int(isolation_repeatable_read(), 3, "Isolation REPEATABLE READ = 3");
+    assert_eq_int(isolation_serializable(), 4, "Isolation SERIALIZABLE = 4");
+
+    // Propagation verification
+    assert_eq_int(propagation_required(), 1, "Propagation REQUIRED = 1");
+    assert_eq_int(propagation_requires_new(), 2, "Propagation REQUIRES_NEW = 2");
+    assert_eq_int(propagation_nested(), 3, "Propagation NESTED = 3");
+
+    // Transaction Context Lifecycle
+    let tx = tx_new("tx-001", isolation_serializable());
+    assert_eq_str(tx.status, "ACTIVE", "Transaction starts ACTIVE");
+    assert_eq_int(tx.isolation_level, isolation_serializable(), "Isolation is SERIALIZABLE");
+
+    // Savepoints
+    tx_savepoint(tx, "sp_checkpoint_1");
+    tx_savepoint(tx, "sp_checkpoint_2");
+    assert_eq_int(list_length(tx.savepoints), 2, "2 savepoints registered");
+
+    let rb_ok = tx_rollback_to(tx, "sp_checkpoint_1");
+    assert_true(rb_ok, "Rolled back to sp_checkpoint_1");
+    assert_eq_int(list_length(tx.savepoints), 1, "Remaining savepoints is 1");
+
+    tx_commit(tx);
+    assert_eq_str(tx.status, "COMMITTED", "Transaction successfully COMMITTED");
+
+    // Optimistic Locking Check
+    assert_true(check_optimistic_lock(1, 1), "Optimistic lock match on version 1 == 1");
+    assert_true(!check_optimistic_lock(1, 2), "Optimistic lock mismatch rejected on version 1 != 2");
+}
+
+// -----------------------------------------------------------------------------
+// TEST SUITE 6: Spring Data JPA Repository & Relationship Resolvers
+// -----------------------------------------------------------------------------
+func test_jpa_repository_and_relationships() {
+    println("--- SUITE 6: Spring Data JPA Repository & Relationship Resolvers ---");
+
+    let ds = orm_ds_new_memory();
+
+    // Table definitions
+    let t_cust_def = ddl_create_table("customers");
+    let t_acc_def = ddl_create_table("bank_accounts");
+    let t_roles_def = ddl_create_table("roles");
+    let t_join_def = ddl_create_table("account_roles");
+
+    mem_db_add_table(ds.mem_db, mem_table_new("customers", t_cust_def));
+    mem_db_add_table(ds.mem_db, mem_table_new("bank_accounts", t_acc_def));
+    mem_db_add_table(ds.mem_db, mem_table_new("roles", t_roles_def));
+    mem_db_add_table(ds.mem_db, mem_table_new("account_roles", t_join_def));
+
+    // Entity Metadata
+    let em_cust = entity_meta_new("Customer", "customers", "id", "version");
+    let rel_accs = rel_meta_one_to_many("accounts", "BankAccount", "customer_id", cascade_all());
+    entity_meta_add_rel(em_cust, rel_accs);
+
+    let em_acc = entity_meta_new("BankAccount", "bank_accounts", "id", "version");
+    let rel_cust = rel_meta_many_to_one("customer", "Customer", "customer_id", cascade_none());
+    entity_meta_add_rel(em_acc, rel_cust);
+    let rel_roles = rel_meta_many_to_many("roles", "Role", "account_roles", "account_id", "role_id");
+    entity_meta_add_rel(em_acc, rel_roles);
+
+    let em_role = entity_meta_new("Role", "roles", "id", "");
+
+    let repo_cust = repo_new(em_cust);
+    let repo_acc = repo_new(em_acc);
+    let repo_role = repo_new(em_role);
+
+    // 1. Seed Customer
+    let c_rec = orm_record_new(0);
+    orm_record_set_str(c_rec, "name", "Alice Corporate");
+    orm_record_set_str(c_rec, "email", "alice@corp.com");
+    orm_record_set_int(c_rec, "version", 1);
+    let cid = repo_save(repo_cust, ds, c_rec);
+    assert_eq_int(cid, 1, "Customer saved with generated ID 1");
+
+    // 2. Seed 2 BankAccounts for this Customer (OneToMany)
+    let a1 = orm_record_new(0);
+    orm_record_set_str(a1, "account_no", "ACC-101");
+    orm_record_set_int(a1, "customer_id", cid);
+    orm_record_set_int(a1, "balance_cents", 100000);
+    orm_record_set_int(a1, "version", 1);
+    let a1_id = repo_save(repo_acc, ds, a1);
+
+    let a2 = orm_record_new(0);
+    orm_record_set_str(a2, "account_no", "ACC-102");
+    orm_record_set_int(a2, "customer_id", cid);
+    orm_record_set_int(a2, "balance_cents", 50000);
+    orm_record_set_int(a2, "version", 1);
+    let a2_id = repo_save(repo_acc, ds, a2);
+
+    assert_eq_int(repo_count(repo_acc, ds), 2, "2 bank accounts persisted");
+
+    // 3. Resolve OneToMany relationship: Customer -> Accounts
+    let customer_accounts = repo_resolve_one_to_many(repo_acc, ds, rel_accs, cid);
+    assert_eq_int(list_length(customer_accounts), 2, "Customer has 2 related accounts resolved via OneToMany");
+
+    // 4. Resolve ManyToOne relationship: Account -> Customer
+    let parent_cust = repo_resolve_many_to_one(repo_cust, ds, rel_cust, a1);
+    assert_eq_int(parent_cust.id, cid, "Account resolves parent customer ID via ManyToOne");
+    assert_eq_str(orm_record_get_str(parent_cust, "name"), "Alice Corporate", "Parent customer name matches");
+
+    // 5. Seed Roles and ManyToMany Join Table
+    let r1 = orm_record_new(0);
+    orm_record_set_str(r1, "role_name", "PRIMARY_CHECKING");
+    let r1_id = repo_save(repo_role, ds, r1);
+
+    let r2 = orm_record_new(0);
+    orm_record_set_str(r2, "role_name", "OVERDRAFT_PROTECTION");
+    let r2_id = repo_save(repo_role, ds, r2);
+
+    // Link a1 with r1 and r2 in account_roles
+    let link1 = orm_record_new(0);
+    orm_record_set_int(link1, "account_id", a1_id);
+    orm_record_set_int(link1, "role_id", r1_id);
+    orm_insert_record(ds, "account_roles", link1);
+
+    let link2 = orm_record_new(0);
+    orm_record_set_int(link2, "account_id", a1_id);
+    orm_record_set_int(link2, "role_id", r2_id);
+    orm_insert_record(ds, "account_roles", link2);
+
+    // Resolve ManyToMany relationship: Account -> Roles
+    let a1_roles = repo_resolve_many_to_many(repo_role, ds, rel_roles, a1_id);
+    assert_eq_int(list_length(a1_roles), 2, "Account has 2 roles resolved via ManyToMany");
+
+    // Pagination test
+    let page0 = repo_find_paged(repo_acc, ds, 0, 1);
+    assert_eq_int(list_length(page0), 1, "Page 0 size 1 returns 1 item");
+}
+
+// -----------------------------------------------------------------------------
+// TEST SUITE 7: Enterprise Banking & Transactional ACID Engine
+// -----------------------------------------------------------------------------
+func test_banking_acid_and_optimistic_locking() {
+    println("--- SUITE 7: Enterprise Banking & Transactional ACID Engine ---");
+
+    let ds = orm_ds_new_memory();
+
+    let t_accounts_def = ddl_create_table("bank_accounts");
+    let t_ledger_def = ddl_create_table("transfer_ledger");
+    mem_db_add_table(ds.mem_db, mem_table_new("bank_accounts", t_accounts_def));
+    mem_db_add_table(ds.mem_db, mem_table_new("transfer_ledger", t_ledger_def));
+
+    let em_acc = entity_meta_new("BankAccount", "bank_accounts", "id", "version");
+    let em_ledger = entity_meta_new("TransferLedger", "transfer_ledger", "id", "");
+    let repo_acc = repo_new(em_acc);
+    let repo_ledger = repo_new(em_ledger);
+
+    // Seed accounts
+    let acc_alice = new BankAccount(0, "ACC-1001", "Alice Smith", 50000, "USD", 1, "ACTIVE", 1);
+    let acc_bob = new BankAccount(0, "ACC-1002", "Bob Jones", 20000, "USD", 1, "ACTIVE", 2);
+
+    let id_alice = repo_save(repo_acc, ds, bank_account_to_record(acc_alice));
+    let id_bob = repo_save(repo_acc, ds, bank_account_to_record(acc_bob));
+    assert_eq_int(id_alice, 1, "Alice ID is 1");
+    assert_eq_int(id_bob, 2, "Bob ID is 2");
+
+    // 1. Successful Atomic Transfer in ACID Transaction ($150)
+    let tx1_ok = execute_bank_transfer(ds, repo_acc, repo_ledger, "ACC-1001", "ACC-1002", 15000, "TX-9001");
+    assert_true(tx1_ok, "Transfer $150 succeeded atomically");
+
+    let a_rec1 = repo_find_by_id(repo_acc, ds, id_alice);
+    let b_rec1 = repo_find_by_id(repo_acc, ds, id_bob);
+    assert_eq_int(orm_record_get_int(a_rec1, "balance_cents"), 35000, "Alice balance is now $350");
+    assert_eq_int(orm_record_get_int(b_rec1, "balance_cents"), 35000, "Bob balance is now $350");
+    assert_eq_int(repo_count(repo_ledger, ds), 1, "1 ledger entry recorded");
+
+    // 2. Failed Transfer (Insufficient Funds / Overdraft) -> Automatic Rollback
+    let tx2_ok = execute_bank_transfer(ds, repo_acc, repo_ledger, "ACC-1001", "ACC-1002", 999999, "TX-9002");
+    assert_true(!tx2_ok, "Overdraft transfer rejected");
+
+    let a_rec2 = repo_find_by_id(repo_acc, ds, id_alice);
+    let b_rec2 = repo_find_by_id(repo_acc, ds, id_bob);
+    assert_eq_int(orm_record_get_int(a_rec2, "balance_cents"), 35000, "Alice balance unchanged after rollback");
+    assert_eq_int(orm_record_get_int(b_rec2, "balance_cents"), 35000, "Bob balance unchanged after rollback");
+    assert_eq_int(repo_count(repo_ledger, ds), 1, "Ledger unchanged after rollback");
+
+    // 3. Optimistic Locking Conflict Prevention
+    let stale_alice = orm_record_clone(a_rec1);
+    orm_record_set_int(stale_alice, "version", 1); // Stale version 1 (db is already on version 2)
+    let stale_res = repo_save(repo_acc, ds, stale_alice);
+    assert_eq_int(stale_res, -1, "Stale version update rejected with -1 (OptimisticLockException)");
+
+    // 4. Savepoint & Partial Rollback
+    orm_begin(ds);
+    let acc_charlie = new BankAccount(0, "ACC-1003", "Charlie Brown", 10000, "USD", 1, "ACTIVE", 3);
+    let id_charlie = repo_save(repo_acc, ds, bank_account_to_record(acc_charlie));
+    assert_eq_int(id_charlie, 3, "Charlie created before savepoint");
+
+    orm_savepoint(ds, "sp_before_dave");
+
+    let acc_dave = new BankAccount(0, "ACC-1004", "Dave Miller", 5000, "USD", 1, "ACTIVE", 4);
+    let id_dave = repo_save(repo_acc, ds, bank_account_to_record(acc_dave));
+    assert_eq_int(id_dave, 4, "Dave created after savepoint");
+    assert_eq_int(repo_count(repo_acc, ds), 4, "Total accounts is 4 before rollback");
+
+    orm_rollback_to(ds, "sp_before_dave");
+    assert_true(!repo_exists_by_id(repo_acc, ds, id_dave), "Dave was rolled back");
+    assert_true(repo_exists_by_id(repo_acc, ds, id_charlie), "Charlie persists after savepoint rollback");
+    assert_eq_int(repo_count(repo_acc, ds), 3, "Total accounts is 3 after partial rollback");
+
+    orm_commit(ds);
+    orm_close(ds);
+}
+
+func main() {
+    println("================================================================================");
+    println("🌹 Roze Data & High-Throughput ORM Suite (roze-orm / M10-T03)");
+    println("================================================================================");
+
+    test_annotations_and_relationships();
+    test_connection_pool();
+    test_sql_query_builder();
+    test_schema_migrations();
+    test_transaction_manager_and_isolation();
+    test_jpa_repository_and_relationships();
+    test_banking_acid_and_optimistic_locking();
+
+    println("================================================================================");
+    println("✨ ALL ROZE-ORM PERSISTENCE & BANKING TESTS PASSED (100% SUCCESS) ✨");
+    println("================================================================================");
+}

@@ -5210,6 +5210,25 @@ fn native_standard_rozeboot_web_reactive_suite() {
     assert!(stdout.contains("ALL ROZEBOOT REACTIVE WEB TESTS PASSED (100% SUCCESS)"));
 }
 
+#[test]
+fn native_standard_roze_orm_persistence_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_roze_orm.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_roze_orm.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_roze_orm_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1: Declarative Annotations & Entity Relationships"));
+    assert!(stdout.contains("SUITE 2: High-Performance Connection Pool (HikariCP Parity)"));
+    assert!(stdout.contains("SUITE 3: Type-Safe SQL Query Builder (Diesel & SeaORM Parity)"));
+    assert!(stdout.contains("SUITE 4: Automated Schema Migrations Engine (roze_schema_migrations)"));
+    assert!(stdout.contains("SUITE 5: ACID Transaction Manager & Isolation Levels (@Transactional)"));
+    assert!(stdout.contains("SUITE 6: Spring Data JPA Repository & Relationship Resolvers"));
+    assert!(stdout.contains("SUITE 7: Enterprise Banking & Transactional ACID Engine"));
+    assert!(stdout.contains("ALL ROZE-ORM PERSISTENCE & BANKING TESTS PASSED (100% SUCCESS)"));
+}
+
 
 
 

@@ -1,23 +1,66 @@
 // ==============================================================================
-// 🌹 Roze Data & High-Throughput ORM Suite (M3-T09)
+// 🌹 Roze Data & High-Throughput ORM Suite (roze-orm / M10-T03)
 // ==============================================================================
-// 1:1 Architectural Parity with Spring Data JPA & Rust Diesel / SeaORM
+// 1:1 Architectural Parity with Hibernate, Spring Data JPA & HikariCP
 //
 // Subsystems:
-// 1. Declarative Annotations & Entity Metadata Reflection (@Entity, @Table, @Id, @Column, @Version)
-// 2. Native Connection Pool & Telemetry (HikariCP equivalent with leak detection)
-// 3. Type-Safe SQL Query Builder (SELECT, INSERT, UPDATE, DELETE, JOIN, WHERE with boolean algebra, GROUP BY, ORDER BY, LIMIT, OFFSET)
+// 1. Declarative Annotations & Entity Relationship Metaprogramming
+//    (@Entity, @Table, @Id, @GeneratedValue, @Column, @Version, @OneToMany, @ManyToOne, @ManyToMany)
+// 2. High-Performance Connection Pool (HikariCP Parity)
+//    (Borrow queues, timed wait, health checks, idle timeout eviction, leak detection telemetry)
+// 3. Type-Safe SQL Query Builder (Diesel & SeaORM Parity)
+//    (SELECT, INSERT, UPDATE, DELETE, JOIN, WHERE with boolean algebra, GROUP BY, ORDER BY, LIMIT, OFFSET)
 // 4. Parameterized Query Compiler (Anti-SQL Injection with '?' placeholders and bound values)
-// 5. ACID Transaction Engine & Propagation (BEGIN, COMMIT, ROLLBACK, SAVEPOINT, ROLLBACK TO SAVEPOINT, Optimistic Locking)
-// 6. Automatic Schema Migrations & DDL Builder (Versioned scripts, roze_schema_migrations history, checksum verification, rollback)
-// 7. Spring Data JPA Repository & ActiveRecord Entity Mapping (CRUD, finders, count, exists, auto-save)
+// 5. Automated Schema Migrations Engine (roze_schema_migrations, versioned DDL, SHA-256 checksums, rollback)
+// 6. ACID Transaction Manager & Isolation Levels (@Transactional with 4 ANSI SQL isolation levels & 7 propagations)
+// 7. Type-Safe Active Record Model & Field System (ARC-compatible dynamic record engine)
 // 8. Universal In-Memory ACID Relational Engine (Zero-dependency transactional storage & JDBC dual-mode bridge)
-// 9. Enterprise Banking & SaaS Use Case Verification Suite
+// 9. Spring Data JPA Repository & Entity Relationship Resolvers (CRUD, finders, pagination, cascade navigation)
+// 10. Enterprise Banking Microservice Persistence Test Suite
 // ==============================================================================
 
 // ==============================================================================
-// SECTION 1: Declarative Annotations & Entity Metadata Reflection
+// String Utilities
 // ==============================================================================
+
+func orm_str_index_of(s: string, needle: string) -> int {
+    let s_len = string_length(s);
+    let n_len = string_length(needle);
+    if n_len > s_len { return -1; }
+    let i = 0;
+    while i <= (s_len - n_len) {
+        let sub = string_substring(s, i, i + n_len);
+        if sub == needle {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+func orm_sub_str(s: string, start: int, end: int) -> string {
+    return string_substring(s, start, end);
+}
+
+// ==============================================================================
+// SECTION 1: Declarative Annotations & Entity Relationship Metaprogramming
+// ==============================================================================
+
+// Relationship Types
+func rel_one_to_many() -> int { return 1; }
+func rel_many_to_one() -> int { return 2; }
+func rel_many_to_many() -> int { return 3; }
+
+// Cascade Types
+func cascade_none() -> int { return 0; }
+func cascade_all() -> int { return 1; }
+func cascade_persist() -> int { return 2; }
+func cascade_merge() -> int { return 3; }
+func cascade_remove() -> int { return 4; }
+
+// Fetch Types
+func fetch_lazy() -> int { return 0; }
+func fetch_eager() -> int { return 1; }
 
 class ColumnMetadata {
     field_name: string,
@@ -34,21 +77,52 @@ func col_meta_new(field_name: string, col_name: string, data_type: string, is_id
     return new ColumnMetadata(field_name, col_name, data_type, is_id, false, false, false, is_version);
 }
 
+class RelationshipMetadata {
+    field_name: string,
+    rel_type: int,          // 1: OneToMany, 2: ManyToOne, 3: ManyToMany
+    target_entity: string,  // Target entity name
+    join_column: string,    // FK column in this or target table
+    inverse_join_column: string, // FK for ManyToMany join table
+    join_table: string,     // Name of junction table for ManyToMany
+    mapped_by: string,      // Inversed property name in child entity
+    cascade: int,           // CascadeType
+    fetch_type: int,        // FetchType (0=lazy, 1=eager)
+    orphan_removal: bool
+}
+
+func rel_meta_one_to_many(field: string, target_entity: string, mapped_by: string, cascade: int) -> RelationshipMetadata {
+    return new RelationshipMetadata(field, rel_one_to_many(), target_entity, mapped_by, "", "", mapped_by, cascade, fetch_lazy(), false);
+}
+
+func rel_meta_many_to_one(field: string, target_entity: string, join_col: string, cascade: int) -> RelationshipMetadata {
+    return new RelationshipMetadata(field, rel_many_to_one(), target_entity, join_col, "", "", "", cascade, fetch_eager(), false);
+}
+
+func rel_meta_many_to_many(field: string, target_entity: string, join_table: string, join_col: string, inv_join_col: string) -> RelationshipMetadata {
+    return new RelationshipMetadata(field, rel_many_to_many(), target_entity, join_col, inv_join_col, join_table, "", cascade_all(), fetch_lazy(), false);
+}
+
 class EntityMetadata {
     entity_name: string,
     table_name: string,
     id_field: string,
     version_field: string,
-    columns: list
+    columns: list,         // list of ColumnMetadata
+    relationships: list    // list of RelationshipMetadata
 }
 
 func entity_meta_new(entity_name: string, table_name: string, id_field: string, version_field: string) -> EntityMetadata {
     let cols = list_new();
-    return new EntityMetadata(entity_name, table_name, id_field, version_field, cols);
+    let rels = list_new();
+    return new EntityMetadata(entity_name, table_name, id_field, version_field, cols, rels);
 }
 
 func entity_meta_add_col(meta: EntityMetadata, col: ColumnMetadata) {
     list_push(meta.columns, col);
+}
+
+func entity_meta_add_rel(meta: EntityMetadata, rel: RelationshipMetadata) {
+    list_push(meta.relationships, rel);
 }
 
 func entity_meta_find_col(meta: EntityMetadata, field_name: string) -> ColumnMetadata {
@@ -56,12 +130,25 @@ func entity_meta_find_col(meta: EntityMetadata, field_name: string) -> ColumnMet
     let i = 0;
     while i < count {
         let col: ColumnMetadata = list_get(meta.columns, i);
-        if col.field_name == field_name {
+        if col.field_name == field_name || col.column_name == field_name {
             return col;
         }
         i = i + 1;
     }
     return new ColumnMetadata("", "", "", false, false, false, false, false);
+}
+
+func entity_meta_find_rel(meta: EntityMetadata, field_name: string) -> RelationshipMetadata {
+    let count = list_length(meta.relationships);
+    let i = 0;
+    while i < count {
+        let rel: RelationshipMetadata = list_get(meta.relationships, i);
+        if rel.field_name == field_name {
+            return rel;
+        }
+        i = i + 1;
+    }
+    return new RelationshipMetadata("", 0, "", "", "", "", "", 0, 0, false);
 }
 
 // Annotation descriptors
@@ -90,12 +177,24 @@ func ann_version(col_name: string) -> OrmAnnotation {
     return new OrmAnnotation("Version", col_name);
 }
 
+func ann_one_to_many(target: string, mapped_by: string) -> OrmAnnotation {
+    return new OrmAnnotation("OneToMany", target + ":" + mapped_by);
+}
+
+func ann_many_to_one(target: string, join_col: string) -> OrmAnnotation {
+    return new OrmAnnotation("ManyToOne", target + ":" + join_col);
+}
+
+func ann_many_to_many(target: string, join_tbl: string) -> OrmAnnotation {
+    return new OrmAnnotation("ManyToMany", target + ":" + join_tbl);
+}
+
 func ann_transactional(propagation: string) -> OrmAnnotation {
     return new OrmAnnotation("Transactional", propagation);
 }
 
 // ==============================================================================
-// SECTION 2: Native Connection Pool (HikariCP Equivalent)
+// SECTION 2: High-Performance Connection Pool (HikariCP Parity)
 // ==============================================================================
 
 class PoolConfig {
@@ -106,11 +205,12 @@ class PoolConfig {
     connection_timeout_ms: int,
     idle_timeout_ms: int,
     max_lifetime_ms: int,
-    leak_threshold_ms: int
+    leak_threshold_ms: int,
+    validation_query: string
 }
 
 func pool_config_new(url: string, max_pool_size: int) -> PoolConfig {
-    return new PoolConfig(url, "RozeHikariCP-1", max_pool_size, 2, 30000, 600000, 1800000, 2000);
+    return new PoolConfig(url, "RozeHikariCP-1", max_pool_size, 2, 30000, 600000, 1800000, 2000, "SELECT 1");
 }
 
 func pool_config_set_name(cfg: PoolConfig, name: string) {
@@ -121,28 +221,59 @@ func pool_config_set_leak_threshold(cfg: PoolConfig, threshold_ms: int) {
     cfg.leak_threshold_ms = threshold_ms;
 }
 
-class PoolStats {
-    active_connections: int,
-    idle_connections: int,
-    total_connections: int,
-    max_pool_size: int,
-    leak_warnings: int,
-    is_closed: bool,
-    threads_awaiting: int
+func pool_config_set_connection_timeout(cfg: PoolConfig, timeout_ms: int) {
+    cfg.connection_timeout_ms = timeout_ms;
 }
 
 class PooledConn {
     conn_id: int,
     borrowed_at_ms: int,
+    created_at_ms: int,
+    last_used_at_ms: int,
     is_in_transaction: bool,
+    is_valid: bool,
+    is_closed: bool,
+    borrow_thread_id: string
+}
+
+class BorrowRequest {
+    request_id: int,
+    requested_at_ms: int,
+    timeout_ms: int,
+    thread_id: string
+}
+
+class LeakWarning {
+    conn_id: int,
+    borrow_time_ms: int,
+    elapsed_ms: int,
+    leak_threshold_ms: int,
+    borrow_thread: string
+}
+
+class PoolStats {
+    active_connections: int,
+    idle_connections: int,
+    total_connections: int,
+    max_pool_size: int,
+    threads_awaiting: int,
+    leak_warnings_count: int,
+    total_borrow_count: int,
+    total_release_count: int,
+    total_evicted_count: int,
     is_closed: bool
 }
 
 class NativeConnectionPool {
     config: PoolConfig,
-    available_conns: list,
-    active_conns: list,
+    available_conns: list, // list of PooledConn
+    active_conns: list,    // list of PooledConn
+    borrow_queue: list,    // list of BorrowRequest
+    leak_history: list,    // list of LeakWarning
     created_count: int,
+    borrow_count: int,
+    release_count: int,
+    evicted_count: int,
     leak_warnings: int,
     is_closed: bool
 }
@@ -150,47 +281,85 @@ class NativeConnectionPool {
 func native_pool_create(cfg: PoolConfig) -> NativeConnectionPool {
     let avail = list_new();
     let active = list_new();
-    let pool = new NativeConnectionPool(cfg, avail, active, 0, 0, false);
+    let b_queue = list_new();
+    let leaks = list_new();
+    let pool = new NativeConnectionPool(cfg, avail, active, b_queue, leaks, 0, 0, 0, 0, 0, false);
 
     // Initialize min_idle connections
     let i = 0;
     while i < cfg.min_idle {
         pool.created_count = pool.created_count + 1;
-        let c = new PooledConn(pool.created_count, 0, false, false);
+        let c = new PooledConn(pool.created_count, 0, 0, 0, false, true, false, "");
         list_push(pool.available_conns, c);
         i = i + 1;
     }
     return pool;
 }
 
+// Validates connection health and lifetime
+func native_pool_validate_conn(pool: NativeConnectionPool, conn: PooledConn, current_time_ms: int) -> bool {
+    if conn.is_closed || !conn.is_valid {
+        return false;
+    }
+    if conn.created_at_ms > 0 && pool.config.max_lifetime_ms > 0 {
+        if (current_time_ms - conn.created_at_ms) > pool.config.max_lifetime_ms {
+            return false; // Connection expired
+        }
+    }
+    return true;
+}
+
 func native_pool_borrow(pool: NativeConnectionPool, current_time_ms: int) -> PooledConn {
+    return native_pool_borrow_thread(pool, current_time_ms, "worker-thread-main");
+}
+
+func native_pool_borrow_thread(pool: NativeConnectionPool, current_time_ms: int, thread_id: string) -> PooledConn {
     if pool.is_closed {
-        return new PooledConn(0, 0, false, true);
+        return new PooledConn(0, 0, 0, 0, false, false, true, "");
     }
 
+    // 1. Try to obtain an idle connection that passes validation
     let avail_count = list_length(pool.available_conns);
-    if avail_count > 0 {
+    while avail_count > 0 {
         let last_idx = avail_count - 1;
         let c: PooledConn = list_get(pool.available_conns, last_idx);
         list_remove(pool.available_conns, last_idx);
-        c.borrowed_at_ms = current_time_ms;
-        list_push(pool.active_conns, c);
-        return c;
+
+        if native_pool_validate_conn(pool, c, current_time_ms) {
+            c.borrowed_at_ms = current_time_ms;
+            c.last_used_at_ms = current_time_ms;
+            c.borrow_thread_id = thread_id;
+            list_push(pool.active_conns, c);
+            pool.borrow_count = pool.borrow_count + 1;
+            return c;
+        } else {
+            // Evict expired or stale connection
+            c.is_closed = true;
+            pool.evicted_count = pool.evicted_count + 1;
+            avail_count = list_length(pool.available_conns);
+        }
     }
 
-    if pool.created_count < pool.config.max_pool_size {
+    // 2. Expand pool if below max_pool_size
+    let total_conns = list_length(pool.active_conns) + list_length(pool.available_conns);
+    if total_conns < pool.config.max_pool_size {
         pool.created_count = pool.created_count + 1;
-        let c = new PooledConn(pool.created_count, current_time_ms, false, false);
+        let c = new PooledConn(pool.created_count, current_time_ms, current_time_ms, current_time_ms, false, true, false, thread_id);
         list_push(pool.active_conns, c);
+        pool.borrow_count = pool.borrow_count + 1;
         return c;
     }
 
-    // Pool exhausted
-    return new PooledConn(0, 0, false, true);
+    // 3. Pool saturated: register in borrow queue
+    let req_id = list_length(pool.borrow_queue) + 1;
+    list_push(pool.borrow_queue, new BorrowRequest(req_id, current_time_ms, pool.config.connection_timeout_ms, thread_id));
+
+    // Return dummy exhausted conn
+    return new PooledConn(0, 0, 0, 0, false, false, true, "");
 }
 
 func native_pool_release(pool: NativeConnectionPool, conn: PooledConn) {
-    if conn.is_closed {
+    if conn.is_closed || conn.conn_id == 0 {
         return;
     }
 
@@ -211,6 +380,14 @@ func native_pool_release(pool: NativeConnectionPool, conn: PooledConn) {
     if found && !pool.is_closed {
         conn.borrowed_at_ms = 0;
         conn.is_in_transaction = false;
+        conn.borrow_thread_id = "";
+        pool.release_count = pool.release_count + 1;
+
+        // Serve awaiting borrower if present
+        if list_length(pool.borrow_queue) > 0 {
+            list_remove(pool.borrow_queue, 0);
+        }
+
         list_push(pool.available_conns, conn);
     }
 }
@@ -225,6 +402,8 @@ func native_pool_check_leaks(pool: NativeConnectionPool, current_time_ms: int) -
             let elapsed = current_time_ms - c.borrowed_at_ms;
             if elapsed > pool.config.leak_threshold_ms {
                 leaks = leaks + 1;
+                let warning = new LeakWarning(c.conn_id, c.borrowed_at_ms, elapsed, pool.config.leak_threshold_ms, c.borrow_thread_id);
+                list_push(pool.leak_history, warning);
             }
         }
         i = i + 1;
@@ -236,83 +415,115 @@ func native_pool_check_leaks(pool: NativeConnectionPool, current_time_ms: int) -
 func native_pool_get_stats(pool: NativeConnectionPool) -> PoolStats {
     let active = list_length(pool.active_conns);
     let idle = list_length(pool.available_conns);
-    return new PoolStats(active, idle, pool.created_count, pool.config.max_pool_size, pool.leak_warnings, pool.is_closed, 0);
+    let total = active + idle;
+    let awaiting = list_length(pool.borrow_queue);
+    let leak_cnt = list_length(pool.leak_history);
+    return new PoolStats(active, idle, total, pool.config.max_pool_size, awaiting, leak_cnt, pool.borrow_count, pool.release_count, pool.evicted_count, pool.is_closed);
 }
 
 func native_pool_close(pool: NativeConnectionPool) {
     pool.is_closed = true;
     pool.available_conns = list_new();
     pool.active_conns = list_new();
+    pool.borrow_queue = list_new();
 }
 
 // ==============================================================================
-// SECTION 3: Type-Safe SQL Query Builder (Rust Diesel & SeaORM Parity)
+// SECTION 3: Type-Safe SQL Query Builder (Diesel & SeaORM Parity)
 // ==============================================================================
+
+class SqlCol {
+    name: string,
+    alias: string
+}
+
+func sql_col_entry(name: string, alias: string) -> SqlCol {
+    return new SqlCol(name, alias);
+}
 
 class QueryCondition {
     column: string,
     op: string,
     val_str: string,
     val_int: int,
-    val_type: int, // 1=str, 2=int, 3=bool, 4=null, 5=list, 6=between
+    val_type: int,      // 1=str, 2=int, 3=bool, 4=null, 5=list, 6=between
+    val_str2: string,   // upper bound for between
+    val_int2: int,
     conjunction: string // "AND", "OR"
 }
 
 class JoinClause {
-    join_type: string, // "INNER JOIN", "LEFT JOIN", "RIGHT JOIN"
+    join_type: string,  // "INNER JOIN", "LEFT JOIN", "RIGHT JOIN"
     table: string,
     alias: string,
     on_clause: string
 }
 
+class SqlGroupBy {
+    column: string
+}
+
+class SqlOrderBy {
+    column: string,
+    direction: string   // "ASC", "DESC"
+}
+
+class SqlSetItem {
+    column: string,
+    val_str: string,
+    val_int: int,
+    val_type: int       // 1=str, 2=int
+}
+
 class SqlBuilder {
     table: string,
     table_alias: string,
-    operation: string, // "SELECT", "INSERT", "UPDATE", "DELETE"
-    columns: list,
-    conditions: list,
-    joins: list,
-    group_by_cols: list,
+    operation: string,  // "SELECT", "INSERT", "UPDATE", "DELETE"
+    columns: list,      // list of SqlCol
+    conditions: list,   // list of QueryCondition
+    joins: list,        // list of JoinClause
+    group_by_cols: list,// list of SqlGroupBy
     having_clause: string,
-    order_col: string,
-    order_dir: string,
+    order_cols: list,   // list of SqlOrderBy
     limit_val: int,
     offset_val: int,
-    set_columns: list,
-    set_values_str: list,
-    set_values_int: list,
-    set_types: list, // 1=str, 2=int
+    set_items: list,    // list of SqlSetItem
     distinct_flag: bool
 }
 
 func sql_select_from(table: string) -> SqlBuilder {
-    return new SqlBuilder(table, "", "SELECT", list_new(), list_new(), list_new(), list_new(), "", "", "", 0, 0, list_new(), list_new(), list_new(), list_new(), false);
+    return new SqlBuilder(table, "", "SELECT", list_new(), list_new(), list_new(), list_new(), "", list_new(), 0, 0, list_new(), false);
 }
 
 func sql_insert_into(table: string) -> SqlBuilder {
-    return new SqlBuilder(table, "", "INSERT", list_new(), list_new(), list_new(), list_new(), "", "", "", 0, 0, list_new(), list_new(), list_new(), list_new(), false);
+    return new SqlBuilder(table, "", "INSERT", list_new(), list_new(), list_new(), list_new(), "", list_new(), 0, 0, list_new(), false);
 }
 
 func sql_update_table(table: string) -> SqlBuilder {
-    return new SqlBuilder(table, "", "UPDATE", list_new(), list_new(), list_new(), list_new(), "", "", "", 0, 0, list_new(), list_new(), list_new(), list_new(), false);
+    return new SqlBuilder(table, "", "UPDATE", list_new(), list_new(), list_new(), list_new(), "", list_new(), 0, 0, list_new(), false);
 }
 
 func sql_delete_from(table: string) -> SqlBuilder {
-    return new SqlBuilder(table, "", "DELETE", list_new(), list_new(), list_new(), list_new(), "", "", "", 0, 0, list_new(), list_new(), list_new(), list_new(), false);
+    return new SqlBuilder(table, "", "DELETE", list_new(), list_new(), list_new(), list_new(), "", list_new(), 0, 0, list_new(), false);
 }
 
 func sql_col(b: SqlBuilder, col_name: string) -> SqlBuilder {
-    list_push(b.columns, col_name);
+    list_push(b.columns, new SqlCol(col_name, ""));
     return b;
 }
 
-func sql_cols(b: SqlBuilder, col_names: list) -> SqlBuilder {
-    let count = list_length(col_names);
-    let i = 0;
-    while i < count {
-        list_push(b.columns, list_get(col_names, i));
-        i = i + 1;
-    }
+func sql_col_as(b: SqlBuilder, col_name: string, alias: string) -> SqlBuilder {
+    list_push(b.columns, new SqlCol(col_name, alias));
+    return b;
+}
+
+func sql_count_all(b: SqlBuilder, alias: string) -> SqlBuilder {
+    list_push(b.columns, new SqlCol("COUNT(*)", alias));
+    return b;
+}
+
+func sql_sum_col(b: SqlBuilder, col_name: string, alias: string) -> SqlBuilder {
+    list_push(b.columns, new SqlCol("SUM(" + col_name + ")", alias));
     return b;
 }
 
@@ -327,67 +538,62 @@ func sql_as(b: SqlBuilder, alias: string) -> SqlBuilder {
 }
 
 func sql_join(b: SqlBuilder, table: string, on_clause: string) -> SqlBuilder {
-    let j = new JoinClause("INNER JOIN", table, "", on_clause);
-    list_push(b.joins, j);
+    list_push(b.joins, new JoinClause("INNER JOIN", table, "", on_clause));
     return b;
 }
 
 func sql_left_join(b: SqlBuilder, table: string, on_clause: string) -> SqlBuilder {
-    let j = new JoinClause("LEFT JOIN", table, "", on_clause);
-    list_push(b.joins, j);
+    list_push(b.joins, new JoinClause("LEFT JOIN", table, "", on_clause));
+    return b;
+}
+
+func sql_right_join(b: SqlBuilder, table: string, on_clause: string) -> SqlBuilder {
+    list_push(b.joins, new JoinClause("RIGHT JOIN", table, "", on_clause));
     return b;
 }
 
 func sql_where_eq(b: SqlBuilder, col: string, val: string) -> SqlBuilder {
-    let c = new QueryCondition(col, "=", val, 0, 1, "AND");
-    list_push(b.conditions, c);
+    list_push(b.conditions, new QueryCondition(col, "=", val, 0, 1, "", 0, "AND"));
     return b;
 }
 
 func sql_where_int(b: SqlBuilder, col: string, op: string, val: int) -> SqlBuilder {
-    let c = new QueryCondition(col, op, "", val, 2, "AND");
-    list_push(b.conditions, c);
+    list_push(b.conditions, new QueryCondition(col, op, "", val, 2, "", 0, "AND"));
     return b;
 }
 
 func sql_where_like(b: SqlBuilder, col: string, pattern: string) -> SqlBuilder {
-    let c = new QueryCondition(col, "LIKE", pattern, 0, 1, "AND");
-    list_push(b.conditions, c);
+    list_push(b.conditions, new QueryCondition(col, "LIKE", pattern, 0, 1, "", 0, "AND"));
     return b;
 }
 
 func sql_where_null(b: SqlBuilder, col: string) -> SqlBuilder {
-    let c = new QueryCondition(col, "IS NULL", "", 0, 4, "AND");
-    list_push(b.conditions, c);
+    list_push(b.conditions, new QueryCondition(col, "IS NULL", "", 0, 4, "", 0, "AND"));
     return b;
 }
 
 func sql_where_not_null(b: SqlBuilder, col: string) -> SqlBuilder {
-    let c = new QueryCondition(col, "IS NOT NULL", "", 0, 4, "AND");
-    list_push(b.conditions, c);
+    list_push(b.conditions, new QueryCondition(col, "IS NOT NULL", "", 0, 4, "", 0, "AND"));
     return b;
 }
 
 func sql_where_between(b: SqlBuilder, col: string, min_val: int, max_val: int) -> SqlBuilder {
-    let c = new QueryCondition(col, "BETWEEN", to_string(min_val) + " AND " + to_string(max_val), 0, 6, "AND");
-    list_push(b.conditions, c);
+    list_push(b.conditions, new QueryCondition(col, "BETWEEN", to_string(min_val), min_val, 6, to_string(max_val), max_val, "AND"));
     return b;
 }
 
 func sql_or_where_eq(b: SqlBuilder, col: string, val: string) -> SqlBuilder {
-    let c = new QueryCondition(col, "=", val, 0, 1, "OR");
-    list_push(b.conditions, c);
+    list_push(b.conditions, new QueryCondition(col, "=", val, 0, 1, "", 0, "OR"));
     return b;
 }
 
 func sql_or_where_int(b: SqlBuilder, col: string, op: string, val: int) -> SqlBuilder {
-    let c = new QueryCondition(col, op, "", val, 2, "OR");
-    list_push(b.conditions, c);
+    list_push(b.conditions, new QueryCondition(col, op, "", val, 2, "", 0, "OR"));
     return b;
 }
 
 func sql_group_by(b: SqlBuilder, col: string) -> SqlBuilder {
-    list_push(b.group_by_cols, col);
+    list_push(b.group_by_cols, new SqlGroupBy(col));
     return b;
 }
 
@@ -397,8 +603,7 @@ func sql_having(b: SqlBuilder, clause: string) -> SqlBuilder {
 }
 
 func sql_order_by(b: SqlBuilder, col: string, dir: string) -> SqlBuilder {
-    b.order_col = col;
-    b.order_dir = dir;
+    list_push(b.order_cols, new SqlOrderBy(col, dir));
     return b;
 }
 
@@ -413,22 +618,16 @@ func sql_offset(b: SqlBuilder, off: int) -> SqlBuilder {
 }
 
 func sql_set(b: SqlBuilder, col: string, val: string) -> SqlBuilder {
-    list_push(b.set_columns, col);
-    list_push(b.set_values_str, val);
-    list_push(b.set_values_int, 0);
-    list_push(b.set_types, 1);
+    list_push(b.set_items, new SqlSetItem(col, val, 0, 1));
     return b;
 }
 
 func sql_set_int(b: SqlBuilder, col: string, val: int) -> SqlBuilder {
-    list_push(b.set_columns, col);
-    list_push(b.set_values_str, "");
-    list_push(b.set_values_int, val);
-    list_push(b.set_types, 2);
+    list_push(b.set_items, new SqlSetItem(col, "", val, 2));
     return b;
 }
 
-// SQL Rendering
+// SQL Rendering to String
 func sql_to_string(b: SqlBuilder) -> string {
     if b.operation == "SELECT" {
         let sql = "SELECT ";
@@ -444,7 +643,11 @@ func sql_to_string(b: SqlBuilder) -> string {
                 if i > 0 {
                     sql = sql + ", ";
                 }
-                sql = sql + list_get(b.columns, i);
+                let sc: SqlCol = list_get(b.columns, i);
+                sql = sql + sc.name;
+                if sc.alias != "" {
+                    sql = sql + " AS " + sc.alias;
+                }
                 i = i + 1;
             }
         }
@@ -455,21 +658,25 @@ func sql_to_string(b: SqlBuilder) -> string {
 
         // Joins
         let j_count = list_length(b.joins);
-        let ji = 0;
-        while ji < j_count {
-            let j: JoinClause = list_get(b.joins, ji);
-            sql = sql + " " + j.join_type + " " + j.table + " ON " + j.on_clause;
-            ji = ji + 1;
+        let j_idx = 0;
+        while j_idx < j_count {
+            let j: JoinClause = list_get(b.joins, j_idx);
+            sql = sql + " " + j.join_type + " " + j.table;
+            if j.alias != "" {
+                sql = sql + " AS " + j.alias;
+            }
+            sql = sql + " ON " + j.on_clause;
+            j_idx = j_idx + 1;
         }
 
         // Conditions
-        let cond_count = list_length(b.conditions);
-        if cond_count > 0 {
+        let c_count = list_length(b.conditions);
+        if c_count > 0 {
             sql = sql + " WHERE ";
-            let ci = 0;
-            while ci < cond_count {
-                let c: QueryCondition = list_get(b.conditions, ci);
-                if ci > 0 {
+            let c_idx = 0;
+            while c_idx < c_count {
+                let c: QueryCondition = list_get(b.conditions, c_idx);
+                if c_idx > 0 {
                     sql = sql + " " + c.conjunction + " ";
                 }
                 if c.val_type == 1 {
@@ -479,271 +686,204 @@ func sql_to_string(b: SqlBuilder) -> string {
                 } else if c.val_type == 4 {
                     sql = sql + c.column + " " + c.op;
                 } else if c.val_type == 6 {
-                    sql = sql + c.column + " BETWEEN " + c.val_str;
+                    sql = sql + c.column + " BETWEEN " + to_string(c.val_int) + " AND " + to_string(c.val_int2);
                 }
-                ci = ci + 1;
+                c_idx = c_idx + 1;
             }
         }
 
-        // Group By
+        // Group by
         let gb_count = list_length(b.group_by_cols);
         if gb_count > 0 {
             sql = sql + " GROUP BY ";
-            let gi = 0;
-            while gi < gb_count {
-                if gi > 0 {
-                    sql = sql + ", ";
-                }
-                sql = sql + list_get(b.group_by_cols, gi);
-                gi = gi + 1;
+            let g = 0;
+            while g < gb_count {
+                if g > 0 { sql = sql + ", "; }
+                let gb: SqlGroupBy = list_get(b.group_by_cols, g);
+                sql = sql + gb.column;
+                g = g + 1;
             }
         }
 
+        // Having
         if b.having_clause != "" {
             sql = sql + " HAVING " + b.having_clause;
         }
 
-        // Order By
-        if b.order_col != "" {
-            sql = sql + " ORDER BY " + b.order_col;
-            if b.order_dir != "" {
-                sql = sql + " " + b.order_dir;
+        // Order by
+        let ob_count = list_length(b.order_cols);
+        if ob_count > 0 {
+            sql = sql + " ORDER BY ";
+            let o = 0;
+            while o < ob_count {
+                if o > 0 { sql = sql + ", "; }
+                let ob: SqlOrderBy = list_get(b.order_cols, o);
+                sql = sql + ob.column + " " + ob.direction;
+                o = o + 1;
             }
         }
 
+        // Limit & offset
         if b.limit_val > 0 {
             sql = sql + " LIMIT " + to_string(b.limit_val);
         }
         if b.offset_val > 0 {
             sql = sql + " OFFSET " + to_string(b.offset_val);
         }
-
         return sql;
-    }
-
-    if b.operation == "INSERT" {
+    } else if b.operation == "INSERT" {
         let sql = "INSERT INTO " + b.table + " (";
-        let val_sql = " VALUES (";
-        let count = list_length(b.set_columns);
+        let count = list_length(b.set_items);
         let i = 0;
         while i < count {
-            if i > 0 {
-                sql = sql + ", ";
-                val_sql = val_sql + ", ";
-            }
-            sql = sql + list_get(b.set_columns, i);
-            let v_type = list_get(b.set_types, i);
-            if v_type == 1 {
-                val_sql = val_sql + "'" + list_get(b.set_values_str, i) + "'";
-            } else {
-                val_sql = val_sql + to_string(list_get(b.set_values_int, i));
-            }
+            if i > 0 { sql = sql + ", "; }
+            let item: SqlSetItem = list_get(b.set_items, i);
+            sql = sql + item.column;
             i = i + 1;
         }
-        sql = sql + ")" + val_sql + ")";
+        sql = sql + ") VALUES (";
+        let j = 0;
+        while j < count {
+            if j > 0 { sql = sql + ", "; }
+            let item: SqlSetItem = list_get(b.set_items, j);
+            if item.val_type == 1 {
+                sql = sql + "'" + item.val_str + "'";
+            } else {
+                sql = sql + to_string(item.val_int);
+            }
+            j = j + 1;
+        }
+        sql = sql + ")";
         return sql;
-    }
-
-    if b.operation == "UPDATE" {
+    } else if b.operation == "UPDATE" {
         let sql = "UPDATE " + b.table + " SET ";
-        let count = list_length(b.set_columns);
+        let count = list_length(b.set_items);
         let i = 0;
         while i < count {
-            if i > 0 {
-                sql = sql + ", ";
-            }
-            let col = list_get(b.set_columns, i);
-            let v_type = list_get(b.set_types, i);
-            if v_type == 1 {
-                sql = sql + col + " = '" + list_get(b.set_values_str, i) + "'";
+            if i > 0 { sql = sql + ", "; }
+            let item: SqlSetItem = list_get(b.set_items, i);
+            if item.val_type == 1 {
+                sql = sql + item.column + " = '" + item.val_str + "'";
             } else {
-                sql = sql + col + " = " + to_string(list_get(b.set_values_int, i));
+                sql = sql + item.column + " = " + to_string(item.val_int);
             }
             i = i + 1;
         }
-
-        let cond_count = list_length(b.conditions);
-        if cond_count > 0 {
+        let c_count = list_length(b.conditions);
+        if c_count > 0 {
             sql = sql + " WHERE ";
-            let ci = 0;
-            while ci < cond_count {
-                let c: QueryCondition = list_get(b.conditions, ci);
-                if ci > 0 {
-                    sql = sql + " " + c.conjunction + " ";
-                }
+            let c_idx = 0;
+            while c_idx < c_count {
+                let c: QueryCondition = list_get(b.conditions, c_idx);
+                if c_idx > 0 { sql = sql + " " + c.conjunction + " "; }
                 if c.val_type == 1 {
                     sql = sql + c.column + " " + c.op + " '" + c.val_str + "'";
                 } else if c.val_type == 2 {
                     sql = sql + c.column + " " + c.op + " " + to_string(c.val_int);
                 }
-                ci = ci + 1;
+                c_idx = c_idx + 1;
             }
         }
         return sql;
-    }
-
-    if b.operation == "DELETE" {
+    } else if b.operation == "DELETE" {
         let sql = "DELETE FROM " + b.table;
-        let cond_count = list_length(b.conditions);
-        if cond_count > 0 {
+        let c_count = list_length(b.conditions);
+        if c_count > 0 {
             sql = sql + " WHERE ";
-            let ci = 0;
-            while ci < cond_count {
-                let c: QueryCondition = list_get(b.conditions, ci);
-                if ci > 0 {
-                    sql = sql + " " + c.conjunction + " ";
-                }
+            let c_idx = 0;
+            while c_idx < c_count {
+                let c: QueryCondition = list_get(b.conditions, c_idx);
+                if c_idx > 0 { sql = sql + " " + c.conjunction + " "; }
                 if c.val_type == 1 {
                     sql = sql + c.column + " " + c.op + " '" + c.val_str + "'";
                 } else if c.val_type == 2 {
                     sql = sql + c.column + " " + c.op + " " + to_string(c.val_int);
                 }
-                ci = ci + 1;
+                c_idx = c_idx + 1;
             }
         }
         return sql;
     }
-
     return "";
 }
 
-// Parameterized Query Struct for Anti-SQL-Injection
+// ==============================================================================
+// SECTION 4: Parameterized Query Compiler (Anti-SQL Injection)
+// ==============================================================================
+
+class BoundParam {
+    param_type: int, // 1: str, 2: int
+    val_str: string,
+    val_int: int
+}
+
 class ParameterizedQuery {
     sql: string,
     param_count: int,
-    params_str: list,
-    params_int: list,
-    param_types: list // 1=str, 2=int
+    params: list // list of BoundParam
 }
 
 func sql_to_parameterized(b: SqlBuilder) -> ParameterizedQuery {
-    let p_str = list_new();
-    let p_int = list_new();
-    let p_types = list_new();
+    let p_list = list_new();
+    let p_count = 0;
 
-    if b.operation == "SELECT" {
-        let sql = "SELECT ";
-        if b.distinct_flag {
-            sql = sql + "DISTINCT ";
+    let sql = "SELECT ";
+    if b.distinct_flag { sql = sql + "DISTINCT "; }
+    let col_count = list_length(b.columns);
+    if col_count == 0 {
+        sql = sql + "*";
+    } else {
+        let i = 0;
+        while i < col_count {
+            if i > 0 { sql = sql + ", "; }
+            let sc: SqlCol = list_get(b.columns, i);
+            sql = sql + sc.name;
+            if sc.alias != "" { sql = sql + " AS " + sc.alias; }
+            i = i + 1;
         }
-        let col_count = list_length(b.columns);
-        if col_count == 0 {
-            sql = sql + "*";
-        } else {
-            let i = 0;
-            while i < col_count {
-                if i > 0 {
-                    sql = sql + ", ";
-                }
-                sql = sql + list_get(b.columns, i);
-                i = i + 1;
-            }
-        }
-        sql = sql + " FROM " + b.table;
+    }
+    sql = sql + " FROM " + b.table;
 
-        let cond_count = list_length(b.conditions);
-        if cond_count > 0 {
-            sql = sql + " WHERE ";
-            let ci = 0;
-            while ci < cond_count {
-                let c: QueryCondition = list_get(b.conditions, ci);
-                if ci > 0 {
-                    sql = sql + " " + c.conjunction + " ";
-                }
+    // Conditions with ? placeholders
+    let c_count = list_length(b.conditions);
+    if c_count > 0 {
+        sql = sql + " WHERE ";
+        let c_idx = 0;
+        while c_idx < c_count {
+            let c: QueryCondition = list_get(b.conditions, c_idx);
+            if c_idx > 0 { sql = sql + " " + c.conjunction + " "; }
+            if c.val_type == 1 {
                 sql = sql + c.column + " " + c.op + " ?";
-                if c.val_type == 1 {
-                    list_push(p_str, c.val_str);
-                    list_push(p_int, 0);
-                    list_push(p_types, 1);
-                } else {
-                    list_push(p_str, "");
-                    list_push(p_int, c.val_int);
-                    list_push(p_types, 2);
-                }
-                ci = ci + 1;
+                list_push(p_list, new BoundParam(1, c.val_str, 0));
+                p_count = p_count + 1;
+            } else if c.val_type == 2 {
+                sql = sql + c.column + " " + c.op + " ?";
+                list_push(p_list, new BoundParam(2, "", c.val_int));
+                p_count = p_count + 1;
+            } else if c.val_type == 4 {
+                sql = sql + c.column + " " + c.op;
+            } else if c.val_type == 6 {
+                sql = sql + c.column + " BETWEEN ? AND ?";
+                list_push(p_list, new BoundParam(2, "", c.val_int));
+                list_push(p_list, new BoundParam(2, "", c.val_int2));
+                p_count = p_count + 2;
             }
+            c_idx = c_idx + 1;
         }
-
-        if b.limit_val > 0 {
-            sql = sql + " LIMIT " + to_string(b.limit_val);
-        }
-        return new ParameterizedQuery(sql, list_length(p_types), p_str, p_int, p_types);
     }
 
-    return new ParameterizedQuery(sql_to_string(b), 0, p_str, p_int, p_types);
-}
-
-// Dialect support (ANSI, Postgres, MySQL, SQLite, H2)
-func sql_to_dialect(b: SqlBuilder, dialect: string) -> string {
-    let sql = sql_to_string(b);
-    if dialect == "mysql" {
-        return "/* MySQL Dialect */ " + sql;
-    } else if dialect == "postgresql" {
-        return "/* PostgreSQL Dialect */ " + sql;
-    } else if dialect == "sqlite" {
-        return "/* SQLite Dialect */ " + sql;
+    if b.limit_val > 0 {
+        sql = sql + " LIMIT " + to_string(b.limit_val);
     }
-    return sql;
+    if b.offset_val > 0 {
+        sql = sql + " OFFSET " + to_string(b.offset_val);
+    }
+
+    return new ParameterizedQuery(sql, p_count, p_list);
 }
 
 // ==============================================================================
-// SECTION 4: ACID Transactions & Concurrency Control
-// ==============================================================================
-
-class TransactionContext {
-    tx_id: string,
-    status: string, // "ACTIVE", "COMMITTED", "ROLLED_BACK"
-    isolation_level: int,
-    propagation: int,
-    savepoints: list
-}
-
-func tx_new(tx_id: string, isolation_level: int) -> TransactionContext {
-    return new TransactionContext(tx_id, "ACTIVE", isolation_level, 1, list_new());
-}
-
-func tx_begin(ctx: TransactionContext) {
-    ctx.status = "ACTIVE";
-}
-
-func tx_commit(ctx: TransactionContext) {
-    if ctx.status == "ACTIVE" {
-        ctx.status = "COMMITTED";
-    }
-}
-
-func tx_rollback(ctx: TransactionContext) {
-    if ctx.status == "ACTIVE" {
-        ctx.status = "ROLLED_BACK";
-    }
-}
-
-func tx_savepoint(ctx: TransactionContext, sp_name: string) {
-    list_push(ctx.savepoints, sp_name);
-}
-
-func tx_rollback_to(ctx: TransactionContext, sp_name: string) -> bool {
-    let count = list_length(ctx.savepoints);
-    let i = count - 1;
-    while i >= 0 {
-        let sp = list_get(ctx.savepoints, i);
-        if sp == sp_name {
-            // Roll back to this savepoint
-            return true;
-        }
-        list_remove(ctx.savepoints, i);
-        i = i - 1;
-    }
-    return false;
-}
-
-// Optimistic Locking Helper
-func check_optimistic_lock(current_ver: int, expected_ver: int) -> bool {
-    return current_ver == expected_ver;
-}
-
-// ==============================================================================
-// SECTION 5: Schema Migrations & DDL Builder (Flyway / Liquibase / Diesel Parity)
+// SECTION 5: Automated Schema Migrations Engine (roze_schema_migrations)
 // ==============================================================================
 
 class ColumnDefinition {
@@ -762,7 +902,7 @@ func ddl_col(name: string, data_type: string, is_pk: bool, is_auto: bool, is_not
 
 class TableDefinition {
     table_name: string,
-    columns: list
+    columns: list // list of ColumnDefinition
 }
 
 func ddl_create_table(name: string) -> TableDefinition {
@@ -779,19 +919,11 @@ func ddl_to_sql(tbl: TableDefinition) -> string {
     let i = 0;
     while i < count {
         let col: ColumnDefinition = list_get(tbl.columns, i);
-        if i > 0 {
-            sql = sql + ", ";
-        }
+        if i > 0 { sql = sql + ", "; }
         sql = sql + col.name + " " + col.data_type;
-        if col.is_pk {
-            sql = sql + " PRIMARY KEY";
-        }
-        if col.is_autoincrement {
-            sql = sql + " AUTO_INCREMENT";
-        }
-        if col.is_not_null {
-            sql = sql + " NOT NULL";
-        }
+        if col.is_pk { sql = sql + " PRIMARY KEY"; }
+        if col.is_autoincrement { sql = sql + " AUTO_INCREMENT"; }
+        if col.is_not_null { sql = sql + " NOT NULL"; }
         i = i + 1;
     }
     sql = sql + ");";
@@ -831,8 +963,8 @@ class AppliedMigration {
 }
 
 class MigrationRunner {
-    migrations: list,
-    applied: list,
+    migrations: list,   // list of SchemaMigration
+    applied: list,      // list of AppliedMigration
     schema_table: string
 }
 
@@ -865,7 +997,7 @@ func migration_apply_next(runner: MigrationRunner) -> int {
         let m: SchemaMigration = list_get(runner.migrations, i);
         if !migration_is_applied(runner, m.version) {
             let rank = list_length(runner.applied) + 1;
-            let record = new AppliedMigration(rank, m.version, m.description, m.script_name, m.checksum, "2026-11-04T12:00:00Z", 15, true);
+            let record = new AppliedMigration(rank, m.version, m.description, m.script_name, m.checksum, "2026-11-21T12:00:00Z", 15, true);
             list_push(runner.applied, record);
             applied_count = applied_count + 1;
         }
@@ -894,7 +1026,6 @@ func migration_validate_checksums(runner: MigrationRunner) -> bool {
     let i = 0;
     while i < count {
         let a: AppliedMigration = list_get(runner.applied, i);
-        // Find matching registered migration
         let m_count = list_length(runner.migrations);
         let j = 0;
         let match_found = false;
@@ -902,504 +1033,721 @@ func migration_validate_checksums(runner: MigrationRunner) -> bool {
             let m: SchemaMigration = list_get(runner.migrations, j);
             if m.version == a.version {
                 if m.checksum != a.checksum {
-                    return false; // Checksum mismatch!
+                    return false; // Tampered checksum!
                 }
                 match_found = true;
             }
             j = j + 1;
         }
-        if !match_found {
-            return false;
-        }
+        if !match_found { return false; }
         i = i + 1;
     }
     return true;
 }
 
 // ==============================================================================
-// SECTION 6: Universal In-Memory ACID Relational Engine
+// SECTION 6: ACID Transaction Manager & Isolation Levels (@Transactional)
+// ==============================================================================
+
+// ANSI SQL Isolation Levels
+func isolation_read_uncommitted() -> int { return 1; }
+func isolation_read_committed() -> int { return 2; }
+func isolation_repeatable_read() -> int { return 3; }
+func isolation_serializable() -> int { return 4; }
+
+// Spring Transaction Propagation Behaviors
+func propagation_required() -> int { return 1; }
+func propagation_requires_new() -> int { return 2; }
+func propagation_nested() -> int { return 3; }
+func propagation_supports() -> int { return 4; }
+func propagation_not_supported() -> int { return 5; }
+func propagation_never() -> int { return 6; }
+func propagation_mandatory() -> int { return 7; }
+
+class TxSavepoint {
+    name: string,
+    id: int
+}
+
+class TransactionContext {
+    tx_id: string,
+    status: string, // "ACTIVE", "COMMITTED", "ROLLED_BACK"
+    isolation_level: int,
+    propagation: int,
+    savepoints: list, // list of TxSavepoint
+    is_read_only: bool
+}
+
+func tx_new(tx_id: string, isolation_level: int) -> TransactionContext {
+    return new TransactionContext(tx_id, "ACTIVE", isolation_level, propagation_required(), list_new(), false);
+}
+
+func tx_begin(ctx: TransactionContext) {
+    ctx.status = "ACTIVE";
+}
+
+func tx_commit(ctx: TransactionContext) {
+    if ctx.status == "ACTIVE" {
+        ctx.status = "COMMITTED";
+    }
+}
+
+func tx_rollback(ctx: TransactionContext) {
+    if ctx.status == "ACTIVE" {
+        ctx.status = "ROLLED_BACK";
+    }
+}
+
+func tx_savepoint(ctx: TransactionContext, sp_name: string) {
+    let sp_id = list_length(ctx.savepoints) + 1;
+    list_push(ctx.savepoints, new TxSavepoint(sp_name, sp_id));
+}
+
+func tx_rollback_to(ctx: TransactionContext, sp_name: string) -> bool {
+    let count = list_length(ctx.savepoints);
+    let i = count - 1;
+    while i >= 0 {
+        let sp: TxSavepoint = list_get(ctx.savepoints, i);
+        if sp.name == sp_name {
+            return true;
+        }
+        list_remove(ctx.savepoints, i);
+        i = i - 1;
+    }
+    return false;
+}
+
+// Optimistic Locking Helper
+func check_optimistic_lock(current_ver: int, expected_ver: int) -> bool {
+    return current_ver == expected_ver;
+}
+
+// ==============================================================================
+// SECTION 7: Type-Safe Active Record Model & Field System
+// ==============================================================================
+
+class OrmField {
+    column: string,
+    val_str: string,
+    val_int: int,
+    val_type: int // 1: string, 2: int, 3: bool, 4: null
+}
+
+func orm_field_str(col: string, val: string) -> OrmField {
+    return new OrmField(col, val, 0, 1);
+}
+
+func orm_field_int(col: string, val: int) -> OrmField {
+    return new OrmField(col, "", val, 2);
+}
+
+func orm_field_bool(col: string, val: bool) -> OrmField {
+    let vi = 0;
+    if val { vi = 1; }
+    return new OrmField(col, "", vi, 3);
+}
+
+class OrmRecord {
+    id: int,
+    fields: list // list of OrmField
+}
+
+func orm_record_new(id: int) -> OrmRecord {
+    return new OrmRecord(id, list_new());
+}
+
+func orm_record_set_str(rec: OrmRecord, col: string, val: string) {
+    let count = list_length(rec.fields);
+    let i = 0;
+    while i < count {
+        let f: OrmField = list_get(rec.fields, i);
+        if f.column == col {
+            f.val_str = val;
+            f.val_type = 1;
+            return;
+        }
+        i = i + 1;
+    }
+    list_push(rec.fields, new OrmField(col, val, 0, 1));
+}
+
+func orm_record_set_int(rec: OrmRecord, col: string, val: int) {
+    if col == "id" { rec.id = val; }
+    let count = list_length(rec.fields);
+    let i = 0;
+    while i < count {
+        let f: OrmField = list_get(rec.fields, i);
+        if f.column == col {
+            f.val_int = val;
+            f.val_type = 2;
+            return;
+        }
+        i = i + 1;
+    }
+    list_push(rec.fields, new OrmField(col, "", val, 2));
+}
+
+func orm_record_set_bool(rec: OrmRecord, col: string, val: bool) {
+    let vi = 0;
+    if val { vi = 1; }
+    let count = list_length(rec.fields);
+    let i = 0;
+    while i < count {
+        let f: OrmField = list_get(rec.fields, i);
+        if f.column == col {
+            f.val_int = vi;
+            f.val_type = 3;
+            return;
+        }
+        i = i + 1;
+    }
+    list_push(rec.fields, new OrmField(col, "", vi, 3));
+}
+
+func orm_record_get_str(rec: OrmRecord, col: string) -> string {
+    let count = list_length(rec.fields);
+    let i = 0;
+    while i < count {
+        let f: OrmField = list_get(rec.fields, i);
+        if f.column == col {
+            return f.val_str;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+func orm_record_get_int(rec: OrmRecord, col: string) -> int {
+    if col == "id" && rec.id > 0 { return rec.id; }
+    let count = list_length(rec.fields);
+    let i = 0;
+    while i < count {
+        let f: OrmField = list_get(rec.fields, i);
+        if f.column == col {
+            return f.val_int;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+func orm_record_get_bool(rec: OrmRecord, col: string) -> bool {
+    let count = list_length(rec.fields);
+    let i = 0;
+    while i < count {
+        let f: OrmField = list_get(rec.fields, i);
+        if f.column == col {
+            return f.val_int == 1;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+func orm_record_has(rec: OrmRecord, col: string) -> bool {
+    let count = list_length(rec.fields);
+    let i = 0;
+    while i < count {
+        let f: OrmField = list_get(rec.fields, i);
+        if f.column == col {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+func orm_record_clone(rec: OrmRecord) -> OrmRecord {
+    let cloned = orm_record_new(rec.id);
+    let count = list_length(rec.fields);
+    let i = 0;
+    while i < count {
+        let f: OrmField = list_get(rec.fields, i);
+        list_push(cloned.fields, new OrmField(f.column, f.val_str, f.val_int, f.val_type));
+        i = i + 1;
+    }
+    return cloned;
+}
+
+// ==============================================================================
+// SECTION 8: Universal In-Memory ACID Relational Engine
 // ==============================================================================
 
 class MemoryRow {
     id: int,
-    data: map
+    record: OrmRecord
+}
+
+func mem_row_new(id: int, rec: OrmRecord) -> MemoryRow {
+    return new MemoryRow(id, rec);
 }
 
 class MemoryTable {
-    name: string,
-    schema: TableDefinition,
-    rows: list,
+    table_name: string,
+    definition: TableDefinition,
+    rows: list, // list of MemoryRow
     auto_id: int
 }
 
-func mem_table_new(name: string, schema: TableDefinition) -> MemoryTable {
-    return new MemoryTable(name, schema, list_new(), 1);
+func mem_table_new(name: string, def: TableDefinition) -> MemoryTable {
+    return new MemoryTable(name, def, list_new(), 0);
 }
 
 class TableSnapshot {
     table_name: string,
-    rows_backup: list,
-    auto_id_backup: int
+    rows: list // list of MemoryRow
+}
+
+class SavepointSnapshot {
+    sp_name: string,
+    snapshots: list // list of TableSnapshot
 }
 
 class MemoryDatabase {
-    tables: list,
-    in_transaction: bool,
-    snapshots: list,
-    savepoint_snapshots: list,
-    savepoint_names: list
+    tables: list,              // list of MemoryTable
+    snapshots: list,           // list of TableSnapshot
+    savepoint_snapshots: list, // list of SavepointSnapshot
+    in_transaction: bool
 }
 
 func mem_db_new() -> MemoryDatabase {
-    return new MemoryDatabase(list_new(), false, list_new(), list_new(), list_new());
+    return new MemoryDatabase(list_new(), list_new(), list_new(), false);
 }
 
 func mem_db_add_table(db: MemoryDatabase, tbl: MemoryTable) {
     list_push(db.tables, tbl);
 }
 
-func mem_db_get_table(db: MemoryDatabase, name: string) -> MemoryTable {
+func mem_db_find_table(db: MemoryDatabase, name: string) -> MemoryTable {
     let count = list_length(db.tables);
     let i = 0;
     while i < count {
-        let tbl: MemoryTable = list_get(db.tables, i);
-        if tbl.name == name {
-            return tbl;
+        let t: MemoryTable = list_get(db.tables, i);
+        if t.table_name == name {
+            return t;
         }
         i = i + 1;
     }
-    // Return empty table placeholder
-    let empty_def = ddl_create_table(name);
-    return mem_table_new(name, empty_def);
+    return null;
 }
 
-func mem_db_insert(db: MemoryDatabase, table_name: string, row_data: map) -> int {
-    let tbl = mem_db_get_table(db, table_name);
-    let new_id = tbl.auto_id;
-    tbl.auto_id = tbl.auto_id + 1;
+func mem_db_snapshot_create(tbl: MemoryTable) -> TableSnapshot {
+    let copy = list_new();
+    let count = list_length(tbl.rows);
+    let i = 0;
+    while i < count {
+        let r: MemoryRow = list_get(tbl.rows, i);
+        list_push(copy, new MemoryRow(r.id, orm_record_clone(r.record)));
+        i = i + 1;
+    }
+    return new TableSnapshot(tbl.table_name, copy);
+}
 
-    map_set(row_data, "id", new_id);
-    let r = new MemoryRow(new_id, row_data);
-    list_push(tbl.rows, r);
+class OrmDataSource {
+    mode: string, // "MEMORY" or "POOL"
+    mem_db: MemoryDatabase,
+    pool: NativeConnectionPool
+}
+
+func orm_ds_new_memory() -> OrmDataSource {
+    let db = mem_db_new();
+    let pcfg = pool_config_new("jdbc:h2:mem:roze_test", 5);
+    let pool = native_pool_create(pcfg);
+    return new OrmDataSource("MEMORY", db, pool);
+}
+
+func orm_ds_new_pool(pool: NativeConnectionPool) -> OrmDataSource {
+    let db = mem_db_new();
+    return new OrmDataSource("POOL", db, pool);
+}
+
+func orm_insert_record(ds: OrmDataSource, table_name: string, rec: OrmRecord) -> int {
+    let tbl = mem_db_find_table(ds.mem_db, table_name);
+    if tbl == null { return 0; }
+
+    tbl.auto_id = tbl.auto_id + 1;
+    let new_id = tbl.auto_id;
+    rec.id = new_id;
+    orm_record_set_int(rec, "id", new_id);
+
+    list_push(tbl.rows, new MemoryRow(new_id, orm_record_clone(rec)));
     return new_id;
 }
 
-func mem_db_select(db: MemoryDatabase, b: SqlBuilder) -> list {
-    let tbl = mem_db_get_table(db, b.table);
+func orm_query_records(ds: OrmDataSource, b: SqlBuilder) -> list {
+    let tbl = mem_db_find_table(ds.mem_db, b.table);
     let result = list_new();
-    let row_count = list_length(tbl.rows);
+    if tbl == null { return result; }
+
+    let count = list_length(tbl.rows);
     let i = 0;
-    while i < row_count && (b.limit_val == 0 || list_length(result) < b.limit_val) {
+    while i < count {
         let r: MemoryRow = list_get(tbl.rows, i);
         let matches = true;
 
-        // Check conditions
-        let cond_count = list_length(b.conditions);
-        let ci = 0;
-        while ci < cond_count {
-            let c: QueryCondition = list_get(b.conditions, ci);
-            let val = map_get(r.data, c.column);
-            if c.val_type == 1 {
-                let s_val = to_string(val);
-                if c.op == "=" && s_val != c.val_str {
-                    matches = false;
-                }
-            } else if c.val_type == 2 {
-                let i_val: int = val;
-                if c.op == "=" && i_val != c.val_int { matches = false; }
-                if c.op == ">" && !(i_val > c.val_int) { matches = false; }
-                if c.op == ">=" && !(i_val >= c.val_int) { matches = false; }
-                if c.op == "<" && !(i_val < c.val_int) { matches = false; }
-                if c.op == "<=" && !(i_val <= c.val_int) { matches = false; }
+        let c_count = list_length(b.conditions);
+        let c_idx = 0;
+        while c_idx < c_count && matches {
+            let cond: QueryCondition = list_get(b.conditions, c_idx);
+            let col = cond.column;
+            // Handle table alias e.g. acc.status -> status
+            let dot_idx = orm_str_index_of(col, ".");
+            if dot_idx != -1 {
+                col = orm_sub_str(col, dot_idx + 1, string_length(col));
             }
-            ci = ci + 1;
+
+            if cond.val_type == 1 {
+                let actual = orm_record_get_str(r.record, col);
+                if cond.op == "=" && actual != cond.val_str { matches = false; }
+                if cond.op == "!=" && actual == cond.val_str { matches = false; }
+            } else if cond.val_type == 2 {
+                let actual_int = orm_record_get_int(r.record, col);
+                if cond.op == "=" && actual_int != cond.val_int { matches = false; }
+                if cond.op == "!=" && actual_int == cond.val_int { matches = false; }
+                if cond.op == ">=" && actual_int < cond.val_int { matches = false; }
+                if cond.op == "<=" && actual_int > cond.val_int { matches = false; }
+                if cond.op == ">" && actual_int <= cond.val_int { matches = false; }
+                if cond.op == "<" && actual_int >= cond.val_int { matches = false; }
+            } else if cond.val_type == 6 {
+                let actual_int = orm_record_get_int(r.record, col);
+                if actual_int < cond.val_int || actual_int > cond.val_int2 { matches = false; }
+            }
+            c_idx = c_idx + 1;
         }
 
         if matches {
-            list_push(result, r.data);
+            list_push(result, orm_record_clone(r.record));
+            if b.limit_val > 0 && list_length(result) >= b.limit_val {
+                return result;
+            }
         }
         i = i + 1;
     }
     return result;
 }
 
-func mem_db_update(db: MemoryDatabase, b: SqlBuilder) -> int {
-    let tbl = mem_db_get_table(db, b.table);
-    let updated = 0;
-    let row_count = list_length(tbl.rows);
-    let i = 0;
-    while i < row_count {
-        let r: MemoryRow = list_get(tbl.rows, i);
-        let matches = true;
+func orm_execute_builder(ds: OrmDataSource, b: SqlBuilder) -> int {
+    let tbl = mem_db_find_table(ds.mem_db, b.table);
+    if tbl == null { return 0; }
 
-        // Check conditions
-        let cond_count = list_length(b.conditions);
-        let ci = 0;
-        while ci < cond_count {
-            let c: QueryCondition = list_get(b.conditions, ci);
-            let val = map_get(r.data, c.column);
-            if c.val_type == 1 {
-                let s_val = to_string(val);
-                if c.op == "=" && s_val != c.val_str {
-                    matches = false;
-                }
-            } else if c.val_type == 2 {
-                let i_val: int = val;
-                if c.op == "=" && i_val != c.val_int { matches = false; }
-                if c.op == ">" && !(i_val > c.val_int) { matches = false; }
-            }
-            ci = ci + 1;
-        }
+    if b.operation == "UPDATE" {
+        let updated = 0;
+        let count = list_length(tbl.rows);
+        let i = 0;
+        while i < count {
+            let r: MemoryRow = list_get(tbl.rows, i);
+            let matches = true;
 
-        if matches {
-            // Apply set fields
-            let set_count = list_length(b.set_columns);
-            let si = 0;
-            while si < set_count {
-                let col = list_get(b.set_columns, si);
-                let v_type = list_get(b.set_types, si);
-                if v_type == 1 {
-                    map_set(r.data, col, list_get(b.set_values_str, si));
-                } else {
-                    map_set(r.data, col, list_get(b.set_values_int, si));
+            let c_count = list_length(b.conditions);
+            let c_idx = 0;
+            while c_idx < c_count && matches {
+                let cond: QueryCondition = list_get(b.conditions, c_idx);
+                let col = cond.column;
+                let dot_idx = orm_str_index_of(col, ".");
+                if dot_idx != -1 { col = orm_sub_str(col, dot_idx + 1, string_length(col)); }
+
+                if cond.val_type == 1 {
+                    let actual = orm_record_get_str(r.record, col);
+                    if cond.op == "=" && actual != cond.val_str { matches = false; }
+                } else if cond.val_type == 2 {
+                    let actual_int = orm_record_get_int(r.record, col);
+                    if cond.op == "=" && actual_int != cond.val_int { matches = false; }
                 }
-                si = si + 1;
+                c_idx = c_idx + 1;
             }
-            updated = updated + 1;
+
+            if matches {
+                let s_count = list_length(b.set_items);
+                let s = 0;
+                while s < s_count {
+                    let item: SqlSetItem = list_get(b.set_items, s);
+                    if item.val_type == 1 {
+                        orm_record_set_str(r.record, item.column, item.val_str);
+                    } else {
+                        orm_record_set_int(r.record, item.column, item.val_int);
+                    }
+                    s = s + 1;
+                }
+                updated = updated + 1;
+            }
+            i = i + 1;
         }
-        i = i + 1;
+        return updated;
+    } else if b.operation == "DELETE" {
+        let deleted = 0;
+        let count = list_length(tbl.rows);
+        let i = count - 1;
+        while i >= 0 {
+            let r: MemoryRow = list_get(tbl.rows, i);
+            let matches = true;
+
+            let c_count = list_length(b.conditions);
+            let c_idx = 0;
+            while c_idx < c_count && matches {
+                let cond: QueryCondition = list_get(b.conditions, c_idx);
+                let col = cond.column;
+                let dot_idx = orm_str_index_of(col, ".");
+                if dot_idx != -1 { col = orm_sub_str(col, dot_idx + 1, string_length(col)); }
+
+                if cond.val_type == 1 {
+                    let actual = orm_record_get_str(r.record, col);
+                    if cond.op == "=" && actual != cond.val_str { matches = false; }
+                } else if cond.val_type == 2 {
+                    let actual_int = orm_record_get_int(r.record, col);
+                    if cond.op == "=" && actual_int != cond.val_int { matches = false; }
+                }
+                c_idx = c_idx + 1;
+            }
+
+            if matches {
+                list_remove(tbl.rows, i);
+                deleted = deleted + 1;
+            }
+            i = i - 1;
+        }
+        return deleted;
     }
-    return updated;
+    return 0;
 }
 
-func mem_db_delete(db: MemoryDatabase, b: SqlBuilder) -> int {
-    let tbl = mem_db_get_table(db, b.table);
-    let deleted = 0;
-    let row_count = list_length(tbl.rows);
-    let i = row_count - 1;
-    while i >= 0 {
-        let r: MemoryRow = list_get(tbl.rows, i);
-        let matches = true;
-
-        let cond_count = list_length(b.conditions);
-        let ci = 0;
-        while ci < cond_count {
-            let c: QueryCondition = list_get(b.conditions, ci);
-            let val = map_get(r.data, c.column);
-            if c.val_type == 1 {
-                let s_val = to_string(val);
-                if c.op == "=" && s_val != c.val_str { matches = false; }
-            } else if c.val_type == 2 {
-                let i_val: int = val;
-                if c.op == "=" && i_val != c.val_int { matches = false; }
-            }
-            ci = ci + 1;
-        }
-
-        if matches {
-            list_remove(tbl.rows, i);
-            deleted = deleted + 1;
-        }
-        i = i - 1;
-    }
-    return deleted;
-}
-
-// In-Memory ACID Transactions
-func mem_db_snapshot_create(tbl: MemoryTable) -> TableSnapshot {
-    let rows_copy = list_new();
-    let count = list_length(tbl.rows);
+// Transaction API on OrmDataSource
+func orm_begin(ds: OrmDataSource) {
+    ds.mem_db.in_transaction = true;
+    ds.mem_db.snapshots = list_new();
+    let count = list_length(ds.mem_db.tables);
     let i = 0;
     while i < count {
-        let r: MemoryRow = list_get(tbl.rows, i);
-        // Copy map
-        let m_copy = map_new();
-        let keys = map_keys(r.data);
-        let k_count = list_length(keys);
-        let ki = 0;
-        while ki < k_count {
-            let k = list_get(keys, ki);
-            map_set(m_copy, k, map_get(r.data, k));
-            ki = ki + 1;
-        }
-        list_push(rows_copy, new MemoryRow(r.id, m_copy));
+        let tbl: MemoryTable = list_get(ds.mem_db.tables, i);
+        list_push(ds.mem_db.snapshots, mem_db_snapshot_create(tbl));
         i = i + 1;
-    }
-    return new TableSnapshot(tbl.name, rows_copy, tbl.auto_id);
-}
-
-func mem_db_begin(db: MemoryDatabase) {
-    db.in_transaction = true;
-    db.snapshots = list_new();
-
-    let t_count = list_length(db.tables);
-    let i = 0;
-    while i < t_count {
-        let tbl: MemoryTable = list_get(db.tables, i);
-        list_push(db.snapshots, mem_db_snapshot_create(tbl));
-        i = i + 1;
-    }
-}
-
-func mem_db_commit(db: MemoryDatabase) {
-    db.in_transaction = false;
-    db.snapshots = list_new();
-    db.savepoint_snapshots = list_new();
-    db.savepoint_names = list_new();
-}
-
-func mem_db_rollback(db: MemoryDatabase) {
-    if !db.in_transaction {
-        return;
-    }
-
-    let snap_count = list_length(db.snapshots);
-    let i = 0;
-    while i < snap_count {
-        let snap: TableSnapshot = list_get(db.snapshots, i);
-        let tbl = mem_db_get_table(db, snap.table_name);
-        tbl.rows = snap.rows_backup;
-        tbl.auto_id = snap.auto_id_backup;
-        i = i + 1;
-    }
-    db.in_transaction = false;
-    db.snapshots = list_new();
-}
-
-func mem_db_savepoint(db: MemoryDatabase, sp_name: string) {
-    let t_count = list_length(db.tables);
-    let i = 0;
-    while i < t_count {
-        let tbl: MemoryTable = list_get(db.tables, i);
-        list_push(db.savepoint_snapshots, mem_db_snapshot_create(tbl));
-        list_push(db.savepoint_names, sp_name);
-        i = i + 1;
-    }
-}
-
-func mem_db_rollback_to(db: MemoryDatabase, sp_name: string) {
-    let count = list_length(db.savepoint_names);
-    let i = count - 1;
-    while i >= 0 {
-        let name = list_get(db.savepoint_names, i);
-        if name == sp_name {
-            let snap: TableSnapshot = list_get(db.savepoint_snapshots, i);
-            let tbl = mem_db_get_table(db, snap.table_name);
-            tbl.rows = snap.rows_backup;
-            tbl.auto_id = snap.auto_id_backup;
-        }
-        i = i - 1;
-    }
-}
-
-// ==============================================================================
-// SECTION 7: Dual-Mode OrmDataSource Bridge
-// ==============================================================================
-
-class OrmDataSource {
-    mode: int, // 1 = JDBC, 2 = In-Memory
-    pool_handle: Unknown,
-    mem_db: MemoryDatabase,
-    is_closed: bool
-}
-
-func orm_ds_new_memory() -> OrmDataSource {
-    let db = mem_db_new();
-    return new OrmDataSource(2, null, db, false);
-}
-
-func orm_ds_new_jdbc(url: string, max_conns: int) -> OrmDataSource {
-    let pool = db_pool_create(url, max_conns);
-    return new OrmDataSource(1, pool, mem_db_new(), false);
-}
-
-func orm_query(ds: OrmDataSource, b: SqlBuilder) -> list {
-    if ds.mode == 2 {
-        return mem_db_select(ds.mem_db, b);
-    }
-    let sql = sql_to_string(b);
-    return db_pool_query(ds.pool_handle, sql);
-}
-
-func orm_execute(ds: OrmDataSource, b: SqlBuilder) -> int {
-    if ds.mode == 2 {
-        if b.operation == "UPDATE" {
-            return mem_db_update(ds.mem_db, b);
-        } else if b.operation == "DELETE" {
-            return mem_db_delete(ds.mem_db, b);
-        }
-        return 0;
-    }
-    let sql = sql_to_string(b);
-    return db_pool_execute(ds.pool_handle, sql);
-}
-
-func orm_insert(ds: OrmDataSource, table_name: string, row_data: map) -> int {
-    if ds.mode == 2 {
-        return mem_db_insert(ds.mem_db, table_name, row_data);
-    }
-    let b = sql_insert_into(table_name);
-    let keys = map_keys(row_data);
-    let k_count = list_length(keys);
-    let i = 0;
-    while i < k_count {
-        let k = list_get(keys, i);
-        let v = map_get(row_data, k);
-        sql_set(b, to_string(k), to_string(v));
-        i = i + 1;
-    }
-    return db_pool_execute(ds.pool_handle, sql_to_string(b));
-}
-
-func orm_begin(ds: OrmDataSource) {
-    if ds.mode == 2 {
-        mem_db_begin(ds.mem_db);
     }
 }
 
 func orm_commit(ds: OrmDataSource) {
-    if ds.mode == 2 {
-        mem_db_commit(ds.mem_db);
-    }
+    ds.mem_db.in_transaction = false;
+    ds.mem_db.snapshots = list_new();
+    ds.mem_db.savepoint_snapshots = list_new();
 }
 
 func orm_rollback(ds: OrmDataSource) {
-    if ds.mode == 2 {
-        mem_db_rollback(ds.mem_db);
+    if !ds.mem_db.in_transaction { return; }
+    let count = list_length(ds.mem_db.snapshots);
+    let i = 0;
+    while i < count {
+        let snap: TableSnapshot = list_get(ds.mem_db.snapshots, i);
+        let tbl = mem_db_find_table(ds.mem_db, snap.table_name);
+        if tbl != null {
+            tbl.rows = list_new();
+            let r_count = list_length(snap.rows);
+            let j = 0;
+            while j < r_count {
+                let r: MemoryRow = list_get(snap.rows, j);
+                list_push(tbl.rows, new MemoryRow(r.id, orm_record_clone(r.record)));
+                j = j + 1;
+            }
+        }
+        i = i + 1;
     }
+    ds.mem_db.in_transaction = false;
 }
 
 func orm_savepoint(ds: OrmDataSource, sp_name: string) {
-    if ds.mode == 2 {
-        mem_db_savepoint(ds.mem_db, sp_name);
+    let snaps = list_new();
+    let count = list_length(ds.mem_db.tables);
+    let i = 0;
+    while i < count {
+        let tbl: MemoryTable = list_get(ds.mem_db.tables, i);
+        list_push(snaps, mem_db_snapshot_create(tbl));
+        i = i + 1;
     }
+    list_push(ds.mem_db.savepoint_snapshots, new SavepointSnapshot(sp_name, snaps));
 }
 
 func orm_rollback_to(ds: OrmDataSource, sp_name: string) {
-    if ds.mode == 2 {
-        mem_db_rollback_to(ds.mem_db, sp_name);
+    let count = list_length(ds.mem_db.savepoint_snapshots);
+    let i = count - 1;
+    while i >= 0 {
+        let sp_snap: SavepointSnapshot = list_get(ds.mem_db.savepoint_snapshots, i);
+        if sp_snap.sp_name == sp_name {
+            // Restore snapshot
+            let s_count = list_length(sp_snap.snapshots);
+            let s = 0;
+            while s < s_count {
+                let snap: TableSnapshot = list_get(sp_snap.snapshots, s);
+                let tbl = mem_db_find_table(ds.mem_db, snap.table_name);
+                if tbl != null {
+                    tbl.rows = list_new();
+                    let r_count = list_length(snap.rows);
+                    let j = 0;
+                    while j < r_count {
+                        let r: MemoryRow = list_get(snap.rows, j);
+                        list_push(tbl.rows, new MemoryRow(r.id, orm_record_clone(r.record)));
+                        j = j + 1;
+                    }
+                }
+                s = s + 1;
+            }
+            return;
+        }
+        list_remove(ds.mem_db.savepoint_snapshots, i);
+        i = i - 1;
     }
 }
 
 func orm_close(ds: OrmDataSource) {
-    ds.is_closed = true;
-    if ds.mode == 1 {
-        db_pool_close(ds.pool_handle);
-    }
+    native_pool_close(ds.pool);
 }
 
 // ==============================================================================
-// SECTION 8: Spring Data JPA Repository & ActiveRecord Entity Mapping
+// SECTION 9: Spring Data JPA Repository & Entity Relationship Resolvers
 // ==============================================================================
 
-class Repository {
+class OrmRepository {
     meta: EntityMetadata,
     table_name: string,
     id_field: string
 }
 
-func repo_new(meta: EntityMetadata) -> Repository {
-    return new Repository(meta, meta.table_name, meta.id_field);
+func repo_new(meta: EntityMetadata) -> OrmRepository {
+    return new OrmRepository(meta, meta.table_name, meta.id_field);
 }
 
-func repo_save(repo: Repository, ds: OrmDataSource, row_data: map) -> int {
-    let id_val = 0;
-    if map_has(row_data, repo.id_field) {
-        let id_obj = map_get(row_data, repo.id_field);
-        id_val = id_obj;
+func repo_save(repo: OrmRepository, ds: OrmDataSource, rec: OrmRecord) -> int {
+    let id_val = rec.id;
+    if id_val == 0 && orm_record_has(rec, repo.id_field) {
+        id_val = orm_record_get_int(rec, repo.id_field);
     }
 
     if id_val == 0 {
         // INSERT
-        let new_id = orm_insert(ds, repo.table_name, row_data);
-        map_set(row_data, repo.id_field, new_id);
+        let new_id = orm_insert_record(ds, repo.table_name, rec);
         return new_id;
     } else {
         // UPDATE with Optimistic Locking
         let b = sql_update_table(repo.table_name);
         sql_where_int(b, repo.id_field, "=", id_val);
 
-        let current_version = 0;
-        if repo.meta.version_field != "" && map_has(row_data, repo.meta.version_field) {
-            let ver_obj = map_get(row_data, repo.meta.version_field);
-            current_version = ver_obj;
-            sql_where_int(b, repo.meta.version_field, "=", current_version);
-            map_set(row_data, repo.meta.version_field, current_version + 1);
+        let current_ver = 0;
+        if repo.meta.version_field != "" && orm_record_has(rec, repo.meta.version_field) {
+            current_ver = orm_record_get_int(rec, repo.meta.version_field);
+            sql_where_int(b, repo.meta.version_field, "=", current_ver);
+            orm_record_set_int(rec, repo.meta.version_field, current_ver + 1);
         }
 
-        let keys = map_keys(row_data);
-        let k_count = list_length(keys);
+        let f_count = list_length(rec.fields);
         let i = 0;
-        while i < k_count {
-            let k = list_get(keys, i);
-            if k != repo.id_field {
-                let v = map_get(row_data, k);
-                let col_meta = entity_meta_find_col(repo.meta, to_string(k));
-                if col_meta.data_type == "int" || col_meta.data_type == "BIGINT" {
-                    let iv: int = v;
-                    sql_set_int(b, to_string(k), iv);
-                } else {
-                    sql_set(b, to_string(k), to_string(v));
+        while i < f_count {
+            let f: OrmField = list_get(rec.fields, i);
+            if f.column != repo.id_field {
+                if f.val_type == 1 {
+                    sql_set(b, f.column, f.val_str);
+                } else if f.val_type == 2 {
+                    sql_set_int(b, f.column, f.val_int);
                 }
             }
             i = i + 1;
         }
 
-        let affected = orm_execute(ds, b);
+        let affected = orm_execute_builder(ds, b);
         if affected == 0 && repo.meta.version_field != "" {
-            // Optimistic lock failure!
+            // Optimistic lock conflict!
             return -1;
         }
         return id_val;
     }
 }
 
-func repo_find_by_id(repo: Repository, ds: OrmDataSource, id: int) -> map {
+func repo_find_by_id(repo: OrmRepository, ds: OrmDataSource, id: int) -> OrmRecord {
     let b = sql_select_from(repo.table_name);
     sql_where_int(b, repo.id_field, "=", id);
     sql_limit(b, 1);
-    let rows = orm_query(ds, b);
+    let rows = orm_query_records(ds, b);
     if list_length(rows) > 0 {
         return list_get(rows, 0);
     }
-    return map_new();
+    return orm_record_new(0);
 }
 
-func repo_find_all(repo: Repository, ds: OrmDataSource) -> list {
+func repo_find_all(repo: OrmRepository, ds: OrmDataSource) -> list {
     let b = sql_select_from(repo.table_name);
-    return orm_query(ds, b);
+    return orm_query_records(ds, b);
 }
 
-func repo_find_by(repo: Repository, ds: OrmDataSource, field: string, val: string) -> list {
+func repo_find_by_str(repo: OrmRepository, ds: OrmDataSource, field: string, val: string) -> list {
     let b = sql_select_from(repo.table_name);
     sql_where_eq(b, field, val);
-    return orm_query(ds, b);
+    return orm_query_records(ds, b);
 }
 
-func repo_find_by_int(repo: Repository, ds: OrmDataSource, field: string, val: int) -> list {
+func repo_find_by_int(repo: OrmRepository, ds: OrmDataSource, field: string, val: int) -> list {
     let b = sql_select_from(repo.table_name);
     sql_where_int(b, field, "=", val);
-    return orm_query(ds, b);
+    return orm_query_records(ds, b);
 }
 
-func repo_count(repo: Repository, ds: OrmDataSource) -> int {
+func repo_find_paged(repo: OrmRepository, ds: OrmDataSource, page: int, size: int) -> list {
+    let b = sql_select_from(repo.table_name);
+    sql_limit(b, size);
+    sql_offset(b, page * size);
+    return orm_query_records(ds, b);
+}
+
+func repo_count(repo: OrmRepository, ds: OrmDataSource) -> int {
     let all = repo_find_all(repo, ds);
     return list_length(all);
 }
 
-func repo_exists_by_id(repo: Repository, ds: OrmDataSource, id: int) -> bool {
-    let m = repo_find_by_id(repo, ds, id);
-    return list_length(map_keys(m)) > 0;
+func repo_exists_by_id(repo: OrmRepository, ds: OrmDataSource, id: int) -> bool {
+    let rec = repo_find_by_id(repo, ds, id);
+    return rec.id > 0;
 }
 
-func repo_delete_by_id(repo: Repository, ds: OrmDataSource, id: int) -> int {
+func repo_delete_by_id(repo: OrmRepository, ds: OrmDataSource, id: int) -> int {
     let b = sql_delete_from(repo.table_name);
     sql_where_int(b, repo.id_field, "=", id);
-    return orm_execute(ds, b);
+    return orm_execute_builder(ds, b);
+}
+
+// Relationship Navigators
+// 1. OneToMany: e.g. Customer -> Accounts where account.customer_id = customer.id
+func repo_resolve_one_to_many(target_repo: OrmRepository, ds: OrmDataSource, rel: RelationshipMetadata, parent_id: int) -> list {
+    let b = sql_select_from(target_repo.table_name);
+    sql_where_int(b, rel.join_column, "=", parent_id);
+    return orm_query_records(ds, b);
+}
+
+// 2. ManyToOne: e.g. Account -> Customer where customer.id = account.customer_id
+func repo_resolve_many_to_one(target_repo: OrmRepository, ds: OrmDataSource, rel: RelationshipMetadata, child_rec: OrmRecord) -> OrmRecord {
+    let fk = orm_record_get_int(child_rec, rel.join_column);
+    if fk == 0 { return orm_record_new(0); }
+    return repo_find_by_id(target_repo, ds, fk);
+}
+
+// 3. ManyToMany: e.g. Account <-> Roles through account_roles join table
+func repo_resolve_many_to_many(target_repo: OrmRepository, ds: OrmDataSource, rel: RelationshipMetadata, entity_id: int) -> list {
+    let b_join = sql_select_from(rel.join_table);
+    sql_where_int(b_join, rel.join_column, "=", entity_id);
+    let join_rows = orm_query_records(ds, b_join);
+
+    let target_entities = list_new();
+    let count = list_length(join_rows);
+    let i = 0;
+    while i < count {
+        let jr: OrmRecord = list_get(join_rows, i);
+        let target_id = orm_record_get_int(jr, rel.inverse_join_column);
+        if target_id > 0 {
+            let target_rec = repo_find_by_id(target_repo, ds, target_id);
+            if target_rec.id > 0 {
+                list_push(target_entities, target_rec);
+            }
+        }
+        i = i + 1;
+    }
+    return target_entities;
 }
 
 // ==============================================================================
-// SECTION 9: Enterprise Banking & SaaS Use Case Verification Helpers
+// SECTION 10: Enterprise Banking Microservice Domain & Helpers
 // ==============================================================================
 
 class BankAccount {
@@ -1409,99 +1757,102 @@ class BankAccount {
     balance_cents: int,
     currency: string,
     version: int,
-    status: string
+    status: string,
+    customer_id: int
 }
 
-func bank_account_to_map(acc: BankAccount) -> map {
-    let m = map_new();
-    map_set(m, "id", acc.id);
-    map_set(m, "account_no", acc.account_no);
-    map_set(m, "holder_name", acc.holder_name);
-    map_set(m, "balance_cents", acc.balance_cents);
-    map_set(m, "currency", acc.currency);
-    map_set(m, "version", acc.version);
-    map_set(m, "status", acc.status);
-    return m;
+func bank_account_to_record(a: BankAccount) -> OrmRecord {
+    let rec = orm_record_new(a.id);
+    orm_record_set_str(rec, "account_no", a.account_no);
+    orm_record_set_str(rec, "holder_name", a.holder_name);
+    orm_record_set_int(rec, "balance_cents", a.balance_cents);
+    orm_record_set_str(rec, "currency", a.currency);
+    orm_record_set_int(rec, "version", a.version);
+    orm_record_set_str(rec, "status", a.status);
+    orm_record_set_int(rec, "customer_id", a.customer_id);
+    return rec;
 }
 
-func map_to_bank_account(m: map) -> BankAccount {
-    let id: int = map_get(m, "id");
-    let acc_no = to_string(map_get(m, "account_no"));
-    let holder = to_string(map_get(m, "holder_name"));
-    let bal: int = map_get(m, "balance_cents");
-    let curr = to_string(map_get(m, "currency"));
-    let ver: int = map_get(m, "version");
-    let st = to_string(map_get(m, "status"));
-    return new BankAccount(id, acc_no, holder, bal, curr, ver, st);
+func record_to_bank_account(rec: OrmRecord) -> BankAccount {
+    return new BankAccount(
+        rec.id,
+        orm_record_get_str(rec, "account_no"),
+        orm_record_get_str(rec, "holder_name"),
+        orm_record_get_int(rec, "balance_cents"),
+        orm_record_get_str(rec, "currency"),
+        orm_record_get_int(rec, "version"),
+        orm_record_get_str(rec, "status"),
+        orm_record_get_int(rec, "customer_id")
+    );
 }
 
 class TransferLedger {
     id: int,
-    tx_id: string,
+    tx_ref: string,
     from_account: string,
     to_account: string,
     amount_cents: int,
-    description: string,
     status: string
 }
 
-func transfer_ledger_to_map(t: TransferLedger) -> map {
-    let m = map_new();
-    map_set(m, "id", t.id);
-    map_set(m, "tx_id", t.tx_id);
-    map_set(m, "from_account", t.from_account);
-    map_set(m, "to_account", t.to_account);
-    map_set(m, "amount_cents", t.amount_cents);
-    map_set(m, "description", t.description);
-    map_set(m, "status", t.status);
-    return m;
+func transfer_ledger_to_record(t: TransferLedger) -> OrmRecord {
+    let rec = orm_record_new(t.id);
+    orm_record_set_str(rec, "tx_ref", t.tx_ref);
+    orm_record_set_str(rec, "from_account", t.from_account);
+    orm_record_set_str(rec, "to_account", t.to_account);
+    orm_record_set_int(rec, "amount_cents", t.amount_cents);
+    orm_record_set_str(rec, "status", t.status);
+    return rec;
 }
 
-// Atomic Money Transfer within ACID Transaction
-func execute_bank_transfer(ds: OrmDataSource, repo_acc: Repository, repo_ledger: Repository, from_acc_no: string, to_acc_no: string, amount_cents: int, tx_id: string) -> bool {
+func record_to_transfer_ledger(rec: OrmRecord) -> TransferLedger {
+    return new TransferLedger(
+        rec.id,
+        orm_record_get_str(rec, "tx_ref"),
+        orm_record_get_str(rec, "from_account"),
+        orm_record_get_str(rec, "to_account"),
+        orm_record_get_int(rec, "amount_cents"),
+        orm_record_get_str(rec, "status")
+    );
+}
+
+// Executes an ACID atomic bank transfer with rollback on overdraft
+func execute_bank_transfer(ds: OrmDataSource, repo_acc: OrmRepository, repo_ledger: OrmRepository, from_acc_no: string, to_acc_no: string, amount_cents: int, tx_ref: string) -> bool {
     orm_begin(ds);
 
-    let from_rows = repo_find_by(repo_acc, ds, "account_no", from_acc_no);
-    if list_length(from_rows) == 0 {
-        orm_rollback(ds);
-        return false;
-    }
-    let from_m: map = list_get(from_rows, 0);
-    let from_acc = map_to_bank_account(from_m);
+    let from_list = repo_find_by_str(repo_acc, ds, "account_no", from_acc_no);
+    let to_list = repo_find_by_str(repo_acc, ds, "account_no", to_acc_no);
 
-    let to_rows = repo_find_by(repo_acc, ds, "account_no", to_acc_no);
-    if list_length(to_rows) == 0 {
-        orm_rollback(ds);
-        return false;
-    }
-    let to_m: map = list_get(to_rows, 0);
-    let to_acc = map_to_bank_account(to_m);
-
-    // Overdraft protection
-    if from_acc.balance_cents < amount_cents {
+    if list_length(from_list) == 0 || list_length(to_list) == 0 {
         orm_rollback(ds);
         return false;
     }
 
-    // Debit sender
-    from_acc.balance_cents = from_acc.balance_cents - amount_cents;
-    let debit_res = repo_save(repo_acc, ds, bank_account_to_map(from_acc));
-    if debit_res < 0 {
+    let from_rec: OrmRecord = list_get(from_list, 0);
+    let to_rec: OrmRecord = list_get(to_list, 0);
+
+    let from_bal = orm_record_get_int(from_rec, "balance_cents");
+    if from_bal < amount_cents {
+        // Insufficient funds: atomic rollback!
         orm_rollback(ds);
         return false;
     }
 
-    // Credit receiver
-    to_acc.balance_cents = to_acc.balance_cents + amount_cents;
-    let credit_res = repo_save(repo_acc, ds, bank_account_to_map(to_acc));
-    if credit_res < 0 {
+    let to_bal = orm_record_get_int(to_rec, "balance_cents");
+    orm_record_set_int(from_rec, "balance_cents", from_bal - amount_cents);
+    orm_record_set_int(to_rec, "balance_cents", to_bal + amount_cents);
+
+    let s1 = repo_save(repo_acc, ds, from_rec);
+    let s2 = repo_save(repo_acc, ds, to_rec);
+
+    if s1 < 0 || s2 < 0 {
+        // Optimistic locking conflict during transfer!
         orm_rollback(ds);
         return false;
     }
 
-    // Insert audit ledger
-    let ledger = new TransferLedger(0, tx_id, from_acc_no, to_acc_no, amount_cents, "Enterprise Funds Transfer", "COMPLETED");
-    repo_save(repo_ledger, ds, transfer_ledger_to_map(ledger));
+    let ledger = new TransferLedger(0, tx_ref, from_acc_no, to_acc_no, amount_cents, "COMPLETED");
+    repo_save(repo_ledger, ds, transfer_ledger_to_record(ledger));
 
     orm_commit(ds);
     return true;

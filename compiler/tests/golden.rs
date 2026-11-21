@@ -2440,6 +2440,20 @@ fn standard_rozeboot_web_reactive_suite() {
     assert!(stdout.contains("ALL ROZEBOOT REACTIVE WEB TESTS PASSED (100% SUCCESS)"));
 }
 
+#[test]
+fn standard_roze_orm_persistence_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_roze_orm.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1: Declarative Annotations & Entity Relationships"));
+    assert!(stdout.contains("SUITE 2: High-Performance Connection Pool (HikariCP Parity)"));
+    assert!(stdout.contains("SUITE 3: Type-Safe SQL Query Builder (Diesel & SeaORM Parity)"));
+    assert!(stdout.contains("SUITE 4: Automated Schema Migrations Engine (roze_schema_migrations)"));
+    assert!(stdout.contains("SUITE 5: ACID Transaction Manager & Isolation Levels (@Transactional)"));
+    assert!(stdout.contains("SUITE 6: Spring Data JPA Repository & Relationship Resolvers"));
+    assert!(stdout.contains("SUITE 7: Enterprise Banking & Transactional ACID Engine"));
+    assert!(stdout.contains("ALL ROZE-ORM PERSISTENCE & BANKING TESTS PASSED (100% SUCCESS)"));
+}
+
 
 
 

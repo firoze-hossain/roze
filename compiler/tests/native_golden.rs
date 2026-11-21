@@ -5150,6 +5150,26 @@ fn native_sec_memory_forensics_suite() {
     assert!(stdout.contains("Memory forensics golden verification passed!"));
 }
 
+#[test]
+fn native_milestone_gate_m9_cybersecurity_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("milestone_gate_m9_cybersecurity.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read milestone_gate_m9_cybersecurity.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("milestone_gate_m9_cybersecurity_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: roze.sec.raw low-level frame engine and promiscuous ring buffers"));
+    assert!(stdout.contains("SUITE 2 PASSED: roze.sec.packet Scapy-class stacking DSL and RFC checksum recalculation"));
+    assert!(stdout.contains("SUITE 3 PASSED: roze.sec.scan stealth reconnaissance, OS fingerprinting, and 100,000 pps benchmark"));
+    assert!(stdout.contains("SUITE 4 PASSED: roze.sec.disasm multi-architecture instruction decoders and symbol demangling"));
+    assert!(stdout.contains("SUITE 5 PASSED: roze.sec.forensics defensive heap forensics, 100% RWX and ROP detection rate"));
+    assert!(stdout.contains("SUITE 6 PASSED: roze.sec sandboxed CPU emulation with zero host execution"));
+    assert!(stdout.contains("SUITE 7 PASSED: Full-spectrum cybersecurity convergence and telemetry export"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Milestone Gate M9 Full-Spectrum Cybersecurity Engine 100% OPERATIONAL"));
+}
+
+
 
 
 

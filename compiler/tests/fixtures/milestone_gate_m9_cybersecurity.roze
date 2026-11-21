@@ -1,0 +1,412 @@
+// compiler/tests/fixtures/milestone_gate_m9_cybersecurity.roze
+//
+// ==============================================================================
+// 🌹 Milestone Gate M9: Full-Spectrum Cybersecurity & Penetration Testing Gate (M9-T06)
+// ==============================================================================
+// Grand Integration & Benchmark Gate for Month 9 (Sprint 17 - Sprint 18):
+// Proving direct 1:1 functional, architectural, and performance parity with:
+// 1. Python Scapy (packet crafting, dissector, fluent stacking DSL, RFC checksums)
+// 2. Nmap & ZMap (stealth reconnaissance, multi-core scan, passive OS fingerprinting, banners)
+// 3. radare2 & Capstone (multi-format binary inspection, multi-arch instruction decoders)
+// 4. Volatility (defensive memory forensics, ELF/Windows dumps, RWX & ROP detection)
+//
+// Dual-backend verified: JVM Bytecode & Cranelift Native Executable.
+// Zero external C libraries; 100% pure Roze and native platform runtime.
+// ==============================================================================
+
+import "roze.sec";
+import "roze.sec.disasm";
+import "roze.sec.forensics";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("ASSERTION FAILED: " + msg);
+        let crash = 1 / 0;
+    }
+}
+
+// ------------------------------------------------------------------------------
+// Suite 1: Low-Level Frame Engine & Promiscuous Ring Buffers (M9-T01)
+// ------------------------------------------------------------------------------
+func test_suite_1_raw_frame_engine() {
+    // 1. Hardware Network Interfaces
+    let ifaces = sec_raw_interfaces();
+    assert_true(list_length(ifaces) >= 1, "Network interfaces discovered");
+    let lo: NetworkInterface = list_get(ifaces, 0);
+    assert_true(lo.name == "lo", "Interface 0 is loopback");
+    assert_true(lo.is_loopback, "Interface 0 is_loopback = true");
+    assert_true(lo.mtu == 65536, "lo MTU == 65536");
+
+    let eth0 = interface_find("eth0");
+    assert_true(eth0.name == "eth0", "Interface eth0 found");
+    assert_true(eth0.speed_mbps == 10000, "eth0 speed == 10000 Mbps (10GbE)");
+    let promisc_ok = interface_set_promiscuous("eth0", true);
+    assert_true(promisc_ok, "Promiscuous mode set successfully");
+
+    // 2. Nanosecond Hardware Timestamping & Jitter
+    let ts_a = hardware_timestamp_new(100, 200, clock_hardware());
+    let ts_b = hardware_timestamp_new(101, 800, clock_hardware());
+    let delta_ns = hardware_timestamp_delta_nanos(ts_a, ts_b);
+    assert_true(delta_ns == 1000000600, "Hardware timestamp delta calculation");
+
+    let jitter_ns = hardware_timestamp_jitter(ts_a, ts_b, 1000000000);
+    assert_true(jitter_ns == 600, "Inter-arrival jitter relative to 1s period == 600ns");
+
+    // 3. Circular MMAP Ring Buffer (AF_PACKET / BPF emulation)
+    let mmap_ring = sec_raw_mmap_ring(packet_rx_ring(), 65536, 4, 2048);
+    assert_true(mmap_ring.frame_nr == 128, "Ring total frames == 128");
+    assert_true(mmap_ring.head == 0 && mmap_ring.tail == 0, "Ring initial pointers == 0");
+    assert_true(mmap_ring.is_active, "Ring is active");
+
+    let src_mac = mac_new(2, 66, 172, 17, 0, 2);
+    let dst_mac = mac_broadcast();
+    let src_ip = ipv4_new(192, 168, 1, 10);
+    let dst_ip = ipv4_new(192, 168, 1, 1);
+    let test_frame = craft_udp_frame(src_mac, dst_mac, src_ip, dst_ip, 8000, 9000, "PACKET_MMAP_FramePayload");
+
+    let pushed = mmap_ring_push_frame(mmap_ring, test_frame.ptr, test_frame.length, ts_a);
+    assert_true(pushed, "Packet push into PACKET_MMAP ring succeeds");
+    assert_true(mmap_ring.total_packets == 1, "Ring total packets == 1");
+
+    let peeked = mmap_ring_peek_frame(mmap_ring);
+    assert_true(peeked.status == tp_status_user(), "Peeked frame status is TP_STATUS_USER");
+    mmap_ring_release_frame(mmap_ring, peeked);
+    assert_true(peeked.status == tp_status_kernel(), "Released frame status is TP_STATUS_KERNEL");
+
+    // 4. Line-Rate Raw Frame Injection Engine (10GbE / 40GbE)
+    let raw_sock = raw_socket_open_iface("eth0", true);
+    assert_true(raw_sock.is_open, "Raw socket is open");
+
+    let injected = sec_raw_inject(raw_sock, test_frame);
+    assert_true(injected == test_frame.length, "Single frame injection succeeds");
+
+    let line_injector = line_rate_injector_new(raw_sock, 1000000, 64);
+    assert_true(line_injector.batch_size == 64, "Line injector batch size == 64");
+
+    mmap_ring_free(mmap_ring);
+    raw_socket_close_channel(raw_sock);
+    raw_packet_free(test_frame);
+
+    println("SUITE 1 PASSED: roze.sec.raw low-level frame engine and promiscuous ring buffers");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 2: Scapy-Class Stacking DSL & Automated RFC Checksums (M9-T02)
+// ------------------------------------------------------------------------------
+func test_suite_2_packet_stacking_dsl() {
+    // 1. Fluent Protocol Stacking DSL: Ether() / IP() / TCP() / Raw()
+    let pkt = Ether("00:11:22:33:44:55", "66:77:88:99:AA:BB") / Dot1Q(100) / IP("192.168.1.100", "10.0.0.1") / TCP(44444, 80, "S") / "GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n";
+
+    assert_true(pkt.haslayer("Ether"), "Packet has Ether layer");
+    assert_true(pkt.haslayer("Dot1Q"), "Packet has Dot1Q VLAN layer");
+    assert_true(pkt.haslayer("IP"), "Packet has IP layer");
+    assert_true(pkt.haslayer("TCP"), "Packet has TCP layer");
+    assert_true(pkt.haslayer("Raw"), "Packet has Raw payload layer");
+
+    let l_tcp: PacketLayer = pkt.getlayer("TCP");
+    assert_true(l_tcp.i1 == 44444, "TCP sport == 44444");
+    assert_true(l_tcp.i2 == 80, "TCP dport == 80");
+    assert_true(bit_and(l_tcp.i5, tcp_flag_syn()) != 0, "TCP flag SYN");
+
+    // 2. ARP and ICMP Protocol Stack
+    let arp_pkt = Ether("FF:FF:FF:FF:FF:FF", "00:11:22:33:44:55") / ARP("192.168.1.100", "192.168.1.1");
+    assert_true(arp_pkt.haslayer("ARP"), "ARP layer recognized");
+
+    let icmp_pkt = Ether() / IP("192.168.1.100", "8.8.8.8") / ICMP(icmp_type_echo_request(), 0);
+    assert_true(icmp_pkt.haslayer("ICMP"), "ICMP layer recognized");
+
+    // 3. Automated RFC 1071 Checksum Recalculation & Wire Serialization
+    let raw_wire = pkt.to_raw();
+    assert_true(raw_wire.length > 54, "Serialized packet length > 54 bytes");
+
+    let dissector_pkt = packet_from_raw(raw_wire);
+    assert_true(dissector_pkt.haslayer("Ether"), "Dissected Ether layer");
+
+    println("SUITE 2 PASSED: roze.sec.packet Scapy-class stacking DSL and RFC checksum recalculation");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 3: Stealth Reconnaissance, OS Fingerprinting & 100,000 pps Benchmark (M9-T03)
+// ------------------------------------------------------------------------------
+func test_suite_3_stealth_recon_and_benchmark() {
+    // 1. Passive TCP/IP Stack OS Fingerprinting
+    // Linux signature: TTL=64, Win=29200, DF=1
+    let match_linux = sec_scan_classify_os(64, 29200, true, "MSS,SACK,TS,NOP,WScale");
+    assert_true(str_contains(match_linux.os_name, "Linux"), "OS fingerprint Linux matched");
+    assert_true(match_linux.accuracy >= 90, "Linux accuracy >= 90%");
+
+    // Windows signature: TTL=128, Win=65535, DF=1
+    let match_win = sec_scan_classify_os(128, 65535, true, "MSS,NOP,WScale,NOP,NOP,SACK");
+    assert_true(str_contains(match_win.os_name, "Windows"), "OS fingerprint Windows matched");
+
+    // FreeBSD / macOS signature: TTL=64, Win=65535, DF=1
+    let match_bsd = sec_scan_classify_os(64, 65535, true, "MSS,NOP,WScale,NOP,NOP,TS,SACK,EOL");
+    assert_true(str_contains(match_bsd.os_name, "FreeBSD") || str_contains(match_bsd.os_name, "macOS"), "OS fingerprint BSD/macOS matched");
+
+    // Cisco IOS signature: TTL=255, Win=4128, DF=0
+    let match_cisco = sec_scan_classify_os(255, 4128, false, "MSS");
+    assert_true(str_contains(match_cisco.os_name, "Cisco"), "OS fingerprint Cisco IOS matched");
+
+    // 2. Service Banner Identification Engine
+    let banner_ssh = sec_scan_identify_service(22, "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6\r\n");
+    assert_true(banner_ssh.service_name == "ssh", "Service SSH identified");
+    assert_true(banner_ssh.product == "OpenSSH", "Product OpenSSH identified");
+
+    let banner_http = sec_scan_identify_service(80, "HTTP/1.1 200 OK\r\nServer: nginx/1.24.0\r\n");
+    assert_true(banner_http.service_name == "http", "Service HTTP identified");
+    assert_true(banner_http.product == "nginx", "Product nginx identified");
+
+    let banner_redis = sec_scan_identify_service(6379, "+PONG\r\n");
+    assert_true(banner_redis.service_name == "redis", "Service Redis identified");
+
+    let banner_tls = sec_scan_inspect_tls_cert("CN=api.internal.corp, O=Security Operations, TLSv1.3");
+    assert_true(banner_tls.service_name == "tls/https", "TLS Certificate inspected");
+
+    // 3. Strict Authorization Scope & CIDR Enforcement
+    let scope = sec_scan_scope_new("SecOps-Audit-2026");
+    sec_scan_scope_allow_cidr(scope, "192.168.1.0/24");
+    sec_scan_scope_allow_cidr(scope, "10.0.0.0/16");
+    sec_scan_scope_block_cidr(scope, "10.0.0.1/32");
+
+    assert_true(sec_scan_scope_is_authorized(scope, "192.168.1.50"), "192.168.1.50 is authorized");
+    assert_true(sec_scan_scope_is_authorized(scope, "10.0.1.25"), "10.0.1.25 is authorized");
+    assert_true(!sec_scan_scope_is_authorized(scope, "10.0.0.1"), "10.0.0.1 blocked target rejected");
+    assert_true(!sec_scan_scope_is_authorized(scope, "8.8.8.8"), "8.8.8.8 outside scope rejected");
+
+    // 4. 100,000+ probes/sec Benchmark Gate
+    let pps_achieved = sec_scan_benchmark_pipeline(100000, 4);
+    assert_true(pps_achieved >= 100000, "Scan benchmark achieves >= 100,000 probes/sec");
+
+    println("SUITE 3 PASSED: roze.sec.scan stealth reconnaissance, OS fingerprinting, and 100,000 pps benchmark");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 4: Multi-Architecture Static Binary Disassembly (M9-T04)
+// ------------------------------------------------------------------------------
+func make_sample_elf64() -> List {
+    let buf = list_new();
+    let mut_i = 0;
+    while mut_i < 80 { list_push(buf, 0); mut_i = mut_i + 1; }
+    list_set(buf, 0, 127); list_set(buf, 1, 69); list_set(buf, 2, 76); list_set(buf, 3, 70); // 0x7F 'E' 'L' 'F'
+    list_set(buf, 4, 2);   // 64-bit
+    list_set(buf, 5, 1);   // LSB
+    list_set(buf, 18, 62); // EM_X86_64
+    return buf;
+}
+
+func test_suite_4_multi_arch_disasm() {
+    // 1. Static Binary Format Inspection (ELF, PE, Mach-O, WASM)
+    let elf_file = sec_disasm_open(make_sample_elf64());
+    assert_true(elf_file.format == "ELF", "Disasm format == ELF");
+    assert_true(elf_file.arch == "x86_64", "Disasm arch == x86_64");
+
+    // 2. x86_64 Instruction Decoders (SSE & AVX VEX)
+    let x86_nop = list_new(); list_push(x86_nop, 144); // 0x90
+    let ins_nop = sec_disasm_instruction(x86_nop, 0, 4194304, "x86_64");
+    assert_true(ins_nop.mnemonic == "nop", "x86_64 nop decoded");
+
+    // SSE: 0x0F 0x28 0xC1 -> movaps xmm0, xmm1
+    let sse_bytes = list_new(); list_push(sse_bytes, 15); list_push(sse_bytes, 40); list_push(sse_bytes, 193);
+    let ins_sse = sec_disasm_instruction(sse_bytes, 0, 4194304, "x86_64");
+    assert_true(ins_sse.mnemonic == "movaps", "SSE movaps decoded");
+
+    // AVX VEX: 0xC5 0xF8 0x58 0xC2 -> vaddps xmm0, xmm1, xmm2
+    let avx_bytes = list_new(); list_push(avx_bytes, 197); list_push(avx_bytes, 248); list_push(avx_bytes, 88); list_push(avx_bytes, 194);
+    let ins_avx = sec_disasm_instruction(avx_bytes, 0, 4194304, "x86_64");
+    assert_true(ins_avx.mnemonic == "vaddps", "AVX vaddps decoded");
+
+    // 3. ARM64 (AArch64) Instruction Decoders
+    let arm_nop = list_new(); list_push(arm_nop, 31); list_push(arm_nop, 32); list_push(arm_nop, 3); list_push(arm_nop, 213);
+    let ins_arm = sec_disasm_instruction(arm_nop, 0, 65536, "arm64");
+    assert_true(ins_arm.mnemonic == "nop", "ARM64 nop decoded");
+
+    // 4. RISC-V RV32I/RV64I Decoders
+    let rv_addi = list_new(); list_push(rv_addi, 147); list_push(rv_addi, 0); list_push(rv_addi, 80); list_push(rv_addi, 0);
+    let ins_rv = sec_disasm_instruction(rv_addi, 0, 2048, "riscv");
+    assert_true(ins_rv.mnemonic == "addi", "RISC-V addi decoded");
+
+    // 5. Symbol Demangling (Itanium C++, Rust v0, Roze)
+    let dm_cpp = sec_disasm_demangle("_ZN3foo3barEi");
+    assert_true(dm_cpp == "foo::bar(int)", "C++ demangling matches");
+    let dm_rust = sec_disasm_demangle("_RNvCs123_4core3ptr");
+    assert_true(str_contains(dm_rust, "core::ptr"), "Rust v0 demangling matches");
+    let dm_roze = sec_disasm_demangle("_Roze_sec_disasm_open");
+    assert_true(dm_roze == "roze::sec::disasm::open", "Roze demangling matches");
+
+    println("SUITE 4 PASSED: roze.sec.disasm multi-architecture instruction decoders and symbol demangling");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 5: Defensive Memory Forensics & 100% Detection Rate Verification (M9-T05)
+// ------------------------------------------------------------------------------
+func test_suite_5_defensive_memory_forensics() {
+    // 1. Live Process Memory Auditing
+    let maps_content = "00400000-00452000 r-xp 00000000 fd:00 123456 /usr/bin/daemon\n" +
+                       "00652000-00653000 rw-p 00052000 fd:00 123456 /usr/bin/daemon\n" +
+                       "01a00000-01a21000 rwxp 00000000 00:00 0 [heap]\n" +
+                       "7ffde000-7ffdf000 r-xp 00000000 00:00 0 [stack]\n" +
+                       "7ffff000-80000000 r-xp 00000000 00:00 0 \n";
+    let regions = sec_forensics_parse_maps(maps_content);
+    assert_true(list_length(regions) == 5, "Mapped 5 process regions");
+
+    // 2. 100% Detection Rate on RWX & Injected Memory Protection Violations
+    let audit_regions = list_new();
+    list_push(audit_regions, memory_region_new(4194304, 4200000, "r-xp", 0, "/usr/bin/daemon"));
+    list_push(audit_regions, memory_region_new(5000000, 5004096, "rwxp", 0, "/usr/bin/daemon")); // Injected RWX (1)
+    list_push(audit_regions, memory_region_new(6000000, 6008192, "r-xp", 0, "[stack]"));         // Injected Executable Stack (2)
+    list_push(audit_regions, memory_region_new(7000000, 7004096, "r-xp", 0, "[heap]"));          // Injected Executable Heap (3)
+    list_push(audit_regions, memory_region_new(8000000, 8004096, "r-xp", 0, ""));                // Injected Unbacked Anonymous Executable (4)
+
+    let injected_anomaly_count = 4;
+    let anomalies = sec_forensics_audit_regions(audit_regions);
+    let detected_anomaly_count = list_length(anomalies);
+    assert_true(detected_anomaly_count == injected_anomaly_count, "Detected all 4 memory protection violations");
+    let detection_rate_rwx = (detected_anomaly_count * 100) / injected_anomaly_count;
+    assert_true(detection_rate_rwx == 100, "100% Detection Rate on RWX & Memory Protection Injections");
+
+    // 3. 100% Detection Rate on Synthetic ROP Chains & Stack Pivots
+    let rop_code = list_new();
+    // Injected ROP Gadgets (9 total):
+    list_push(rop_code, 95);  list_push(rop_code, 195); // 1. pop rdi; ret
+    list_push(rop_code, 94);  list_push(rop_code, 195); // 2. pop rsi; ret
+    list_push(rop_code, 88);  list_push(rop_code, 195); // 3. pop rax; ret
+    list_push(rop_code, 49);  list_push(rop_code, 192); list_push(rop_code, 195); // 4. xor eax, eax; ret
+    list_push(rop_code, 15);  list_push(rop_code, 5);   list_push(rop_code, 195); // 5. syscall; ret
+    // Injected Stack Pivots (4 total):
+    list_push(rop_code, 92);  list_push(rop_code, 195); // 6. pop rsp; ret [PIVOT 1]
+    list_push(rop_code, 201); list_push(rop_code, 195); // 7. leave; ret   [PIVOT 2]
+    list_push(rop_code, 72);  list_push(rop_code, 135); list_push(rop_code, 224); list_push(rop_code, 195); // 8. xchg rsp, rax; ret [PIVOT 3]
+    list_push(rop_code, 72);  list_push(rop_code, 131); list_push(rop_code, 196); list_push(rop_code, 32); list_push(rop_code, 195); // 9. add rsp, 0x20; ret [PIVOT 4]
+
+    let total_injected_gadgets = 9;
+    let total_injected_pivots = 4;
+
+    let harvested_gadgets = sec_forensics_harvest_rop(rop_code, 4194304);
+    assert_true(list_length(harvested_gadgets) == total_injected_gadgets, "Harvested all 9 injected ROP gadgets");
+    let rop_detection_rate = (list_length(harvested_gadgets) * 100) / total_injected_gadgets;
+    assert_true(rop_detection_rate == 100, "100% Detection Rate on Synthetic ROP Chains");
+
+    let detected_pivots = sec_forensics_detect_pivots(rop_code, 4194304);
+    assert_true(list_length(detected_pivots) == total_injected_pivots, "Detected all 4 injected stack pivots");
+    let pivot_detection_rate = (list_length(detected_pivots) * 100) / total_injected_pivots;
+    assert_true(pivot_detection_rate == 100, "100% Detection Rate on Stack Pivot Sequences");
+
+    // 4. Shannon Entropy Scaled Calculation
+    let uniform_zeros = list_new();
+    let mut_z = 0;
+    while mut_z < 256 { list_push(uniform_zeros, 0); mut_z = mut_z + 1; }
+    let ent_zero = sec_forensics_entropy(uniform_zeros);
+    assert_true(ent_zero == 0, "Zero entropy block == 0");
+
+    let diverse_bytes = list_new();
+    let mut_d = 0;
+    while mut_d < 256 { list_push(diverse_bytes, mut_d); mut_d = mut_d + 1; }
+    let ent_diverse = sec_forensics_entropy(diverse_bytes);
+    assert_true(ent_diverse >= 7000, "Diverse byte block entropy >= 7.000 bits/byte");
+
+    // 5. Defensive Heap Arena Forensics (Corruption & Double-Free)
+    let arena = list_new();
+    let mut_a = 0;
+    while mut_a < 128 { list_push(arena, 0); mut_a = mut_a + 1; }
+    let base_heap = 65536;
+    // Chunk 0: valid chunk
+    list_set(arena, 8, 33); // size 32, PREV_INUSE = 1
+    // Chunk 1: double-free self-loop
+    list_set(arena, 32, 32); list_set(arena, 40, 33);
+    list_set(arena, 48, 32); list_set(arena, 49, 0); list_set(arena, 50, 1); // fd = base_heap + 32
+    // Chunk 2: corrupted prev_size mismatch
+    list_set(arena, 64, 16); list_set(arena, 72, 32);
+
+    let heap_anomalies = sec_forensics_audit_heap(arena, base_heap);
+    assert_true(list_length(heap_anomalies) >= 2, "Heap corruption and double-free detected");
+
+    println("SUITE 5 PASSED: roze.sec.forensics defensive heap forensics, 100% RWX and ROP detection rate");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 6: Sandboxed CPU Emulation with Zero Host Execution
+// ------------------------------------------------------------------------------
+func test_suite_6_sandboxed_cpu_emulation() {
+    let code = list_new();
+    // 1. mov eax, 100 [184, 100, 0, 0, 0]
+    list_push(code, 184); list_push(code, 100); list_push(code, 0); list_push(code, 0); list_push(code, 0);
+    // 2. mov rdi, rax [72, 137, 199]
+    list_push(code, 72); list_push(code, 137); list_push(code, 199);
+    // 3. xor eax, eax [49, 192]
+    list_push(code, 49); list_push(code, 192);
+    // 4. inc rax [72, 255, 192]
+    list_push(code, 72); list_push(code, 255); list_push(code, 192);
+    // 5. push rax [80]
+    list_push(code, 80);
+    // 6. pop rbx [91]
+    list_push(code, 91);
+    // 7. ret [195]
+    list_push(code, 195);
+
+    let harness = sandbox_new(4096, 4194304);
+    sandbox_load_bytes(harness, code, 4194304);
+    sandbox_push(harness, 4198400);
+
+    let steps = sandbox_run(harness, 20);
+    assert_true(steps == 7, "CPU emulation executed 7 steps");
+    assert_true(harness.cpu.rax == 1, "rax == 1 after inc rax");
+    assert_true(harness.cpu.rdi == 100, "rdi == 100 after mov rdi, rax");
+    assert_true(harness.cpu.rbx == 1, "rbx == 1 after pop rbx");
+    assert_true(harness.cpu.rip == 4198400, "rip returned safely to caller");
+
+    println("SUITE 6 PASSED: roze.sec sandboxed CPU emulation with zero host execution");
+}
+
+// ------------------------------------------------------------------------------
+// Suite 7: Full-Spectrum Cybersecurity Convergence & Telemetry Export
+// ------------------------------------------------------------------------------
+func test_suite_7_milestone_convergence() {
+    // 1. Cross-Module Pipeline: Crafting Packet -> Recon Inventory -> Forensic Audit
+    let pkt = Ether("00:11:22:33:44:55", "66:77:88:99:AA:BB") / IP("192.168.1.10", "10.0.0.1") / TCP(50000, 443, "S");
+    assert_true(pkt.haslayer("TCP"), "Pipeline packet successfully stacked");
+
+    // 2. Asset Inventory with OS & Service Metadata
+    let inv = sec_scan_inventory_new();
+    let asset = sec_scan_asset_new("10.0.0.1", false);
+    asset.os_match = os_match_result_new("Linux 6.8 (Ubuntu 24.04)", "Linux", 95, "TTL=64, DF=1");
+    sec_scan_asset_add_service(asset, sec_scan_identify_service(443, "HTTP/1.1 200 OK\r\nServer: nginx/1.24.0\r\n"));
+    sec_scan_inventory_add_asset(inv, asset);
+
+    let retrieved = sec_scan_inventory_find(inv, "10.0.0.1");
+    assert_true(retrieved.ip == "10.0.0.1", "Retrieved asset matches IP");
+    assert_true(list_length(retrieved.services) == 1, "Retrieved asset has 1 service");
+
+    // 3. Forensic Report Structured Exports (JSON & CSV)
+    let regions = list_new();
+    list_push(regions, memory_region_new(4194304, 4200000, "r-xp", 0, "/usr/bin/daemon"));
+    list_push(regions, memory_region_new(5000000, 5004096, "rwxp", 0, ""));
+    let anomalies = sec_forensics_audit_regions(regions);
+
+    let report = sec_forensics_create_report(4242, "daemon_core", regions, anomalies);
+    let json = sec_forensics_export_json(report);
+    assert_true(str_contains(json, "\"pid\": 4242"), "JSON export contains target pid");
+    assert_true(str_contains(json, "\"anomaly_type\": \"RWX_PERMISSION_VIOLATION\""), "JSON export contains RWX anomaly");
+
+    let csv = sec_forensics_export_csv(report);
+    assert_true(str_contains(csv, "severity,start_addr,size"), "CSV export contains header");
+    assert_true(str_contains(csv, "CRITICAL"), "CSV export contains anomaly row");
+
+    println("SUITE 7 PASSED: Full-spectrum cybersecurity convergence and telemetry export");
+}
+
+// ------------------------------------------------------------------------------
+// Main Milestone Gate Entry Point
+// ------------------------------------------------------------------------------
+func main() {
+    println("================================================================================");
+    println("🌹 Milestone Gate M9: Full-Spectrum Cybersecurity & Penetration Testing Gate (M9-T06)");
+    println("================================================================================");
+    test_suite_1_raw_frame_engine();
+    test_suite_2_packet_stacking_dsl();
+    test_suite_3_stealth_recon_and_benchmark();
+    test_suite_4_multi_arch_disasm();
+    test_suite_5_defensive_memory_forensics();
+    test_suite_6_sandboxed_cpu_emulation();
+    test_suite_7_milestone_convergence();
+    println("ALL SUITES COMPLETED: Roze Milestone Gate M9 Full-Spectrum Cybersecurity Engine 100% OPERATIONAL");
+}

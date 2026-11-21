@@ -2395,6 +2395,21 @@ fn sec_memory_forensics_suite() {
     assert!(stdout.contains("Memory forensics golden verification passed!"));
 }
 
+#[test]
+fn milestone_gate_m9_cybersecurity_suite() {
+    let (stdout, stderr, ok) = run_fixture("milestone_gate_m9_cybersecurity.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: roze.sec.raw low-level frame engine and promiscuous ring buffers"));
+    assert!(stdout.contains("SUITE 2 PASSED: roze.sec.packet Scapy-class stacking DSL and RFC checksum recalculation"));
+    assert!(stdout.contains("SUITE 3 PASSED: roze.sec.scan stealth reconnaissance, OS fingerprinting, and 100,000 pps benchmark"));
+    assert!(stdout.contains("SUITE 4 PASSED: roze.sec.disasm multi-architecture instruction decoders and symbol demangling"));
+    assert!(stdout.contains("SUITE 5 PASSED: roze.sec.forensics defensive heap forensics, 100% RWX and ROP detection rate"));
+    assert!(stdout.contains("SUITE 6 PASSED: roze.sec sandboxed CPU emulation with zero host execution"));
+    assert!(stdout.contains("SUITE 7 PASSED: Full-spectrum cybersecurity convergence and telemetry export"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Milestone Gate M9 Full-Spectrum Cybersecurity Engine 100% OPERATIONAL"));
+}
+
+
 
 
 

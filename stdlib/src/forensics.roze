@@ -422,7 +422,7 @@ func hex_digit_char(val: int) -> string {
     return "0";
 }
 
-func int_to_hex(val: int) -> string {
+func forensics_int_to_hex(val: int) -> string {
     if val == 0 { return "0x0"; }
     let mut_v = val;
     let mut_res = "";
@@ -1675,7 +1675,7 @@ func rop_harvest_gadgets(bytes: List, base_addr: int) -> List {
                 let p4_2 = read_u8(bytes, mut_i - 2);
                 let p4_3 = read_u8(bytes, mut_i - 1);
                 if p4_0 == 72 && p4_1 == 131 && p4_2 == 196 {
-                    let ins_str = "add rsp, " + int_to_hex(p4_3) + "; ret";
+                    let ins_str = "add rsp, " + forensics_int_to_hex(p4_3) + "; ret";
                     list_push(gadgets, new RopGadget(base_addr + mut_i - 4, ins_str, "stack_pivot", 5));
                 }
             }

@@ -750,7 +750,7 @@ s1_rows = [
         ("M9-T06", 8), ("Month 9", 24), ("Sprint 18 (W37-W38)", 8), "Milestone Gate M9", "Full-Spectrum Cybersecurity & Penetration Testing Gate",
         "Automated offensive packet crafting and defensive memory inspection verification suite; 100% detection rate on synthetic ROP chain and RWX memory injection; 100,000 packets/sec SYN scan benchmark passing.",
         "Proves Python Scapy + Nmap + Volatility equivalence in pure Roze with zero external C libraries.",
-        "Cybersecurity, Offensive & Defensive Operations", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
+        "Cybersecurity, Offensive & Defensive Operations", "3 Days", ("Critical", 14), ("Completed", 16)
     ],
 
     # MONTH 10: ROZEBOOT 3.0 ENTERPRISE CLOUD FRAMEWORK (SPRING BOOT 3 PARITY)

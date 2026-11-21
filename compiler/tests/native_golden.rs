@@ -5169,6 +5169,26 @@ fn native_milestone_gate_m9_cybersecurity_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze Milestone Gate M9 Full-Spectrum Cybersecurity Engine 100% OPERATIONAL"));
 }
 
+#[test]
+fn native_standard_rozeboot_core_ioc_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_rozeboot_core.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_rozeboot_core.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_rozeboot_core_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: All 20 annotations and metadata records verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: Environment and placeholder resolution verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: Conditional bean loading verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: Topological dependency DAG resolution verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: Circular dependency detection and diagnostics verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: Singleton caching vs Prototype factory verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: Disambiguation with @Qualifier and @Primary verified."));
+    assert!(stdout.contains("SUITE 8 PASSED: Event bus and reverse topological teardown verified."));
+    assert!(stdout.contains("ALL SUITES COMPLETED: RozeBoot Core IoC Container 100% OPERATIONAL"));
+}
+
 
 
 

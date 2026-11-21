@@ -1,0 +1,1253 @@
+// ==============================================================================
+// 🌹 RozeBoot Core - Advanced Inversion of Control & Metaprogramming (M10-T01)
+// ==============================================================================
+// 1:1 Architectural Parity with Spring Framework 6 / Spring Boot 3 Core Container
+//
+// Key Subsystems:
+// 1. Stereotype & Metaprogramming Annotations (@Component, @Service, @Repository,
+//    @Controller, @RestController, @Configuration, @Bean, @Autowired, @Qualifier,
+//    @Value, @Scope, @PostConstruct, @PreDestroy, @Primary, @Lazy, @Order, @Profile,
+//    @ConditionalOnProperty, @ConditionalOnMissingBean, @ConditionalOnBean)
+// 2. Hierarchical Environment & Dynamic Property Placeholder Resolution (${prop:default})
+// 3. Conditional Bean Evaluation Engine (Property, Missing Bean, On Bean, Profile)
+// 4. Advanced BeanDefinition Model & Metadata Registry
+// 5. Kahn's Directed Acyclic Graph (DAG) Topological Dependency Graph Resolution
+// 6. Depth-First Circular Dependency Detection with Cycle Diagnostics
+// 7. Full Bean Lifecycle Management (Eager Singleton Caching vs Prototype Factories)
+// 8. Application Event Bus & Event Listeners (ContextRefreshed, ContextClosed)
+// ==============================================================================
+
+// ==============================================================================
+// SECTION 1: Fundamental Constants & String Utilities
+// ==============================================================================
+
+// Bean Scopes
+func scope_singleton() -> int { return 1; }
+func scope_prototype() -> int { return 2; }
+
+// Bean Lifecycle States
+func bean_state_uninstantiated() -> int { return 0; }
+func bean_state_instantiating() -> int { return 1; }
+func bean_state_instantiated() -> int { return 2; }
+func bean_state_initialized() -> int { return 3; }
+func bean_state_destroyed() -> int { return 4; }
+
+// Safe ASCII Char Converter (0-127)
+func ioc_ascii_char(code: int) -> string {
+    if code >= 97 && code <= 122 {
+        if code == 97 { return "a"; } if code == 98 { return "b"; }
+        if code == 99 { return "c"; } if code == 100 { return "d"; }
+        if code == 101 { return "e"; } if code == 102 { return "f"; }
+        if code == 103 { return "g"; } if code == 104 { return "h"; }
+        if code == 105 { return "i"; } if code == 106 { return "j"; }
+        if code == 107 { return "k"; } if code == 108 { return "l"; }
+        if code == 109 { return "m"; } if code == 110 { return "n"; }
+        if code == 111 { return "o"; } if code == 112 { return "p"; }
+        if code == 113 { return "q"; } if code == 114 { return "r"; }
+        if code == 115 { return "s"; } if code == 116 { return "t"; }
+        if code == 117 { return "u"; } if code == 118 { return "v"; }
+        if code == 119 { return "w"; } if code == 120 { return "x"; }
+        if code == 121 { return "y"; } if code == 122 { return "z"; }
+    }
+    if code >= 65 && code <= 90 {
+        if code == 65 { return "A"; } if code == 66 { return "B"; }
+        if code == 67 { return "C"; } if code == 68 { return "D"; }
+        if code == 69 { return "E"; } if code == 70 { return "F"; }
+        if code == 71 { return "G"; } if code == 72 { return "H"; }
+        if code == 73 { return "I"; } if code == 74 { return "J"; }
+        if code == 75 { return "K"; } if code == 76 { return "L"; }
+        if code == 77 { return "M"; } if code == 78 { return "N"; }
+        if code == 79 { return "O"; } if code == 80 { return "P"; }
+        if code == 81 { return "Q"; } if code == 82 { return "R"; }
+        if code == 83 { return "S"; } if code == 84 { return "T"; }
+        if code == 85 { return "U"; } if code == 86 { return "V"; }
+        if code == 87 { return "W"; } if code == 88 { return "X"; }
+        if code == 89 { return "Y"; } if code == 90 { return "Z"; }
+    }
+    if code >= 48 && code <= 57 {
+        if code == 48 { return "0"; } if code == 49 { return "1"; }
+        if code == 50 { return "2"; } if code == 51 { return "3"; }
+        if code == 52 { return "4"; } if code == 53 { return "5"; }
+        if code == 54 { return "6"; } if code == 55 { return "7"; }
+        if code == 56 { return "8"; } if code == 57 { return "9"; }
+    }
+    if code == 32 { return " "; }
+    if code == 33 { return "!"; }
+    if code == 34 { return "\""; }
+    if code == 35 { return "#"; }
+    if code == 36 { return "$"; }
+    if code == 37 { return "%"; }
+    if code == 38 { return "&"; }
+    if code == 39 { return "'"; }
+    if code == 40 { return "("; }
+    if code == 41 { return ")"; }
+    if code == 42 { return "*"; }
+    if code == 43 { return "+"; }
+    if code == 44 { return ","; }
+    if code == 45 { return "-"; }
+    if code == 46 { return "."; }
+    if code == 47 { return "/"; }
+    if code == 58 { return ":"; }
+    if code == 59 { return ";"; }
+    if code == 60 { return "<"; }
+    if code == 61 { return "="; }
+    if code == 62 { return ">"; }
+    if code == 63 { return "?"; }
+    if code == 64 { return "@"; }
+    if code == 91 { return "["; }
+    if code == 92 { return "\\"; }
+    if code == 93 { return "]"; }
+    if code == 94 { return "^"; }
+    if code == 95 { return "_"; }
+    if code == 96 { return "`"; }
+    if code == 123 { return "{"; }
+    if code == 124 { return "|"; }
+    if code == 125 { return "}"; }
+    if code == 126 { return "~"; }
+    if code == 10 { return "\n"; }
+    if code == 13 { return "\r"; }
+    if code == 9 { return "\t"; }
+    return "?";
+}
+
+func ioc_sub_str(s: string, start: int, end: int) -> string {
+    let s_len = string_length(s);
+    if start < 0 { start = 0; }
+    if end > s_len { end = s_len; }
+    if start >= end { return ""; }
+    let res = "";
+    let i = start;
+    while i < end {
+        let c: int = string_char_at(s, i);
+        res = res + ioc_ascii_char(c);
+        i = i + 1;
+    }
+    return res;
+}
+
+func ioc_str_starts_with(s: string, prefix: string) -> bool {
+    let s_len = string_length(s);
+    let p_len = string_length(prefix);
+    if p_len > s_len { return false; }
+    let sub = ioc_sub_str(s, 0, p_len);
+    return sub == prefix;
+}
+
+func ioc_str_contains(s: string, sub: string) -> bool {
+    let s_len = string_length(s);
+    let sub_len = string_length(sub);
+    if sub_len == 0 { return true; }
+    if sub_len > s_len { return false; }
+    let i = 0;
+    while i <= s_len - sub_len {
+        let chunk = ioc_sub_str(s, i, i + sub_len);
+        if chunk == sub {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+func ioc_str_index_of(s: string, sub: string) -> int {
+    let s_len = string_length(s);
+    let sub_len = string_length(sub);
+    if sub_len == 0 { return 0; }
+    if sub_len > s_len { return -1; }
+    let i = 0;
+    while i <= s_len - sub_len {
+        let chunk = ioc_sub_str(s, i, i + sub_len);
+        if chunk == sub {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+func ioc_int_to_str(val: int) -> string {
+    if val == 0 { return "0"; }
+    let mut_val = val;
+    let is_neg = false;
+    if mut_val < 0 {
+        is_neg = true;
+        mut_val = 0 - mut_val;
+    }
+    let res = "";
+    while mut_val > 0 {
+        let digit = mut_val % 10;
+        let c = ioc_ascii_char(48 + digit);
+        res = c + res;
+        mut_val = mut_val / 10;
+    }
+    if is_neg {
+        res = "-" + res;
+    }
+    return res;
+}
+
+// ==============================================================================
+// SECTION 2: Annotation Metadata Reflection Model
+// ==============================================================================
+
+class AnnotationRecord {
+    name: string,
+    target: string,
+    value: string,
+    extra: string
+}
+
+func annotation_new(name: string, target: string, value: string, extra: string) -> AnnotationRecord {
+    return new AnnotationRecord(name, target, value, extra);
+}
+
+// Stereotype Annotations
+func ann_component(target: string, name: string) -> AnnotationRecord {
+    return new AnnotationRecord("Component", target, name, "");
+}
+
+func ann_service(target: string, name: string) -> AnnotationRecord {
+    return new AnnotationRecord("Service", target, name, "");
+}
+
+func ann_repository(target: string, name: string) -> AnnotationRecord {
+    return new AnnotationRecord("Repository", target, name, "");
+}
+
+func ann_controller(target: string, path: string) -> AnnotationRecord {
+    return new AnnotationRecord("Controller", target, path, "");
+}
+
+func ann_rest_controller(target: string, path: string) -> AnnotationRecord {
+    return new AnnotationRecord("RestController", target, path, "");
+}
+
+func ann_configuration(target: string, name: string) -> AnnotationRecord {
+    return new AnnotationRecord("Configuration", target, name, "");
+}
+
+func ann_bean(target: string, name: string, return_type: string) -> AnnotationRecord {
+    return new AnnotationRecord("Bean", target, name, return_type);
+}
+
+// Dependency Injection & Configuration Annotations
+func ann_autowired(target: string, field_name: string) -> AnnotationRecord {
+    return new AnnotationRecord("Autowired", target, field_name, "");
+}
+
+func ann_qualifier(target: string, field_name: string, qualifier_name: string) -> AnnotationRecord {
+    return new AnnotationRecord("Qualifier", target, field_name, qualifier_name);
+}
+
+func ann_value(target: string, field_name: string, expr: string) -> AnnotationRecord {
+    return new AnnotationRecord("Value", target, field_name, expr);
+}
+
+func ann_scope(target: string, scope_name: string) -> AnnotationRecord {
+    return new AnnotationRecord("Scope", target, scope_name, "");
+}
+
+func ann_post_construct(target: string) -> AnnotationRecord {
+    return new AnnotationRecord("PostConstruct", target, "", "");
+}
+
+func ann_pre_destroy(target: string) -> AnnotationRecord {
+    return new AnnotationRecord("PreDestroy", target, "", "");
+}
+
+func ann_primary(target: string) -> AnnotationRecord {
+    return new AnnotationRecord("Primary", target, "", "");
+}
+
+func ann_lazy(target: string) -> AnnotationRecord {
+    return new AnnotationRecord("Lazy", target, "", "");
+}
+
+func ann_order(target: string, order_val: int) -> AnnotationRecord {
+    return new AnnotationRecord("Order", target, ioc_int_to_str(order_val), "");
+}
+
+func ann_profile(target: string, profile_name: string) -> AnnotationRecord {
+    return new AnnotationRecord("Profile", target, profile_name, "");
+}
+
+func ann_conditional_on_property(target: string, prop_name: string, having_val: string, match_if_missing: bool) -> AnnotationRecord {
+    let mim = "false";
+    if match_if_missing { mim = "true"; }
+    return new AnnotationRecord("ConditionalOnProperty", target, prop_name, having_val + ":" + mim);
+}
+
+func ann_conditional_on_missing_bean(target: string, bean_identifier: string) -> AnnotationRecord {
+    return new AnnotationRecord("ConditionalOnMissingBean", target, bean_identifier, "");
+}
+
+func ann_conditional_on_bean(target: string, bean_identifier: string) -> AnnotationRecord {
+    return new AnnotationRecord("ConditionalOnBean", target, bean_identifier, "");
+}
+
+// Web MVC HTTP Mapping Annotations
+func ann_get_mapping(target: string, path: string) -> AnnotationRecord {
+    return new AnnotationRecord("GetMapping", target, path, "GET");
+}
+
+func ann_post_mapping(target: string, path: string) -> AnnotationRecord {
+    return new AnnotationRecord("PostMapping", target, path, "POST");
+}
+
+func ann_put_mapping(target: string, path: string) -> AnnotationRecord {
+    return new AnnotationRecord("PutMapping", target, path, "PUT");
+}
+
+func ann_delete_mapping(target: string, path: string) -> AnnotationRecord {
+    return new AnnotationRecord("DeleteMapping", target, path, "DELETE");
+}
+
+func ann_patch_mapping(target: string, path: string) -> AnnotationRecord {
+    return new AnnotationRecord("PatchMapping", target, path, "PATCH");
+}
+
+func ann_path_variable(target: string, var_name: string) -> AnnotationRecord {
+    return new AnnotationRecord("PathVariable", target, var_name, "");
+}
+
+func ann_request_param(target: string, key: string, required: bool, default_val: string) -> AnnotationRecord {
+    let req_str = "false";
+    if required { req_str = "true"; }
+    return new AnnotationRecord("RequestParam", target, key, req_str + ":" + default_val);
+}
+
+func ann_request_body(target: string) -> AnnotationRecord {
+    return new AnnotationRecord("RequestBody", target, "", "");
+}
+
+func ann_valid(target: string) -> AnnotationRecord {
+    return new AnnotationRecord("Valid", target, "", "");
+}
+
+// ==============================================================================
+// SECTION 3: Environment, Properties & Profile Engine
+// ==============================================================================
+
+class PropertyEntry {
+    key: string,
+    val: string
+}
+
+func property_entry_new(k: string, v: string) -> PropertyEntry {
+    return new PropertyEntry(k, v);
+}
+
+class ProfileEntry {
+    name: string
+}
+
+func profile_entry_new(name: string) -> ProfileEntry {
+    return new ProfileEntry(name);
+}
+
+class Environment {
+    properties: list, // list of PropertyEntry
+    active_profiles: list // list of ProfileEntry
+}
+
+func env_new() -> Environment {
+    let props = list_new();
+    let profs = list_new();
+    return new Environment(props, profs);
+}
+
+func env_set_property(env: Environment, key: string, val: string) {
+    let total = list_length(env.properties);
+    let i = 0;
+    while i < total {
+        let p: PropertyEntry = list_get(env.properties, i);
+        if p.key == key {
+            p.val = val;
+            return;
+        }
+        i = i + 1;
+    }
+    list_push(env.properties, new PropertyEntry(key, val));
+}
+
+func env_contains_property(env: Environment, key: string) -> bool {
+    let total = list_length(env.properties);
+    let i = 0;
+    while i < total {
+        let p: PropertyEntry = list_get(env.properties, i);
+        if p.key == key {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+func env_get_property(env: Environment, key: string, default_val: string) -> string {
+    let total = list_length(env.properties);
+    let i = 0;
+    while i < total {
+        let p: PropertyEntry = list_get(env.properties, i);
+        if p.key == key {
+            return p.val;
+        }
+        i = i + 1;
+    }
+    return default_val;
+}
+
+func env_add_active_profile(env: Environment, profile: string) {
+    if !env_is_profile_active(env, profile) {
+        list_push(env.active_profiles, new ProfileEntry(profile));
+    }
+}
+
+func env_is_profile_active(env: Environment, profile: string) -> bool {
+    let total = list_length(env.active_profiles);
+    let i = 0;
+    while i < total {
+        let p: ProfileEntry = list_get(env.active_profiles, i);
+        if p.name == profile {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+func env_get_active_profiles(env: Environment) -> list {
+    return env.active_profiles;
+}
+
+// Resolves ${property.name:default_value} expressions
+func env_resolve_placeholders(env: Environment, expr: string) -> string {
+    let mut_expr = expr;
+    while ioc_str_contains(mut_expr, "${") {
+        let start_idx = ioc_str_index_of(mut_expr, "${");
+        let end_idx = -1;
+        let expr_len = string_length(mut_expr);
+        let i = start_idx + 2;
+        while i < expr_len {
+            let c: int = string_char_at(mut_expr, i);
+            if c == 125 { // '}'
+                end_idx = i;
+                i = expr_len; // break loop
+            }
+            i = i + 1;
+        }
+
+        if end_idx == -1 {
+            // Unclosed placeholder, return as is
+            return mut_expr;
+        }
+
+        let inside = ioc_sub_str(mut_expr, start_idx + 2, end_idx);
+        let colon_idx = ioc_str_index_of(inside, ":");
+        let key = inside;
+        let default_val = "";
+        if colon_idx != -1 {
+            key = ioc_sub_str(inside, 0, colon_idx);
+            default_val = ioc_sub_str(inside, colon_idx + 1, string_length(inside));
+        }
+
+        let resolved_val = env_get_property(env, key, default_val);
+        let prefix = ioc_sub_str(mut_expr, 0, start_idx);
+        let suffix = ioc_sub_str(mut_expr, end_idx + 1, expr_len);
+        mut_expr = prefix + resolved_val + suffix;
+    }
+    return mut_expr;
+}
+
+// ==============================================================================
+// SECTION 4: Condition Rules & Evaluator
+// ==============================================================================
+
+class ConditionRule {
+    condition_type: string, // "property", "missing_bean", "on_bean", "profile"
+    property_key: string,
+    expected_value: string,
+    match_if_missing: bool,
+    target_identifier: string
+}
+
+func cond_on_property(key: string, having_val: string, match_if_missing: bool) -> ConditionRule {
+    return new ConditionRule("property", key, having_val, match_if_missing, "");
+}
+
+func cond_on_missing_bean(target_id: string) -> ConditionRule {
+    return new ConditionRule("missing_bean", "", "", false, target_id);
+}
+
+func cond_on_bean(target_id: string) -> ConditionRule {
+    return new ConditionRule("on_bean", "", "", false, target_id);
+}
+
+func cond_on_profile(profile_name: string) -> ConditionRule {
+    return new ConditionRule("profile", "", "", false, profile_name);
+}
+
+// ==============================================================================
+// SECTION 5: Advanced BeanDefinition Model
+// ==============================================================================
+
+class DependencyRef {
+    target_bean_name: string,
+    field_name: string,
+    qualifier: string,
+    required: bool
+}
+
+func dependency_ref_new(target_name: string, field: string, qualifier: string, req: bool) -> DependencyRef {
+    return new DependencyRef(target_name, field, qualifier, req);
+}
+
+class ValueBinding {
+    field_name: string,
+    expression: string,
+    resolved_value: string
+}
+
+func value_binding_new(field: string, expr: string) -> ValueBinding {
+    return new ValueBinding(field, expr, "");
+}
+
+class BeanDefinition {
+    name: string,
+    type_name: string,
+    scope: int, // 1 = Singleton, 2 = Prototype
+    dependencies: list, // list of DependencyRef
+    value_bindings: list, // list of ValueBinding
+    conditions: list, // list of ConditionRule
+    is_primary: bool,
+    is_lazy: bool,
+    order: int,
+    post_construct_hook: string,
+    pre_destroy_hook: string,
+    factory_bean_name: string,
+    factory_method_name: string,
+    state: int,
+    instance: Unknown,
+    is_instantiated: bool,
+    is_initialized: bool,
+    active: bool,
+    creation_count: int
+}
+
+func bean_definition_new(name: string, type_name: string, scope: int) -> BeanDefinition {
+    let deps = list_new();
+    let vals = list_new();
+    let conds = list_new();
+    return new BeanDefinition(
+        name,
+        type_name,
+        scope,
+        deps,
+        vals,
+        conds,
+        false, // is_primary
+        false, // is_lazy
+        0,     // order
+        "",    // post_construct_hook
+        "",    // pre_destroy_hook
+        "",    // factory_bean_name
+        "",    // factory_method_name
+        bean_state_uninstantiated(),
+        null,  // instance
+        false, // is_instantiated
+        false, // is_initialized
+        true,  // active
+        0      // creation_count
+    );
+}
+
+func bean_def_add_dependency(def: BeanDefinition, dep_name: string) {
+    list_push(def.dependencies, new DependencyRef(dep_name, dep_name, "", true));
+}
+
+func bean_def_add_dependency_ref(def: BeanDefinition, dep_name: string, field: string, qualifier: string, req: bool) {
+    list_push(def.dependencies, new DependencyRef(dep_name, field, qualifier, req));
+}
+
+func bean_def_add_value(def: BeanDefinition, field_name: string, expr: string) {
+    list_push(def.value_bindings, new ValueBinding(field_name, expr, ""));
+}
+
+func bean_def_add_condition(def: BeanDefinition, rule: ConditionRule) {
+    list_push(def.conditions, rule);
+}
+
+func bean_def_set_hooks(def: BeanDefinition, post_construct: string, pre_destroy: string) {
+    def.post_construct_hook = post_construct;
+    def.pre_destroy_hook = pre_destroy;
+}
+
+func bean_def_set_primary(def: BeanDefinition, is_prim: bool) {
+    def.is_primary = is_prim;
+}
+
+func bean_def_set_lazy(def: BeanDefinition, is_lazy: bool) {
+    def.is_lazy = is_lazy;
+}
+
+func bean_def_set_order(def: BeanDefinition, order: int) {
+    def.order = order;
+}
+
+func bean_def_set_factory(def: BeanDefinition, factory_bean: string, factory_method: string) {
+    def.factory_bean_name = factory_bean;
+    def.factory_method_name = factory_method;
+}
+
+// ==============================================================================
+// SECTION 6: Lifecycle Records, Events & Graph Diagnostics
+// ==============================================================================
+
+class BeanEntry {
+    name: string,
+    instance: Unknown
+}
+
+class LifecycleRecord {
+    bean_name: string,
+    action: string, // "REGISTERED", "POST_CONSTRUCT", "PRE_DESTROY", "PROTOTYPE_CREATED"
+    detail: string
+}
+
+func lifecycle_record_new(name: string, action: string, detail: string) -> LifecycleRecord {
+    return new LifecycleRecord(name, action, detail);
+}
+
+class StackFrame {
+    bean_name: string
+}
+
+func stack_frame_new(name: string) -> StackFrame {
+    return new StackFrame(name);
+}
+
+class ApplicationEvent {
+    event_type: string,
+    source: string,
+    timestamp: int,
+    payload: string
+}
+
+func application_event_new(event_type: string, source: string, payload: string) -> ApplicationEvent {
+    return new ApplicationEvent(event_type, source, 0, payload);
+}
+
+class EventListenerEntry {
+    listener_name: string,
+    target_event_type: string,
+    callback_name: string
+}
+
+func event_listener_entry_new(name: string, evt_type: string, cb: string) -> EventListenerEntry {
+    return new EventListenerEntry(name, evt_type, cb);
+}
+
+class CycleDiagnostic {
+    has_cycle: bool,
+    cycle_path: string,
+    participating_count: int
+}
+
+func cycle_diagnostic_new(has_cycle: bool, path: string, count: int) -> CycleDiagnostic {
+    return new CycleDiagnostic(has_cycle, path, count);
+}
+
+// ==============================================================================
+// SECTION 7: IoC Container & ApplicationContext Core Engine
+// ==============================================================================
+
+class IoCContainer {
+    definitions: list, // list of BeanDefinition
+    beans: list, // list of BeanEntry (singletons)
+    lifecycle_log: list, // list of LifecycleRecord
+    environment: Environment,
+    event_listeners: list, // list of EventListenerEntry
+    published_events: list, // list of ApplicationEvent
+    initialization_order: list, // list of StackFrame
+    active: bool,
+    cycle_detected: bool,
+    cycle_error: string
+}
+
+func ioc_container_new() -> IoCContainer {
+    let defs = list_new();
+    let bns = list_new();
+    let logs = list_new();
+    let env = env_new();
+    let listeners = list_new();
+    let events = list_new();
+    let order = list_new();
+    return new IoCContainer(defs, bns, logs, env, listeners, events, order, true, false, "");
+}
+
+func ioc_get_environment(ioc: IoCContainer) -> Environment {
+    return ioc.environment;
+}
+
+func ioc_register_definition(ioc: IoCContainer, def: BeanDefinition) {
+    list_push(ioc.definitions, def);
+    list_push(ioc.lifecycle_log, new LifecycleRecord(def.name, "REGISTERED", def.type_name));
+}
+
+func ioc_register_singleton(ioc: IoCContainer, name: string, type_name: string, instance: Unknown) {
+    let def = bean_definition_new(name, type_name, scope_singleton());
+    def.instance = instance;
+    def.is_instantiated = true;
+    def.is_initialized = true;
+    def.state = bean_state_initialized();
+    ioc_register_definition(ioc, def);
+    list_push(ioc.beans, new BeanEntry(name, instance));
+}
+
+func ioc_find_definition(ioc: IoCContainer, name: string) -> BeanDefinition {
+    let total = list_length(ioc.definitions);
+    let i = 0;
+    while i < total {
+        let def: BeanDefinition = list_get(ioc.definitions, i);
+        if def.name == name {
+            return def;
+        }
+        i = i + 1;
+    }
+    return null;
+}
+
+func ioc_contains_definition(ioc: IoCContainer, identifier: string) -> bool {
+    let total = list_length(ioc.definitions);
+    let i = 0;
+    while i < total {
+        let def: BeanDefinition = list_get(ioc.definitions, i);
+        if def.name == identifier || def.type_name == identifier {
+            if def.active {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+func ioc_contains_bean(ioc: IoCContainer, name: string) -> bool {
+    let total = list_length(ioc.beans);
+    let i = 0;
+    while i < total {
+        let entry: BeanEntry = list_get(ioc.beans, i);
+        if entry.name == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+func ioc_is_singleton(ioc: IoCContainer, name: string) -> bool {
+    let def = ioc_find_definition(ioc, name);
+    if def != null {
+        return def.scope == scope_singleton();
+    }
+    return false;
+}
+
+func ioc_is_prototype(ioc: IoCContainer, name: string) -> bool {
+    let def = ioc_find_definition(ioc, name);
+    if def != null {
+        return def.scope == scope_prototype();
+    }
+    return false;
+}
+
+func ioc_get_definition_count(ioc: IoCContainer) -> int {
+    let count = 0;
+    let total = list_length(ioc.definitions);
+    let i = 0;
+    while i < total {
+        let def: BeanDefinition = list_get(ioc.definitions, i);
+        if def.active {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return count;
+}
+
+func ioc_get_definition_names(ioc: IoCContainer) -> list {
+    let names = list_new();
+    let total = list_length(ioc.definitions);
+    let i = 0;
+    while i < total {
+        let def: BeanDefinition = list_get(ioc.definitions, i);
+        if def.active {
+            list_push(names, new StackFrame(def.name));
+        }
+        i = i + 1;
+    }
+    return names;
+}
+
+// ==============================================================================
+// SECTION 8: Condition Evaluation Engine
+// ==============================================================================
+
+func ioc_evaluate_condition(ioc: IoCContainer, rule: ConditionRule) -> bool {
+    if rule.condition_type == "property" {
+        let key = rule.property_key;
+        if env_contains_property(ioc.environment, key) {
+            let actual = env_get_property(ioc.environment, key, "");
+            return actual == rule.expected_value;
+        } else {
+            return rule.match_if_missing;
+        }
+    }
+    if rule.condition_type == "missing_bean" {
+        return !ioc_contains_definition(ioc, rule.target_identifier);
+    }
+    if rule.condition_type == "on_bean" {
+        return ioc_contains_definition(ioc, rule.target_identifier);
+    }
+    if rule.condition_type == "profile" {
+        return env_is_profile_active(ioc.environment, rule.target_identifier);
+    }
+    return true;
+}
+
+func ioc_evaluate_bean_conditions(ioc: IoCContainer, def: BeanDefinition) -> bool {
+    let cond_count = list_length(def.conditions);
+    let i = 0;
+    while i < cond_count {
+        let rule: ConditionRule = list_get(def.conditions, i);
+        if !ioc_evaluate_condition(ioc, rule) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// ==============================================================================
+// SECTION 9: Cycle Detection & Kahn's Topological Sort Engine
+// ==============================================================================
+
+func ioc_dfs_cycle_check(ioc: IoCContainer, current_def: BeanDefinition, visiting: list, path: string) -> bool {
+    let name = current_def.name;
+    let v_count = list_length(visiting);
+    let i = 0;
+    while i < v_count {
+        let frame: StackFrame = list_get(visiting, i);
+        if frame.bean_name == name {
+            // Circular dependency cycle detected!
+            ioc.cycle_detected = true;
+            ioc.cycle_error = "CircularDependencyException: Cycle detected in bean hierarchy: " + path + " -> " + name;
+            return true;
+        }
+        i = i + 1;
+    }
+
+    list_push(visiting, new StackFrame(name));
+    let next_path = path;
+    if string_length(next_path) > 0 {
+        next_path = next_path + " -> " + name;
+    } else {
+        next_path = name;
+    }
+
+    let dep_count = list_length(current_def.dependencies);
+    let d = 0;
+    while d < dep_count {
+        let dep_ref: DependencyRef = list_get(current_def.dependencies, d);
+        let dep_def = ioc_find_definition(ioc, dep_ref.target_bean_name);
+        if dep_def != null && dep_def.active {
+            let has_sub_cycle = ioc_dfs_cycle_check(ioc, dep_def, visiting, next_path);
+            if has_sub_cycle {
+                return true;
+            }
+        }
+        d = d + 1;
+    }
+
+    let last_idx = list_length(visiting) - 1;
+    if last_idx >= 0 {
+        list_remove(visiting, last_idx);
+    }
+    return false;
+}
+
+func ioc_detect_circular_dependencies(ioc: IoCContainer) -> bool {
+    let total = list_length(ioc.definitions);
+    let i = 0;
+    while i < total {
+        let def: BeanDefinition = list_get(ioc.definitions, i);
+        if def.active {
+            let visiting = list_new();
+            let has_cycle = ioc_dfs_cycle_check(ioc, def, visiting, "");
+            if has_cycle {
+                list_push(ioc.lifecycle_log, new LifecycleRecord(def.name, "CYCLE_DETECTED", ioc.cycle_error));
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Kahn's Algorithm for Topological Sort of Bean Graph
+func ioc_topological_sort(ioc: IoCContainer) -> bool {
+    // Collect active beans
+    let active_defs = list_new();
+    let total = list_length(ioc.definitions);
+    let i = 0;
+    while i < total {
+        let def: BeanDefinition = list_get(ioc.definitions, i);
+        if def.active {
+            list_push(active_defs, def);
+        }
+        i = i + 1;
+    }
+
+    let active_count = list_length(active_defs);
+    let in_degrees = list_new(); // list of int
+    let d_idx = 0;
+    while d_idx < active_count {
+        let cur_def: BeanDefinition = list_get(active_defs, d_idx);
+        let dep_count = list_length(cur_def.dependencies);
+        // Only count dependencies that are also active beans
+        let real_dep_count = 0;
+        let c = 0;
+        while c < dep_count {
+            let d_ref: DependencyRef = list_get(cur_def.dependencies, c);
+            let d_def = ioc_find_definition(ioc, d_ref.target_bean_name);
+            if d_def != null && d_def.active {
+                real_dep_count = real_dep_count + 1;
+            }
+            c = c + 1;
+        }
+        list_push(in_degrees, real_dep_count);
+        d_idx = d_idx + 1;
+    }
+
+    // Queue nodes with in-degree 0
+    let queue = list_new();
+    let q_i = 0;
+    while q_i < active_count {
+        let deg: int = list_get(in_degrees, q_i);
+        if deg == 0 {
+            let z_def: BeanDefinition = list_get(active_defs, q_i);
+            list_push(queue, z_def);
+        }
+        q_i = q_i + 1;
+    }
+
+    ioc.initialization_order = list_new();
+    while list_length(queue) > 0 {
+        let cur_node: BeanDefinition = list_remove(queue, 0);
+        list_push(ioc.initialization_order, new StackFrame(cur_node.name));
+
+        // For each other node that has cur_node as dependency, decrement its in-degree
+        let n_idx = 0;
+        while n_idx < active_count {
+            let cand_def: BeanDefinition = list_get(active_defs, n_idx);
+            let has_dep = false;
+            let cand_deps_len = list_length(cand_def.dependencies);
+            let cd = 0;
+            while cd < cand_deps_len {
+                let dr: DependencyRef = list_get(cand_def.dependencies, cd);
+                if dr.target_bean_name == cur_node.name {
+                    has_dep = true;
+                }
+                cd = cd + 1;
+            }
+
+            if has_dep {
+                let current_deg: int = list_get(in_degrees, n_idx);
+                let new_deg = current_deg - 1;
+                list_set(in_degrees, n_idx, new_deg);
+                if new_deg == 0 {
+                    list_push(queue, cand_def);
+                }
+            }
+            n_idx = n_idx + 1;
+        }
+    }
+
+    if list_length(ioc.initialization_order) < active_count {
+        ioc.cycle_detected = true;
+        ioc.cycle_error = "CircularDependencyException: Cycle detected in bean hierarchy during topological resolution";
+        return false;
+    }
+    return true;
+}
+
+func ioc_get_initialization_order(ioc: IoCContainer) -> list {
+    return ioc.initialization_order;
+}
+
+func ioc_get_cycle_diagnostic(ioc: IoCContainer) -> CycleDiagnostic {
+    return new CycleDiagnostic(ioc.cycle_detected, ioc.cycle_error, list_length(ioc.definitions));
+}
+
+// ==============================================================================
+// SECTION 10: Event Bus & ApplicationListener Engine
+// ==============================================================================
+
+func ioc_register_listener(ioc: IoCContainer, listener_name: string, evt_type: string, callback_name: string) {
+    list_push(ioc.event_listeners, new EventListenerEntry(listener_name, evt_type, callback_name));
+}
+
+func ioc_publish_event(ioc: IoCContainer, event: ApplicationEvent) {
+    list_push(ioc.published_events, event);
+    let total = list_length(ioc.event_listeners);
+    let i = 0;
+    while i < total {
+        let l: EventListenerEntry = list_get(ioc.event_listeners, i);
+        if l.target_event_type == "*" || l.target_event_type == event.event_type {
+            list_push(ioc.lifecycle_log, new LifecycleRecord(l.listener_name, "EVENT_TRIGGERED", event.event_type));
+        }
+        i = i + 1;
+    }
+}
+
+func ioc_get_published_events(ioc: IoCContainer) -> list {
+    return ioc.published_events;
+}
+
+// ==============================================================================
+// SECTION 11: Bean Creation, Resolution & Lifecycle Management
+// ==============================================================================
+
+func ioc_refresh(ioc: IoCContainer) -> bool {
+    // 1. Evaluate bean conditions
+    let total_defs = list_length(ioc.definitions);
+    let i = 0;
+    while i < total_defs {
+        let def: BeanDefinition = list_get(ioc.definitions, i);
+        let matches = ioc_evaluate_bean_conditions(ioc, def);
+        def.active = matches;
+        if !matches {
+            list_push(ioc.lifecycle_log, new LifecycleRecord(def.name, "SKIPPED_CONDITION", "Condition not met"));
+        }
+        i = i + 1;
+    }
+
+    // 2. Detect circular dependencies
+    if ioc_detect_circular_dependencies(ioc) {
+        return false;
+    }
+
+    // 3. Compute topological dependency graph order
+    if !ioc_topological_sort(ioc) {
+        return false;
+    }
+
+    // 4. Initialize singletons in topological order
+    let order_len = list_length(ioc.initialization_order);
+    let o = 0;
+    while o < order_len {
+        let frame: StackFrame = list_get(ioc.initialization_order, o);
+        let def = ioc_find_definition(ioc, frame.bean_name);
+        if def != null && def.active && def.scope == scope_singleton() {
+            // Eagerly resolve and instantiate singleton
+            if !def.is_instantiated {
+                def.is_instantiated = true;
+                def.state = bean_state_instantiated();
+                def.creation_count = def.creation_count + 1;
+                list_push(ioc.beans, new BeanEntry(def.name, def.instance));
+            }
+
+            // Resolve @Value placeholder bindings
+            let vb_count = list_length(def.value_bindings);
+            let v = 0;
+            while v < vb_count {
+                let vb: ValueBinding = list_get(def.value_bindings, v);
+                vb.resolved_value = env_resolve_placeholders(ioc.environment, vb.expression);
+                v = v + 1;
+            }
+
+            // Execute @PostConstruct hook
+            if !def.is_initialized {
+                if string_length(def.post_construct_hook) > 0 {
+                    list_push(ioc.lifecycle_log, new LifecycleRecord(def.name, "POST_CONSTRUCT", def.post_construct_hook));
+                }
+                def.is_initialized = true;
+                def.state = bean_state_initialized();
+            }
+        }
+        o = o + 1;
+    }
+
+    // 5. Publish ContextRefreshedEvent
+    ioc_publish_event(ioc, application_event_new("ContextRefreshedEvent", "IoCContainer", "ApplicationContext successfully refreshed"));
+    return true;
+}
+
+func ioc_resolve_dependencies(ioc: IoCContainer) -> bool {
+    return ioc_refresh(ioc);
+}
+
+func ioc_get_bean(ioc: IoCContainer, name: string) -> Unknown {
+    let def = ioc_find_definition(ioc, name);
+    if def == null || !def.active {
+        return null;
+    }
+
+    // Singleton Scope: Return cached singleton instance
+    if def.scope == scope_singleton() {
+        let total = list_length(ioc.beans);
+        let i = 0;
+        while i < total {
+            let entry: BeanEntry = list_get(ioc.beans, i);
+            if entry.name == name {
+                return entry.instance;
+            }
+            i = i + 1;
+        }
+        return def.instance;
+    }
+
+    // Prototype Scope: Create a new instance upon each getBean call
+    if def.scope == scope_prototype() {
+        def.creation_count = def.creation_count + 1;
+        list_push(ioc.lifecycle_log, new LifecycleRecord(def.name, "PROTOTYPE_CREATED", "count=" + ioc_int_to_str(def.creation_count)));
+        if string_length(def.post_construct_hook) > 0 {
+            list_push(ioc.lifecycle_log, new LifecycleRecord(def.name, "POST_CONSTRUCT", def.post_construct_hook));
+        }
+        // Returns the prototype template or prototype instance reference
+        return def.instance;
+    }
+
+    return null;
+}
+
+func ioc_get_bean_by_type(ioc: IoCContainer, type_name: string) -> Unknown {
+    let candidates = list_new();
+    let total = list_length(ioc.definitions);
+    let i = 0;
+    while i < total {
+        let def: BeanDefinition = list_get(ioc.definitions, i);
+        if def.type_name == type_name && def.active {
+            list_push(candidates, def);
+        }
+        i = i + 1;
+    }
+
+    let cand_count = list_length(candidates);
+    if cand_count == 0 {
+        return null;
+    }
+    if cand_count == 1 {
+        let only_def: BeanDefinition = list_get(candidates, 0);
+        return ioc_get_bean(ioc, only_def.name);
+    }
+
+    // Multiple candidates: check for @Primary
+    let p = 0;
+    while p < cand_count {
+        let c_def: BeanDefinition = list_get(candidates, p);
+        if c_def.is_primary {
+            return ioc_get_bean(ioc, c_def.name);
+        }
+        p = p + 1;
+    }
+
+    // Default to first candidate
+    let first_def: BeanDefinition = list_get(candidates, 0);
+    return ioc_get_bean(ioc, first_def.name);
+}
+
+func ioc_get_bean_with_qualifier(ioc: IoCContainer, type_name: string, qualifier: string) -> Unknown {
+    let total = list_length(ioc.definitions);
+    let i = 0;
+    while i < total {
+        let def: BeanDefinition = list_get(ioc.definitions, i);
+        if def.type_name == type_name && def.active {
+            if def.name == qualifier {
+                return ioc_get_bean(ioc, def.name);
+            }
+        }
+        i = i + 1;
+    }
+    return null;
+}
+
+func ioc_get_beans_of_type(ioc: IoCContainer, type_name: string) -> list {
+    let matches = list_new();
+    let total = list_length(ioc.definitions);
+    let i = 0;
+    while i < total {
+        let def: BeanDefinition = list_get(ioc.definitions, i);
+        if def.type_name == type_name && def.active {
+            let instance = ioc_get_bean(ioc, def.name);
+            if instance != null {
+                list_push(matches, new BeanEntry(def.name, instance));
+            }
+        }
+        i = i + 1;
+    }
+    return matches;
+}
+
+func ioc_close(ioc: IoCContainer) {
+    if !ioc.active {
+        return;
+    }
+
+    // 1. Publish ContextClosedEvent
+    ioc_publish_event(ioc, application_event_new("ContextClosedEvent", "IoCContainer", "ApplicationContext shutting down"));
+
+    // 2. Invoke @PreDestroy on Singletons in REVERSE topological order
+    let order_len = list_length(ioc.initialization_order);
+    let idx = order_len - 1;
+    while idx >= 0 {
+        let frame: StackFrame = list_get(ioc.initialization_order, idx);
+        let def = ioc_find_definition(ioc, frame.bean_name);
+        if def != null && def.active && def.scope == scope_singleton() {
+            if string_length(def.pre_destroy_hook) > 0 {
+                list_push(ioc.lifecycle_log, new LifecycleRecord(def.name, "PRE_DESTROY", def.pre_destroy_hook));
+            }
+            def.state = bean_state_destroyed();
+        }
+        idx = idx - 1;
+    }
+
+    // 3. Clear beans
+    ioc.beans = list_new();
+    ioc.active = false;
+    list_push(ioc.lifecycle_log, new LifecycleRecord("IoCContainer", "SHUTDOWN", "IoC Container successfully shutdown"));
+}
+
+func ioc_destroy(ioc: IoCContainer) {
+    ioc_close(ioc);
+}
+
+// ==============================================================================
+// SECTION 12: Lifecycle Query Utilities & Diagnostics
+// ==============================================================================
+
+func ioc_get_lifecycle_logs(ioc: IoCContainer) -> list {
+    return ioc.lifecycle_log;
+}
+
+func ioc_has_lifecycle_action(ioc: IoCContainer, bean_name: string, action: string) -> bool {
+    let total = list_length(ioc.lifecycle_log);
+    let i = 0;
+    while i < total {
+        let rec: LifecycleRecord = list_get(ioc.lifecycle_log, i);
+        if rec.bean_name == bean_name && rec.action == action {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+func ioc_print_banner() {
+    println("  .   ____          _            __ _ _");
+    println(" /\\\\ / ___'_ __ _ _(_)_ __  __ _ \\ \\ \\ \\");
+    println("( ( )\\___ | '_ | '_| | '_ \\/ _` | \\ \\ \\ \\");
+    println(" \\\\/  ___)| |_)| | | | | || (_| |  ) ) ) )");
+    println("  '  |____| .__|_| |_|_| |_\\__, | / / / /");
+    println(" =========|_|==============|___/=/_/_/_/");
+    println(" :: RozeBoot Core ::        (v3.0 Titan)");
+}

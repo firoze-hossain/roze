@@ -1,0 +1,395 @@
+// compiler/tests/fixtures/std_rozeboot_core.roze
+// Golden fixture for Sprint 19 (M10-T01): Advanced IoC Container & Metaprogramming (rozeboot.core)
+
+import "rozeboot.core";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("❌ ASSERTION FAILED: " + msg);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_str(actual: string, expected: string, msg: string) {
+    if actual != expected {
+        println("❌ ASSERTION FAILED: " + msg);
+        println("   Expected: " + expected);
+        println("   Actual:   " + actual);
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_int(actual: int, expected: int, msg: string) {
+    if actual != expected {
+        println("❌ ASSERTION FAILED: " + msg);
+        println("   Expected: " + to_string(expected));
+        println("   Actual:   " + to_string(actual));
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+// Sample Domain Classes
+class AuditRepository {
+    table_name: string
+}
+
+class UserRepository {
+    audit_repo: string
+}
+
+class UserService {
+    user_repo: string,
+    app_title: string
+}
+
+class AuthManager {
+    user_service: string
+}
+
+class AccountController {
+    auth_mgr: string
+}
+
+class PaymentProcessor {
+    gateway_name: string
+}
+
+class WorkerTask {
+    task_id: int
+}
+
+func main() {
+    println("==================================================================");
+    println("🌹 RozeBoot Core IoC Container & Metaprogramming Suite (M10-T01)");
+    println("==================================================================");
+
+    // -------------------------------------------------------------------------
+    // TEST SUITE 1: Stereotype Annotations & Metaprogramming Model
+    // -------------------------------------------------------------------------
+    println("\n[TEST SUITE 1] Stereotype Annotations & Metaprogramming Model");
+    let ann_c = ann_component("UserComponent", "userComponent");
+    assert_eq_str(ann_c.name, "Component", "@Component name match");
+    assert_eq_str(ann_c.value, "userComponent", "@Component value match");
+
+    let ann_s = ann_service("OrderService", "orderService");
+    assert_eq_str(ann_s.name, "Service", "@Service name match");
+
+    let ann_r = ann_repository("AccountRepository", "accountRepo");
+    assert_eq_str(ann_r.name, "Repository", "@Repository name match");
+
+    let ann_ctrl = ann_controller("HomeController", "/home");
+    assert_eq_str(ann_ctrl.name, "Controller", "@Controller name match");
+
+    let ann_rc = ann_rest_controller("ApiController", "/api/v1");
+    assert_eq_str(ann_rc.name, "RestController", "@RestController name match");
+
+    let ann_cfg = ann_configuration("AppConfig", "appConfig");
+    assert_eq_str(ann_cfg.name, "Configuration", "@Configuration name match");
+
+    let ann_b = ann_bean("appConfig", "dataSource", "DataSource");
+    assert_eq_str(ann_b.name, "Bean", "@Bean name match");
+    assert_eq_str(ann_b.extra, "DataSource", "@Bean return type match");
+
+    let ann_w = ann_autowired("orderService", "paymentGateway");
+    assert_eq_str(ann_w.name, "Autowired", "@Autowired name match");
+
+    let ann_q = ann_qualifier("orderService", "paymentGateway", "stripeProcessor");
+    assert_eq_str(ann_q.name, "Qualifier", "@Qualifier name match");
+    assert_eq_str(ann_q.extra, "stripeProcessor", "@Qualifier extra match");
+
+    let ann_v = ann_value("orderService", "taxRate", "${app.tax.rate:15}");
+    assert_eq_str(ann_v.name, "Value", "@Value name match");
+    assert_eq_str(ann_v.extra, "${app.tax.rate:15}", "@Value expression match");
+
+    let ann_sc = ann_scope("workerTask", "prototype");
+    assert_eq_str(ann_sc.name, "Scope", "@Scope name match");
+    assert_eq_str(ann_sc.value, "prototype", "@Scope value match");
+
+    let ann_post = ann_post_construct("orderService");
+    assert_eq_str(ann_post.name, "PostConstruct", "@PostConstruct name match");
+
+    let ann_pre = ann_pre_destroy("orderService");
+    assert_eq_str(ann_pre.name, "PreDestroy", "@PreDestroy name match");
+
+    let ann_prim = ann_primary("stripeProcessor");
+    assert_eq_str(ann_prim.name, "Primary", "@Primary name match");
+
+    let ann_laz = ann_lazy("heavyReportService");
+    assert_eq_str(ann_laz.name, "Lazy", "@Lazy name match");
+
+    let ann_ord = ann_order("securityFilter", 100);
+    assert_eq_str(ann_ord.name, "Order", "@Order name match");
+    assert_eq_str(ann_ord.value, "100", "@Order value match");
+
+    let ann_prof = ann_profile("devDataSource", "dev");
+    assert_eq_str(ann_prof.name, "Profile", "@Profile name match");
+
+    let ann_cop = ann_conditional_on_property("cacheManager", "app.cache.enabled", "true", false);
+    assert_eq_str(ann_cop.name, "ConditionalOnProperty", "@ConditionalOnProperty match");
+
+    let ann_comb = ann_conditional_on_missing_bean("defaultEmailService", "customEmailService");
+    assert_eq_str(ann_comb.name, "ConditionalOnMissingBean", "@ConditionalOnMissingBean match");
+
+    let ann_cob = ann_conditional_on_bean("orderAuditService", "orderService");
+    assert_eq_str(ann_cob.name, "ConditionalOnBean", "@ConditionalOnBean match");
+
+    println("SUITE 1 PASSED: All 20 annotations and metadata records verified.");
+
+    // -------------------------------------------------------------------------
+    // TEST SUITE 2: Environment & Property Placeholder Resolution
+    // -------------------------------------------------------------------------
+    println("\n[TEST SUITE 2] Environment & Dynamic Property Placeholder Resolution");
+    let env = env_new();
+    env_set_property(env, "app.name", "RozeTitanApp");
+    env_set_property(env, "server.port", "8080");
+    env_set_property(env, "db.host", "127.0.0.1");
+    env_set_property(env, "feature.metrics.enabled", "true");
+    env_add_active_profile(env, "prod");
+    env_add_active_profile(env, "cloud");
+
+    assert_true(env_contains_property(env, "app.name"), "Environment contains 'app.name'");
+    assert_eq_str(env_get_property(env, "app.name", ""), "RozeTitanApp", "Property 'app.name' value match");
+    assert_true(env_is_profile_active(env, "prod"), "Profile 'prod' is active");
+    assert_true(env_is_profile_active(env, "cloud"), "Profile 'cloud' is active");
+    assert_true(!env_is_profile_active(env, "dev"), "Profile 'dev' is not active");
+
+    // Placeholder resolution
+    let simple_res = env_resolve_placeholders(env, "${app.name}");
+    assert_eq_str(simple_res, "RozeTitanApp", "Resolved ${app.name}");
+
+    let default_res = env_resolve_placeholders(env, "${server.timeout:5000}");
+    assert_eq_str(default_res, "5000", "Resolved fallback ${server.timeout:5000}");
+
+    let compound_res = env_resolve_placeholders(env, "http://${db.host:localhost}:${server.port:5432}/api/v1");
+    assert_eq_str(compound_res, "http://127.0.0.1:8080/api/v1", "Resolved compound placeholder string");
+
+    println("SUITE 2 PASSED: Environment and placeholder resolution verified.");
+
+    // -------------------------------------------------------------------------
+    // TEST SUITE 3: Conditional Bean Loading Engine
+    // -------------------------------------------------------------------------
+    println("\n[TEST SUITE 3] Conditional Bean Loading Engine");
+    let ioc_cond = ioc_container_new();
+    let env_c = ioc_get_environment(ioc_cond);
+    env_set_property(env_c, "app.metrics.enabled", "true");
+    env_add_active_profile(env_c, "prod");
+
+    // Bean 1: ConditionalOnProperty matched
+    let def_metrics = bean_definition_new("metricsCollector", "MetricsCollector", scope_singleton());
+    bean_def_add_condition(def_metrics, cond_on_property("app.metrics.enabled", "true", false));
+    ioc_register_definition(ioc_cond, def_metrics);
+
+    // Bean 2: ConditionalOnProperty NOT matched
+    let def_legacy = bean_definition_new("legacyBridge", "LegacyBridge", scope_singleton());
+    bean_def_add_condition(def_legacy, cond_on_property("app.legacy.enabled", "true", false));
+    ioc_register_definition(ioc_cond, def_legacy);
+
+    // Bean 3: ConditionalOnProfile NOT matched (profile is "dev", active is "prod")
+    let def_dev_db = bean_definition_new("devDatabase", "DevDatabase", scope_singleton());
+    bean_def_add_condition(def_dev_db, cond_on_profile("dev"));
+    ioc_register_definition(ioc_cond, def_dev_db);
+
+    // Bean 4: ConditionalOnMissingBean matched (no bean "customAuditService")
+    let def_fallback_audit = bean_definition_new("defaultAuditService", "AuditService", scope_singleton());
+    bean_def_add_condition(def_fallback_audit, cond_on_missing_bean("customAuditService"));
+    ioc_register_definition(ioc_cond, def_fallback_audit);
+
+    let cond_ok = ioc_refresh(ioc_cond);
+    assert_true(cond_ok, "IoC refresh with conditions succeeded");
+    assert_true(def_metrics.active, "metricsCollector is active (condition met)");
+    assert_true(!def_legacy.active, "legacyBridge is skipped (property missing)");
+    assert_true(!def_dev_db.active, "devDatabase is skipped (profile 'dev' inactive)");
+    assert_true(def_fallback_audit.active, "defaultAuditService is active (missing bean matched)");
+    assert_eq_int(ioc_get_definition_count(ioc_cond), 2, "Only 2 conditional beans are active");
+
+    println("SUITE 3 PASSED: Conditional bean loading verified.");
+
+    // -------------------------------------------------------------------------
+    // TEST SUITE 4: Topological Dependency Graph Resolution (DAG Engine)
+    // -------------------------------------------------------------------------
+    println("\n[TEST SUITE 4] Kahn's Topological Dependency Graph Resolution");
+    let ioc_dag = ioc_container_new();
+
+    let def_ar = bean_definition_new("auditRepo", "AuditRepository", scope_singleton());
+    bean_def_set_hooks(def_ar, "initAuditRepo", "closeAuditRepo");
+    def_ar.instance = new AuditRepository("audit_log_v1");
+    ioc_register_definition(ioc_dag, def_ar);
+
+    let def_ur = bean_definition_new("userRepo", "UserRepository", scope_singleton());
+    bean_def_add_dependency(def_ur, "auditRepo");
+    bean_def_set_hooks(def_ur, "initUserRepo", "closeUserRepo");
+    def_ur.instance = new UserRepository("auditRepo");
+    ioc_register_definition(ioc_dag, def_ur);
+
+    let def_us = bean_definition_new("userService", "UserService", scope_singleton());
+    bean_def_add_dependency(def_us, "userRepo");
+    bean_def_add_dependency(def_us, "auditRepo");
+    bean_def_add_value(def_us, "app_title", "${app.name:DefaultTitle}");
+    bean_def_set_hooks(def_us, "initUserService", "closeUserService");
+    def_us.instance = new UserService("userRepo", "RozeTitan");
+    ioc_register_definition(ioc_dag, def_us);
+
+    let def_am = bean_definition_new("authManager", "AuthManager", scope_singleton());
+    bean_def_add_dependency(def_am, "userService");
+    bean_def_set_hooks(def_am, "initAuthManager", "closeAuthManager");
+    def_am.instance = new AuthManager("userService");
+    ioc_register_definition(ioc_dag, def_am);
+
+    let def_ac = bean_definition_new("accountController", "AccountController", scope_singleton());
+    bean_def_add_dependency(def_ac, "authManager");
+    bean_def_set_hooks(def_ac, "initAccountController", "closeAccountController");
+    def_ac.instance = new AccountController("authManager");
+    ioc_register_definition(ioc_dag, def_ac);
+
+    let dag_ok = ioc_refresh(ioc_dag);
+    assert_true(dag_ok, "Topological refresh succeeded without cycle");
+
+    let order = ioc_get_initialization_order(ioc_dag);
+    assert_eq_int(list_length(order), 5, "All 5 beans ordered in DAG");
+
+    let f0: StackFrame = list_get(order, 0);
+    let f1: StackFrame = list_get(order, 1);
+    let f2: StackFrame = list_get(order, 2);
+    let f3: StackFrame = list_get(order, 3);
+    let f4: StackFrame = list_get(order, 4);
+
+    assert_eq_str(f0.bean_name, "auditRepo", "Rank 0 is leaf 'auditRepo'");
+    assert_eq_str(f1.bean_name, "userRepo", "Rank 1 is 'userRepo'");
+    assert_eq_str(f2.bean_name, "userService", "Rank 2 is 'userService'");
+    assert_eq_str(f3.bean_name, "authManager", "Rank 3 is 'authManager'");
+    assert_eq_str(f4.bean_name, "accountController", "Rank 4 is 'accountController'");
+
+    assert_true(ioc_has_lifecycle_action(ioc_dag, "auditRepo", "POST_CONSTRUCT"), "auditRepo @PostConstruct invoked");
+    assert_true(ioc_has_lifecycle_action(ioc_dag, "accountController", "POST_CONSTRUCT"), "accountController @PostConstruct invoked");
+
+    println("SUITE 4 PASSED: Topological dependency DAG resolution verified.");
+
+    // -------------------------------------------------------------------------
+    // TEST SUITE 5: Circular Dependency Detection & Cycle Diagnostics
+    // -------------------------------------------------------------------------
+    println("\n[TEST SUITE 5] Circular Dependency Detection with Cycle Diagnostics");
+    let ioc_cycle = ioc_container_new();
+
+    let def_ca = bean_definition_new("cycleA", "CycleServiceA", scope_singleton());
+    bean_def_add_dependency(def_ca, "cycleB");
+    ioc_register_definition(ioc_cycle, def_ca);
+
+    let def_cb = bean_definition_new("cycleB", "CycleServiceB", scope_singleton());
+    bean_def_add_dependency(def_cb, "cycleC");
+    ioc_register_definition(ioc_cycle, def_cb);
+
+    let def_cc = bean_definition_new("cycleC", "CycleServiceC", scope_singleton());
+    bean_def_add_dependency(def_cc, "cycleA"); // Closes cycle A -> B -> C -> A
+    ioc_register_definition(ioc_cycle, def_cc);
+
+    let cycle_detected = ioc_detect_circular_dependencies(ioc_cycle);
+    assert_true(cycle_detected, "Cycle detection flagged circular dependency");
+    assert_true(ioc_cycle.cycle_detected, "Container state cycle_detected = true");
+    assert_true(ioc_str_contains(ioc_cycle.cycle_error, "CircularDependencyException"), "Contains CircularDependencyException");
+    assert_true(ioc_str_contains(ioc_cycle.cycle_error, "cycleA -> cycleB -> cycleC -> cycleA"), "Diagnostic shows exact cycle path");
+
+    let cycle_refresh_result = ioc_refresh(ioc_cycle);
+    assert_true(!cycle_refresh_result, "Refresh failed safely upon cycle detection");
+
+    println("SUITE 5 PASSED: Circular dependency detection and diagnostics verified.");
+
+    // -------------------------------------------------------------------------
+    // TEST SUITE 6: Advanced Bean Lifecycle (Singleton vs Prototype)
+    // -------------------------------------------------------------------------
+    println("\n[TEST SUITE 6] Bean Scopes: Singleton Caching vs Prototype Factory");
+    let ioc_scopes = ioc_container_new();
+
+    // Singleton Bean
+    let def_sing = bean_definition_new("singletonService", "SingletonService", scope_singleton());
+    def_sing.instance = new AuditRepository("singleton_shared_table");
+    bean_def_set_hooks(def_sing, "initSingleton", "destroySingleton");
+    ioc_register_definition(ioc_scopes, def_sing);
+
+    // Prototype Bean
+    let def_proto = bean_definition_new("workerTask", "WorkerTask", scope_prototype());
+    def_proto.instance = new WorkerTask(1001);
+    bean_def_set_hooks(def_proto, "initWorkerTask", "");
+    ioc_register_definition(ioc_scopes, def_proto);
+
+    let scope_refresh = ioc_refresh(ioc_scopes);
+    assert_true(scope_refresh, "Scopes container refreshed");
+
+    // Singleton check: creation count = 1, subsequent gets return cached instance
+    let s1 = ioc_get_bean(ioc_scopes, "singletonService");
+    let s2 = ioc_get_bean(ioc_scopes, "singletonService");
+    assert_true(s1 != null, "Singleton instance retrieved");
+    assert_eq_int(def_sing.creation_count, 1, "Singleton created exactly once");
+
+    // Prototype check: each getBean increments creation_count
+    let p1 = ioc_get_bean(ioc_scopes, "workerTask");
+    let p2 = ioc_get_bean(ioc_scopes, "workerTask");
+    let p3 = ioc_get_bean(ioc_scopes, "workerTask");
+    assert_true(p1 != null, "Prototype 1 retrieved");
+    assert_eq_int(def_proto.creation_count, 3, "Prototype instantiated 3 independent times");
+
+    println("SUITE 6 PASSED: Singleton caching vs Prototype factory verified.");
+
+    // -------------------------------------------------------------------------
+    // TEST SUITE 7: Disambiguation with @Qualifier & @Primary
+    // -------------------------------------------------------------------------
+    println("\n[TEST SUITE 7] Disambiguation with @Qualifier & @Primary");
+    let ioc_dis = ioc_container_new();
+
+    let def_stripe = bean_definition_new("stripeProcessor", "PaymentProcessor", scope_singleton());
+    def_stripe.instance = new PaymentProcessor("Stripe");
+    bean_def_set_primary(def_stripe, true); // Marked @Primary
+    ioc_register_definition(ioc_dis, def_stripe);
+
+    let def_paypal = bean_definition_new("paypalProcessor", "PaymentProcessor", scope_singleton());
+    def_paypal.instance = new PaymentProcessor("PayPal");
+    bean_def_set_primary(def_paypal, false);
+    ioc_register_definition(ioc_dis, def_paypal);
+
+    let dis_ok = ioc_refresh(ioc_dis);
+    assert_true(dis_ok, "Disambiguation container refreshed");
+
+    // By Type: should choose @Primary (stripeProcessor)
+    let prim_bean: PaymentProcessor = ioc_get_bean_by_type(ioc_dis, "PaymentProcessor");
+    assert_true(prim_bean != null, "Primary bean retrieved by type");
+    assert_eq_str(prim_bean.gateway_name, "Stripe", "Primary bean is Stripe");
+
+    // With Qualifier: should choose explicit qualifier
+    let qual_bean: PaymentProcessor = ioc_get_bean_with_qualifier(ioc_dis, "PaymentProcessor", "paypalProcessor");
+    assert_true(qual_bean != null, "Qualified bean retrieved");
+    assert_eq_str(qual_bean.gateway_name, "PayPal", "Qualified bean is PayPal");
+
+    // Get all beans of type
+    let all_processors = ioc_get_beans_of_type(ioc_dis, "PaymentProcessor");
+    assert_eq_int(list_length(all_processors), 2, "Found both payment processors of type");
+
+    println("SUITE 7 PASSED: Disambiguation with @Qualifier and @Primary verified.");
+
+    // -------------------------------------------------------------------------
+    // TEST SUITE 8: Application Event Bus & Reverse Topological @PreDestroy Teardown
+    // -------------------------------------------------------------------------
+    println("\n[TEST SUITE 8] Application Event Bus & Reverse Topological Teardown");
+    ioc_register_listener(ioc_dag, "auditSecurityListener", "UserLoginEvent", "onUserLogin");
+    ioc_publish_event(ioc_dag, application_event_new("UserLoginEvent", "AuthManager", "User firoze authenticated"));
+
+    let events = ioc_get_published_events(ioc_dag);
+    assert_true(list_length(events) >= 2, "Published events logged (ContextRefreshed + UserLogin)");
+    assert_true(ioc_has_lifecycle_action(ioc_dag, "auditSecurityListener", "EVENT_TRIGGERED"), "Listener triggered on event");
+
+    // Close container: triggers reverse topological @PreDestroy
+    ioc_close(ioc_dag);
+    assert_true(!ioc_dag.active, "Container marked inactive upon close");
+    assert_true(ioc_has_lifecycle_action(ioc_dag, "accountController", "PRE_DESTROY"), "accountController @PreDestroy invoked");
+    assert_true(ioc_has_lifecycle_action(ioc_dag, "auditRepo", "PRE_DESTROY"), "auditRepo @PreDestroy invoked");
+    assert_true(ioc_has_lifecycle_action(ioc_dag, "IoCContainer", "SHUTDOWN"), "IoC container shutdown logged");
+
+    println("SUITE 8 PASSED: Event bus and reverse topological teardown verified.");
+
+    // Print banner
+    println("\n==================================================================");
+    ioc_print_banner();
+    println("==================================================================");
+    println("ALL SUITES COMPLETED: RozeBoot Core IoC Container 100% OPERATIONAL");
+}

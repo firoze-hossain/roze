@@ -758,7 +758,7 @@ s1_rows = [
         ("M10-T01", 8), ("Month 10", 25), ("Sprint 19 (W39-W40)", 8), "Enterprise IoC & DI", "Advanced IoC Container & Metaprogramming (rozeboot.core)",
         "Advanced Inversion of Control container in pure Roze: @Component, @Service, @Repository, @Controller, @RestController, @Autowired, @Qualifier, @Value, @Configuration, @Bean, @Scope('singleton'|'prototype'), @PostConstruct, @PreDestroy. Topological dependency graph resolution, circular dependency detection with cycle diagnostics, and conditional bean loading.",
         "1:1 architectural parity with Spring Framework 6 / Spring Boot 3 core container.",
-        "Enterprise Web, Cloud Microservices, Architecture", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Enterprise Web, Cloud Microservices, Architecture", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M10-T02", 8), ("Month 10", 25), ("Sprint 19 (W39-W40)", 8), "High-Throughput Web", "Reactive HTTP/2, HTTP/3, WebSockets & gRPC (rozeboot.web)",

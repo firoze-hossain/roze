@@ -132,6 +132,9 @@ const NIO_DISPLAY_NAME: &str = "nio (built-in)";
 const CONCURRENT_SOURCE: &str = include_str!("../../stdlib/src/concurrent.roze");
 const CONCURRENT_DISPLAY_NAME: &str = "concurrent (built-in)";
 
+const ROZEBOOT_CORE_SOURCE: &str = include_str!("../../stdlib/src/rozeboot_core.roze");
+const ROZEBOOT_CORE_DISPLAY_NAME: &str = "rozeboot_core (built-in)";
+
 fn statement_defined_name(stmt: &Statement) -> Option<String> {
     match stmt {
         Statement::Function { name, .. } | Statement::ExternFunction { name, .. } | Statement::ClassDecl { name, .. } => Some(name.clone()),
@@ -225,6 +228,9 @@ pub fn resolve_imports(program: Program, base_dir: &Path) -> Result<Program> {
 /// from the workspace `packages/` directory, project `libs/` directory, cache, or environment.
 pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, String)> {
     let pkg_subpath = match path {
+        "rozeboot.core" | "rozeboot::core" | "roze::boot::core" | "roze.boot.core" | "rozeboot_core" | "rozeboot-core" | "ioc.core" | "spring.core" => {
+            Some("rozeboot/src/core.roze".to_string())
+        }
         "rozeboot" | "rozeboot2" | "roze::boot" | "roze-boot" | "roze_boot" | "ioc" | "annotations" => {
             Some("rozeboot/src/lib.roze".to_string())
         }
@@ -480,6 +486,10 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         || path == "forkjoin" || path == "roze.forkjoin" || path == "roze::forkjoin"
         || path == "crossbeam" || path == "roze.crossbeam" || path == "roze::crossbeam" {
         return Ok((CONCURRENT_SOURCE.to_string(), CONCURRENT_DISPLAY_NAME.to_string()));
+    }
+    if path == "rozeboot.core" || path == "rozeboot::core" || path == "roze::boot::core" || path == "roze.boot.core"
+        || path == "rozeboot_core" || path == "rozeboot-core" || path == "ioc.core" || path == "spring.core" {
+        return Ok((ROZEBOOT_CORE_SOURCE.to_string(), ROZEBOOT_CORE_DISPLAY_NAME.to_string()));
     }
 
     let primary_path: PathBuf = if path.ends_with(".roze") {

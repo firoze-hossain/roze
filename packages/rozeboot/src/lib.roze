@@ -12,6 +12,7 @@
 import "web";
 import "enterprise_web.roze";
 import "cloud_security.roze";
+import "security.roze";
 
 // ==============================================================================
 // 1. Database Connection Pooling (HikariCP / Pooled DataSource)

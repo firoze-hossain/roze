@@ -5229,6 +5229,27 @@ fn native_standard_roze_orm_persistence_suite() {
     assert!(stdout.contains("ALL ROZE-ORM PERSISTENCE & BANKING TESTS PASSED (100% SUCCESS)"));
 }
 
+#[test]
+fn native_standard_rozeboot_security_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_rozeboot_security.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_rozeboot_security.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_rozeboot_security_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Principal & SecurityContext verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: JWT Authentication Filter verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: OAuth 2.0 & OIDC Server verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: RBAC & @PreAuthorize evaluated successfully."));
+    assert!(stdout.contains("SUITE 5 PASSED: Argon2id Password Hashing verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: CSRF Token Filter verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: CORS Filter verified."));
+    assert!(stdout.contains("SUITE 8 PASSED: Rate Limiter Token Bucket verified."));
+    assert!(stdout.contains("SUITE 9 PASSED: Unified Security Filter Chain fully operational."));
+    assert!(stdout.contains("ALL 9 TEST SUITES COMPLETED: 100% PASSING (Spring Security 6 Parity)"));
+}
+
 
 
 

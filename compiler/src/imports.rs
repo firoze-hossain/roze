@@ -138,6 +138,9 @@ const ROZEBOOT_CORE_DISPLAY_NAME: &str = "rozeboot_core (built-in)";
 const ROZEBOOT_WEB_SOURCE: &str = include_str!("../../stdlib/src/rozeboot_web.roze");
 const ROZEBOOT_WEB_DISPLAY_NAME: &str = "rozeboot_web (built-in)";
 
+const ROZEBOOT_SECURITY_SOURCE: &str = include_str!("../../stdlib/src/rozeboot_security.roze");
+const ROZEBOOT_SECURITY_DISPLAY_NAME: &str = "rozeboot_security (built-in)";
+
 const ORM_SOURCE: &str = include_str!("../../stdlib/src/orm.roze");
 const ORM_DISPLAY_NAME: &str = "orm (built-in)";
 
@@ -239,6 +242,9 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         }
         "rozeboot.web" | "rozeboot::web" | "roze::boot::web" | "roze.boot.web" | "rozeboot_web" | "rozeboot-web" | "reactive_web" => {
             Some("rozeboot/src/web.roze".to_string())
+        }
+        "rozeboot.security" | "rozeboot::security" | "roze::boot::security" | "roze.boot.security" | "rozeboot_security" | "rozeboot-security" | "spring.security" => {
+            Some("rozeboot/src/security.roze".to_string())
         }
         "rozeboot" | "rozeboot2" | "roze::boot" | "roze-boot" | "roze_boot" | "ioc" | "annotations" => {
             Some("rozeboot/src/lib.roze".to_string())
@@ -503,6 +509,10 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "rozeboot.web" || path == "rozeboot::web" || path == "roze::boot::web" || path == "roze.boot.web"
         || path == "rozeboot_web" || path == "rozeboot-web" || path == "reactive_web" {
         return Ok((ROZEBOOT_WEB_SOURCE.to_string(), ROZEBOOT_WEB_DISPLAY_NAME.to_string()));
+    }
+    if path == "rozeboot.security" || path == "rozeboot::security" || path == "roze::boot::security" || path == "roze.boot.security"
+        || path == "rozeboot_security" || path == "rozeboot-security" || path == "spring.security" {
+        return Ok((ROZEBOOT_SECURITY_SOURCE.to_string(), ROZEBOOT_SECURITY_DISPLAY_NAME.to_string()));
     }
     if path == "orm" || path == "roze::orm" || path == "roze.orm" || path == "roze-orm" || path == "roze_orm"
         || path == "sql_orm" || path == "jpa" || path == "diesel" || path == "seaorm" {

@@ -1,0 +1,1459 @@
+// ==============================================================================
+// 🌹 RozeBoot Security - Cloud Security Perimeter & OAuth2/JWT (M10-T04)
+// ==============================================================================
+// 1:1 Architectural Parity with Spring Security 6 on Java 25
+//
+// Subsystems:
+// 1. Principal, Authorities & SecurityContext (Spring Security 6 Architecture)
+// 2. Built-in JWT Authentication Filter (RFC 7519 Base64URL, HS256, Claims, Expiry)
+// 3. OAuth 2.0 / OIDC Authorization & Resource Server (RFC 6749, RFC 7662 Introspection)
+// 4. Role-Based Access Control (RBAC) & Method-Level Security (@PreAuthorize, Hierarchies)
+// 5. Argon2id Password Hashing Engine (RFC 9106 Modular Crypt PHC Format)
+// 6. CSRF Token Validation Filter (Double Submit Cookie & Synchronizer Token)
+// 7. CORS Configuration Filter (Cross-Origin Resource Sharing & Preflight OPTIONS)
+// 8. Rate Limiting / Token Bucket Filter (Burst Capacity, Refill Rate, HTTP 429)
+// 9. Unified Security Filter Chain (Ordered execution of security perimeter)
+// ==============================================================================
+
+// ==============================================================================
+// SECTION 0: Pure Roze Cryptographic & String Utilities (Zero C/JVM Dependencies)
+// ==============================================================================
+
+func sec_str_equals(a: string, b: string) -> bool {
+    let len_a = string_length(a);
+    let len_b = string_length(b);
+    if len_a != len_b { return false; }
+    let diff = 0;
+    let i = 0;
+    while i < len_a {
+        let ca = string_char_at(a, i);
+        let cb = string_char_at(b, i);
+        if ca != cb {
+            diff = diff + 1;
+        }
+        i = i + 1;
+    }
+    return diff == 0;
+}
+
+func sec_str_starts_with(s: string, prefix: string) -> bool {
+    return string_starts_with(s, prefix);
+}
+
+func sec_str_contains(s: string, needle: string) -> bool {
+    return string_contains(s, needle);
+}
+
+func sec_sub_str(s: string, start: int, end: int) -> string {
+    return string_substring(s, start, end);
+}
+
+func sec_str_index_of(s: string, needle: string) -> int {
+    let s_len = string_length(s);
+    let n_len = string_length(needle);
+    if n_len > s_len { return -1; }
+    let i = 0;
+    while i <= (s_len - n_len) {
+        let sub = string_substring(s, i, i + n_len);
+        if sub == needle {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+func sec_bytes_new(len: int) -> list {
+    let out = list_new();
+    let i = 0;
+    while i < len {
+        list_push(out, 0);
+        i = i + 1;
+    }
+    return out;
+}
+
+func sec_bytes_concat(a: list, b: list) -> list {
+    let out = list_new();
+    let na = list_length(a);
+    let i = 0;
+    while i < na {
+        list_push(out, list_get(a, i));
+        i = i + 1;
+    }
+    let nb = list_length(b);
+    let j = 0;
+    while j < nb {
+        list_push(out, list_get(b, j));
+        j = j + 1;
+    }
+    return out;
+}
+
+func sec_str_to_bytes(s: string) -> list {
+    let out = list_new();
+    let len = string_length(s);
+    let i = 0;
+    while i < len {
+        list_push(out, string_char_at(s, i));
+        i = i + 1;
+    }
+    return out;
+}
+
+func sec_byte_to_char(b: int) -> string {
+    if b >= 32 && b <= 126 {
+        let table = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+        return string_substring(table, b - 32, b - 31);
+    }
+    if b == 10 { return "\n"; }
+    if b == 13 { return "\r"; }
+    if b == 9 { return "\t"; }
+    return "?";
+}
+
+func sec_u32_add(a: int, b: int) -> int {
+    return bit_and(a + b, 4294967295);
+}
+
+func sec_u32_rotr(x: int, n: int) -> int {
+    let r = bit_shr(x, n);
+    let l = bit_and(bit_shl(x, 32 - n), 4294967295);
+    return bit_or(r, l);
+}
+
+func sec_u32_from_be(b: list, off: int) -> int {
+    let b0: int = list_get(b, off);
+    let b1: int = list_get(b, off + 1);
+    let b2: int = list_get(b, off + 2);
+    let b3: int = list_get(b, off + 3);
+    return bit_or(bit_or(bit_or(bit_shl(b0, 24), bit_shl(b1, 16)), bit_shl(b2, 8)), b3);
+}
+
+func sec_u32_to_be(val: int, b: list, off: int) {
+    list_set(b, off, bit_and(bit_shr(val, 24), 255));
+    list_set(b, off + 1, bit_and(bit_shr(val, 16), 255));
+    list_set(b, off + 2, bit_and(bit_shr(val, 8), 255));
+    list_set(b, off + 3, bit_and(val, 255));
+}
+
+func sec_sha256_k() -> list {
+    let k = list_new();
+    list_push(k, 1116352408); list_push(k, 1899447441); list_push(k, -1245643825); list_push(k, -373957723);
+    list_push(k, 961987163); list_push(k, 1508970993); list_push(k, -1841331548); list_push(k, -1424204075);
+    list_push(k, -670586216); list_push(k, 310598401); list_push(k, 607225278); list_push(k, 1426881987);
+    list_push(k, 1925078388); list_push(k, -2132889090); list_push(k, -1680079193); list_push(k, -1046744716);
+    list_push(k, -459576895); list_push(k, -272742522); list_push(k, 264347078); list_push(k, 604807628);
+    list_push(k, 770255983); list_push(k, 1249150122); list_push(k, 1555081692); list_push(k, 1996064986);
+    list_push(k, -1740746414); list_push(k, -1473132947); list_push(k, -1341970488); list_push(k, -1084653625);
+    list_push(k, -958395405); list_push(k, -710438585); list_push(k, 113926993); list_push(k, 338241895);
+    list_push(k, 666307205); list_push(k, 773529912); list_push(k, 1294757372); list_push(k, 1396182291);
+    list_push(k, 1695183700); list_push(k, 1986661051); list_push(k, -2117940946); list_push(k, -1838011259);
+    list_push(k, -1564481375); list_push(k, -1474664885); list_push(k, -1035236496); list_push(k, -949202525);
+    list_push(k, -778901479); list_push(k, -694614492); list_push(k, -200395387); list_push(k, 275423344);
+    list_push(k, 430227734); list_push(k, 506948616); list_push(k, 659060556); list_push(k, 883997877);
+    list_push(k, 958139571); list_push(k, 1322822218); list_push(k, 1537002063); list_push(k, 1747873779);
+    list_push(k, 1955562222); list_push(k, 2024104815); list_push(k, -2067236844); list_push(k, -1933114872);
+    list_push(k, -1866530822); list_push(k, -1538233109); list_push(k, -1090935817); list_push(k, -965641998);
+    return k;
+}
+
+func sec_sha256(data: list) -> list {
+    let k = sec_sha256_k();
+    let data_len = list_length(data);
+
+    let pad_len = 64 - ((data_len + 9) % 64);
+    if pad_len == 64 { pad_len = 0; }
+    let total_len = data_len + 1 + pad_len + 8;
+    let buf = sec_bytes_new(total_len);
+
+    let i = 0;
+    while i < data_len {
+        let b: int = list_get(data, i);
+        list_set(buf, i, b);
+        i = i + 1;
+    }
+    list_set(buf, data_len, 128); // 0x80
+
+    let bit_len = data_len * 8;
+    list_set(buf, total_len - 4, bit_and(bit_shr(bit_len, 24), 255));
+    list_set(buf, total_len - 3, bit_and(bit_shr(bit_len, 16), 255));
+    list_set(buf, total_len - 2, bit_and(bit_shr(bit_len, 8), 255));
+    list_set(buf, total_len - 1, bit_and(bit_len, 255));
+
+    let mut_h0 = 1779033703;
+    let mut_h1 = -1150833019;
+    let mut_h2 = 1013904242;
+    let mut_h3 = -1521486534;
+    let mut_h4 = 1359893119;
+    let mut_h5 = -1694144372;
+    let mut_h6 = 528734635;
+    let mut_h7 = 1541459225;
+
+    let w = list_new();
+    let z = 0;
+    while z < 64 { list_push(w, 0); z = z + 1; }
+
+    let block_off = 0;
+    while block_off < total_len {
+        let t = 0;
+        while t < 16 {
+            list_set(w, t, sec_u32_from_be(buf, block_off + (t * 4)));
+            t = t + 1;
+        }
+        while t < 64 {
+            let wt2: int = list_get(w, t - 2);
+            let s1 = bit_xor(bit_xor(sec_u32_rotr(wt2, 17), sec_u32_rotr(wt2, 19)), bit_shr(wt2, 10));
+            let wt15: int = list_get(w, t - 15);
+            let s0 = bit_xor(bit_xor(sec_u32_rotr(wt15, 7), sec_u32_rotr(wt15, 18)), bit_shr(wt15, 3));
+            let wt7: int = list_get(w, t - 7);
+            let wt16: int = list_get(w, t - 16);
+            let val = sec_u32_add(sec_u32_add(wt16, s0), sec_u32_add(wt7, s1));
+            list_set(w, t, val);
+            t = t + 1;
+        }
+
+        let a = mut_h0;
+        let b = mut_h1;
+        let c = mut_h2;
+        let d = mut_h3;
+        let e = mut_h4;
+        let f = mut_h5;
+        let g = mut_h6;
+        let h = mut_h7;
+
+        let m = 0;
+        while m < 64 {
+            let s1 = bit_xor(bit_xor(sec_u32_rotr(e, 6), sec_u32_rotr(e, 11)), sec_u32_rotr(e, 25));
+            let ch = bit_xor(bit_and(e, f), bit_and(bit_not(e), g));
+            let ki: int = list_get(k, m);
+            let wi: int = list_get(w, m);
+            let temp1 = sec_u32_add(sec_u32_add(h, s1), sec_u32_add(sec_u32_add(ch, ki), wi));
+            let s0 = bit_xor(bit_xor(sec_u32_rotr(a, 2), sec_u32_rotr(a, 13)), sec_u32_rotr(a, 22));
+            let maj = bit_xor(bit_xor(bit_and(a, b), bit_and(a, c)), bit_and(b, c));
+            let temp2 = sec_u32_add(s0, maj);
+
+            h = g;
+            g = f;
+            f = e;
+            e = sec_u32_add(d, temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = sec_u32_add(temp1, temp2);
+            m = m + 1;
+        }
+
+        mut_h0 = sec_u32_add(mut_h0, a);
+        mut_h1 = sec_u32_add(mut_h1, b);
+        mut_h2 = sec_u32_add(mut_h2, c);
+        mut_h3 = sec_u32_add(mut_h3, d);
+        mut_h4 = sec_u32_add(mut_h4, e);
+        mut_h5 = sec_u32_add(mut_h5, f);
+        mut_h6 = sec_u32_add(mut_h6, g);
+        mut_h7 = sec_u32_add(mut_h7, h);
+
+        block_off = block_off + 64;
+    }
+
+    let digest = sec_bytes_new(32);
+    sec_u32_to_be(mut_h0, digest, 0);
+    sec_u32_to_be(mut_h1, digest, 4);
+    sec_u32_to_be(mut_h2, digest, 8);
+    sec_u32_to_be(mut_h3, digest, 12);
+    sec_u32_to_be(mut_h4, digest, 16);
+    sec_u32_to_be(mut_h5, digest, 20);
+    sec_u32_to_be(mut_h6, digest, 24);
+    sec_u32_to_be(mut_h7, digest, 28);
+    return digest;
+}
+
+func sec_hmac_sha256(key: list, data: list) -> list {
+    let block_size = 64;
+    let actual_key = key;
+    if list_length(key) > block_size {
+        actual_key = sec_sha256(key);
+    }
+    let k_pad_len = list_length(actual_key);
+
+    let ipad = sec_bytes_new(block_size);
+    let opad = sec_bytes_new(block_size);
+    let i = 0;
+    while i < block_size {
+        let kb = 0;
+        if i < k_pad_len {
+            kb = list_get(actual_key, i);
+        }
+        list_set(ipad, i, bit_xor(kb, 54));  // 0x36
+        list_set(opad, i, bit_xor(kb, 92));  // 0x5c
+        i = i + 1;
+    }
+
+    let inner_data = sec_bytes_concat(ipad, data);
+    let inner_hash = sec_sha256(inner_data);
+    let outer_data = sec_bytes_concat(opad, inner_hash);
+    return sec_sha256(outer_data);
+}
+
+func sec_base64url_encode(bytes: list) -> string {
+    let alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let len = list_length(bytes);
+    let out = "";
+    let i = 0;
+    while i + 2 < len {
+        let b0: int = list_get(bytes, i);
+        let b1: int = list_get(bytes, i + 1);
+        let b2: int = list_get(bytes, i + 2);
+
+        let n = bit_or(bit_or(bit_shl(b0, 16), bit_shl(b1, 8)), b2);
+        let c0 = bit_and(bit_shr(n, 18), 63);
+        let c1 = bit_and(bit_shr(n, 12), 63);
+        let c2 = bit_and(bit_shr(n, 6), 63);
+        let c3 = bit_and(n, 63);
+
+        out = out + string_substring(alpha, c0, c0 + 1)
+                  + string_substring(alpha, c1, c1 + 1)
+                  + string_substring(alpha, c2, c2 + 1)
+                  + string_substring(alpha, c3, c3 + 1);
+        i = i + 3;
+    }
+
+    if i < len {
+        let rem = len - i;
+        if rem == 1 {
+            let b0: int = list_get(bytes, i);
+            let n = bit_shl(b0, 16);
+            let c0 = bit_and(bit_shr(n, 18), 63);
+            let c1 = bit_and(bit_shr(n, 12), 63);
+            out = out + string_substring(alpha, c0, c0 + 1)
+                      + string_substring(alpha, c1, c1 + 1);
+        } else {
+            let b0: int = list_get(bytes, i);
+            let b1: int = list_get(bytes, i + 1);
+            let n = bit_or(bit_shl(b0, 16), bit_shl(b1, 8));
+            let c0 = bit_and(bit_shr(n, 18), 63);
+            let c1 = bit_and(bit_shr(n, 12), 63);
+            let c2 = bit_and(bit_shr(n, 6), 63);
+            out = out + string_substring(alpha, c0, c0 + 1)
+                      + string_substring(alpha, c1, c1 + 1)
+                      + string_substring(alpha, c2, c2 + 1);
+        }
+    }
+    return out;
+}
+
+func sec_b64_val(c: string) -> int {
+    let code = string_char_at(c, 0);
+    if code >= 65 && code <= 90 { return code - 65; }
+    if code >= 97 && code <= 122 { return code - 97 + 26; }
+    if code >= 48 && code <= 57 { return code - 48 + 52; }
+    if c == "-" || c == "+" { return 62; }
+    if c == "_" || c == "/" { return 63; }
+    return 0;
+}
+
+func sec_base64url_decode_to_str(s: string) -> string {
+    let len = string_length(s);
+    let out = "";
+    let i = 0;
+    while i + 3 < len {
+        let v0 = sec_b64_val(string_substring(s, i, i + 1));
+        let v1 = sec_b64_val(string_substring(s, i + 1, i + 2));
+        let v2 = sec_b64_val(string_substring(s, i + 2, i + 3));
+        let v3 = sec_b64_val(string_substring(s, i + 3, i + 4));
+
+        let n = bit_or(bit_or(bit_or(bit_shl(v0, 18), bit_shl(v1, 12)), bit_shl(v2, 6)), v3);
+        let b0 = bit_and(bit_shr(n, 16), 255);
+        let b1 = bit_and(bit_shr(n, 8), 255);
+        let b2 = bit_and(n, 255);
+
+        out = out + sec_byte_to_char(b0) + sec_byte_to_char(b1) + sec_byte_to_char(b2);
+        i = i + 4;
+    }
+    let rem = len - i;
+    if rem == 2 {
+        let v0 = sec_b64_val(string_substring(s, i, i + 1));
+        let v1 = sec_b64_val(string_substring(s, i + 1, i + 2));
+        let n = bit_or(bit_shl(v0, 18), bit_shl(v1, 12));
+        let b0 = bit_and(bit_shr(n, 16), 255);
+        out = out + sec_byte_to_char(b0);
+    } else if rem == 3 {
+        let v0 = sec_b64_val(string_substring(s, i, i + 1));
+        let v1 = sec_b64_val(string_substring(s, i + 1, i + 2));
+        let v2 = sec_b64_val(string_substring(s, i + 2, i + 3));
+        let n = bit_or(bit_or(bit_shl(v0, 18), bit_shl(v1, 12)), bit_shl(v2, 6));
+        let b0 = bit_and(bit_shr(n, 16), 255);
+        let b1 = bit_and(bit_shr(n, 8), 255);
+        out = out + sec_byte_to_char(b0) + sec_byte_to_char(b1);
+    }
+    return out;
+}
+
+func sec_json_extract_str(json: string, key: string) -> string {
+    let target = "\"" + key + "\":\"";
+    let idx = sec_str_index_of(json, target);
+    if idx == -1 { return ""; }
+    let val_start = idx + string_length(target);
+    let sub = sec_sub_str(json, val_start, string_length(json));
+    let quote_idx = sec_str_index_of(sub, "\"");
+    if quote_idx == -1 { return ""; }
+    return sec_sub_str(sub, 0, quote_idx);
+}
+
+func sec_json_extract_int(json: string, key: string) -> int {
+    let target = "\"" + key + "\":";
+    let idx = sec_str_index_of(json, target);
+    if idx == -1 { return 0; }
+    let val_start = idx + string_length(target);
+    let len = string_length(json);
+    let num_val = 0;
+    let i = val_start;
+    while i < len {
+        let ch = string_char_at(json, i);
+        if ch >= 48 && ch <= 57 {
+            num_val = (num_val * 10) + (ch - 48);
+        } else {
+            return num_val;
+        }
+        i = i + 1;
+    }
+    return num_val;
+}
+
+// ==============================================================================
+// SECTION 1: Principal, Authorities & SecurityContext (Spring Security 6 Model)
+// ==============================================================================
+
+class GrantedAuthority {
+    authority: string // e.g. "ROLE_ADMIN", "ROLE_USER", "SCOPE_read"
+}
+
+func authority_new(auth: string) -> GrantedAuthority {
+    return new GrantedAuthority(auth);
+}
+
+class SecurityPrincipal {
+    user_id: string,
+    username: string,
+    authorities: list, // list of GrantedAuthority
+    authenticated: bool,
+    details: string
+}
+
+func principal_new(user_id: string, username: string, auths: list) -> SecurityPrincipal {
+    return new SecurityPrincipal(user_id, username, auths, true, "");
+}
+
+func principal_anonymous() -> SecurityPrincipal {
+    let empty_auths = list_new();
+    list_push(empty_auths, new GrantedAuthority("ROLE_ANONYMOUS"));
+    return new SecurityPrincipal("anonymous", "anonymousUser", empty_auths, false, "");
+}
+
+func principal_has_authority(p: SecurityPrincipal, auth_name: string) -> bool {
+    let count = list_length(p.authorities);
+    let i = 0;
+    while i < count {
+        let ga: GrantedAuthority = list_get(p.authorities, i);
+        if ga.authority == auth_name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+func principal_has_role(p: SecurityPrincipal, role_name: string) -> bool {
+    let target = role_name;
+    if !sec_str_starts_with(target, "ROLE_") {
+        target = "ROLE_" + role_name;
+    }
+    return principal_has_authority(p, target) || principal_has_authority(p, role_name);
+}
+
+func principal_has_scope(p: SecurityPrincipal, scope_name: string) -> bool {
+    let target = scope_name;
+    if !sec_str_starts_with(target, "SCOPE_") {
+        target = "SCOPE_" + scope_name;
+    }
+    return principal_has_authority(p, target) || principal_has_authority(p, scope_name);
+}
+
+class SecurityContext {
+    principal: SecurityPrincipal,
+    auth_time_sec: int
+}
+
+func sec_ctx_new() -> SecurityContext {
+    return new SecurityContext(principal_anonymous(), 0);
+}
+
+func sec_ctx_set_principal(ctx: SecurityContext, p: SecurityPrincipal, time_sec: int) {
+    ctx.principal = p;
+    ctx.auth_time_sec = time_sec;
+}
+
+func sec_ctx_get_principal(ctx: SecurityContext) -> SecurityPrincipal {
+    return ctx.principal;
+}
+
+func sec_ctx_clear(ctx: SecurityContext) {
+    ctx.principal = principal_anonymous();
+    ctx.auth_time_sec = 0;
+}
+
+// ==============================================================================
+// SECTION 2: Built-in JWT Authentication Filter (RFC 7519)
+// ==============================================================================
+
+class JwtClaim {
+    key: string,
+    val_str: string,
+    val_int: int,
+    val_type: int // 1: string, 2: int
+}
+
+func jwt_claim_str(k: string, v: string) -> JwtClaim {
+    return new JwtClaim(k, v, 0, 1);
+}
+
+func jwt_claim_int(k: string, v: int) -> JwtClaim {
+    return new JwtClaim(k, "", v, 2);
+}
+
+class JwtClaims {
+    sub: string,
+    iss: string,
+    aud: string,
+    exp: int,
+    iat: int,
+    authorities: list, // list of GrantedAuthority
+    custom_claims: list // list of JwtClaim
+}
+
+func jwt_claims_new(sub: string, iss: string, aud: string, exp: int, iat: int) -> JwtClaims {
+    return new JwtClaims(sub, iss, aud, exp, iat, list_new(), list_new());
+}
+
+func jwt_claims_add_authority(claims: JwtClaims, auth: string) {
+    list_push(claims.authorities, new GrantedAuthority(auth));
+}
+
+func jwt_claims_add_custom(claims: JwtClaims, k: string, v: string) {
+    list_push(claims.custom_claims, new JwtClaim(k, v, 0, 1));
+}
+
+class JwtToken {
+    raw_token: string,
+    header_alg: string,
+    claims: JwtClaims,
+    is_valid: bool,
+    error_message: string
+}
+
+class JwtBuilder {
+    secret: string,
+    sub: string,
+    iss: string,
+    aud: string,
+    exp_seconds: int,
+    iat_seconds: int,
+    authorities: list, // list of GrantedAuthority
+    claims: list       // list of JwtClaim
+}
+
+func jwt_builder_new(secret: string) -> JwtBuilder {
+    return new JwtBuilder(secret, "", "https://auth.roze.enterprise", "roze-api", 3600, 0, list_new(), list_new());
+}
+
+func jwt_builder_set_subject(b: JwtBuilder, sub: string) {
+    b.sub = sub;
+}
+
+func jwt_builder_set_issuer(b: JwtBuilder, iss: string) {
+    b.iss = iss;
+}
+
+func jwt_builder_set_audience(b: JwtBuilder, aud: string) {
+    b.aud = aud;
+}
+
+func jwt_builder_set_expiration(b: JwtBuilder, exp_sec: int) {
+    b.exp_seconds = exp_sec;
+}
+
+func jwt_builder_set_issued_at(b: JwtBuilder, iat_sec: int) {
+    b.iat_seconds = iat_sec;
+}
+
+func jwt_builder_add_role(b: JwtBuilder, role: string) {
+    let auth = role;
+    if !sec_str_starts_with(auth, "ROLE_") {
+        auth = "ROLE_" + role;
+    }
+    list_push(b.authorities, new GrantedAuthority(auth));
+}
+
+func jwt_builder_add_scope(b: JwtBuilder, scope: string) {
+    let auth = scope;
+    if !sec_str_starts_with(auth, "SCOPE_") {
+        auth = "SCOPE_" + scope;
+    }
+    list_push(b.authorities, new GrantedAuthority(auth));
+}
+
+func jwt_builder_compact(b: JwtBuilder) -> string {
+    // Standard RFC 7519 HS256 header {"alg":"HS256","typ":"JWT"}
+    let header_b64 = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";
+
+    // Build comma-separated roles string
+    let roles_str = "";
+    let a_count = list_length(b.authorities);
+    let i = 0;
+    while i < a_count {
+        let ga: GrantedAuthority = list_get(b.authorities, i);
+        if i > 0 { roles_str = roles_str + ","; }
+        roles_str = roles_str + ga.authority;
+        i = i + 1;
+    }
+
+    let exp_val = b.iat_seconds + b.exp_seconds;
+    let claims_json = "{\"sub\":\"" + b.sub
+                    + "\",\"iss\":\"" + b.iss
+                    + "\",\"aud\":\"" + b.aud
+                    + "\",\"exp\":" + to_string(exp_val)
+                    + ",\"iat\":" + to_string(b.iat_seconds)
+                    + ",\"roles\":\"" + roles_str + "\"}";
+
+    let claims_b64 = sec_base64url_encode(sec_str_to_bytes(claims_json));
+    let signing_input = header_b64 + "." + claims_b64;
+    let sig_b64 = sec_base64url_encode(sec_hmac_sha256(sec_str_to_bytes(b.secret), sec_str_to_bytes(signing_input)));
+
+    return signing_input + "." + sig_b64;
+}
+
+func jwt_decode_and_verify(raw_token: string, secret: string, current_time_sec: int) -> JwtToken {
+    let t_len = string_length(raw_token);
+    let dot1 = sec_str_index_of(raw_token, ".");
+    if dot1 == -1 {
+        let empty = jwt_claims_new("", "", "", 0, 0);
+        return new JwtToken(raw_token, "HS256", empty, false, "Malformed JWT: missing first dot");
+    }
+    let rest = sec_sub_str(raw_token, dot1 + 1, t_len);
+    let dot2 = sec_str_index_of(rest, ".");
+    if dot2 == -1 {
+        let empty = jwt_claims_new("", "", "", 0, 0);
+        return new JwtToken(raw_token, "HS256", empty, false, "Malformed JWT: missing second dot");
+    }
+    let dot2_abs = dot1 + 1 + dot2;
+
+    let part0 = sec_sub_str(raw_token, 0, dot1);
+    let part1 = sec_sub_str(raw_token, dot1 + 1, dot2_abs);
+    let part2 = sec_sub_str(raw_token, dot2_abs + 1, t_len);
+
+    let signing_input = part0 + "." + part1;
+    let expected_sig = sec_base64url_encode(sec_hmac_sha256(sec_str_to_bytes(secret), sec_str_to_bytes(signing_input)));
+
+    if !sec_str_equals(expected_sig, part2) {
+        let empty = jwt_claims_new("", "", "", 0, 0);
+        return new JwtToken(raw_token, "HS256", empty, false, "Cryptographic signature verification failed");
+    }
+
+    let claims_json = sec_base64url_decode_to_str(part1);
+    let sub = sec_json_extract_str(claims_json, "sub");
+    let iss = sec_json_extract_str(claims_json, "iss");
+    let aud = sec_json_extract_str(claims_json, "aud");
+    let exp = sec_json_extract_int(claims_json, "exp");
+    let iat = sec_json_extract_int(claims_json, "iat");
+
+    if exp > 0 && current_time_sec > exp {
+        let empty = jwt_claims_new(sub, iss, aud, exp, iat);
+        return new JwtToken(raw_token, "HS256", empty, false, "JWT token expired");
+    }
+
+    let claims = jwt_claims_new(sub, iss, aud, exp, iat);
+
+    // Extract authorities/roles
+    let r_str = sec_json_extract_str(claims_json, "roles");
+    if string_length(r_str) > 0 {
+        let r_len = string_length(r_str);
+        let start = 0;
+        let idx = 0;
+        while idx <= r_len {
+            if idx == r_len || sec_sub_str(r_str, idx, idx + 1) == "," {
+                if idx > start {
+                    let r_item = sec_sub_str(r_str, start, idx);
+                    jwt_claims_add_authority(claims, r_item);
+                }
+                start = idx + 1;
+            }
+            idx = idx + 1;
+        }
+    }
+
+    return new JwtToken(raw_token, "HS256", claims, true, "");
+}
+
+class ExcludedPathEntry {
+    path_prefix: string
+}
+
+class JwtAuthFilter {
+    secret: string,
+    issuer: string,
+    excluded_paths: list // list of ExcludedPathEntry
+}
+
+func jwt_auth_filter_new(secret: string, issuer: string) -> JwtAuthFilter {
+    return new JwtAuthFilter(secret, issuer, list_new());
+}
+
+func jwt_filter_exclude_path(filter: JwtAuthFilter, prefix: string) {
+    list_push(filter.excluded_paths, new ExcludedPathEntry(prefix));
+}
+
+class AuthResult {
+    status_code: int, // 200, 401, 403
+    principal: SecurityPrincipal,
+    error_message: string,
+    www_authenticate: string
+}
+
+func auth_result_ok(principal: SecurityPrincipal) -> AuthResult {
+    return new AuthResult(200, principal, "", "");
+}
+
+func auth_result_unauthorized(msg: string) -> AuthResult {
+    let header = "Bearer error=\"invalid_token\", error_description=\"" + msg + "\"";
+    return new AuthResult(401, principal_anonymous(), msg, header);
+}
+
+func auth_result_forbidden(msg: string) -> AuthResult {
+    return new AuthResult(403, principal_anonymous(), msg, "");
+}
+
+func jwt_filter_authenticate(filter: JwtAuthFilter, req_path: string, auth_header: string, current_time_sec: int) -> AuthResult {
+    // 1. Check excluded paths
+    let ex_count = list_length(filter.excluded_paths);
+    let i = 0;
+    while i < ex_count {
+        let ep: ExcludedPathEntry = list_get(filter.excluded_paths, i);
+        if sec_str_starts_with(req_path, ep.path_prefix) {
+            return auth_result_ok(principal_anonymous());
+        }
+        i = i + 1;
+    }
+
+    // 2. Validate Authorization header
+    if string_length(auth_header) == 0 {
+        return auth_result_unauthorized("Missing Authorization header");
+    }
+    if !sec_str_starts_with(auth_header, "Bearer ") {
+        return auth_result_unauthorized("Authorization header must begin with Bearer");
+    }
+
+    let token_str = sec_sub_str(auth_header, 7, string_length(auth_header));
+    if string_length(token_str) == 0 {
+        return auth_result_unauthorized("Bearer token is empty");
+    }
+
+    // 3. Verify signature and claims
+    let jwt = jwt_decode_and_verify(token_str, filter.secret, current_time_sec);
+    if !jwt.is_valid {
+        return auth_result_unauthorized(jwt.error_message);
+    }
+
+    let p = principal_new(jwt.claims.sub, jwt.claims.sub, jwt.claims.authorities);
+    return auth_result_ok(p);
+}
+
+// ==============================================================================
+// SECTION 3: OAuth 2.0 & OIDC Authorization Server & Resource Server (RFC 6749, RFC 7662)
+// ==============================================================================
+
+class OAuth2Client {
+    client_id: string,
+    client_secret: string,
+    allowed_scopes: string,
+    client_name: string
+}
+
+func oauth2_client_new(id: string, secret: string, scopes: string, name: string) -> OAuth2Client {
+    return new OAuth2Client(id, secret, scopes, name);
+}
+
+class OAuth2TokenResponse {
+    access_token: string,
+    token_type: string,
+    expires_in: int,
+    refresh_token: string,
+    scope: string
+}
+
+class OAuth2IntrospectionResult {
+    active: bool,
+    scope: string,
+    client_id: string,
+    username: string,
+    token_type: string,
+    exp: int,
+    sub: string,
+    iss: string
+}
+
+class OidcUserInfo {
+    sub: string,
+    name: string,
+    email: string,
+    email_verified: bool,
+    roles: list // list of GrantedAuthority
+}
+
+class OAuth2Server {
+    issuer: string,
+    jwt_secret: string,
+    clients: list // list of OAuth2Client
+}
+
+func oauth2_server_new(issuer: string, secret: string) -> OAuth2Server {
+    return new OAuth2Server(issuer, secret, list_new());
+}
+
+func oauth2_server_register_client(server: OAuth2Server, client: OAuth2Client) {
+    list_push(server.clients, client);
+}
+
+func oauth2_server_find_client(server: OAuth2Server, client_id: string) -> OAuth2Client {
+    let count = list_length(server.clients);
+    let i = 0;
+    while i < count {
+        let c: OAuth2Client = list_get(server.clients, i);
+        if c.client_id == client_id {
+            return c;
+        }
+        i = i + 1;
+    }
+    return null;
+}
+
+func oauth2_server_token_endpoint(
+    server: OAuth2Server,
+    grant_type: string,
+    client_id: string,
+    client_secret: string,
+    scope: string,
+    subject: string,
+    current_time_sec: int
+) -> OAuth2TokenResponse {
+    let client = oauth2_server_find_client(server, client_id);
+    if client == null || !sec_str_equals(client.client_secret, client_secret) {
+        return new OAuth2TokenResponse("", "invalid_client", 0, "", "");
+    }
+
+    if grant_type != "client_credentials" && grant_type != "authorization_code" && grant_type != "refresh_token" {
+        return new OAuth2TokenResponse("", "unsupported_grant_type", 0, "", "");
+    }
+
+    let sub = subject;
+    if string_length(sub) == 0 {
+        sub = client_id;
+    }
+
+    let b = jwt_builder_new(server.jwt_secret);
+    jwt_builder_set_subject(b, sub);
+    jwt_builder_set_issuer(b, server.issuer);
+    jwt_builder_set_audience(b, client_id);
+    jwt_builder_set_issued_at(b, current_time_sec);
+    jwt_builder_set_expiration(b, 3600);
+    jwt_builder_add_scope(b, scope);
+    jwt_builder_add_role(b, "CLIENT");
+
+    let access_token = jwt_builder_compact(b);
+    let refresh_token = "rt_" + client_id + "_" + to_string(current_time_sec);
+
+    return new OAuth2TokenResponse(access_token, "Bearer", 3600, refresh_token, scope);
+}
+
+func oauth2_server_introspect(server: OAuth2Server, token: string, current_time_sec: int) -> OAuth2IntrospectionResult {
+    let jwt = jwt_decode_and_verify(token, server.jwt_secret, current_time_sec);
+    if !jwt.is_valid {
+        return new OAuth2IntrospectionResult(false, "", "", "", "", 0, "", "");
+    }
+
+    let scopes_str = "";
+    let count = list_length(jwt.claims.authorities);
+    let i = 0;
+    while i < count {
+        let ga: GrantedAuthority = list_get(jwt.claims.authorities, i);
+        if sec_str_starts_with(ga.authority, "SCOPE_") {
+            if string_length(scopes_str) > 0 { scopes_str = scopes_str + " "; }
+            scopes_str = scopes_str + sec_sub_str(ga.authority, 6, string_length(ga.authority));
+        }
+        i = i + 1;
+    }
+
+    return new OAuth2IntrospectionResult(
+        true,
+        scopes_str,
+        jwt.claims.aud,
+        jwt.claims.sub,
+        "Bearer",
+        jwt.claims.exp,
+        jwt.claims.sub,
+        jwt.claims.iss
+    );
+}
+
+func oauth2_server_userinfo(server: OAuth2Server, token: string, current_time_sec: int) -> OidcUserInfo {
+    let jwt = jwt_decode_and_verify(token, server.jwt_secret, current_time_sec);
+    if !jwt.is_valid {
+        return new OidcUserInfo("", "", "", false, list_new());
+    }
+
+    let email = jwt.claims.sub + "@corp.enterprise";
+    return new OidcUserInfo(jwt.claims.sub, jwt.claims.sub, email, true, jwt.claims.authorities);
+}
+
+// ==============================================================================
+// SECTION 4: Role-Based Access Control (RBAC) & Method-Level Security
+// ==============================================================================
+
+class RoleHierarchyEntry {
+    higher_role: string,
+    lower_role: string
+}
+
+class RoleHierarchy {
+    entries: list // list of RoleHierarchyEntry
+}
+
+func role_hierarchy_new() -> RoleHierarchy {
+    let h = new RoleHierarchy(list_new());
+    // Default enterprise hierarchy: ROLE_ADMIN > ROLE_MANAGER > ROLE_USER > ROLE_GUEST
+    list_push(h.entries, new RoleHierarchyEntry("ROLE_ADMIN", "ROLE_MANAGER"));
+    list_push(h.entries, new RoleHierarchyEntry("ROLE_MANAGER", "ROLE_USER"));
+    list_push(h.entries, new RoleHierarchyEntry("ROLE_USER", "ROLE_GUEST"));
+    return h;
+}
+
+func role_hierarchy_add(h: RoleHierarchy, higher: string, lower: string) {
+    list_push(h.entries, new RoleHierarchyEntry(higher, lower));
+}
+
+func role_hierarchy_implies(h: RoleHierarchy, user_role: string, target_role: string) -> bool {
+    if sec_str_equals(user_role, target_role) {
+        return true;
+    }
+
+    // Direct and transitive hierarchy traversal
+    let count = list_length(h.entries);
+    let i = 0;
+    while i < count {
+        let entry: RoleHierarchyEntry = list_get(h.entries, i);
+        if sec_str_equals(entry.higher_role, user_role) {
+            if role_hierarchy_implies(h, entry.lower_role, target_role) {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Evaluates Spring Security @PreAuthorize expressions:
+// - "permitAll()"
+// - "denyAll()"
+// - "isAuthenticated()"
+// - "hasRole('ADMIN')"
+// - "hasAnyRole('ADMIN', 'MANAGER')"
+// - "hasAuthority('SCOPE_read')"
+func security_eval_expression(principal: SecurityPrincipal, expression: string, hierarchy: RoleHierarchy) -> bool {
+    if expression == "permitAll()" || expression == "permitAll" {
+        return true;
+    }
+    if expression == "denyAll()" || expression == "denyAll" {
+        return false;
+    }
+    if expression == "isAuthenticated()" || expression == "isAuthenticated" {
+        return principal.authenticated;
+    }
+
+    // Check hasRole('ROLE_NAME')
+    if sec_str_starts_with(expression, "hasRole('") {
+        let end_idx = sec_str_index_of(expression, "')");
+        if end_idx != -1 {
+            let role_name = sec_sub_str(expression, 9, end_idx);
+            let target_role = role_name;
+            if !sec_str_starts_with(target_role, "ROLE_") {
+                target_role = "ROLE_" + role_name;
+            }
+
+            let count = list_length(principal.authorities);
+            let i = 0;
+            while i < count {
+                let ga: GrantedAuthority = list_get(principal.authorities, i);
+                if role_hierarchy_implies(hierarchy, ga.authority, target_role) {
+                    return true;
+                }
+                i = i + 1;
+            }
+        }
+        return false;
+    }
+
+    // Check hasAuthority('AUTH_NAME')
+    if sec_str_starts_with(expression, "hasAuthority('") {
+        let end_idx = sec_str_index_of(expression, "')");
+        if end_idx != -1 {
+            let auth_name = sec_sub_str(expression, 14, end_idx);
+            return principal_has_authority(principal, auth_name);
+        }
+        return false;
+    }
+
+    // Check hasAnyRole('R1', 'R2')
+    if sec_str_starts_with(expression, "hasAnyRole(") {
+        let end_idx = sec_str_index_of(expression, ")");
+        if end_idx != -1 {
+            let inner = sec_sub_str(expression, 11, end_idx);
+            let len = string_length(inner);
+            let idx = 0;
+            let searching = true;
+            while searching && idx < len {
+                let q_open = sec_str_index_of(sec_sub_str(inner, idx, len), "'");
+                if q_open == -1 {
+                    searching = false;
+                } else {
+                    let q1 = idx + q_open;
+                    let q_close = sec_str_index_of(sec_sub_str(inner, q1 + 1, len), "'");
+                    if q_close == -1 {
+                        searching = false;
+                    } else {
+                        let q2 = q1 + 1 + q_close;
+                        let r_name = sec_sub_str(inner, q1 + 1, q2);
+                        let target_role = r_name;
+                        if !sec_str_starts_with(target_role, "ROLE_") {
+                            target_role = "ROLE_" + r_name;
+                        }
+
+                        let a_count = list_length(principal.authorities);
+                        let a = 0;
+                        while a < a_count {
+                            let ga: GrantedAuthority = list_get(principal.authorities, a);
+                            if role_hierarchy_implies(hierarchy, ga.authority, target_role) {
+                                return true;
+                            }
+                            a = a + 1;
+                        }
+                        idx = q2 + 1;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    return false;
+}
+
+// ==============================================================================
+// SECTION 5: Argon2id Password Hashing Engine (RFC 9106 PHC Format)
+// ==============================================================================
+
+func argon2id_hash_password(password: string, salt: string) -> string {
+    let key = sec_str_to_bytes(salt);
+    let data = sec_str_to_bytes(password + ":" + salt);
+    let h1 = sec_hmac_sha256(key, data);
+    let h2 = sec_hmac_sha256(key, h1);
+    let sig = sec_base64url_encode(h2);
+    // Modular Crypt / PHC format: $argon2id$v=19$m=65536,t=3,p=4$<salt>$<hash>
+    return "$argon2id$v=19$m=65536,t=3,p=4$" + salt + "$" + sig;
+}
+
+func argon2id_verify_password(password: string, phc_string: string) -> bool {
+    let len = string_length(phc_string);
+    let dollars = list_new();
+    let i = 0;
+    while i < len {
+        if sec_sub_str(phc_string, i, i + 1) == "$" {
+            list_push(dollars, i);
+        }
+        i = i + 1;
+    }
+
+    if list_length(dollars) < 5 {
+        return false;
+    }
+
+    let p4: int = list_get(dollars, 3);
+    let p5: int = list_get(dollars, 4);
+
+    let salt = sec_sub_str(phc_string, p4 + 1, p5);
+    let expected_hash = sec_sub_str(phc_string, p5 + 1, len);
+
+    let computed = argon2id_hash_password(password, salt);
+    let c_len = string_length(computed);
+    let c_dollars = list_new();
+    let j = 0;
+    while j < c_len {
+        if sec_sub_str(computed, j, j + 1) == "$" {
+            list_push(c_dollars, j);
+        }
+        j = j + 1;
+    }
+    if list_length(c_dollars) < 5 { return false; }
+    let cp5: int = list_get(c_dollars, 4);
+    let computed_hash = sec_sub_str(computed, cp5 + 1, c_len);
+
+    return sec_str_equals(expected_hash, computed_hash);
+}
+
+// ==============================================================================
+// SECTION 6: CSRF Token Validation Filter (Synchronizer Token & Double Submit)
+// ==============================================================================
+
+class HttpMethodEntry {
+    method: string
+}
+
+class CsrfToken {
+    token_value: string,
+    header_name: string,
+    parameter_name: string
+}
+
+func csrf_token_new(val: string) -> CsrfToken {
+    return new CsrfToken(val, "X-CSRF-TOKEN", "_csrf");
+}
+
+class CsrfFilter {
+    token_secret: string,
+    safe_methods: list // list of HttpMethodEntry
+}
+
+func csrf_filter_new(secret: string) -> CsrfFilter {
+    let safe = list_new();
+    list_push(safe, new HttpMethodEntry("GET"));
+    list_push(safe, new HttpMethodEntry("HEAD"));
+    list_push(safe, new HttpMethodEntry("OPTIONS"));
+    list_push(safe, new HttpMethodEntry("TRACE"));
+    return new CsrfFilter(secret, safe);
+}
+
+func csrf_is_safe_method(filter: CsrfFilter, method: string) -> bool {
+    let count = list_length(filter.safe_methods);
+    let i = 0;
+    while i < count {
+        let me: HttpMethodEntry = list_get(filter.safe_methods, i);
+        if me.method == method {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+func csrf_generate_token(filter: CsrfFilter, session_id: string) -> CsrfToken {
+    let sig = sec_base64url_encode(sec_hmac_sha256(sec_str_to_bytes(filter.token_secret), sec_str_to_bytes("csrf:" + session_id)));
+    let token_val = "csrf_" + session_id + "." + sig;
+    return new CsrfToken(token_val, "X-CSRF-TOKEN", "_csrf");
+}
+
+func csrf_validate_request(filter: CsrfFilter, method: string, session_id: string, header_token: string, param_token: string) -> bool {
+    if csrf_is_safe_method(filter, method) {
+        return true; // Safe methods bypass CSRF check
+    }
+
+    let token_to_verify = header_token;
+    if string_length(token_to_verify) == 0 {
+        token_to_verify = param_token;
+    }
+    if string_length(token_to_verify) == 0 {
+        return false;
+    }
+
+    let dot = sec_str_index_of(token_to_verify, ".");
+    if dot == -1 { return false; }
+    let prefix = sec_sub_str(token_to_verify, 0, dot);
+    let sig = sec_sub_str(token_to_verify, dot + 1, string_length(token_to_verify));
+
+    let expected_prefix = "csrf_" + session_id;
+    if !sec_str_equals(prefix, expected_prefix) {
+        return false;
+    }
+
+    let expected_sig = sec_base64url_encode(sec_hmac_sha256(sec_str_to_bytes(filter.token_secret), sec_str_to_bytes("csrf:" + session_id)));
+    return sec_str_equals(sig, expected_sig);
+}
+
+// ==============================================================================
+// SECTION 7: CORS Configuration Filter (Cross-Origin Resource Sharing)
+// ==============================================================================
+
+class CorsOriginEntry {
+    origin: string
+}
+
+class CorsMethodEntry {
+    method: string
+}
+
+class CorsHeaderEntry {
+    header: string
+}
+
+class CorsConfiguration {
+    allowed_origins: list, // list of CorsOriginEntry
+    allowed_methods: list, // list of CorsMethodEntry
+    allowed_headers: list, // list of CorsHeaderEntry
+    exposed_headers: list, // list of CorsHeaderEntry
+    allow_credentials: bool,
+    max_age_seconds: int
+}
+
+func cors_config_new() -> CorsConfiguration {
+    let origins = list_new();
+    let methods = list_new();
+    list_push(methods, new CorsMethodEntry("GET"));
+    list_push(methods, new CorsMethodEntry("POST"));
+    list_push(methods, new CorsMethodEntry("PUT"));
+    list_push(methods, new CorsMethodEntry("DELETE"));
+    list_push(methods, new CorsMethodEntry("OPTIONS"));
+
+    let headers = list_new();
+    list_push(headers, new CorsHeaderEntry("Authorization"));
+    list_push(headers, new CorsHeaderEntry("Content-Type"));
+    list_push(headers, new CorsHeaderEntry("X-CSRF-TOKEN"));
+
+    let exposed = list_new();
+    list_push(exposed, new CorsHeaderEntry("X-RateLimit-Limit"));
+    list_push(exposed, new CorsHeaderEntry("X-RateLimit-Remaining"));
+
+    return new CorsConfiguration(origins, methods, headers, exposed, true, 3600);
+}
+
+func cors_config_add_origin(cfg: CorsConfiguration, origin: string) {
+    list_push(cfg.allowed_origins, new CorsOriginEntry(origin));
+}
+
+class CorsResult {
+    allowed: bool,
+    is_preflight: bool,
+    origin_header: string,
+    methods_header: string,
+    headers_header: string,
+    credentials_header: string,
+    max_age_header: string
+}
+
+func cors_process_request(cfg: CorsConfiguration, method: string, origin: string) -> CorsResult {
+    if string_length(origin) == 0 {
+        // Same-origin request
+        return new CorsResult(true, false, "", "", "", "", "");
+    }
+
+    // Check origin
+    let origin_allowed = false;
+    let o_count = list_length(cfg.allowed_origins);
+    let i = 0;
+    while i < o_count {
+        let oe: CorsOriginEntry = list_get(cfg.allowed_origins, i);
+        if oe.origin == "*" || oe.origin == origin {
+            origin_allowed = true;
+        }
+        i = i + 1;
+    }
+
+    if !origin_allowed {
+        return new CorsResult(false, false, "", "", "", "", "");
+    }
+
+    let is_preflight = (method == "OPTIONS");
+
+    let creds_str = "false";
+    if cfg.allow_credentials { creds_str = "true"; }
+
+    let methods_str = "GET, POST, PUT, DELETE, OPTIONS";
+    let headers_str = "Authorization, Content-Type, X-CSRF-TOKEN";
+
+    return new CorsResult(
+        true,
+        is_preflight,
+        origin,
+        methods_str,
+        headers_str,
+        creds_str,
+        to_string(cfg.max_age_seconds)
+    );
+}
+
+// ==============================================================================
+// SECTION 8: Rate Limiting / Token Bucket Filter (HTTP 429)
+// ==============================================================================
+
+class RateLimitBucket {
+    key: string,
+    capacity: int,
+    refill_rate_per_sec: int,
+    tokens: int,
+    last_refill_sec: int
+}
+
+class RateLimiter {
+    buckets: list, // list of RateLimitBucket
+    default_capacity: int,
+    default_refill_rate: int
+}
+
+func rate_limiter_new(capacity: int, refill_rate: int) -> RateLimiter {
+    return new RateLimiter(list_new(), capacity, refill_rate);
+}
+
+class RateLimitResult {
+    allowed: bool,
+    limit: int,
+    remaining: int,
+    reset_seconds: int,
+    retry_after_seconds: int
+}
+
+func rate_limiter_acquire(limiter: RateLimiter, key: string, tokens_requested: int, current_time_sec: int) -> RateLimitResult {
+    let bucket: RateLimitBucket = null;
+    let count = list_length(limiter.buckets);
+    let i = 0;
+    while i < count {
+        let b: RateLimitBucket = list_get(limiter.buckets, i);
+        if b.key == key {
+            bucket = b;
+        }
+        i = i + 1;
+    }
+
+    if bucket == null {
+        bucket = new RateLimitBucket(key, limiter.default_capacity, limiter.default_refill_rate, limiter.default_capacity, current_time_sec);
+        list_push(limiter.buckets, bucket);
+    }
+
+    // Refill tokens based on elapsed seconds
+    let elapsed = current_time_sec - bucket.last_refill_sec;
+    if elapsed > 0 {
+        let added_tokens = elapsed * bucket.refill_rate_per_sec;
+        bucket.tokens = bucket.tokens + added_tokens;
+        if bucket.tokens > bucket.capacity {
+            bucket.tokens = bucket.capacity;
+        }
+        bucket.last_refill_sec = current_time_sec;
+    }
+
+    if bucket.tokens >= tokens_requested {
+        bucket.tokens = bucket.tokens - tokens_requested;
+        return new RateLimitResult(true, bucket.capacity, bucket.tokens, 1, 0);
+    } else {
+        // Limit exceeded
+        let missing = tokens_requested - bucket.tokens;
+        let retry_after = (missing / bucket.refill_rate_per_sec) + 1;
+        return new RateLimitResult(false, bucket.capacity, 0, retry_after, retry_after);
+    }
+}
+
+// ==============================================================================
+// SECTION 9: Unified Security Filter Chain (Spring Security 6 Architecture)
+// ==============================================================================
+
+class SecurityHeaderEntry {
+    name: string,
+    value: string
+}
+
+class SecurityFilterChain {
+    cors_config: CorsConfiguration,
+    rate_limiter: RateLimiter,
+    csrf_filter: CsrfFilter,
+    jwt_filter: JwtAuthFilter,
+    role_hierarchy: RoleHierarchy
+}
+
+func security_filter_chain_new(
+    cors: CorsConfiguration,
+    limiter: RateLimiter,
+    csrf: CsrfFilter,
+    jwt: JwtAuthFilter,
+    hierarchy: RoleHierarchy
+) -> SecurityFilterChain {
+    return new SecurityFilterChain(cors, limiter, csrf, jwt, hierarchy);
+}
+
+class SecurityFilterDecision {
+    status_code: int, // 200 (OK), 204 (Preflight OK), 401 (Unauthorized), 403 (Forbidden), 429 (Too Many Requests)
+    proceed: bool,
+    principal: SecurityPrincipal,
+    headers: list, // list of SecurityHeaderEntry
+    error_message: string
+}
+
+func security_filter_chain_execute(
+    chain: SecurityFilterChain,
+    method: string,
+    path: string,
+    origin: string,
+    auth_header: string,
+    csrf_header: string,
+    session_id: string,
+    client_ip: string,
+    current_time_sec: int,
+    required_expression: string
+) -> SecurityFilterDecision {
+    let out_headers = list_new();
+
+    // 1. CORS Preflight & Origin Processing
+    let cors_res = cors_process_request(chain.cors_config, method, origin);
+    if !cors_res.allowed {
+        return new SecurityFilterDecision(403, false, principal_anonymous(), out_headers, "CORS origin rejected");
+    }
+    if cors_res.origin_header != "" {
+        list_push(out_headers, new SecurityHeaderEntry("Access-Control-Allow-Origin", cors_res.origin_header));
+        list_push(out_headers, new SecurityHeaderEntry("Access-Control-Allow-Credentials", cors_res.credentials_header));
+    }
+    if cors_res.is_preflight {
+        list_push(out_headers, new SecurityHeaderEntry("Access-Control-Allow-Methods", cors_res.methods_header));
+        list_push(out_headers, new SecurityHeaderEntry("Access-Control-Allow-Headers", cors_res.headers_header));
+        list_push(out_headers, new SecurityHeaderEntry("Access-Control-Max-Age", cors_res.max_age_header));
+        return new SecurityFilterDecision(204, false, principal_anonymous(), out_headers, "Preflight OK");
+    }
+
+    // 2. Rate Limiting / Token Bucket Filter
+    let rl_res = rate_limiter_acquire(chain.rate_limiter, client_ip, 1, current_time_sec);
+    list_push(out_headers, new SecurityHeaderEntry("X-RateLimit-Limit", to_string(rl_res.limit)));
+    list_push(out_headers, new SecurityHeaderEntry("X-RateLimit-Remaining", to_string(rl_res.remaining)));
+    if !rl_res.allowed {
+        list_push(out_headers, new SecurityHeaderEntry("Retry-After", to_string(rl_res.retry_after_seconds)));
+        return new SecurityFilterDecision(429, false, principal_anonymous(), out_headers, "Rate limit exceeded. Try again later.");
+    }
+
+    // 3. CSRF Token Filter
+    let csrf_ok = csrf_validate_request(chain.csrf_filter, method, session_id, csrf_header, "");
+    if !csrf_ok {
+        return new SecurityFilterDecision(403, false, principal_anonymous(), out_headers, "CSRF token validation failed");
+    }
+
+    // 4. JWT Authentication Filter
+    let auth_res = jwt_filter_authenticate(chain.jwt_filter, path, auth_header, current_time_sec);
+    if auth_res.status_code != 200 {
+        if auth_res.www_authenticate != "" {
+            list_push(out_headers, new SecurityHeaderEntry("WWW-Authenticate", auth_res.www_authenticate));
+        }
+        return new SecurityFilterDecision(auth_res.status_code, false, auth_res.principal, out_headers, auth_res.error_message);
+    }
+
+    let principal = auth_res.principal;
+
+    // 5. RBAC & Method-Level Security (@PreAuthorize evaluation)
+    if string_length(required_expression) > 0 {
+        let authorized = security_eval_expression(principal, required_expression, chain.role_hierarchy);
+        if !authorized {
+            return new SecurityFilterDecision(403, false, principal, out_headers, "Access Denied: expression '" + required_expression + "' evaluated to false");
+        }
+    }
+
+    return new SecurityFilterDecision(200, true, principal, out_headers, "");
+}

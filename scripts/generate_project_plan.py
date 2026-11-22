@@ -776,7 +776,7 @@ s1_rows = [
         ("M10-T04", 8), ("Month 10", 25), ("Sprint 20 (W41-W42)", 8), "Enterprise Security", "Cloud Security Perimeter & OAuth2/JWT (rozeboot.security)",
         "Security framework: Built-in JWT authentication filter, OAuth 2.0 / OIDC authorization server and resource server filters, Role-Based Access Control (@PreAuthorize(\"hasRole('ADMIN')\")), Argon2id password hashing, CSRF token validation, CORS configuration, rate limiting / token bucket filter.",
         "Full parity with Spring Security 6 on Java 25.",
-        "Cloud Security, Identity Management, Compliance", "8 Days", ("High", 14), ("Planned", 12)
+        "Cloud Security, Identity Management, Compliance", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M10-T05", 8), ("Month 10", 25), ("Sprint 20 (W41-W42)", 8), "Cloud Observability", "OpenTelemetry Tracing, Prometheus & OpenAPI 3.1 (rozeboot.actuator)",

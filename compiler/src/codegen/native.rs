@@ -9815,7 +9815,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 return Ok(result);
             }
             "map_new" if arguments.is_empty() => return self.emit_map_new(),
-            "map_put" if arguments.len() == 3 => {
+            "map_put" | "map_set" if arguments.len() == 3 => {
                 self.reject_unless_supported_as_container_value(&arguments[1], location, "map_put (key)")?;
                 self.reject_unless_supported_as_container_value(&arguments[2], location, "map_put (value)")?;
                 let map = self.compile_expression(&arguments[0])?;
@@ -9860,6 +9860,21 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let result = self.emit_map_is_empty(map)?;
                 self.release_if_fresh(&arguments[0], map)?;
                 return Ok(result);
+            }
+            "is_map" if arguments.len() == 1 => {
+                let m = self.compile_expression(&arguments[0])?;
+                self.release_if_fresh(&arguments[0], m)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
+            }
+            "is_number" if arguments.len() == 1 => {
+                let m = self.compile_expression(&arguments[0])?;
+                self.release_if_fresh(&arguments[0], m)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 1));
+            }
+            "is_string" if arguments.len() == 1 => {
+                let m = self.compile_expression(&arguments[0])?;
+                self.release_if_fresh(&arguments[0], m)?;
+                return Ok(self.builder.ins().iconst(VALUE_TYPE, 0));
             }
 
             // ---- Concurrency: Threads & Channels (MED-03) ----
@@ -12305,7 +12320,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 self.release_if_fresh(&arguments[0], m)?;
                 return Ok(self.builder.inst_results(call)[0]);
             }
-            "btree_map_keys" if arguments.len() == 1 => {
+            "btree_map_keys" | "map_keys" if arguments.len() == 1 => {
                 let m = self.compile_expression(&arguments[0])?;
                 let func_ref = self.module.declare_func_in_func(self.collections.btree_map_keys, self.builder.func);
                 let call = self.builder.ins().call(func_ref, &[m]);

@@ -1602,17 +1602,23 @@ func orm_close(ds: OrmDataSource) {
 // SECTION 9: Spring Data JPA Repository & Entity Relationship Resolvers
 // ==============================================================================
 
+class Repository {
+    meta: EntityMetadata,
+    table_name: string,
+    id_field: string
+}
+
 class OrmRepository {
     meta: EntityMetadata,
     table_name: string,
     id_field: string
 }
 
-func repo_new(meta: EntityMetadata) -> OrmRepository {
-    return new OrmRepository(meta, meta.table_name, meta.id_field);
+func repo_new(meta: EntityMetadata) -> Repository {
+    return new Repository(meta, meta.table_name, meta.id_field);
 }
 
-func repo_save(repo: OrmRepository, ds: OrmDataSource, rec: OrmRecord) -> int {
+func repo_save_record(repo: Repository, ds: OrmDataSource, rec: OrmRecord) -> int {
     let id_val = rec.id;
     if id_val == 0 && orm_record_has(rec, repo.id_field) {
         id_val = orm_record_get_int(rec, repo.id_field);
@@ -1657,7 +1663,55 @@ func repo_save(repo: OrmRepository, ds: OrmDataSource, rec: OrmRecord) -> int {
     }
 }
 
-func repo_find_by_id(repo: OrmRepository, ds: OrmDataSource, id: int) -> OrmRecord {
+func repo_save(repo: Repository, ds: OrmDataSource, row_data: Unknown) -> int {
+    if is_map(row_data) {
+        let m: map = row_data;
+        let id_val = 0;
+        let k_id: Unknown = repo.id_field;
+        if map_has(m, k_id) {
+            let id_obj = orm_map_get(m, k_id);
+            let id_int: int = id_obj;
+            id_val = id_int;
+        }
+
+        let rec = orm_record_new(id_val);
+        let keys = map_keys(m);
+        let count = list_length(keys);
+        let i = 0;
+        while i < count {
+            let k_obj = list_get(keys, i);
+            let k = to_string(k_obj);
+            if k != repo.id_field {
+                let v = orm_map_get(m, k_obj);
+                if is_number(v) {
+                    let iv: int = v;
+                    orm_record_set_int(rec, k, iv);
+                } else {
+                    orm_record_set_str(rec, k, to_string(v));
+                }
+            }
+            i = i + 1;
+        }
+
+        let res = repo_save_record(repo, ds, rec);
+        if res > 0 {
+            if id_val == 0 {
+                orm_map_put(m, k_id, res);
+            }
+            if repo.meta.version_field != "" {
+                let new_ver = orm_record_get_int(rec, repo.meta.version_field);
+                let k_ver: Unknown = repo.meta.version_field;
+                orm_map_put(m, k_ver, new_ver);
+            }
+        }
+        return res;
+    }
+
+    let rec: OrmRecord = row_data;
+    return repo_save_record(repo, ds, rec);
+}
+
+func repo_find_by_id(repo: Repository, ds: OrmDataSource, id: int) -> OrmRecord {
     let b = sql_select_from(repo.table_name);
     sql_where_int(b, repo.id_field, "=", id);
     sql_limit(b, 1);
@@ -1668,41 +1722,45 @@ func repo_find_by_id(repo: OrmRepository, ds: OrmDataSource, id: int) -> OrmReco
     return orm_record_new(0);
 }
 
-func repo_find_all(repo: OrmRepository, ds: OrmDataSource) -> list {
+func repo_find_all(repo: Repository, ds: OrmDataSource) -> list {
     let b = sql_select_from(repo.table_name);
     return orm_query_records(ds, b);
 }
 
-func repo_find_by_str(repo: OrmRepository, ds: OrmDataSource, field: string, val: string) -> list {
+func repo_find_by_str(repo: Repository, ds: OrmDataSource, field: string, val: string) -> list {
     let b = sql_select_from(repo.table_name);
     sql_where_eq(b, field, val);
     return orm_query_records(ds, b);
 }
 
-func repo_find_by_int(repo: OrmRepository, ds: OrmDataSource, field: string, val: int) -> list {
+func repo_find_by(repo: Repository, ds: OrmDataSource, field: string, val: string) -> list {
+    return repo_find_by_str(repo, ds, field, val);
+}
+
+func repo_find_by_int(repo: Repository, ds: OrmDataSource, field: string, val: int) -> list {
     let b = sql_select_from(repo.table_name);
     sql_where_int(b, field, "=", val);
     return orm_query_records(ds, b);
 }
 
-func repo_find_paged(repo: OrmRepository, ds: OrmDataSource, page: int, size: int) -> list {
+func repo_find_paged(repo: Repository, ds: OrmDataSource, page: int, size: int) -> list {
     let b = sql_select_from(repo.table_name);
     sql_limit(b, size);
     sql_offset(b, page * size);
     return orm_query_records(ds, b);
 }
 
-func repo_count(repo: OrmRepository, ds: OrmDataSource) -> int {
+func repo_count(repo: Repository, ds: OrmDataSource) -> int {
     let all = repo_find_all(repo, ds);
     return list_length(all);
 }
 
-func repo_exists_by_id(repo: OrmRepository, ds: OrmDataSource, id: int) -> bool {
+func repo_exists_by_id(repo: Repository, ds: OrmDataSource, id: int) -> bool {
     let rec = repo_find_by_id(repo, ds, id);
     return rec.id > 0;
 }
 
-func repo_delete_by_id(repo: OrmRepository, ds: OrmDataSource, id: int) -> int {
+func repo_delete_by_id(repo: Repository, ds: OrmDataSource, id: int) -> int {
     let b = sql_delete_from(repo.table_name);
     sql_where_int(b, repo.id_field, "=", id);
     return orm_execute_builder(ds, b);
@@ -1710,21 +1768,21 @@ func repo_delete_by_id(repo: OrmRepository, ds: OrmDataSource, id: int) -> int {
 
 // Relationship Navigators
 // 1. OneToMany: e.g. Customer -> Accounts where account.customer_id = customer.id
-func repo_resolve_one_to_many(target_repo: OrmRepository, ds: OrmDataSource, rel: RelationshipMetadata, parent_id: int) -> list {
+func repo_resolve_one_to_many(target_repo: Repository, ds: OrmDataSource, rel: RelationshipMetadata, parent_id: int) -> list {
     let b = sql_select_from(target_repo.table_name);
     sql_where_int(b, rel.join_column, "=", parent_id);
     return orm_query_records(ds, b);
 }
 
 // 2. ManyToOne: e.g. Account -> Customer where customer.id = account.customer_id
-func repo_resolve_many_to_one(target_repo: OrmRepository, ds: OrmDataSource, rel: RelationshipMetadata, child_rec: OrmRecord) -> OrmRecord {
+func repo_resolve_many_to_one(target_repo: Repository, ds: OrmDataSource, rel: RelationshipMetadata, child_rec: OrmRecord) -> OrmRecord {
     let fk = orm_record_get_int(child_rec, rel.join_column);
     if fk == 0 { return orm_record_new(0); }
     return repo_find_by_id(target_repo, ds, fk);
 }
 
 // 3. ManyToMany: e.g. Account <-> Roles through account_roles join table
-func repo_resolve_many_to_many(target_repo: OrmRepository, ds: OrmDataSource, rel: RelationshipMetadata, entity_id: int) -> list {
+func repo_resolve_many_to_many(target_repo: Repository, ds: OrmDataSource, rel: RelationshipMetadata, entity_id: int) -> list {
     let b_join = sql_select_from(rel.join_table);
     sql_where_int(b_join, rel.join_column, "=", entity_id);
     let join_rows = orm_query_records(ds, b_join);
@@ -1757,8 +1815,7 @@ class BankAccount {
     balance_cents: int,
     currency: string,
     version: int,
-    status: string,
-    customer_id: int
+    status: string
 }
 
 func bank_account_to_record(a: BankAccount) -> OrmRecord {
@@ -1769,7 +1826,6 @@ func bank_account_to_record(a: BankAccount) -> OrmRecord {
     orm_record_set_str(rec, "currency", a.currency);
     orm_record_set_int(rec, "version", a.version);
     orm_record_set_str(rec, "status", a.status);
-    orm_record_set_int(rec, "customer_id", a.customer_id);
     return rec;
 }
 
@@ -1781,9 +1837,58 @@ func record_to_bank_account(rec: OrmRecord) -> BankAccount {
         orm_record_get_int(rec, "balance_cents"),
         orm_record_get_str(rec, "currency"),
         orm_record_get_int(rec, "version"),
-        orm_record_get_str(rec, "status"),
-        orm_record_get_int(rec, "customer_id")
+        orm_record_get_str(rec, "status")
     );
+}
+
+func orm_map_put(m: map, k: Unknown, v: Unknown) {
+    map_set(m, k, v);
+}
+
+func orm_map_get(m: map, k: Unknown) -> Unknown {
+    return map_get(m, k);
+}
+
+func bank_account_to_map(a: BankAccount) -> map {
+    let m = map_new();
+    let k_id: Unknown = "id";
+    let k_acc_no: Unknown = "account_no";
+    let k_holder: Unknown = "holder_name";
+    let k_bal: Unknown = "balance_cents";
+    let k_curr: Unknown = "currency";
+    let k_ver: Unknown = "version";
+    let k_st: Unknown = "status";
+    orm_map_put(m, k_id, a.id);
+    orm_map_put(m, k_acc_no, a.account_no);
+    orm_map_put(m, k_holder, a.holder_name);
+    orm_map_put(m, k_bal, a.balance_cents);
+    orm_map_put(m, k_curr, a.currency);
+    orm_map_put(m, k_ver, a.version);
+    orm_map_put(m, k_st, a.status);
+    return m;
+}
+
+func map_to_bank_account(m: Unknown) -> BankAccount {
+    if !is_map(m) {
+        let rec: OrmRecord = m;
+        return record_to_bank_account(rec);
+    }
+    let k_id: Unknown = "id";
+    let k_acc_no: Unknown = "account_no";
+    let k_holder: Unknown = "holder_name";
+    let k_bal: Unknown = "balance_cents";
+    let k_curr: Unknown = "currency";
+    let k_ver: Unknown = "version";
+    let k_st: Unknown = "status";
+    let mp: map = m;
+    let id: int = orm_map_get(mp, k_id);
+    let acc_no = to_string(orm_map_get(mp, k_acc_no));
+    let holder = to_string(orm_map_get(mp, k_holder));
+    let bal: int = orm_map_get(mp, k_bal);
+    let curr = to_string(orm_map_get(mp, k_curr));
+    let ver: int = orm_map_get(mp, k_ver);
+    let st = to_string(orm_map_get(mp, k_st));
+    return new BankAccount(id, acc_no, holder, bal, curr, ver, st);
 }
 
 class TransferLedger {
@@ -1817,7 +1922,7 @@ func record_to_transfer_ledger(rec: OrmRecord) -> TransferLedger {
 }
 
 // Executes an ACID atomic bank transfer with rollback on overdraft
-func execute_bank_transfer(ds: OrmDataSource, repo_acc: OrmRepository, repo_ledger: OrmRepository, from_acc_no: string, to_acc_no: string, amount_cents: int, tx_ref: string) -> bool {
+func execute_bank_transfer(ds: OrmDataSource, repo_acc: Repository, repo_ledger: Repository, from_acc_no: string, to_acc_no: string, amount_cents: int, tx_ref: string) -> bool {
     orm_begin(ds);
 
     let from_list = repo_find_by_str(repo_acc, ds, "account_no", from_acc_no);

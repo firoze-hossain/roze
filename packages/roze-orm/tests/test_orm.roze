@@ -399,8 +399,8 @@ func test_banking_acid_and_optimistic_locking() {
     let repo_ledger = repo_new(em_ledger);
 
     // Seed accounts
-    let acc_alice = new BankAccount(0, "ACC-1001", "Alice Smith", 50000, "USD", 1, "ACTIVE", 1);
-    let acc_bob = new BankAccount(0, "ACC-1002", "Bob Jones", 20000, "USD", 1, "ACTIVE", 2);
+    let acc_alice = new BankAccount(0, "ACC-1001", "Alice Smith", 50000, "USD", 1, "ACTIVE");
+    let acc_bob = new BankAccount(0, "ACC-1002", "Bob Jones", 20000, "USD", 1, "ACTIVE");
 
     let id_alice = repo_save(repo_acc, ds, bank_account_to_record(acc_alice));
     let id_bob = repo_save(repo_acc, ds, bank_account_to_record(acc_bob));
@@ -435,13 +435,13 @@ func test_banking_acid_and_optimistic_locking() {
 
     // 4. Savepoint & Partial Rollback
     orm_begin(ds);
-    let acc_charlie = new BankAccount(0, "ACC-1003", "Charlie Brown", 10000, "USD", 1, "ACTIVE", 3);
+    let acc_charlie = new BankAccount(0, "ACC-1003", "Charlie Brown", 10000, "USD", 1, "ACTIVE");
     let id_charlie = repo_save(repo_acc, ds, bank_account_to_record(acc_charlie));
     assert_eq_int(id_charlie, 3, "Charlie created before savepoint");
 
     orm_savepoint(ds, "sp_before_dave");
 
-    let acc_dave = new BankAccount(0, "ACC-1004", "Dave Miller", 5000, "USD", 1, "ACTIVE", 4);
+    let acc_dave = new BankAccount(0, "ACC-1004", "Dave Miller", 5000, "USD", 1, "ACTIVE");
     let id_dave = repo_save(repo_acc, ds, bank_account_to_record(acc_dave));
     assert_eq_int(id_dave, 4, "Dave created after savepoint");
     assert_eq_int(repo_count(repo_acc, ds), 4, "Total accounts is 4 before rollback");

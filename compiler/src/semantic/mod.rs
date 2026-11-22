@@ -727,6 +727,7 @@ fn builtin_signatures() -> Vec<(&'static str, Vec<Type>, Type)> {
         ("to_int", vec![Type::String], Type::Int),
         ("is_number", vec![Type::Unknown], Type::Bool),
         ("is_string", vec![Type::Unknown], Type::Bool),
+        ("is_map", vec![Type::Unknown], Type::Bool),
 
         // ---- Collections (List, Map) ----
         // No generics yet, so elements/keys/values are all Unknown

@@ -2560,6 +2560,7 @@ __attribute__((weak)) int64_t __roze_time_now_millis(void) {
 __attribute__((weak)) int64_t time_now(void) { return __roze_time_now(); }
 __attribute__((weak)) int64_t time_now_millis(void) { return __roze_time_now_millis(); }
 __attribute__((weak)) void* map_keys(void* m) { (void)m; return NULL; }
+__attribute__((weak)) int64_t is_map(void* m) { (void)m; return 0; }
 __attribute__((weak)) int64_t string_length(const char* s) { return s ? (int64_t)strlen(s) : 0; }
 __attribute__((weak)) int64_t string_char_at(const char* s, int64_t idx) { return (s && idx >= 0 && idx < (int64_t)strlen(s)) ? (int64_t)(unsigned char)s[idx] : 0; }
 __attribute__((weak)) const char* substring(const char* s, int64_t start, int64_t end) { (void)start; (void)end; return s ? s : ""; }

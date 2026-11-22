@@ -6251,6 +6251,7 @@ fn intrinsic_return_type(name: &str) -> Option<&'static str> {
         "to_int" => Some("int"),
         "is_number" => Some("boolean"),
         "is_string" => Some("boolean"),
+        "is_map" => Some("boolean"),
 
         "list_new" => Some("java.util.List"),
         "list_push" => Some("boolean"),
@@ -9020,6 +9021,11 @@ impl JavaSourceGenerator {
                 source.push_str("((Object)(");
                 self.generate_expression(source, &arguments[0])?;
                 source.push_str(") instanceof String)");
+            }
+            "is_map" if arguments.len() == 1 => {
+                source.push_str("((Object)(");
+                self.generate_expression(source, &arguments[0])?;
+                source.push_str(") instanceof java.util.Map)");
             }
 
             // ---- Fixed-Width Conversions ----

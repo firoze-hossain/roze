@@ -144,6 +144,9 @@ const ROZEBOOT_SECURITY_DISPLAY_NAME: &str = "rozeboot_security (built-in)";
 const ROZEBOOT_ACTUATOR_SOURCE: &str = include_str!("../../stdlib/src/rozeboot_actuator.roze");
 const ROZEBOOT_ACTUATOR_DISPLAY_NAME: &str = "rozeboot_actuator (built-in)";
 
+const ROZEBOOT_BANKING_SOURCE: &str = include_str!("../../stdlib/src/rozeboot_banking.roze");
+const ROZEBOOT_BANKING_DISPLAY_NAME: &str = "rozeboot_banking (built-in)";
+
 const ORM_SOURCE: &str = include_str!("../../stdlib/src/orm.roze");
 const ORM_DISPLAY_NAME: &str = "orm (built-in)";
 
@@ -251,6 +254,9 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         }
         "rozeboot.actuator" | "rozeboot::actuator" | "roze::boot::actuator" | "roze.boot.actuator" | "rozeboot_actuator" | "rozeboot-actuator" | "actuator" | "micrometer" | "otel" | "opentelemetry" | "prometheus" => {
             Some("rozeboot/src/actuator.roze".to_string())
+        }
+        "rozeboot.banking" | "rozeboot::banking" | "roze::boot::banking" | "roze.boot.banking" | "rozeboot_banking" | "rozeboot-banking" | "banking" | "enterprise_banking" => {
+            Some("rozeboot/src/banking.roze".to_string())
         }
         "rozeboot" | "rozeboot2" | "roze::boot" | "roze-boot" | "roze_boot" | "ioc" | "annotations" => {
             Some("rozeboot/src/lib.roze".to_string())
@@ -366,6 +372,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
                 "cloud_security" => Some("cloud_security.roze"),
                 "rozeboot" => Some("rozeboot.roze"),
                 "rozeboot_actuator" => Some("rozeboot_actuator.roze"),
+                "rozeboot_banking" => Some("rozeboot_banking.roze"),
                 "orm" => Some("orm.roze"),
                 "raw_net" => Some("raw_net.roze"),
                 "crypto" => Some("crypto.roze"),
@@ -524,6 +531,10 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "rozeboot.actuator" || path == "rozeboot::actuator" || path == "roze::boot::actuator" || path == "roze.boot.actuator"
         || path == "rozeboot_actuator" || path == "rozeboot-actuator" || path == "actuator" || path == "micrometer" || path == "otel" || path == "opentelemetry" || path == "prometheus" {
         return Ok((ROZEBOOT_ACTUATOR_SOURCE.to_string(), ROZEBOOT_ACTUATOR_DISPLAY_NAME.to_string()));
+    }
+    if path == "rozeboot.banking" || path == "rozeboot::banking" || path == "roze::boot::banking" || path == "roze.boot.banking"
+        || path == "rozeboot_banking" || path == "rozeboot-banking" || path == "banking" || path == "enterprise_banking" {
+        return Ok((ROZEBOOT_BANKING_SOURCE.to_string(), ROZEBOOT_BANKING_DISPLAY_NAME.to_string()));
     }
     if path == "orm" || path == "roze::orm" || path == "roze.orm" || path == "roze-orm" || path == "roze_orm"
         || path == "sql_orm" || path == "jpa" || path == "diesel" || path == "seaorm" {

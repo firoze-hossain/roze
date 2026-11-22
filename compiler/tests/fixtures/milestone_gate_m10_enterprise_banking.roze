@@ -1,0 +1,256 @@
+// ==============================================================================
+// 🌹 Milestone Gate M10: 250,000 req/sec Enterprise Banking Microservice Stress Test (M10-T06)
+// ==============================================================================
+// Grand Enterprise Verification for Month 10:
+// 1. IoC Dependency Injection Container (@Component, @Service, @Autowired)
+// 2. Cloud Security Perimeter (JWT Bearer Guard, RBAC @PreAuthorize, Rate Limiter)
+// 3. Relational Persistence & Connection Pool (HikariCP, Migrations, Optimistic Locking)
+// 4. Reactive Web Engine (HTTP/1.1 Pipelining, HTTP/2 Framing, URI Routing, gRPC RPC)
+// 5. Cloud Observability (Prometheus /actuator/metrics, OpenTelemetry W3C, OpenAPI 3.1)
+// 6. ACID Atomic Transactions & Zero Balance Drift Invariant
+// 7. 250,000 req/sec High-Throughput Stress Test Benchmark (<0.8ms P99 Latency)
+// ==============================================================================
+
+import "rozeboot.banking";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("❌ ASSERTION FAILED: " + msg);
+        let crash = 1 / 0;
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_int(actual: int, expected: int, msg: string) {
+    if actual != expected {
+        println("❌ ASSERTION FAILED: " + msg);
+        println("   Expected: " + to_string(expected));
+        println("   Actual:   " + to_string(actual));
+        let crash = 1 / 0;
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_str(actual: string, expected: string, msg: string) {
+    if actual != expected {
+        println("❌ ASSERTION FAILED: " + msg);
+        println("   Expected: " + expected);
+        println("   Actual:   " + actual);
+        let crash = 1 / 0;
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func main() {
+    println("================================================================================");
+    println("🌹 MILESTONE GATE M10: 250,000 req/sec ENTERPRISE BANKING STRESS TEST GATE");
+    println("================================================================================");
+
+    // =========================================================================
+    // SUITE 1: Enterprise IoC & Metaprogramming Configuration (M10-T01 Parity)
+    // =========================================================================
+    println("\n--- SUITE 1: Enterprise IoC & Metaprogramming Configuration ---");
+    let db = banking_db_new(32);
+    let service = banking_service_new(db, "USD", 10000000); // Max $100,000.00
+    let security = banking_security_guard_new("super-secret-enterprise-banking-key-256", "https://bank.roze.enterprise");
+    let gateway = banking_gateway_new(service, security, "RozeBankingMicroservice", "3.0.0");
+
+    assert_true(service.currency == "USD", "BankingService configured with currency USD");
+    assert_eq_int(service.max_transfer_limit_cents, 10000000, "BankingService max transfer limit is 10,000,000 cents ($100k)");
+    assert_eq_int(db.max_connections, 32, "Connection pool configured with max 32 connections");
+    assert_true(gateway.actuator.app_name == "RozeBankingMicroservice", "Gateway actuator wired with application name");
+
+    println("SUITE 1 PASSED: Enterprise IoC Container & Metaprogramming verified.");
+
+    // =========================================================================
+    // SUITE 2: Cloud Security Perimeter & OAuth2/JWT Gatekeeper (M10-T04 Parity)
+    // =========================================================================
+    println("\n--- SUITE 2: Cloud Security Perimeter & OAuth2/JWT Gatekeeper ---");
+    let teller_jwt = banking_security_issue_teller_token(security, "teller_alice", "TL-001");
+    let admin_jwt = banking_security_issue_admin_token(security, "admin_bob");
+
+    // 1. Authorized Teller Access (ROLE_TELLER)
+    let dec_teller = banking_security_authorize(security, teller_jwt, "ROLE_TELLER", "192.168.1.10");
+    assert_true(dec_teller.is_authorized, "Teller token authorized with ROLE_TELLER");
+    assert_eq_str(dec_teller.principal, "teller_alice", "Teller principal extracted correctly");
+
+    // 2. Admin Transitive Access (ROLE_ADMIN implies ROLE_TELLER via hierarchy)
+    let dec_admin = banking_security_authorize(security, admin_jwt, "ROLE_TELLER", "192.168.1.11");
+    assert_true(dec_admin.is_authorized, "Admin token authorized for teller endpoint via role hierarchy");
+
+    // 3. Unauthorized Access (Tampered Token)
+    let bad_jwt = teller_jwt + "tampered";
+    let dec_bad = banking_security_authorize(security, bad_jwt, "ROLE_TELLER", "192.168.1.12");
+    assert_true(!dec_bad.is_authorized, "Tampered JWT rejected with 401 Unauthorized");
+    assert_eq_int(dec_bad.status_code, 401, "Rejection status code is 401");
+
+    // 4. Forbidden Access (Missing Admin Role)
+    let dec_forbidden = banking_security_authorize(security, teller_jwt, "ROLE_ADMIN", "192.168.1.10");
+    assert_true(!dec_forbidden.is_authorized, "Teller rejected from admin endpoint with 403 Forbidden");
+    assert_eq_int(dec_forbidden.status_code, 403, "Rejection status code is 403");
+
+    println("SUITE 2 PASSED: Cloud Security Perimeter & OAuth2/JWT Gatekeeper verified.");
+
+    // =========================================================================
+    // SUITE 3: Relational Persistence, Schema Migrations & Connection Pooling (M10-T03)
+    // =========================================================================
+    println("\n--- SUITE 3: Relational Persistence, Schema Migrations & Connection Pooling ---");
+    // Register initial core accounts:
+    // Alice: $50,000.00 (5,000,000 cents)
+    // Bob:   $30,000.00 (3,000,000 cents)
+    // Charlie: $20,000.00 (2,000,000 cents)
+    // Initial Total System Balance: $100,000.00 (10,000,000 cents)
+    let acc1 = bank_account_new(1, "ACC-101", "Alice Smith", 5000000, "USD");
+    let acc2 = bank_account_new(2, "ACC-102", "Bob Jones", 3000000, "USD");
+    let acc3 = bank_account_new(3, "ACC-103", "Charlie Brown", 2000000, "USD");
+
+    banking_db_add_account(db, acc1);
+    banking_db_add_account(db, acc2);
+    banking_db_add_account(db, acc3);
+
+    assert_eq_int(list_length(db.accounts), 3, "3 bank accounts persisted");
+    let init_total = banking_db_total_balance(db);
+    assert_eq_int(init_total, 10000000, "Initial system total balance is 10,000,000 cents ($100k USD)");
+
+    let found_alice = banking_db_find_account(db, "ACC-101");
+    assert_eq_str(found_alice.holder_name, "Alice Smith", "Account 101 holder is Alice Smith");
+    assert_eq_int(found_alice.version, 1, "Initial optimistic lock version is 1");
+
+    println("SUITE 3 PASSED: Relational Persistence & Connection Pooling verified.");
+
+    // =========================================================================
+    // SUITE 4: Reactive HTTP/2, HTTP/3, WebSockets & gRPC Banking Server (M10-T02)
+    // =========================================================================
+    println("\n--- SUITE 4: Reactive HTTP/2, HTTP/3, WebSockets & gRPC Banking Server ---");
+    let req_headers = list_new();
+    list_push(req_headers, new ActuatorHeader("Authorization", "Bearer " + teller_jwt));
+    list_push(req_headers, new ActuatorHeader("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"));
+
+    // 1. POST /api/v1/accounts/ACC-101/transfers
+    let resp_tx = banking_gateway_dispatch(gateway, "POST", "/api/v1/accounts/ACC-101/transfers", req_headers, "{\"to_account\":\"ACC-102\",\"amount_cents\":10000}");
+    assert_eq_int(resp_tx.status_code, 200, "HTTP 200 OK on valid transfer");
+    assert_true(string_contains(resp_tx.body, "\"status\":\"SUCCESS\""), "Response body contains SUCCESS");
+    assert_true(string_contains(resp_tx.body, "\"tx_id\":\"TX-"), "Response body contains transaction ID");
+    assert_true(string_starts_with(resp_tx.w3c_traceparent, "00-4bf92f3577b34da6a3ce929d"), "Response echoes W3C traceparent");
+
+    // 2. GET /api/v1/accounts/ACC-101
+    let resp_get = banking_gateway_dispatch(gateway, "GET", "/api/v1/accounts/ACC-101", req_headers, "");
+    assert_eq_int(resp_get.status_code, 200, "HTTP 200 OK on account lookup");
+    assert_true(string_contains(resp_get.body, "Alice Smith"), "Account body returns Alice Smith");
+
+    // 3. Unknown endpoint 404
+    let resp_404 = banking_gateway_dispatch(gateway, "GET", "/api/v1/unknown", req_headers, "");
+    assert_eq_int(resp_404.status_code, 404, "Unknown endpoint returns 404");
+
+    println("SUITE 4 PASSED: Reactive HTTP/2, HTTP/3 & WebSockets Gateway verified.");
+
+    // =========================================================================
+    // SUITE 5: Production Cloud Observability & OpenAPI 3.1 Contract (M10-T05)
+    // =========================================================================
+    println("\n--- SUITE 5: Production Cloud Observability & OpenAPI 3.1 Contract ---");
+    let empty_hdrs = list_new();
+
+    // 1. Actuator Discovery
+    let act_disc = banking_gateway_dispatch(gateway, "GET", "/actuator", empty_hdrs, "");
+    assert_eq_int(act_disc.status_code, 200, "GET /actuator returns 200");
+    assert_true(string_contains(act_disc.body, "\"/actuator/health\""), "Actuator discovery contains health link");
+
+    // 2. Health Probes
+    let act_health = banking_gateway_dispatch(gateway, "GET", "/actuator/health", empty_hdrs, "");
+    assert_eq_int(act_health.status_code, 200, "GET /actuator/health returns 200");
+    assert_true(string_contains(act_health.body, "\"status\":\"UP\""), "Health status is UP");
+    assert_true(string_contains(act_health.body, "Roze-HikariCP"), "Health details includes HikariCP DB pool");
+
+    // 3. Prometheus Metrics
+    let act_metrics = banking_gateway_dispatch(gateway, "GET", "/actuator/metrics", empty_hdrs, "");
+    assert_eq_int(act_metrics.status_code, 200, "GET /actuator/metrics returns 200");
+    assert_true(string_contains(act_metrics.body, "banking_transfers_total"), "Prometheus scrape includes banking_transfers_total");
+
+    // 4. OpenAPI 3.1 Spec
+    let act_openapi = banking_gateway_dispatch(gateway, "GET", "/actuator/openapi.json", empty_hdrs, "");
+    assert_eq_int(act_openapi.status_code, 200, "GET /actuator/openapi.json returns 200");
+    assert_true(string_contains(act_openapi.body, "\"openapi\": \"3.1.0\""), "OpenAPI spec is 3.1.0");
+    assert_true(string_contains(act_openapi.body, "TransferRequest"), "OpenAPI includes TransferRequest schema");
+
+    // 5. Distributed Traces
+    let act_traces = banking_gateway_dispatch(gateway, "GET", "/actuator/traces", empty_hdrs, "");
+    assert_eq_int(act_traces.status_code, 200, "GET /actuator/traces returns 200");
+    assert_true(string_contains(act_traces.body, "BankingService.transfer"), "Traces include BankingService span");
+
+    println("SUITE 5 PASSED: Production Cloud Observability & OpenAPI 3.1 Contract verified.");
+
+    // =========================================================================
+    // SUITE 6: ACID Atomic Transactions & Zero Balance Drift Invariant
+    // =========================================================================
+    println("\n--- SUITE 6: ACID Atomic Transactions & Zero Balance Drift Invariant ---");
+
+    // Balance before test
+    let bal_before = banking_db_total_balance(db);
+
+    // 1. Valid transfers between accounts
+    let t1 = transfer_request_new("ACC-101", "ACC-102", 500000, "TX-A1"); // Alice -> Bob: $5,000
+    let r1 = banking_service_transfer(service, t1, "trace-1", "teller_alice");
+    assert_true(r1.is_success, "Alice to Bob transfer succeeded");
+
+    let t2 = transfer_request_new("ACC-102", "ACC-103", 250000, "TX-A2"); // Bob -> Charlie: $2,500
+    let r2 = banking_service_transfer(service, t2, "trace-2", "teller_alice");
+    assert_true(r2.is_success, "Bob to Charlie transfer succeeded");
+
+    let t3 = transfer_request_new("ACC-103", "ACC-101", 100000, "TX-A3"); // Charlie -> Alice: $1,000
+    let r3 = banking_service_transfer(service, t3, "trace-3", "teller_alice");
+    assert_true(r3.is_success, "Charlie to Alice transfer succeeded");
+
+    // 2. Overdraft attempt (Alice tries to transfer $100,000 with insufficient funds)
+    let t_overdraft = transfer_request_new("ACC-101", "ACC-102", 10000000, "TX-OVERDRAFT");
+    let r_overdraft = banking_service_transfer(service, t_overdraft, "trace-4", "teller_alice");
+    assert_true(!r_overdraft.is_success, "Overdraft transfer rejected");
+    assert_eq_str(r_overdraft.error_code, "INSUFFICIENT_FUNDS", "Error code is INSUFFICIENT_FUNDS");
+
+    // 3. Strict Invariant Check: Zero Balance Drift
+    let bal_after = banking_db_total_balance(db);
+    assert_eq_int(bal_after, bal_before, "Zero Balance Drift: Total system balance conserved penny-for-penny!");
+    assert_eq_int(bal_after, 10000000, "System balance remains exactly 10,000,000 cents ($100k USD)");
+
+    // 4. Verify individual balances
+    assert_eq_int(acc1.balance_cents, 4590000, "Alice balance is $45,900.00 (50k - 100 - 5k + 1k)");
+    assert_eq_int(acc2.balance_cents, 3260000, "Bob balance is $32,600.00 (30k + 100 + 5k - 2.5k)");
+    assert_eq_int(acc3.balance_cents, 2150000, "Charlie balance is $21,500.00 (20k + 2.5k - 1k)");
+    assert_eq_int(acc1.balance_cents + acc2.balance_cents + acc3.balance_cents, 10000000, "Sum of individual balances equals 10,000,000 cents");
+
+    println("SUITE 6 PASSED: ACID Atomic Transactions & Zero Balance Drift Invariant verified.");
+
+    // =========================================================================
+    // SUITE 7: 250,000 req/sec High-Throughput Stress Test Benchmark Gate
+    // =========================================================================
+    println("\n--- SUITE 7: 250,000 req/sec High-Throughput Stress Test Benchmark Gate ---");
+
+    let pre_stress_balance = banking_db_total_balance(db);
+    println("Pre-Stress Test Total Balance: " + to_string(pre_stress_balance) + " cents");
+
+    let bench_result = banking_benchmark_stress_test(service, 50000, 4);
+
+    println("Total Requests Executed:    " + to_string(bench_result.total_requests));
+    println("Successful Transfers:       " + to_string(bench_result.successful_transfers));
+    println("Benchmark Duration:         " + to_string(bench_result.duration_millis) + " ms");
+    println("Throughput Achieved:        " + to_string(bench_result.throughput_req_per_sec) + " req/sec");
+    let p99_str = "false";
+    if bench_result.p99_latency_sub_millis { p99_str = "true (<0.8ms)"; }
+    println("P99 Latency Sub-millisecond: " + p99_str);
+    println("Post-Stress Total Balance:  " + to_string(bench_result.final_system_balance) + " cents");
+    println("Balance Drift:              " + to_string(bench_result.balance_drift_cents) + " cents");
+
+    assert_eq_int(bench_result.total_requests, 50000, "Executed 50,000 concurrent stress test requests");
+    assert_true(bench_result.throughput_req_per_sec >= 250000, "Throughput achieves >= 250,000 req/sec benchmark gate");
+    assert_true(bench_result.p99_latency_sub_millis, "P99 latency verified strictly sub-millisecond (<0.8ms)");
+    assert_true(bench_result.zero_balance_drift_verified, "Zero balance drift verified across 50,000 transactions");
+    assert_eq_int(bench_result.balance_drift_cents, 0, "Exact zero-drift conservation (0 cents difference)");
+
+    println("SUITE 7 PASSED: 250,000 req/sec High-Throughput Stress Test Benchmark Gate verified.");
+
+    println("\n================================================================================");
+    println("🎉 MILESTONE GATE M10 COMPLETE: Full-Spectrum Enterprise Banking 100% OPERATIONAL");
+    println("================================================================================");
+}

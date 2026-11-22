@@ -2484,6 +2484,20 @@ fn standard_rozeboot_actuator_suite() {
     assert!(stdout.contains("ALL 7 TEST SUITES COMPLETED: 100% PASSING (Spring Boot Actuator Parity)"));
 }
 
+#[test]
+fn milestone_gate_m10_enterprise_banking_suite() {
+    let (stdout, stderr, ok) = run_fixture("milestone_gate_m10_enterprise_banking.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Enterprise IoC Container & Metaprogramming verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: Cloud Security Perimeter & OAuth2/JWT Gatekeeper verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: Relational Persistence & Connection Pooling verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: Reactive HTTP/2, HTTP/3 & WebSockets Gateway verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: Production Cloud Observability & OpenAPI 3.1 Contract verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: ACID Atomic Transactions & Zero Balance Drift Invariant verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: 250,000 req/sec High-Throughput Stress Test Benchmark Gate verified."));
+    assert!(stdout.contains("MILESTONE GATE M10 COMPLETE: Full-Spectrum Enterprise Banking 100% OPERATIONAL"));
+}
+
 
 
 

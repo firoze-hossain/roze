@@ -5269,6 +5269,25 @@ fn native_standard_rozeboot_actuator_suite() {
     assert!(stdout.contains("ALL 7 TEST SUITES COMPLETED: 100% PASSING (Spring Boot Actuator Parity)"));
 }
 
+#[test]
+fn native_milestone_gate_m10_enterprise_banking_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("milestone_gate_m10_enterprise_banking.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read milestone_gate_m10_enterprise_banking.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("milestone_gate_m10_enterprise_banking_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Enterprise IoC Container & Metaprogramming verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: Cloud Security Perimeter & OAuth2/JWT Gatekeeper verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: Relational Persistence & Connection Pooling verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: Reactive HTTP/2, HTTP/3 & WebSockets Gateway verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: Production Cloud Observability & OpenAPI 3.1 Contract verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: ACID Atomic Transactions & Zero Balance Drift Invariant verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: 250,000 req/sec High-Throughput Stress Test Benchmark Gate verified."));
+    assert!(stdout.contains("MILESTONE GATE M10 COMPLETE: Full-Spectrum Enterprise Banking 100% OPERATIONAL"));
+}
+
 
 
 

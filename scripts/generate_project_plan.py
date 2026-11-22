@@ -782,7 +782,7 @@ s1_rows = [
         ("M10-T05", 8), ("Month 10", 25), ("Sprint 20 (W41-W42)", 8), "Cloud Observability", "OpenTelemetry Tracing, Prometheus & OpenAPI 3.1 (rozeboot.actuator)",
         "Production cloud management: Prometheus /actuator/metrics exposition (counters, gauges, latency histograms), OpenTelemetry distributed tracing with W3C traceparent propagation, /actuator/health probes (readiness, liveness), OpenAPI 3.1 JSON generation, and embedded Swagger UI responsive dashboard.",
         "Matches Spring Boot Actuator and Micrometer cloud observability.",
-        "DevOps, Site Reliability Engineering, Cloud Native", "7 Days", ("High", 14), ("Planned", 12)
+        "DevOps, Site Reliability Engineering, Cloud Native", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M10-T06", 8), ("Month 10", 25), ("Sprint 20 (W41-W42)", 8), "Milestone Gate M10", "250,000 req/sec Enterprise Banking Microservice Stress Test",

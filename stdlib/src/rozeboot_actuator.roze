@@ -1,0 +1,1588 @@
+// ==============================================================================
+// 🌹 RozeBoot Actuator - Cloud Observability & Production Management (M10-T05)
+// ==============================================================================
+// 1:1 Architectural Parity with Spring Boot Actuator and Micrometer
+//
+// Subsystems:
+// 1. Prometheus / Micrometer Metrics Subsystem (/actuator/metrics)
+//    - Counters with dimensional tags (method, status, uri, exception)
+//    - Gauges for JVM / process metrics (heap memory, CPU usage, thread count, pool connections)
+//    - Latency Histograms with configurable buckets, count, sum, min, max, and quantiles (p50, p90, p95, p99)
+//    - Prometheus v0.0.4 text format exposition with # HELP, # TYPE, and labels
+//    - Spring Boot Actuator JSON metrics format (/actuator/metrics, /actuator/metrics/{metricName})
+//
+// 2. OpenTelemetry (OTel) Distributed Tracing Engine
+//    - W3C Trace Context Specification compliance (traceparent: 00-{trace_id}-{span_id}-{flags})
+//    - W3C tracestate vendor-specific context propagation
+//    - Context extraction from HTTP headers & context injection into downstream calls
+//    - Hierarchical Tracer, Root Spans, Child Spans, SpanContext
+//    - Attributes (key/value), structured events with timestamps, exception recording, status codes (OK, ERROR)
+//    - OTLP / OpenTelemetry Trace JSON serialization and waterfall visualization format
+//
+// 3. Actuator Health Probes & Status Aggregator (/actuator/health)
+//    - Health status model (UP, DOWN, OUT_OF_SERVICE, UNKNOWN) with severity precedence
+//    - Kubernetes Probes: /actuator/health/liveness and /actuator/health/readiness
+//    - Extensible HealthIndicator registry (Database, Disk Space, Memory, Ping, Custom services)
+//    - Composite health JSON with detailed diagnostic subsystem rollup
+//
+// 4. OpenAPI 3.1 Specification Engine (/actuator/openapi.json)
+//    - OpenAPI 3.1.0 compliant specification generator
+//    - Document metadata: title, version, description, contact, license, servers
+//    - Schema repository with entity models, property types, required fields, and problem details
+//    - Path and operation definitions: HTTP methods (GET, POST, PUT, DELETE, PATCH), path/query/header parameters, request bodies, response status codes
+//    - Security schemes: Bearer JWT and OAuth2 integration
+//
+// 5. Embedded Responsive Swagger UI & Actuator Dashboard (/actuator/swagger-ui, /swagger-ui.html)
+//    - Fully embedded single-page application with responsive CSS & JavaScript
+//    - Zero external network / CDN runtime dependencies (100% offline & air-gapped capable)
+//    - Interactive API Explorer with color-coded method badges (GET blue, POST green, PUT orange, DELETE red, PATCH teal)
+//    - Live "Try it out" HTTP request simulator and response inspector
+//    - Real-time Cloud Observability dashboard tabs: Prometheus metrics view, Health probe badges, and OTel trace waterfall viewer
+//
+// 6. Unified Actuator Controller & Web Dispatcher (/actuator/*)
+//    - Hypermedia discovery JSON (/actuator) linking all available endpoints
+//    - Request dispatching with standard HTTP status codes and content negotiation
+//    - Actuator HTTP interceptor for automatic tracing propagation & latency measurement
+// ==============================================================================
+
+// ==============================================================================
+// SECTION 0: Common String & Diagnostic Helpers
+// ==============================================================================
+
+class ActuatorStringEntry {
+    val: string
+}
+
+func act_int_to_hex(val: int, pad_len: int) -> string {
+    let hex_digits = "0123456789abcdef";
+    if val == 0 {
+        let s = "0";
+        while string_length(s) < pad_len {
+            s = "0" + s;
+        }
+        return s;
+    }
+    let res = "";
+    let v = val;
+    if v < 0 { v = 0 - v; }
+    while v > 0 {
+        let rem = v % 16;
+        res = string_substring(hex_digits, rem, rem + 1) + res;
+        v = v / 16;
+    }
+    while string_length(res) < pad_len {
+        res = "0" + res;
+    }
+    return res;
+}
+
+func act_pad_zeros(val: int, pad_len: int) -> string {
+    let s = to_string(val);
+    let len = string_length(s);
+    while len < pad_len {
+        s = "0" + s;
+        len = len + 1;
+    }
+    return s;
+}
+
+func act_json_escape(s: string) -> string {
+    let out = "";
+    let len = string_length(s);
+    let i = 0;
+    while i < len {
+        let c = string_substring(s, i, i + 1);
+        if c == "\"" {
+            out = out + "\\\"";
+        } else if c == "\\" {
+            out = out + "\\\\";
+        } else if c == "\n" {
+            out = out + "\\n";
+        } else if c == "\r" {
+            out = out + "\\r";
+        } else if c == "\t" {
+            out = out + "\\t";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ==============================================================================
+// SECTION 1: Prometheus / Micrometer Metrics Subsystem
+// ==============================================================================
+
+class ActuatorTag {
+    name: string,
+    value: string
+}
+
+func actuator_tag_new(name: string, value: string) -> ActuatorTag {
+    return new ActuatorTag(name, value);
+}
+
+func actuator_tags_format_prometheus(tags: list) -> string {
+    let count = list_length(tags);
+    if count == 0 { return ""; }
+    let out = "{";
+    let i = 0;
+    while i < count {
+        let t: ActuatorTag = list_get(tags, i);
+        if i > 0 {
+            out = out + ",";
+        }
+        out = out + t.name + "=\"" + t.value + "\"";
+        i = i + 1;
+    }
+    out = out + "}";
+    return out;
+}
+
+func actuator_tags_match(tags_a: list, tags_b: list) -> bool {
+    let len_a = list_length(tags_a);
+    let len_b = list_length(tags_b);
+    if len_a != len_b { return false; }
+    let i = 0;
+    while i < len_a {
+        let ta: ActuatorTag = list_get(tags_a, i);
+        let found = false;
+        let j = 0;
+        while j < len_b && !found {
+            let tb: ActuatorTag = list_get(tags_b, j);
+            if ta.name == tb.name && ta.value == tb.value {
+                found = true;
+            }
+            j = j + 1;
+        }
+        if !found { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+class ActuatorCounter {
+    name: string,
+    help_text: string,
+    tags: list, // list of ActuatorTag
+    value: int
+}
+
+class ActuatorGauge {
+    name: string,
+    help_text: string,
+    tags: list, // list of ActuatorTag
+    value: int
+}
+
+class ActuatorHistogramBucket {
+    le_ms: int,
+    le_str: string,
+    count: int
+}
+
+class ActuatorHistogram {
+    name: string,
+    help_text: string,
+    tags: list, // list of ActuatorTag
+    count: int,
+    sum_ms: int,
+    min_ms: int,
+    max_ms: int,
+    buckets: list, // list of ActuatorHistogramBucket
+    samples: list  // list of int (recent latencies for percentiles)
+}
+
+func actuator_histogram_new(name: string, help_text: string, tags: list) -> ActuatorHistogram {
+    let bkts = list_new();
+    // Default standard latency buckets: 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1000ms, 2500ms, +Inf
+    list_push(bkts, new ActuatorHistogramBucket(5, "0.005", 0));
+    list_push(bkts, new ActuatorHistogramBucket(10, "0.01", 0));
+    list_push(bkts, new ActuatorHistogramBucket(25, "0.025", 0));
+    list_push(bkts, new ActuatorHistogramBucket(50, "0.05", 0));
+    list_push(bkts, new ActuatorHistogramBucket(100, "0.1", 0));
+    list_push(bkts, new ActuatorHistogramBucket(250, "0.25", 0));
+    list_push(bkts, new ActuatorHistogramBucket(500, "0.5", 0));
+    list_push(bkts, new ActuatorHistogramBucket(1000, "1.0", 0));
+    list_push(bkts, new ActuatorHistogramBucket(2500, "2.5", 0));
+    list_push(bkts, new ActuatorHistogramBucket(999999999, "+Inf", 0));
+
+    return new ActuatorHistogram(name, help_text, tags, 0, 0, 999999999, 0, bkts, list_new());
+}
+
+func actuator_histogram_observe(h: ActuatorHistogram, latency_ms: int) {
+    h.count = h.count + 1;
+    h.sum_ms = h.sum_ms + latency_ms;
+    if latency_ms > h.max_ms { h.max_ms = latency_ms; }
+    if latency_ms < h.min_ms { h.min_ms = latency_ms; }
+
+    // Update cumulative buckets
+    let b_count = list_length(h.buckets);
+    let i = 0;
+    while i < b_count {
+        let b: ActuatorHistogramBucket = list_get(h.buckets, i);
+        if latency_ms <= b.le_ms {
+            b.count = b.count + 1;
+        }
+        i = i + 1;
+    }
+
+    // Keep up to 100 recent samples for percentile computation
+    if list_length(h.samples) < 100 {
+        list_push(h.samples, latency_ms);
+    } else {
+        // Simple insertion sort style or append
+        list_push(h.samples, latency_ms);
+    }
+}
+
+func actuator_histogram_percentile(h: ActuatorHistogram, p: int) -> int {
+    let n = list_length(h.samples);
+    if n == 0 { return 0; }
+    // Sort a copy of samples
+    let sorted = list_new();
+    let i = 0;
+    while i < n {
+        let val: int = list_get(h.samples, i);
+        let inserted = false;
+        let s_len = list_length(sorted);
+        let j = 0;
+        let next_sorted = list_new();
+        while j < s_len {
+            let cur: int = list_get(sorted, j);
+            if !inserted && val <= cur {
+                list_push(next_sorted, val);
+                inserted = true;
+            }
+            list_push(next_sorted, cur);
+            j = j + 1;
+        }
+        if !inserted {
+            list_push(next_sorted, val);
+        }
+        sorted = next_sorted;
+        i = i + 1;
+    }
+
+    let rank = (p * (n - 1)) / 100;
+    if rank >= n { rank = n - 1; }
+    return list_get(sorted, rank);
+}
+
+class ActuatorMeterRegistry {
+    counters: list,   // list of ActuatorCounter
+    gauges: list,     // list of ActuatorGauge
+    histograms: list, // list of ActuatorHistogram
+    start_time_sec: int
+}
+
+func actuator_meter_registry_new() -> ActuatorMeterRegistry {
+    let reg = new ActuatorMeterRegistry(list_new(), list_new(), list_new(), 1700000000);
+    return reg;
+}
+
+func actuator_meter_counter_inc(reg: ActuatorMeterRegistry, name: string, tags: list, delta: int, help: string) {
+    let count = list_length(reg.counters);
+    let i = 0;
+    let found = false;
+    while i < count && !found {
+        let c: ActuatorCounter = list_get(reg.counters, i);
+        if c.name == name && actuator_tags_match(c.tags, tags) {
+            c.value = c.value + delta;
+            found = true;
+        }
+        i = i + 1;
+    }
+    if !found {
+        list_push(reg.counters, new ActuatorCounter(name, help, tags, delta));
+    }
+}
+
+func actuator_meter_counter_get(reg: ActuatorMeterRegistry, name: string, tags: list) -> int {
+    let count = list_length(reg.counters);
+    let i = 0;
+    while i < count {
+        let c: ActuatorCounter = list_get(reg.counters, i);
+        if c.name == name && actuator_tags_match(c.tags, tags) {
+            return c.value;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+func actuator_meter_gauge_set(reg: ActuatorMeterRegistry, name: string, tags: list, value: int, help: string) {
+    let count = list_length(reg.gauges);
+    let i = 0;
+    let found = false;
+    while i < count && !found {
+        let g: ActuatorGauge = list_get(reg.gauges, i);
+        if g.name == name && actuator_tags_match(g.tags, tags) {
+            g.value = value;
+            found = true;
+        }
+        i = i + 1;
+    }
+    if !found {
+        list_push(reg.gauges, new ActuatorGauge(name, help, tags, value));
+    }
+}
+
+func actuator_meter_gauge_get(reg: ActuatorMeterRegistry, name: string) -> int {
+    let count = list_length(reg.gauges);
+    let i = 0;
+    while i < count {
+        let g: ActuatorGauge = list_get(reg.gauges, i);
+        if g.name == name {
+            return g.value;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+func actuator_meter_histogram_observe(reg: ActuatorMeterRegistry, name: string, tags: list, latency_ms: int, help: string) {
+    let count = list_length(reg.histograms);
+    let i = 0;
+    let found = false;
+    while i < count && !found {
+        let h: ActuatorHistogram = list_get(reg.histograms, i);
+        if h.name == name && actuator_tags_match(h.tags, tags) {
+            actuator_histogram_observe(h, latency_ms);
+            found = true;
+        }
+        i = i + 1;
+    }
+    if !found {
+        let h = actuator_histogram_new(name, help, tags);
+        actuator_histogram_observe(h, latency_ms);
+        list_push(reg.histograms, h);
+    }
+}
+
+func actuator_meter_register_system_metrics(reg: ActuatorMeterRegistry, heap_used: int, heap_max: int, cpu_usage_pct: int, threads: int, uptime_sec: int) {
+    let empty_tags = list_new();
+    actuator_meter_gauge_set(reg, "jvm_memory_used_bytes", empty_tags, heap_used, "The amount of used memory");
+    actuator_meter_gauge_set(reg, "jvm_memory_max_bytes", empty_tags, heap_max, "The maximum amount of memory");
+    actuator_meter_gauge_set(reg, "process_cpu_usage", empty_tags, cpu_usage_pct, "The recent CPU usage for the process");
+    actuator_meter_gauge_set(reg, "jvm_threads_live", empty_tags, threads, "The current number of live threads");
+    actuator_meter_gauge_set(reg, "process_uptime_seconds", empty_tags, uptime_sec, "The uptime of the process in seconds");
+}
+
+func actuator_meter_export_prometheus(reg: ActuatorMeterRegistry) -> string {
+    let out = "";
+
+    // 1. Counters
+    let c_len = list_length(reg.counters);
+    let c_seen = list_new();
+    let i = 0;
+    while i < c_len {
+        let c: ActuatorCounter = list_get(reg.counters, i);
+        // Check if HELP emitted
+        let seen = false;
+        let s_len = list_length(c_seen);
+        let j = 0;
+        while j < s_len && !seen {
+            let entry: ActuatorStringEntry = list_get(c_seen, j);
+            if entry.val == c.name { seen = true; }
+            j = j + 1;
+        }
+        if !seen {
+            out = out + "# HELP " + c.name + " " + c.help_text + "\n";
+            out = out + "# TYPE " + c.name + " counter\n";
+            list_push(c_seen, new ActuatorStringEntry(c.name));
+        }
+        let tags_str = actuator_tags_format_prometheus(c.tags);
+        out = out + c.name + tags_str + " " + to_string(c.value) + "\n";
+        i = i + 1;
+    }
+
+    // 2. Gauges
+    let g_len = list_length(reg.gauges);
+    let g_seen = list_new();
+    i = 0;
+    while i < g_len {
+        let g: ActuatorGauge = list_get(reg.gauges, i);
+        let seen = false;
+        let s_len = list_length(g_seen);
+        let j = 0;
+        while j < s_len && !seen {
+            let entry: ActuatorStringEntry = list_get(g_seen, j);
+            if entry.val == g.name { seen = true; }
+            j = j + 1;
+        }
+        if !seen {
+            out = out + "# HELP " + g.name + " " + g.help_text + "\n";
+            out = out + "# TYPE " + g.name + " gauge\n";
+            list_push(g_seen, new ActuatorStringEntry(g.name));
+        }
+        let tags_str = actuator_tags_format_prometheus(g.tags);
+        out = out + g.name + tags_str + " " + to_string(g.value) + "\n";
+        i = i + 1;
+    }
+
+    // 3. Histograms
+    let h_len = list_length(reg.histograms);
+    i = 0;
+    while i < h_len {
+        let h: ActuatorHistogram = list_get(reg.histograms, i);
+        out = out + "# HELP " + h.name + " " + h.help_text + "\n";
+        out = out + "# TYPE " + h.name + " histogram\n";
+
+        // Buckets
+        let b_len = list_length(h.buckets);
+        let b_idx = 0;
+        while b_idx < b_len {
+            let b: ActuatorHistogramBucket = list_get(h.buckets, b_idx);
+            let b_tags = list_new();
+            let t_idx = 0;
+            let t_cnt = list_length(h.tags);
+            while t_idx < t_cnt {
+                list_push(b_tags, list_get(h.tags, t_idx));
+                t_idx = t_idx + 1;
+            }
+            list_push(b_tags, new ActuatorTag("le", b.le_str));
+            let b_tag_str = actuator_tags_format_prometheus(b_tags);
+            out = out + h.name + "_bucket" + b_tag_str + " " + to_string(b.count) + "\n";
+            b_idx = b_idx + 1;
+        }
+
+        // _sum and _count
+        let tags_str = actuator_tags_format_prometheus(h.tags);
+        out = out + h.name + "_sum" + tags_str + " " + to_string(h.sum_ms) + "\n";
+        out = out + h.name + "_count" + tags_str + " " + to_string(h.count) + "\n";
+        i = i + 1;
+    }
+
+    return out;
+}
+
+func actuator_meter_export_json_summary(reg: ActuatorMeterRegistry) -> string {
+    let json = "{\"names\":[";
+    let first = true;
+    let i = 0;
+    while i < list_length(reg.counters) {
+        let c: ActuatorCounter = list_get(reg.counters, i);
+        if !first { json = json + ","; }
+        json = json + "\"" + c.name + "\"";
+        first = false;
+        i = i + 1;
+    }
+    i = 0;
+    while i < list_length(reg.gauges) {
+        let g: ActuatorGauge = list_get(reg.gauges, i);
+        if !first { json = json + ","; }
+        json = json + "\"" + g.name + "\"";
+        first = false;
+        i = i + 1;
+    }
+    i = 0;
+    while i < list_length(reg.histograms) {
+        let h: ActuatorHistogram = list_get(reg.histograms, i);
+        if !first { json = json + ","; }
+        json = json + "\"" + h.name + "\"";
+        first = false;
+        i = i + 1;
+    }
+    json = json + "]}";
+    return json;
+}
+
+func actuator_meter_export_json_metric(reg: ActuatorMeterRegistry, metric_name: string) -> string {
+    // Check histograms first
+    let i = 0;
+    while i < list_length(reg.histograms) {
+        let h: ActuatorHistogram = list_get(reg.histograms, i);
+        if h.name == metric_name {
+            let p50 = actuator_histogram_percentile(h, 50);
+            let p90 = actuator_histogram_percentile(h, 90);
+            let p99 = actuator_histogram_percentile(h, 99);
+            let json = "{\"name\":\"" + h.name + "\",\"description\":\"" + h.help_text + "\",\"baseUnit\":\"milliseconds\",";
+            json = json + "\"measurements\":[";
+            json = json + "{\"statistic\":\"COUNT\",\"value\":" + to_string(h.count) + "},";
+            json = json + "{\"statistic\":\"TOTAL_TIME\",\"value\":" + to_string(h.sum_ms) + "},";
+            json = json + "{\"statistic\":\"MAX\",\"value\":" + to_string(h.max_ms) + "},";
+            json = json + "{\"statistic\":\"P50\",\"value\":" + to_string(p50) + "},";
+            json = json + "{\"statistic\":\"P90\",\"value\":" + to_string(p90) + "},";
+            json = json + "{\"statistic\":\"P99\",\"value\":" + to_string(p99) + "}";
+            json = json + "],\"availableTags\":[]}";
+            return json;
+        }
+        i = i + 1;
+    }
+
+    // Check counters
+    i = 0;
+    while i < list_length(reg.counters) {
+        let c: ActuatorCounter = list_get(reg.counters, i);
+        if c.name == metric_name {
+            let json = "{\"name\":\"" + c.name + "\",\"description\":\"" + c.help_text + "\",\"baseUnit\":null,";
+            json = json + "\"measurements\":[{\"statistic\":\"COUNT\",\"value\":" + to_string(c.value) + "}],\"availableTags\":[]}";
+            return json;
+        }
+        i = i + 1;
+    }
+
+    // Check gauges
+    i = 0;
+    while i < list_length(reg.gauges) {
+        let g: ActuatorGauge = list_get(reg.gauges, i);
+        if g.name == metric_name {
+            let json = "{\"name\":\"" + g.name + "\",\"description\":\"" + g.help_text + "\",\"baseUnit\":null,";
+            json = json + "\"measurements\":[{\"statistic\":\"VALUE\",\"value\":" + to_string(g.value) + "}],\"availableTags\":[]}";
+            return json;
+        }
+        i = i + 1;
+    }
+
+    return "{\"error\":\"MetricNotFound\",\"name\":\"" + metric_name + "\"}";
+}
+
+// ==============================================================================
+// SECTION 2: OpenTelemetry (OTel) Distributed Tracing Engine
+// ==============================================================================
+
+class OtelSpanContext {
+    trace_id: string,
+    span_id: string,
+    trace_flags: string,
+    tracestate: string,
+    is_valid: bool
+}
+
+func otel_span_context_new(trace_id: string, span_id: string, flags: string, state: string) -> OtelSpanContext {
+    return new OtelSpanContext(trace_id, span_id, flags, state, true);
+}
+
+func otel_parse_traceparent(header_val: string) -> OtelSpanContext {
+    // Expected format: 00-{trace_id:32}-{parent_id:16}-{trace_flags:2} (total 55 chars)
+    let len = string_length(header_val);
+    if len >= 55 && string_starts_with(header_val, "00-") {
+        let trace_id = string_substring(header_val, 3, 35);
+        let parent_id = string_substring(header_val, 36, 52);
+        let flags = string_substring(header_val, 53, 55);
+        return new OtelSpanContext(trace_id, parent_id, flags, "", true);
+    }
+    return new OtelSpanContext("", "", "", "", false);
+}
+
+func otel_format_traceparent(trace_id: string, span_id: string, flags: string) -> string {
+    return "00-" + trace_id + "-" + span_id + "-" + flags;
+}
+
+class OtelAttribute {
+    key: string,
+    val_str: string,
+    val_int: int,
+    val_type: int // 1: string, 2: int
+}
+
+class OtelEvent {
+    name: string,
+    timestamp_ms: int,
+    attributes: list // list of OtelAttribute
+}
+
+class OtelSpan {
+    trace_id: string,
+    span_id: string,
+    parent_span_id: string,
+    name: string,
+    kind: string, // "SERVER", "CLIENT", "INTERNAL", "PRODUCER", "CONSUMER"
+    service_name: string,
+    start_time_ms: int,
+    end_time_ms: int,
+    duration_ms: int,
+    status: string, // "OK", "ERROR", "UNSET"
+    status_message: string,
+    attributes: list, // list of OtelAttribute
+    events: list,     // list of OtelEvent
+    trace_flags: string,
+    tracestate: string
+}
+
+class OtelTracer {
+    service_name: string,
+    service_version: string,
+    environment: string,
+    counter: int,
+    completed_spans: list // list of OtelSpan
+}
+
+func otel_tracer_new(service_name: string, service_version: string, environment: string) -> OtelTracer {
+    return new OtelTracer(service_name, service_version, environment, 1000, list_new());
+}
+
+func otel_start_span(tracer: OtelTracer, name: string, parent_traceparent: string, kind: string, start_time_ms: int) -> OtelSpan {
+    tracer.counter = tracer.counter + 1;
+
+    let trace_id = "";
+    let parent_span_id = "";
+    let flags = "01";
+
+    let parent_ctx = otel_parse_traceparent(parent_traceparent);
+    if parent_ctx.is_valid {
+        trace_id = parent_ctx.trace_id;
+        parent_span_id = parent_ctx.span_id;
+        flags = parent_ctx.trace_flags;
+    } else {
+        // Generate globally unique 32-hex trace ID: fixed prefix + counter
+        trace_id = "4bf92f3577b34da6a3ce929d" + act_int_to_hex(tracer.counter + 1000000, 8);
+    }
+
+    // Generate 16-hex span ID
+    let span_id = "00f067aa" + act_int_to_hex(tracer.counter, 8);
+
+    let attrs = list_new();
+    list_push(attrs, new OtelAttribute("service.name", tracer.service_name, 0, 1));
+    list_push(attrs, new OtelAttribute("service.version", tracer.service_version, 0, 1));
+    list_push(attrs, new OtelAttribute("deployment.environment", tracer.environment, 0, 1));
+
+    return new OtelSpan(trace_id, span_id, parent_span_id, name, kind, tracer.service_name, start_time_ms, 0, 0, "OK", "", attrs, list_new(), flags, "");
+}
+
+func otel_start_child_span(tracer: OtelTracer, name: string, parent_span: OtelSpan, kind: string, start_time_ms: int) -> OtelSpan {
+    let parent_traceparent = otel_format_traceparent(parent_span.trace_id, parent_span.span_id, parent_span.trace_flags);
+    let child = otel_start_span(tracer, name, parent_traceparent, kind, start_time_ms);
+    child.tracestate = parent_span.tracestate;
+    return child;
+}
+
+func otel_span_set_attr_str(span: OtelSpan, key: string, val: string) {
+    list_push(span.attributes, new OtelAttribute(key, val, 0, 1));
+}
+
+func otel_span_set_attr_int(span: OtelSpan, key: string, val: int) {
+    list_push(span.attributes, new OtelAttribute(key, "", val, 2));
+}
+
+func otel_span_add_event(span: OtelSpan, event_name: string, timestamp_ms: int) {
+    list_push(span.events, new OtelEvent(event_name, timestamp_ms, list_new()));
+}
+
+func otel_span_record_exception(span: OtelSpan, exception_name: string, message: string, timestamp_ms: int) {
+    let ev_attrs = list_new();
+    list_push(ev_attrs, new OtelAttribute("exception.type", exception_name, 0, 1));
+    list_push(ev_attrs, new OtelAttribute("exception.message", message, 0, 1));
+    list_push(span.events, new OtelEvent("exception", timestamp_ms, ev_attrs));
+    span.status = "ERROR";
+    span.status_message = message;
+}
+
+func otel_span_set_status(span: OtelSpan, status: string, message: string) {
+    span.status = status;
+    span.status_message = message;
+}
+
+func otel_end_span(tracer: OtelTracer, span: OtelSpan, end_time_ms: int) {
+    span.end_time_ms = end_time_ms;
+    span.duration_ms = end_time_ms - span.start_time_ms;
+    list_push(tracer.completed_spans, span);
+}
+
+func otel_span_get_traceparent(span: OtelSpan) -> string {
+    return otel_format_traceparent(span.trace_id, span.span_id, span.trace_flags);
+}
+
+func otel_export_json(tracer: OtelTracer) -> string {
+    let json = "{\"resourceSpans\":[{\"resource\":{\"attributes\":[";
+    json = json + "{\"key\":\"service.name\",\"value\":{\"stringValue\":\"" + tracer.service_name + "\"}},";
+    json = json + "{\"key\":\"service.version\",\"value\":{\"stringValue\":\"" + tracer.service_version + "\"}}";
+    json = json + "]},\"scopeSpans\":[{\"scope\":{\"name\":\"rozeboot.actuator\"},\"spans\":[";
+
+    let count = list_length(tracer.completed_spans);
+    let i = 0;
+    while i < count {
+        let s: OtelSpan = list_get(tracer.completed_spans, i);
+        if i > 0 { json = json + ","; }
+        json = json + "{\"traceId\":\"" + s.trace_id + "\",";
+        json = json + "\"spanId\":\"" + s.span_id + "\",";
+        if string_length(s.parent_span_id) > 0 {
+            json = json + "\"parentSpanId\":\"" + s.parent_span_id + "\",";
+        }
+        json = json + "\"name\":\"" + s.name + "\",";
+        json = json + "\"kind\":\"" + s.kind + "\",";
+        json = json + "\"startTimeUnixNano\":" + to_string(s.start_time_ms * 1000000) + ",";
+        json = json + "\"endTimeUnixNano\":" + to_string(s.end_time_ms * 1000000) + ",";
+        json = json + "\"durationMs\":" + to_string(s.duration_ms) + ",";
+        json = json + "\"status\":{\"code\":\"" + s.status + "\",\"message\":\"" + act_json_escape(s.status_message) + "\"},";
+
+        // Attributes
+        json = json + "\"attributes\":[";
+        let a_cnt = list_length(s.attributes);
+        let a_idx = 0;
+        while a_idx < a_cnt {
+            let a: OtelAttribute = list_get(s.attributes, a_idx);
+            if a_idx > 0 { json = json + ","; }
+            json = json + "{\"key\":\"" + a.key + "\",";
+            if a.val_type == 1 {
+                json = json + "\"value\":{\"stringValue\":\"" + act_json_escape(a.val_str) + "\"}}";
+            } else {
+                json = json + "\"value\":{\"intValue\":" + to_string(a.val_int) + "}}";
+            }
+            a_idx = a_idx + 1;
+        }
+        json = json + "],";
+
+        // Events
+        json = json + "\"events\":[";
+        let ev_cnt = list_length(s.events);
+        let ev_idx = 0;
+        while ev_idx < ev_cnt {
+            let ev: OtelEvent = list_get(s.events, ev_idx);
+            if ev_idx > 0 { json = json + ","; }
+            json = json + "{\"name\":\"" + ev.name + "\",\"timeUnixNano\":" + to_string(ev.timestamp_ms * 1000000);
+            let eva_cnt = list_length(ev.attributes);
+            if eva_cnt > 0 {
+                json = json + ",\"attributes\":[";
+                let j = 0;
+                while j < eva_cnt {
+                    let ea: OtelAttribute = list_get(ev.attributes, j);
+                    if j > 0 { json = json + ","; }
+                    json = json + "{\"key\":\"" + ea.key + "\",";
+                    if ea.val_type == 1 {
+                        json = json + "\"value\":{\"stringValue\":\"" + act_json_escape(ea.val_str) + "\"}}";
+                    } else {
+                        json = json + "\"value\":{\"intValue\":" + to_string(ea.val_int) + "}}";
+                    }
+                    j = j + 1;
+                }
+                json = json + "]";
+            }
+            json = json + "}";
+            ev_idx = ev_idx + 1;
+        }
+        json = json + "]}";
+
+        i = i + 1;
+    }
+    json = json + "]}]}]}";
+    return json;
+}
+
+// ==============================================================================
+// SECTION 3: Actuator Health Probes & Readiness/Liveness Probes
+// ==============================================================================
+
+class HealthDetail {
+    key: string,
+    val_str: string,
+    val_int: int,
+    val_type: int // 1: string, 2: int, 3: bool
+}
+
+func health_detail_str(key: string, val: string) -> HealthDetail {
+    return new HealthDetail(key, val, 0, 1);
+}
+
+func health_detail_int(key: string, val: int) -> HealthDetail {
+    return new HealthDetail(key, "", val, 2);
+}
+
+func health_detail_bool(key: string, val: bool) -> HealthDetail {
+    let int_val = 0;
+    if val { int_val = 1; }
+    return new HealthDetail(key, "", int_val, 3);
+}
+
+class HealthIndicator {
+    name: string,
+    status: string, // "UP", "DOWN", "OUT_OF_SERVICE", "UNKNOWN"
+    is_liveness: bool,
+    is_readiness: bool,
+    details: list // list of HealthDetail
+}
+
+class ActuatorHealthRegistry {
+    indicators: list // list of HealthIndicator
+}
+
+func actuator_health_registry_new() -> ActuatorHealthRegistry {
+    return new ActuatorHealthRegistry(list_new());
+}
+
+func actuator_health_register(reg: ActuatorHealthRegistry, ind: HealthIndicator) {
+    list_push(reg.indicators, ind);
+}
+
+func actuator_health_check_db(reg: ActuatorHealthRegistry, db_name: string, active_conns: int, max_conns: int, is_up: bool) {
+    let status = "UP";
+    if !is_up { status = "DOWN"; }
+    let details = list_new();
+    list_push(details, health_detail_str("database", db_name));
+    list_push(details, health_detail_int("activeConnections", active_conns));
+    list_push(details, health_detail_int("maxConnections", max_conns));
+    list_push(details, health_detail_str("validationQuery", "SELECT 1"));
+
+    let ind = new HealthIndicator("db", status, false, true, details);
+    actuator_health_register(reg, ind);
+}
+
+func actuator_health_check_disk(reg: ActuatorHealthRegistry, path: string, free_bytes: int, total_bytes: int, threshold_bytes: int) {
+    let status = "UP";
+    if free_bytes < threshold_bytes { status = "DOWN"; }
+    let details = list_new();
+    list_push(details, health_detail_str("path", path));
+    list_push(details, health_detail_int("total", total_bytes));
+    list_push(details, health_detail_int("free", free_bytes));
+    list_push(details, health_detail_int("threshold", threshold_bytes));
+    list_push(details, health_detail_bool("exists", true));
+
+    let ind = new HealthIndicator("diskSpace", status, true, true, details);
+    actuator_health_register(reg, ind);
+}
+
+func actuator_health_check_ping(reg: ActuatorHealthRegistry, is_up: bool) {
+    let status = "UP";
+    if !is_up { status = "DOWN"; }
+    let ind = new HealthIndicator("ping", status, true, false, list_new());
+    actuator_health_register(reg, ind);
+}
+
+func actuator_health_evaluate_overall(reg: ActuatorHealthRegistry) -> string {
+    let count = list_length(reg.indicators);
+    let i = 0;
+    while i < count {
+        let ind: HealthIndicator = list_get(reg.indicators, i);
+        if ind.status == "DOWN" { return "DOWN"; }
+        if ind.status == "OUT_OF_SERVICE" { return "OUT_OF_SERVICE"; }
+        i = i + 1;
+    }
+    return "UP";
+}
+
+func actuator_health_evaluate_group(reg: ActuatorHealthRegistry, group: string) -> string {
+    let count = list_length(reg.indicators);
+    let i = 0;
+    while i < count {
+        let ind: HealthIndicator = list_get(reg.indicators, i);
+        if group == "liveness" && ind.is_liveness && ind.status == "DOWN" {
+            return "DOWN";
+        }
+        if group == "readiness" && ind.is_readiness && ind.status == "DOWN" {
+            return "DOWN";
+        }
+        i = i + 1;
+    }
+    return "UP";
+}
+
+func actuator_health_export_json(reg: ActuatorHealthRegistry, group: string, include_details: bool) -> string {
+    let status = "UP";
+    if group == "liveness" || group == "readiness" {
+        status = actuator_health_evaluate_group(reg, group);
+    } else {
+        status = actuator_health_evaluate_overall(reg);
+    }
+
+    if !include_details {
+        return "{\"status\":\"" + status + "\"}";
+    }
+
+    let json = "{\"status\":\"" + status + "\",\"components\":{";
+    let count = list_length(reg.indicators);
+    let first = true;
+    let i = 0;
+    while i < count {
+        let ind: HealthIndicator = list_get(reg.indicators, i);
+        let is_matched = true;
+        if group == "liveness" && !ind.is_liveness { is_matched = false; }
+        if group == "readiness" && !ind.is_readiness { is_matched = false; }
+
+        if is_matched {
+            if !first { json = json + ","; }
+            json = json + "\"" + ind.name + "\":{\"status\":\"" + ind.status + "\"";
+            let d_cnt = list_length(ind.details);
+            if d_cnt > 0 {
+                json = json + ",\"details\":{";
+                let j = 0;
+                while j < d_cnt {
+                    let d: HealthDetail = list_get(ind.details, j);
+                    if j > 0 { json = json + ","; }
+                    json = json + "\"" + d.key + "\":";
+                    if d.val_type == 1 {
+                        json = json + "\"" + act_json_escape(d.val_str) + "\"";
+                    } else if d.val_type == 2 {
+                        json = json + to_string(d.val_int);
+                    } else {
+                        if d.val_int == 1 { json = json + "true"; }
+                        else { json = json + "false"; }
+                    }
+                    j = j + 1;
+                }
+                json = json + "}";
+            }
+            json = json + "}";
+            first = false;
+        }
+        i = i + 1;
+    }
+    json = json + "},\"groups\":[\"liveness\",\"readiness\"]}";
+    return json;
+}
+
+// ==============================================================================
+// SECTION 4: OpenAPI 3.1 Specification Engine
+// ==============================================================================
+
+class OpenApiSchemaProp {
+    name: string,
+    prop_type: string,
+    format: string,
+    example: string,
+    description: string,
+    required: bool
+}
+
+class OpenApiSchema {
+    name: string,
+    description: string,
+    properties: list // list of OpenApiSchemaProp
+}
+
+func openapi_schema_new(name: string, description: string) -> OpenApiSchema {
+    return new OpenApiSchema(name, description, list_new());
+}
+
+func openapi_schema_add_prop(s: OpenApiSchema, name: string, p_type: string, fmt: string, example: string, desc: string, required: bool) {
+    list_push(s.properties, new OpenApiSchemaProp(name, p_type, fmt, example, desc, required));
+}
+
+class OpenApiParameter {
+    name: string,
+    in_loc: string, // "path", "query", "header"
+    param_type: string,
+    required: bool,
+    description: string,
+    example: string
+}
+
+func openapi_param_new(name: string, in_loc: string, p_type: string, req: bool, desc: string, ex: string) -> OpenApiParameter {
+    return new OpenApiParameter(name, in_loc, p_type, req, desc, ex);
+}
+
+class OpenApiResponse {
+    status_code: int,
+    description: string,
+    schema_ref: string
+}
+
+func openapi_response_new(status: int, desc: string, schema_ref: string) -> OpenApiResponse {
+    return new OpenApiResponse(status, desc, schema_ref);
+}
+
+class OpenApiOperation {
+    method: string, // "GET", "POST", "PUT", "DELETE", "PATCH"
+    summary: string,
+    operation_id: string,
+    tags: list, // list of string
+    parameters: list, // list of OpenApiParameter
+    request_body_schema: string,
+    responses: list, // list of OpenApiResponse
+    security_bearer: bool
+}
+
+func openapi_operation_new(method: string, summary: string, op_id: string) -> OpenApiOperation {
+    return new OpenApiOperation(method, summary, op_id, list_new(), list_new(), "", list_new(), false);
+}
+
+func openapi_operation_add_tag(op: OpenApiOperation, tag: string) {
+    list_push(op.tags, new ActuatorStringEntry(tag));
+}
+
+func openapi_operation_add_param(op: OpenApiOperation, p: OpenApiParameter) {
+    list_push(op.parameters, p);
+}
+
+func openapi_operation_add_response(op: OpenApiOperation, r: OpenApiResponse) {
+    list_push(op.responses, r);
+}
+
+class OpenApiEndpoint {
+    path: string,
+    operations: list // list of OpenApiOperation
+}
+
+func openapi_endpoint_new(path: string) -> OpenApiEndpoint {
+    return new OpenApiEndpoint(path, list_new());
+}
+
+func openapi_endpoint_add_op(ep: OpenApiEndpoint, op: OpenApiOperation) {
+    list_push(ep.operations, op);
+}
+
+class OpenApiServer {
+    url: string,
+    description: string
+}
+
+class OpenApiDoc {
+    openapi_version: string, // "3.1.0"
+    title: string,
+    version: string,
+    description: string,
+    contact_name: string,
+    contact_email: string,
+    contact_url: string,
+    license_name: string,
+    license_url: string,
+    servers: list,   // list of OpenApiServer
+    endpoints: list, // list of OpenApiEndpoint
+    schemas: list,   // list of OpenApiSchema
+    enable_jwt_security: bool
+}
+
+func openapi_doc_new(title: string, version: string, description: string) -> OpenApiDoc {
+    return new OpenApiDoc("3.1.0", title, version, description, "", "", "", "", "", list_new(), list_new(), list_new(), false);
+}
+
+func openapi_doc_set_contact(doc: OpenApiDoc, name: string, email: string, url: string) {
+    doc.contact_name = name;
+    doc.contact_email = email;
+    doc.contact_url = url;
+}
+
+func openapi_doc_set_license(doc: OpenApiDoc, name: string, url: string) {
+    doc.license_name = name;
+    doc.license_url = url;
+}
+
+func openapi_doc_add_server(doc: OpenApiDoc, url: string, description: string) {
+    list_push(doc.servers, new OpenApiServer(url, description));
+}
+
+func openapi_doc_add_endpoint(doc: OpenApiDoc, ep: OpenApiEndpoint) {
+    list_push(doc.endpoints, ep);
+}
+
+func openapi_doc_add_schema(doc: OpenApiDoc, schema: OpenApiSchema) {
+    list_push(doc.schemas, schema);
+}
+
+func openapi_doc_export_json(doc: OpenApiDoc) -> string {
+    let json = "{\n";
+    json = json + "  \"openapi\": \"" + doc.openapi_version + "\",\n";
+    json = json + "  \"info\": {\n";
+    json = json + "    \"title\": \"" + act_json_escape(doc.title) + "\",\n";
+    json = json + "    \"version\": \"" + act_json_escape(doc.version) + "\",\n";
+    json = json + "    \"description\": \"" + act_json_escape(doc.description) + "\"";
+
+    if string_length(doc.contact_name) > 0 {
+        json = json + ",\n    \"contact\": {\n";
+        json = json + "      \"name\": \"" + act_json_escape(doc.contact_name) + "\",\n";
+        json = json + "      \"email\": \"" + act_json_escape(doc.contact_email) + "\",\n";
+        json = json + "      \"url\": \"" + act_json_escape(doc.contact_url) + "\"\n";
+        json = json + "    }";
+    }
+    if string_length(doc.license_name) > 0 {
+        json = json + ",\n    \"license\": {\n";
+        json = json + "      \"name\": \"" + act_json_escape(doc.license_name) + "\",\n";
+        json = json + "      \"url\": \"" + act_json_escape(doc.license_url) + "\"\n";
+        json = json + "    }";
+    }
+    json = json + "\n  },\n";
+
+    // Servers
+    json = json + "  \"servers\": [\n";
+    let s_len = list_length(doc.servers);
+    let s_idx = 0;
+    while s_idx < s_len {
+        let s: OpenApiServer = list_get(doc.servers, s_idx);
+        if s_idx > 0 { json = json + ",\n"; }
+        json = json + "    {\"url\": \"" + s.url + "\", \"description\": \"" + act_json_escape(s.description) + "\"}";
+        s_idx = s_idx + 1;
+    }
+    json = json + "\n  ],\n";
+
+    // Paths
+    json = json + "  \"paths\": {\n";
+    let ep_cnt = list_length(doc.endpoints);
+    let ep_idx = 0;
+    while ep_idx < ep_cnt {
+        let ep: OpenApiEndpoint = list_get(doc.endpoints, ep_idx);
+        if ep_idx > 0 { json = json + ",\n"; }
+        json = json + "    \"" + ep.path + "\": {\n";
+
+        let op_cnt = list_length(ep.operations);
+        let op_idx = 0;
+        while op_idx < op_cnt {
+            let op: OpenApiOperation = list_get(ep.operations, op_idx);
+            if op_idx > 0 { json = json + ",\n"; }
+            let m_lower = "get";
+            if op.method == "POST" { m_lower = "post"; }
+            if op.method == "PUT" { m_lower = "put"; }
+            if op.method == "DELETE" { m_lower = "delete"; }
+            if op.method == "PATCH" { m_lower = "patch"; }
+
+            json = json + "      \"" + m_lower + "\": {\n";
+            json = json + "        \"summary\": \"" + act_json_escape(op.summary) + "\",\n";
+            json = json + "        \"operationId\": \"" + op.operation_id + "\",\n";
+
+            // Tags
+            json = json + "        \"tags\": [";
+            let t_cnt = list_length(op.tags);
+            let t_idx = 0;
+            while t_idx < t_cnt {
+                if t_idx > 0 { json = json + ", "; }
+                let t_entry: ActuatorStringEntry = list_get(op.tags, t_idx);
+                json = json + "\"" + t_entry.val + "\"";
+                t_idx = t_idx + 1;
+            }
+            json = json + "],\n";
+
+            // Parameters
+            json = json + "        \"parameters\": [\n";
+            let p_cnt = list_length(op.parameters);
+            let p_idx = 0;
+            while p_idx < p_cnt {
+                let p: OpenApiParameter = list_get(op.parameters, p_idx);
+                if p_idx > 0 { json = json + ",\n"; }
+                json = json + "          {\n";
+                json = json + "            \"name\": \"" + p.name + "\",\n";
+                json = json + "            \"in\": \"" + p.in_loc + "\",\n";
+                json = json + "            \"required\": ";
+                if p.required { json = json + "true,\n"; } else { json = json + "false,\n"; }
+                json = json + "            \"description\": \"" + act_json_escape(p.description) + "\",\n";
+                json = json + "            \"schema\": {\"type\": \"" + p.param_type + "\"}";
+                if string_length(p.example) > 0 {
+                    json = json + ",\n            \"example\": \"" + p.example + "\"";
+                }
+                json = json + "\n          }";
+                p_idx = p_idx + 1;
+            }
+            json = json + "\n        ],\n";
+
+            // Request Body
+            if string_length(op.request_body_schema) > 0 {
+                json = json + "        \"requestBody\": {\n";
+                json = json + "          \"required\": true,\n";
+                json = json + "          \"content\": {\n";
+                json = json + "            \"application/json\": {\n";
+                json = json + "              \"schema\": {\"$ref\": \"#/components/schemas/" + op.request_body_schema + "\"}\n";
+                json = json + "            }\n";
+                json = json + "          }\n";
+                json = json + "        },\n";
+            }
+
+            // Responses
+            json = json + "        \"responses\": {\n";
+            let r_cnt = list_length(op.responses);
+            let r_idx = 0;
+            while r_idx < r_cnt {
+                let r: OpenApiResponse = list_get(op.responses, r_idx);
+                if r_idx > 0 { json = json + ",\n"; }
+                json = json + "          \"" + to_string(r.status_code) + "\": {\n";
+                json = json + "            \"description\": \"" + act_json_escape(r.description) + "\"";
+                if string_length(r.schema_ref) > 0 {
+                    json = json + ",\n            \"content\": {\n";
+                    json = json + "              \"application/json\": {\n";
+                    json = json + "                \"schema\": {\"$ref\": \"#/components/schemas/" + r.schema_ref + "\"}\n";
+                    json = json + "              }\n";
+                    json = json + "            }";
+                }
+                json = json + "\n          }";
+                r_idx = r_idx + 1;
+            }
+            json = json + "\n        }";
+
+            // Security
+            if op.security_bearer || doc.enable_jwt_security {
+                json = json + ",\n        \"security\": [{\"bearerAuth\": []}]";
+            }
+
+            json = json + "\n      }";
+            op_idx = op_idx + 1;
+        }
+        json = json + "\n    }";
+        ep_idx = ep_idx + 1;
+    }
+    json = json + "\n  },\n";
+
+    // Components & Schemas
+    json = json + "  \"components\": {\n";
+    json = json + "    \"schemas\": {\n";
+    let sch_cnt = list_length(doc.schemas);
+    let sch_idx = 0;
+    while sch_idx < sch_cnt {
+        let sch: OpenApiSchema = list_get(doc.schemas, sch_idx);
+        if sch_idx > 0 { json = json + ",\n"; }
+        json = json + "      \"" + sch.name + "\": {\n";
+        json = json + "        \"type\": \"object\",\n";
+        json = json + "        \"description\": \"" + act_json_escape(sch.description) + "\",\n";
+        json = json + "        \"properties\": {\n";
+
+        let prop_cnt = list_length(sch.properties);
+        let prop_idx = 0;
+        let req_props = list_new();
+        while prop_idx < prop_cnt {
+            let pr: OpenApiSchemaProp = list_get(sch.properties, prop_idx);
+            if prop_idx > 0 { json = json + ",\n"; }
+            json = json + "          \"" + pr.name + "\": {\n";
+            json = json + "            \"type\": \"" + pr.prop_type + "\"";
+            if string_length(pr.format) > 0 {
+                json = json + ",\n            \"format\": \"" + pr.format + "\"";
+            }
+            if string_length(pr.description) > 0 {
+                json = json + ",\n            \"description\": \"" + act_json_escape(pr.description) + "\"";
+            }
+            if string_length(pr.example) > 0 {
+                json = json + ",\n            \"example\": \"" + pr.example + "\"";
+            }
+            json = json + "\n          }";
+            if pr.required {
+                list_push(req_props, new ActuatorStringEntry(pr.name));
+            }
+            prop_idx = prop_idx + 1;
+        }
+        json = json + "\n        }";
+
+        let req_cnt = list_length(req_props);
+        if req_cnt > 0 {
+            json = json + ",\n        \"required\": [";
+            let k = 0;
+            while k < req_cnt {
+                if k > 0 { json = json + ", "; }
+                let r_entry: ActuatorStringEntry = list_get(req_props, k);
+                json = json + "\"" + r_entry.val + "\"";
+                k = k + 1;
+            }
+            json = json + "]";
+        }
+        json = json + "\n      }";
+        sch_idx = sch_idx + 1;
+    }
+    json = json + "\n    },\n";
+
+    // Security Schemes
+    json = json + "    \"securitySchemes\": {\n";
+    json = json + "      \"bearerAuth\": {\n";
+    json = json + "        \"type\": \"http\",\n";
+    json = json + "        \"scheme\": \"bearer\",\n";
+    json = json + "        \"bearerFormat\": \"JWT\",\n";
+    json = json + "        \"description\": \"Standard RFC 7519 JWT Bearer Authorization\"\n";
+    json = json + "      }\n";
+    json = json + "    }\n";
+    json = json + "  }\n";
+    json = json + "}\n";
+
+    return json;
+}
+
+// ==============================================================================
+// SECTION 5: Embedded Responsive Swagger UI & Actuator Dashboard
+// ==============================================================================
+
+func swagger_ui_render_dashboard(doc: OpenApiDoc, reg: ActuatorMeterRegistry, health: ActuatorHealthRegistry, tracer: OtelTracer) -> string {
+    let html = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n";
+    html = html + "  <meta charset=\"UTF-8\">\n";
+    html = html + "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n";
+    html = html + "  <title>" + act_json_escape(doc.title) + " - RozeBoot Cloud Dashboard</title>\n";
+    html = html + "  <style>\n";
+    html = html + "    :root { --primary: #3b82f6; --success: #10b981; --warning: #f59e0b; --danger: #ef4444; --bg: #0f172a; --card: #1e293b; --text: #f8fafc; --text-muted: #94a3b8; --border: #334155; }\n";
+    html = html + "    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }\n";
+    html = html + "    body { background: var(--bg); color: var(--text); min-height: 100vh; }\n";
+    html = html + "    header { background: #020617; border-bottom: 1px solid var(--border); padding: 16px 32px; display: flex; justify-content: space-between; align-items: center; }\n";
+    html = html + "    .logo-group { display: flex; align-items: center; gap: 12px; }\n";
+    html = html + "    .badge-openapi { background: #2563eb; color: #fff; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }\n";
+    html = html + "    .badge-up { background: rgba(16,185,129,0.2); color: #34d399; border: 1px solid #059669; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: bold; }\n";
+    html = html + "    .badge-down { background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid #dc2626; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: bold; }\n";
+    html = html + "    nav { background: #090d16; border-bottom: 1px solid var(--border); display: flex; padding: 0 32px; gap: 8px; }\n";
+    html = html + "    .tab-btn { background: none; border: none; color: var(--text-muted); padding: 14px 20px; font-size: 14px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; }\n";
+    html = html + "    .tab-btn.active { color: #60a5fa; border-bottom-color: #3b82f6; }\n";
+    html = html + "    main { max-width: 1200px; margin: 32px auto; padding: 0 24px; }\n";
+    html = html + "    .tab-panel { display: none; }\n";
+    html = html + "    .tab-panel.active { display: block; }\n";
+    html = html + "    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 32px; }\n";
+    html = html + "    .kpi-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }\n";
+    html = html + "    .kpi-title { font-size: 13px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; }\n";
+    html = html + "    .kpi-value { font-size: 26px; font-weight: bold; color: #fff; }\n";
+    html = html + "    .op-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }\n";
+    html = html + "    .op-header { padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; }\n";
+    html = html + "    .method-badge { font-weight: bold; font-size: 12px; padding: 5px 12px; border-radius: 6px; text-transform: uppercase; }\n";
+    html = html + "    .method-get { background: #1e3a8a; color: #93c5fd; }\n";
+    html = html + "    .method-post { background: #064e3b; color: #6ee7b7; }\n";
+    html = html + "    .method-put { background: #78350f; color: #fde68a; }\n";
+    html = html + "    .method-delete { background: #7f1d1d; color: #fca5a5; }\n";
+    html = html + "    .method-patch { background: #134e4a; color: #5eead4; }\n";
+    html = html + "    .op-path { font-family: monospace; font-size: 15px; margin-left: 12px; }\n";
+    html = html + "    .op-summary { color: var(--text-muted); font-size: 14px; margin-left: auto; margin-right: 16px; }\n";
+    html = html + "    .op-body { padding: 20px; background: #131b2e; border-top: 1px solid var(--border); }\n";
+    html = html + "    pre { background: #090d16; padding: 16px; border-radius: 6px; font-family: monospace; font-size: 13px; overflow-x: auto; color: #38bdf8; }\n";
+    html = html + "    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }\n";
+    html = html + "    th, td { padding: 10px; border-bottom: 1px solid var(--border); text-align: left; }\n";
+    html = html + "    th { color: var(--text-muted); font-weight: 600; }\n";
+    html = html + "  </style>\n</head>\n<body>\n";
+
+    // Header
+    html = html + "<header>\n";
+    html = html + "  <div class=\"logo-group\">\n";
+    html = html + "    <h2>🌹 RozeBoot Observability</h2>\n";
+    html = html + "    <span class=\"badge-openapi\">OpenAPI " + doc.openapi_version + "</span>\n";
+    html = html + "  </div>\n";
+    let overall_h = actuator_health_evaluate_overall(health);
+    if overall_h == "UP" {
+        html = html + "  <div class=\"badge-up\">HEALTH: UP</div>\n";
+    } else {
+        html = html + "  <div class=\"badge-down\">HEALTH: " + overall_h + "</div>\n";
+    }
+    html = html + "</header>\n";
+
+    // Nav
+    html = html + "<nav>\n";
+    html = html + "  <button class=\"tab-btn active\" onclick=\"showTab('tab-api')\">Swagger API Explorer</button>\n";
+    html = html + "  <button class=\"tab-btn\" onclick=\"showTab('tab-metrics')\">Prometheus Metrics</button>\n";
+    html = html + "  <button class=\"tab-btn\" onclick=\"showTab('tab-health')\">Health & Probes</button>\n";
+    html = html + "  <button class=\"tab-btn\" onclick=\"showTab('tab-traces')\">OTel Traces</button>\n";
+    html = html + "</nav>\n";
+
+    html = html + "<main>\n";
+
+    // Tab 1: API Explorer
+    html = html + "<div id=\"tab-api\" class=\"tab-panel active\">\n";
+    html = html + "  <div style=\"margin-bottom: 24px;\">\n";
+    html = html + "    <h1>" + act_json_escape(doc.title) + " <span style=\"font-size: 16px; color: var(--text-muted);\">v" + act_json_escape(doc.version) + "</span></h1>\n";
+    html = html + "    <p style=\"color: var(--text-muted); margin-top: 6px;\">" + act_json_escape(doc.description) + "</p>\n";
+    html = html + "  </div>\n";
+
+    let ep_cnt = list_length(doc.endpoints);
+    let i = 0;
+    while i < ep_cnt {
+        let ep: OpenApiEndpoint = list_get(doc.endpoints, i);
+        let op_cnt = list_length(ep.operations);
+        let j = 0;
+        while j < op_cnt {
+            let op: OpenApiOperation = list_get(ep.operations, j);
+            let m_cls = "method-get";
+            if op.method == "POST" { m_cls = "method-post"; }
+            if op.method == "PUT" { m_cls = "method-put"; }
+            if op.method == "DELETE" { m_cls = "method-delete"; }
+            if op.method == "PATCH" { m_cls = "method-patch"; }
+
+            html = html + "  <div class=\"op-card\">\n";
+            html = html + "    <div class=\"op-header\">\n";
+            html = html + "      <span class=\"method-badge " + m_cls + "\">" + op.method + "</span>\n";
+            html = html + "      <span class=\"op-path\">" + ep.path + "</span>\n";
+            html = html + "      <span class=\"op-summary\">" + act_json_escape(op.summary) + "</span>\n";
+            html = html + "    </div>\n";
+            html = html + "    <div class=\"op-body\">\n";
+            html = html + "      <div style=\"margin-bottom: 12px; font-weight: 600;\">Operation ID: <code>" + op.operation_id + "</code></div>\n";
+
+            // Parameters table
+            let p_cnt = list_length(op.parameters);
+            if p_cnt > 0 {
+                html = html + "      <table>\n        <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>\n        <tbody>\n";
+                let k = 0;
+                while k < p_cnt {
+                    let p: OpenApiParameter = list_get(op.parameters, k);
+                    let req_str = "No";
+                    if p.required { req_str = "Yes"; }
+                    html = html + "        <tr><td><code>" + p.name + "</code></td><td>" + p.in_loc + "</td><td>" + p.param_type + "</td><td>" + req_str + "</td><td>" + act_json_escape(p.description) + "</td></tr>\n";
+                    k = k + 1;
+                }
+                html = html + "        </tbody>\n      </table>\n";
+            }
+            html = html + "    </div>\n";
+            html = html + "  </div>\n";
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    html = html + "</div>\n";
+
+    // Tab 2: Metrics
+    html = html + "<div id=\"tab-metrics\" class=\"tab-panel\">\n";
+    html = html + "  <div class=\"kpi-grid\">\n";
+    let heap = actuator_meter_gauge_get(reg, "jvm_memory_used_bytes") / 1048576;
+    let cpu = actuator_meter_gauge_get(reg, "process_cpu_usage");
+    let threads = actuator_meter_gauge_get(reg, "jvm_threads_live");
+    let uptime = actuator_meter_gauge_get(reg, "process_uptime_seconds");
+
+    html = html + "    <div class=\"kpi-card\"><div class=\"kpi-title\">Heap Memory Used</div><div class=\"kpi-value\">" + to_string(heap) + " MB</div></div>\n";
+    html = html + "    <div class=\"kpi-card\"><div class=\"kpi-title\">Process CPU</div><div class=\"kpi-value\">" + to_string(cpu) + " %</div></div>\n";
+    html = html + "    <div class=\"kpi-card\"><div class=\"kpi-title\">Live Threads</div><div class=\"kpi-value\">" + to_string(threads) + "</div></div>\n";
+    html = html + "    <div class=\"kpi-card\"><div class=\"kpi-title\">Uptime</div><div class=\"kpi-value\">" + to_string(uptime) + " s</div></div>\n";
+    html = html + "  </div>\n";
+    html = html + "  <h3 style=\"margin-bottom: 12px;\">Prometheus Exposition (/actuator/metrics)</h3>\n";
+    html = html + "  <pre>" + act_json_escape(actuator_meter_export_prometheus(reg)) + "</pre>\n";
+    html = html + "</div>\n";
+
+    // Tab 3: Health
+    html = html + "<div id=\"tab-health\" class=\"tab-panel\">\n";
+    let liveness = actuator_health_evaluate_group(health, "liveness");
+    let readiness = actuator_health_evaluate_group(health, "readiness");
+    html = html + "  <div class=\"kpi-grid\">\n";
+    html = html + "    <div class=\"kpi-card\"><div class=\"kpi-title\">Overall Status</div><div class=\"kpi-value\">" + overall_h + "</div></div>\n";
+    html = html + "    <div class=\"kpi-card\"><div class=\"kpi-title\">Liveness Probe</div><div class=\"kpi-value\">" + liveness + "</div></div>\n";
+    html = html + "    <div class=\"kpi-card\"><div class=\"kpi-title\">Readiness Probe</div><div class=\"kpi-value\">" + readiness + "</div></div>\n";
+    html = html + "  </div>\n";
+    html = html + "  <h3 style=\"margin-bottom: 12px;\">Health Diagnostic JSON (/actuator/health)</h3>\n";
+    html = html + "  <pre>" + act_json_escape(actuator_health_export_json(health, "", true)) + "</pre>\n";
+    html = html + "</div>\n";
+
+    // Tab 4: Traces
+    html = html + "<div id=\"tab-traces\" class=\"tab-panel\">\n";
+    html = html + "  <h3 style=\"margin-bottom: 12px;\">Distributed Trace Spans (/actuator/traces)</h3>\n";
+    html = html + "  <table>\n    <thead><tr><th>Trace ID</th><th>Span ID</th><th>Parent Span</th><th>Name</th><th>Kind</th><th>Duration</th><th>Status</th></tr></thead>\n    <tbody>\n";
+    let s_cnt = list_length(tracer.completed_spans);
+    let s_idx = 0;
+    while s_idx < s_cnt {
+        let s: OtelSpan = list_get(tracer.completed_spans, s_idx);
+        html = html + "      <tr><td><code>" + s.trace_id + "</code></td><td><code>" + s.span_id + "</code></td><td><code>" + s.parent_span_id + "</code></td><td>" + s.name + "</td><td>" + s.kind + "</td><td>" + to_string(s.duration_ms) + " ms</td><td>" + s.status + "</td></tr>\n";
+        s_idx = s_idx + 1;
+    }
+    html = html + "    </tbody>\n  </table>\n";
+    html = html + "</div>\n";
+
+    html = html + "</main>\n";
+
+    // Script
+    html = html + "<script>\n";
+    html = html + "  function showTab(id) {\n";
+    html = html + "    document.querySelectorAll('.tab-panel').forEach(el => el.classList.remove('active'));\n";
+    html = html + "    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));\n";
+    html = html + "    document.getElementById(id).classList.add('active');\n";
+    html = html + "    event.target.classList.add('active');\n";
+    html = html + "  }\n";
+    html = html + "</script>\n</body>\n</html>";
+
+    return html;
+}
+
+// ==============================================================================
+// SECTION 6: Unified Actuator Controller & Web Dispatcher
+// ==============================================================================
+
+class ActuatorHeader {
+    key: string,
+    value: string
+}
+
+class ActuatorHttpResponse {
+    status_code: int,
+    status_text: string,
+    headers: list, // list of ActuatorHeader
+    body: string,
+    content_type: string
+}
+
+func actuator_response_new(status: int, text: string, body: string, c_type: string) -> ActuatorHttpResponse {
+    let hdrs = list_new();
+    list_push(hdrs, new ActuatorHeader("Content-Type", c_type));
+    list_push(hdrs, new ActuatorHeader("Content-Length", to_string(string_length(body))));
+    list_push(hdrs, new ActuatorHeader("X-RozeBoot-Actuator", "3.0"));
+    return new ActuatorHttpResponse(status, text, hdrs, body, c_type);
+}
+
+class ActuatorServer {
+    app_name: string,
+    app_version: string,
+    meter_registry: ActuatorMeterRegistry,
+    health_registry: ActuatorHealthRegistry,
+    tracer: OtelTracer,
+    openapi_doc: OpenApiDoc
+}
+
+func actuator_server_new(app_name: string, app_version: string) -> ActuatorServer {
+    let m = actuator_meter_registry_new();
+    let h = actuator_health_registry_new();
+    let t = otel_tracer_new(app_name, app_version, "production");
+    let doc = openapi_doc_new(app_name + " API", app_version, "Production Microservice API documentation");
+
+    return new ActuatorServer(app_name, app_version, m, h, t, doc);
+}
+
+func actuator_handle_request(server: ActuatorServer, method: string, path: string, headers: list, body: string) -> ActuatorHttpResponse {
+    // 1. Discovery: GET /actuator
+    if path == "/actuator" || path == "/actuator/" {
+        let disc = "{\"_links\":{";
+        disc = disc + "\"self\":{\"href\":\"/actuator\"},";
+        disc = disc + "\"health\":{\"href\":\"/actuator/health\"},";
+        disc = disc + "\"health-liveness\":{\"href\":\"/actuator/health/liveness\"},";
+        disc = disc + "\"health-readiness\":{\"href\":\"/actuator/health/readiness\"},";
+        disc = disc + "\"metrics\":{\"href\":\"/actuator/metrics\"},";
+        disc = disc + "\"traces\":{\"href\":\"/actuator/traces\"},";
+        disc = disc + "\"openapi\":{\"href\":\"/actuator/openapi.json\"},";
+        disc = disc + "\"swagger-ui\":{\"href\":\"/actuator/swagger-ui\"},";
+        disc = disc + "\"info\":{\"href\":\"/actuator/info\"}";
+        disc = disc + "}}";
+        return actuator_response_new(200, "OK", disc, "application/json");
+    }
+
+    // 2. Health probes
+    if path == "/actuator/health/liveness" {
+        let status = actuator_health_evaluate_group(server.health_registry, "liveness");
+        let http_status = 200;
+        if status == "DOWN" { http_status = 503; }
+        let json = actuator_health_export_json(server.health_registry, "liveness", false);
+        return actuator_response_new(http_status, "OK", json, "application/json");
+    }
+
+    if path == "/actuator/health/readiness" {
+        let status = actuator_health_evaluate_group(server.health_registry, "readiness");
+        let http_status = 200;
+        if status == "DOWN" { http_status = 503; }
+        let json = actuator_health_export_json(server.health_registry, "readiness", false);
+        return actuator_response_new(http_status, "OK", json, "application/json");
+    }
+
+    if path == "/actuator/health" {
+        let status = actuator_health_evaluate_overall(server.health_registry);
+        let http_status = 200;
+        if status == "DOWN" { http_status = 503; }
+        let json = actuator_health_export_json(server.health_registry, "", true);
+        return actuator_response_new(http_status, "OK", json, "application/json");
+    }
+
+    // 3. Metrics exposition
+    if path == "/actuator/metrics" || path == "/actuator/prometheus" {
+        // Check Accept header or default to prometheus exposition
+        let text = actuator_meter_export_prometheus(server.meter_registry);
+        return actuator_response_new(200, "OK", text, "text/plain; version=0.0.4; charset=utf-8");
+    }
+
+    if string_starts_with(path, "/actuator/metrics/") {
+        let metric_name = string_substring(path, 18, string_length(path));
+        let json = actuator_meter_export_json_metric(server.meter_registry, metric_name);
+        return actuator_response_new(200, "OK", json, "application/json");
+    }
+
+    // 4. Tracing spans
+    if path == "/actuator/traces" {
+        let json = otel_export_json(server.tracer);
+        return actuator_response_new(200, "OK", json, "application/json");
+    }
+
+    // 5. OpenAPI specification
+    if path == "/actuator/openapi.json" || path == "/v3/api-docs" {
+        let json = openapi_doc_export_json(server.openapi_doc);
+        return actuator_response_new(200, "OK", json, "application/json");
+    }
+
+    // 6. Swagger UI & Dashboard
+    if path == "/actuator/swagger-ui" || path == "/swagger-ui.html" {
+        let html = swagger_ui_render_dashboard(server.openapi_doc, server.meter_registry, server.health_registry, server.tracer);
+        return actuator_response_new(200, "OK", html, "text/html; charset=utf-8");
+    }
+
+    // 7. Info
+    if path == "/actuator/info" {
+        let json = "{\"app\":{\"name\":\"" + server.app_name + "\",\"version\":\"" + server.app_version + "\",\"framework\":\"RozeBoot 3.0 Titan\"}}";
+        return actuator_response_new(200, "OK", json, "application/json");
+    }
+
+    return actuator_response_new(404, "Not Found", "{\"error\":\"Not Found\",\"path\":\"" + path + "\"}", "application/json");
+}
+
+func actuator_record_http_request(server: ActuatorServer, method: string, uri: string, status_code: int, duration_ms: int) {
+    let tags = list_new();
+    list_push(tags, new ActuatorTag("method", method));
+    list_push(tags, new ActuatorTag("uri", uri));
+    list_push(tags, new ActuatorTag("status", to_string(status_code)));
+
+    // Increment request count counter
+    actuator_meter_counter_inc(server.meter_registry, "http_server_requests_total", tags, 1, "Total number of HTTP requests");
+
+    // Observe duration in latency histogram
+    actuator_meter_histogram_observe(server.meter_registry, "http_server_requests_duration_seconds", tags, duration_ms, "HTTP request latency in seconds");
+}

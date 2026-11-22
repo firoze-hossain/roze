@@ -5250,6 +5250,25 @@ fn native_standard_rozeboot_security_suite() {
     assert!(stdout.contains("ALL 9 TEST SUITES COMPLETED: 100% PASSING (Spring Security 6 Parity)"));
 }
 
+#[test]
+fn native_standard_rozeboot_actuator_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_rozeboot_actuator.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_rozeboot_actuator.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_rozeboot_actuator_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Prometheus & Micrometer Metrics Subsystem verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: OpenTelemetry (OTel) Distributed Tracing Engine verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: Actuator Health Probes & Readiness/Liveness Probes verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: OpenAPI 3.1 Specification Engine verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: Embedded Responsive Swagger UI & Actuator Dashboard verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: Unified Actuator Controller & Web Dispatcher verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: End-to-End Microservice Observability Lifecycle verified."));
+    assert!(stdout.contains("ALL 7 TEST SUITES COMPLETED: 100% PASSING (Spring Boot Actuator Parity)"));
+}
+
 
 
 

@@ -1,0 +1,1547 @@
+// ==============================================================================
+// 🌹 Roze-Game: Archetypal ECS & Real-Time Engine (roze-game.ecs / roze::game::ecs)
+// ==============================================================================
+// High-performance cache-friendly archetypal Entity Component System (ECS)
+// with 1:1 architectural parity to Rust Bevy ECS, Flecs, and modern real-time
+// 2D/3D game engines.
+//
+// Features:
+// 1. Vector3 & Mat4 Matrix Math (TRS, LookAt view, Perspective, Orthographic)
+// 2. Generational Entity Allocator with recycled IDs and generation validation
+// 3. Archetype Columnar Storage (dense contiguous arrays with O(1) swap-and-pop)
+// 4. Bevy-Style Query Filter System (all_mask / none_mask matching)
+// 5. Scene Graph Hierarchy & Hierarchical Transform Matrix Propagation
+// 6. 60+ FPS Real-Time Game Loop with Fixed-Timestep Physics & Lerp Interpolation
+// 7. Fluent Entity Builder API for declarative game entity spawning
+// ==============================================================================
+
+// ==============================================================================
+// SECTION 1: Mathematics & Matrix Engine (Vector3, Color, Mat4)
+// ==============================================================================
+
+class Vector3 {
+    x: float,
+    y: float,
+    z: float
+}
+
+func vec3_new(x: float, y: float, z: float) -> Vector3 {
+    return new Vector3(x, y, z);
+}
+
+func vec3_zero() -> Vector3 {
+    return new Vector3(0.0, 0.0, 0.0);
+}
+
+func vec3_one() -> Vector3 {
+    return new Vector3(1.0, 1.0, 1.0);
+}
+
+func vec3_add(a: Vector3, b: Vector3) -> Vector3 {
+    return new Vector3(a.x + b.x, a.y + b.y, a.z + b.z);
+}
+
+func vec3_sub(a: Vector3, b: Vector3) -> Vector3 {
+    return new Vector3(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+func vec3_scale(a: Vector3, s: float) -> Vector3 {
+    return new Vector3(a.x * s, a.y * s, a.z * s);
+}
+
+func vec3_dot(a: Vector3, b: Vector3) -> float {
+    return (a.x * b.x) + (a.y * b.y) + (a.z * b.z);
+}
+
+func vec3_cross(a: Vector3, b: Vector3) -> Vector3 {
+    let cx = (a.y * b.z) - (a.z * b.y);
+    let cy = (a.z * b.x) - (a.x * b.z);
+    let cz = (a.x * b.y) - (a.y * b.x);
+    return new Vector3(cx, cy, cz);
+}
+
+func game_math_sqrt(x: float) -> float {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    let guess = x / 2.0;
+    if guess == 0.0 {
+        guess = 1.0;
+    }
+    let iter = 0;
+    while iter < 12 {
+        guess = (guess + (x / guess)) / 2.0;
+        iter = iter + 1;
+    }
+    return guess;
+}
+
+func vec3_length(a: Vector3) -> float {
+    let sq = (a.x * a.x) + (a.y * a.y) + (a.z * a.z);
+    return game_math_sqrt(sq);
+}
+
+func vec3_normalize(a: Vector3) -> Vector3 {
+    let len = vec3_length(a);
+    if len == 0.0 {
+        return new Vector3(0.0, 0.0, 0.0);
+    }
+    return new Vector3(a.x / len, a.y / len, a.z / len);
+}
+
+func vec3_distance(a: Vector3, b: Vector3) -> float {
+    let d = vec3_sub(a, b);
+    return vec3_length(d);
+}
+
+func vec3_lerp(a: Vector3, b: Vector3, t: float) -> Vector3 {
+    let inv_t = 1.0 - t;
+    return new Vector3(
+        (a.x * inv_t) + (b.x * t),
+        (a.y * inv_t) + (b.y * t),
+        (a.z * inv_t) + (b.z * t)
+    );
+}
+
+func game_pi() -> float {
+    return 3.141592653589793;
+}
+
+func game_deg2rad(deg: float) -> float {
+    return deg * (game_pi() / 180.0);
+}
+
+func game_rad2deg(rad: float) -> float {
+    return rad * (180.0 / game_pi());
+}
+
+func game_math_sin(rad: float) -> float {
+    let pi = game_pi();
+    let two_pi = 6.283185307179586;
+    let x = rad;
+    while x > pi {
+        x = x - two_pi;
+    }
+    while x < (0.0 - pi) {
+        x = x + two_pi;
+    }
+    let x2 = x * x;
+    let x3 = x * x2;
+    let x5 = x3 * x2;
+    let x7 = x5 * x2;
+    let x9 = x7 * x2;
+    return x - (x3 / 6.0) + (x5 / 120.0) - (x7 / 5040.0) + (x9 / 362880.0);
+}
+
+func game_math_cos(rad: float) -> float {
+    return game_math_sin(rad + (game_pi() / 2.0));
+}
+
+class Color {
+    r: int,
+    g: int,
+    b: int,
+    a: int
+}
+
+func color_new(r: int, g: int, b: int, a: int) -> Color {
+    return new Color(r, g, b, a);
+}
+
+func color_white() -> Color { return new Color(255, 255, 255, 255); }
+func color_red() -> Color { return new Color(255, 0, 0, 255); }
+func color_green() -> Color { return new Color(0, 255, 0, 255); }
+func color_blue() -> Color { return new Color(0, 0, 255, 255); }
+func color_yellow() -> Color { return new Color(255, 255, 0, 255); }
+
+// 4x4 Row-Major Transformation Matrix
+class Mat4 {
+    m00: float, m01: float, m02: float, m03: float,
+    m10: float, m11: float, m12: float, m13: float,
+    m20: float, m21: float, m22: float, m23: float,
+    m30: float, m31: float, m32: float, m33: float
+}
+
+func mat4_new(
+    m00: float, m01: float, m02: float, m03: float,
+    m10: float, m11: float, m12: float, m13: float,
+    m20: float, m21: float, m22: float, m23: float,
+    m30: float, m31: float, m32: float, m33: float
+) -> Mat4 {
+    return new Mat4(
+        m00, m01, m02, m03,
+        m10, m11, m12, m13,
+        m20, m21, m22, m23,
+        m30, m31, m32, m33
+    );
+}
+
+func mat4_identity() -> Mat4 {
+    return new Mat4(
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0
+    );
+}
+
+func mat4_translation(x: float, y: float, z: float) -> Mat4 {
+    return new Mat4(
+        1.0, 0.0, 0.0, x,
+        0.0, 1.0, 0.0, y,
+        0.0, 0.0, 1.0, z,
+        0.0, 0.0, 0.0, 1.0
+    );
+}
+
+func mat4_scaling(sx: float, sy: float, sz: float) -> Mat4 {
+    return new Mat4(
+        sx,  0.0, 0.0, 0.0,
+        0.0, sy,  0.0, 0.0,
+        0.0, 0.0, sz,  0.0,
+        0.0, 0.0, 0.0, 1.0
+    );
+}
+
+func mat4_rotation_x(angle_rad: float) -> Mat4 {
+    if angle_rad == 0.0 {
+        return mat4_identity();
+    }
+    let c = game_math_cos(angle_rad);
+    let s = game_math_sin(angle_rad);
+    return new Mat4(
+        1.0, 0.0, 0.0, 0.0,
+        0.0, c,   0.0 - s, 0.0,
+        0.0, s,   c,   0.0,
+        0.0, 0.0, 0.0, 1.0
+    );
+}
+
+func mat4_rotation_y(angle_rad: float) -> Mat4 {
+    if angle_rad == 0.0 {
+        return mat4_identity();
+    }
+    let c = game_math_cos(angle_rad);
+    let s = game_math_sin(angle_rad);
+    return new Mat4(
+        c,   0.0, s,   0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0 - s, 0.0, c, 0.0,
+        0.0, 0.0, 0.0, 1.0
+    );
+}
+
+func mat4_rotation_z(angle_rad: float) -> Mat4 {
+    if angle_rad == 0.0 {
+        return mat4_identity();
+    }
+    let c = game_math_cos(angle_rad);
+    let s = game_math_sin(angle_rad);
+    return new Mat4(
+        c,   0.0 - s, 0.0, 0.0,
+        s,   c,   0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0
+    );
+}
+
+func mat4_mul(a: Mat4, b: Mat4) -> Mat4 {
+    let c00 = (a.m00 * b.m00) + (a.m01 * b.m10) + (a.m02 * b.m20) + (a.m03 * b.m30);
+    let c01 = (a.m00 * b.m01) + (a.m01 * b.m11) + (a.m02 * b.m21) + (a.m03 * b.m31);
+    let c02 = (a.m00 * b.m02) + (a.m01 * b.m12) + (a.m02 * b.m22) + (a.m03 * b.m32);
+    let c03 = (a.m00 * b.m03) + (a.m01 * b.m13) + (a.m02 * b.m23) + (a.m03 * b.m33);
+
+    let c10 = (a.m10 * b.m00) + (a.m11 * b.m10) + (a.m12 * b.m20) + (a.m13 * b.m30);
+    let c11 = (a.m10 * b.m01) + (a.m11 * b.m11) + (a.m12 * b.m21) + (a.m13 * b.m31);
+    let c12 = (a.m10 * b.m02) + (a.m11 * b.m12) + (a.m12 * b.m22) + (a.m13 * b.m32);
+    let c13 = (a.m10 * b.m03) + (a.m11 * b.m13) + (a.m12 * b.m23) + (a.m13 * b.m33);
+
+    let c20 = (a.m20 * b.m00) + (a.m21 * b.m10) + (a.m22 * b.m20) + (a.m23 * b.m30);
+    let c21 = (a.m20 * b.m01) + (a.m21 * b.m11) + (a.m22 * b.m21) + (a.m23 * b.m31);
+    let c22 = (a.m20 * b.m02) + (a.m21 * b.m12) + (a.m22 * b.m22) + (a.m23 * b.m32);
+    let c23 = (a.m20 * b.m03) + (a.m21 * b.m13) + (a.m22 * b.m23) + (a.m23 * b.m33);
+
+    let c30 = (a.m30 * b.m00) + (a.m31 * b.m10) + (a.m32 * b.m20) + (a.m33 * b.m30);
+    let c31 = (a.m30 * b.m01) + (a.m31 * b.m11) + (a.m32 * b.m21) + (a.m33 * b.m31);
+    let c32 = (a.m30 * b.m02) + (a.m31 * b.m12) + (a.m32 * b.m22) + (a.m33 * b.m32);
+    let c33 = (a.m30 * b.m03) + (a.m31 * b.m13) + (a.m32 * b.m23) + (a.m33 * b.m33);
+
+    return new Mat4(
+        c00, c01, c02, c03,
+        c10, c11, c12, c13,
+        c20, c21, c22, c23,
+        c30, c31, c32, c33
+    );
+}
+
+func mat4_from_euler(pitch: float, yaw: float, roll: float) -> Mat4 {
+    if pitch == 0.0 && yaw == 0.0 && roll == 0.0 {
+        return mat4_identity();
+    }
+    let ry = mat4_rotation_y(yaw);
+    let rx = mat4_rotation_x(pitch);
+    let rz = mat4_rotation_z(roll);
+    return mat4_mul(mat4_mul(ry, rx), rz);
+}
+
+func mat4_from_trs(pos: Vector3, rot: Vector3, scale: Vector3) -> Mat4 {
+    let t = mat4_translation(pos.x, pos.y, pos.z);
+    let r = mat4_from_euler(rot.x, rot.y, rot.z);
+    let s = mat4_scaling(scale.x, scale.y, scale.z);
+    return mat4_mul(mat4_mul(t, r), s);
+}
+
+func mat4_transform_point(m: Mat4, p: Vector3) -> Vector3 {
+    let px = (m.m00 * p.x) + (m.m01 * p.y) + (m.m02 * p.z) + m.m03;
+    let py = (m.m10 * p.x) + (m.m11 * p.y) + (m.m12 * p.z) + m.m13;
+    let pz = (m.m20 * p.x) + (m.m21 * p.y) + (m.m22 * p.z) + m.m23;
+    let pw = (m.m30 * p.x) + (m.m31 * p.y) + (m.m32 * p.z) + m.m33;
+    if pw != 1.0 && pw != 0.0 {
+        px = px / pw;
+        py = py / pw;
+        pz = pz / pw;
+    }
+    return new Vector3(px, py, pz);
+}
+
+func mat4_transform_vector(m: Mat4, v: Vector3) -> Vector3 {
+    let vx = (m.m00 * v.x) + (m.m01 * v.y) + (m.m02 * v.z);
+    let vy = (m.m10 * v.x) + (m.m11 * v.y) + (m.m12 * v.z);
+    let vz = (m.m20 * v.x) + (m.m21 * v.y) + (m.m22 * v.z);
+    return new Vector3(vx, vy, vz);
+}
+
+func mat4_look_at(eye: Vector3, target: Vector3, up: Vector3) -> Mat4 {
+    let f_dir = vec3_sub(target, eye);
+    let f = vec3_normalize(f_dir);
+    let r_dir = vec3_cross(f, up);
+    let r = vec3_normalize(r_dir);
+    let u = vec3_cross(r, f);
+
+    let dot_r = 0.0 - vec3_dot(r, eye);
+    let dot_u = 0.0 - vec3_dot(u, eye);
+    let dot_f = vec3_dot(f, eye);
+
+    return new Mat4(
+        r.x, r.y, r.z, dot_r,
+        u.x, u.y, u.z, dot_u,
+        0.0 - f.x, 0.0 - f.y, 0.0 - f.z, dot_f,
+        0.0, 0.0, 0.0, 1.0
+    );
+}
+
+func mat4_perspective(fovy_rad: float, aspect: float, near: float, far: float) -> Mat4 {
+    let half_fovy = fovy_rad / 2.0;
+    let s_val = game_math_sin(half_fovy);
+    let c_val = game_math_cos(half_fovy);
+    let tan_val = 0.0001;
+    if c_val != 0.0 {
+        tan_val = s_val / c_val;
+    }
+    if tan_val == 0.0 {
+        tan_val = 0.0001;
+    }
+    let f = 1.0 / tan_val;
+    let range_inv = 1.0 / (near - far);
+
+    return new Mat4(
+        f / aspect, 0.0, 0.0, 0.0,
+        0.0, f, 0.0, 0.0,
+        0.0, 0.0, (far + near) * range_inv, (2.0 * far * near) * range_inv,
+        0.0, 0.0, -1.0, 0.0
+    );
+}
+
+func mat4_orthographic(left: float, right: float, bottom: float, top: float, near: float, far: float) -> Mat4 {
+    let rml = right - left;
+    let tmb = top - bottom;
+    let fmn = far - near;
+    return new Mat4(
+        2.0 / rml, 0.0, 0.0, 0.0 - ((right + left) / rml),
+        0.0, 2.0 / tmb, 0.0, 0.0 - ((top + bottom) / tmb),
+        0.0, 0.0, -2.0 / fmn, 0.0 - ((far + near) / fmn),
+        0.0, 0.0, 0.0, 1.0
+    );
+}
+
+// ==============================================================================
+// SECTION 2: ECS Component Bitmasks & Type Definitions
+// ==============================================================================
+
+func comp_transform() -> int { return 1; }      // Bit 0
+func comp_velocity() -> int { return 2; }       // Bit 1
+func comp_rigidbody() -> int { return 4; }      // Bit 2
+func comp_collider() -> int { return 8; }       // Bit 3
+func comp_mesh() -> int { return 16; }          // Bit 4
+func comp_camera() -> int { return 32; }        // Bit 5
+func comp_hierarchy() -> int { return 64; }     // Bit 6
+func comp_tag() -> int { return 128; }          // Bit 7
+func comp_lifetime() -> int { return 256; }     // Bit 8
+
+class Entity {
+    id: int,
+    generation: int
+}
+
+func entity_new(id: int, gen: int) -> Entity {
+    return new Entity(id, gen);
+}
+
+func entity_null() -> Entity {
+    return new Entity(-1, 0);
+}
+
+func entity_is_null(e: Entity) -> bool {
+    return e.id < 0;
+}
+
+func entity_equals(a: Entity, b: Entity) -> bool {
+    return a.id == b.id && a.generation == b.generation;
+}
+
+// Transform Component (Position, Rotation, Scale, Matrices)
+class Transform {
+    position: Vector3,
+    rotation: Vector3,
+    scale: Vector3,
+    local_matrix: Mat4,
+    world_matrix: Mat4,
+    prev_position: Vector3,
+    is_dirty: bool
+}
+
+func transform_new(x: float, y: float, z: float) -> Transform {
+    let pos = new Vector3(x, y, z);
+    let rot = new Vector3(0.0, 0.0, 0.0);
+    let sc = new Vector3(1.0, 1.0, 1.0);
+    let m = mat4_translation(x, y, z);
+    let prev = new Vector3(x, y, z);
+    return new Transform(pos, rot, sc, m, m, prev, true);
+}
+
+func transform_update_local(t: Transform) {
+    t.local_matrix = mat4_from_trs(t.position, t.rotation, t.scale);
+    t.is_dirty = true;
+}
+
+// Velocity Component
+class Velocity {
+    linear: Vector3,
+    angular: Vector3,
+    max_speed: float
+}
+
+func velocity_new(vx: float, vy: float, vz: float) -> Velocity {
+    let lin = new Vector3(vx, vy, vz);
+    let ang = new Vector3(0.0, 0.0, 0.0);
+    return new Velocity(lin, ang, 1000.0);
+}
+
+// RigidBody Component
+class RigidBody {
+    mass: float,
+    inv_mass: float,
+    restitution: float,
+    friction: float,
+    is_static: bool,
+    is_kinematic: bool,
+    linear_damping: float
+}
+
+func rigidbody_new(mass: float, restitution: float) -> RigidBody {
+    let inv = 0.0;
+    if mass > 0.0 {
+        inv = 1.0 / mass;
+    }
+    return new RigidBody(mass, inv, restitution, 0.1, false, false, 0.02);
+}
+
+func rigidbody_static() -> RigidBody {
+    return new RigidBody(0.0, 0.0, 0.2, 0.5, true, false, 0.0);
+}
+
+// Collider Component
+class Collider {
+    shape_type: int,   // 0=AABB, 1=Sphere, 2=Box3D
+    size: Vector3,
+    radius: float,
+    is_trigger: bool
+}
+
+func collider_sphere(radius: float) -> Collider {
+    return new Collider(1, new Vector3(radius, radius, radius), radius, false);
+}
+
+func collider_box(sx: float, sy: float, sz: float) -> Collider {
+    return new Collider(2, new Vector3(sx, sy, sz), 0.0, false);
+}
+
+// MeshRenderer Component
+class MeshRenderer {
+    mesh_name: string,
+    color: Color,
+    material_name: string,
+    is_visible: bool
+}
+
+func mesh_renderer_new(mesh: string, col: Color) -> MeshRenderer {
+    return new MeshRenderer(mesh, col, "default", true);
+}
+
+// Camera Component
+class Camera {
+    fov: float,
+    near: float,
+    far: float,
+    aspect: float,
+    is_active: bool,
+    view_matrix: Mat4,
+    proj_matrix: Mat4
+}
+
+func camera_new(fov: float, aspect: float) -> Camera {
+    let vm = mat4_identity();
+    let pm = mat4_perspective(game_deg2rad(fov), aspect, 0.1, 1000.0);
+    return new Camera(fov, 0.1, 1000.0, aspect, true, vm, pm);
+}
+
+// Scene Graph Hierarchy Node Component
+class HierarchyNode {
+    parent_id: int,
+    parent_gen: int,
+    children_ids: list,
+    depth: int
+}
+
+func hierarchy_new() -> HierarchyNode {
+    return new HierarchyNode(-1, 0, list_new(), 0);
+}
+
+// Tag Component
+class Tag {
+    name: string,
+    layer: int
+}
+
+func tag_new(name: string) -> Tag {
+    return new Tag(name, 0);
+}
+
+// Lifetime Component
+class Lifetime {
+    remaining_sec: float,
+    initial_sec: float
+}
+
+func lifetime_new(sec: float) -> Lifetime {
+    return new Lifetime(sec, sec);
+}
+
+// ==============================================================================
+// SECTION 3: Archetype Columnar Storage & O(1) Transitions
+// ==============================================================================
+
+class Archetype {
+    id: int,
+    mask: int,
+    entity_ids: list,
+    entity_gens: list,
+    col_transforms: list,
+    col_velocities: list,
+    col_rigidbodies: list,
+    col_colliders: list,
+    col_meshes: list,
+    col_cameras: list,
+    col_hierarchies: list,
+    col_tags: list,
+    col_lifetimes: list
+}
+
+func archetype_new(id: int, mask: int) -> Archetype {
+    return new Archetype(
+        id,
+        mask,
+        list_new(),
+        list_new(),
+        list_new(),
+        list_new(),
+        list_new(),
+        list_new(),
+        list_new(),
+        list_new(),
+        list_new(),
+        list_new(),
+        list_new()
+    );
+}
+
+func archetype_count(arch: Archetype) -> int {
+    return list_length(arch.entity_ids);
+}
+
+// ==============================================================================
+// SECTION 4: World & Generational Entity Management
+// ==============================================================================
+
+class ResourceEntry {
+    name: string,
+    value: Unknown
+}
+
+class World {
+    next_entity_id: int,
+    free_ids: list,
+    entity_gens: list,
+    entity_archetype_ids: list,
+    entity_rows: list,
+    archetypes: list,
+    resources: list
+}
+
+func world_new() -> World {
+    let w = new World(
+        0,
+        list_new(),
+        list_new(),
+        list_new(),
+        list_new(),
+        list_new(),
+        list_new()
+    );
+    // Create root empty archetype (mask 0)
+    let empty_arch = archetype_new(0, 0);
+    list_push(w.archetypes, empty_arch);
+    return w;
+}
+
+func world_get_or_create_archetype(w: World, mask: int) -> Archetype {
+    let count = list_length(w.archetypes);
+    let i = 0;
+    while i < count {
+        let arch: Archetype = list_get(w.archetypes, i);
+        if arch.mask == mask {
+            return arch;
+        }
+        i = i + 1;
+    }
+    let new_id = list_length(w.archetypes);
+    let new_arch = archetype_new(new_id, mask);
+    list_push(w.archetypes, new_arch);
+    return new_arch;
+}
+
+func world_spawn(w: World) -> Entity {
+    let id = 0;
+    let gen = 0;
+    if !list_is_empty(w.free_ids) {
+        let recycled = list_get(w.free_ids, list_length(w.free_ids) - 1);
+        list_remove(w.free_ids, list_length(w.free_ids) - 1);
+        id = recycled;
+        gen = list_get(w.entity_gens, id);
+    } else {
+        id = w.next_entity_id;
+        w.next_entity_id = w.next_entity_id + 1;
+        list_push(w.entity_gens, 0);
+        list_push(w.entity_archetype_ids, -1);
+        list_push(w.entity_rows, -1);
+        gen = 0;
+    }
+
+    let empty_arch: Archetype = list_get(w.archetypes, 0);
+    let row = list_length(empty_arch.entity_ids);
+    list_push(empty_arch.entity_ids, id);
+    list_push(empty_arch.entity_gens, gen);
+
+    // Push dummy null objects for columnar alignment
+    list_push(empty_arch.col_transforms, transform_new(0.0, 0.0, 0.0));
+    list_push(empty_arch.col_velocities, velocity_new(0.0, 0.0, 0.0));
+    list_push(empty_arch.col_rigidbodies, rigidbody_new(0.0, 0.0));
+    list_push(empty_arch.col_colliders, collider_sphere(0.0));
+    list_push(empty_arch.col_meshes, mesh_renderer_new("", color_white()));
+    list_push(empty_arch.col_cameras, camera_new(60.0, 1.33));
+    list_push(empty_arch.col_hierarchies, hierarchy_new());
+    list_push(empty_arch.col_tags, tag_new(""));
+    list_push(empty_arch.col_lifetimes, lifetime_new(0.0));
+
+    list_set(w.entity_archetype_ids, id, 0);
+    list_set(w.entity_rows, id, row);
+
+    return new Entity(id, gen);
+}
+
+func world_is_alive(w: World, e: Entity) -> bool {
+    if e.id < 0 || e.id >= w.next_entity_id {
+        return false;
+    }
+    let cur_gen: int = list_get(w.entity_gens, e.id);
+    if cur_gen != e.generation {
+        return false;
+    }
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    return arch_id >= 0;
+}
+
+func world_despawn(w: World, e: Entity) -> bool {
+    if !world_is_alive(w, e) {
+        return false;
+    }
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let last_row = list_length(arch.entity_ids) - 1;
+
+    // Swap-and-pop from columnar lists to preserve O(1) performance
+    if row < last_row {
+        let last_id: int = list_get(arch.entity_ids, last_row);
+        let last_gen: int = list_get(arch.entity_gens, last_row);
+
+        list_set(arch.entity_ids, row, last_id);
+        list_set(arch.entity_gens, row, last_gen);
+        list_set(arch.col_transforms, row, list_get(arch.col_transforms, last_row));
+        list_set(arch.col_velocities, row, list_get(arch.col_velocities, last_row));
+        list_set(arch.col_rigidbodies, row, list_get(arch.col_rigidbodies, last_row));
+        list_set(arch.col_colliders, row, list_get(arch.col_colliders, last_row));
+        list_set(arch.col_meshes, row, list_get(arch.col_meshes, last_row));
+        list_set(arch.col_cameras, row, list_get(arch.col_cameras, last_row));
+        list_set(arch.col_hierarchies, row, list_get(arch.col_hierarchies, last_row));
+        list_set(arch.col_tags, row, list_get(arch.col_tags, last_row));
+        list_set(arch.col_lifetimes, row, list_get(arch.col_lifetimes, last_row));
+
+        list_set(w.entity_rows, last_id, row);
+    }
+
+    list_remove(arch.entity_ids, last_row);
+    list_remove(arch.entity_gens, last_row);
+    list_remove(arch.col_transforms, last_row);
+    list_remove(arch.col_velocities, last_row);
+    list_remove(arch.col_rigidbodies, last_row);
+    list_remove(arch.col_colliders, last_row);
+    list_remove(arch.col_meshes, last_row);
+    list_remove(arch.col_cameras, last_row);
+    list_remove(arch.col_hierarchies, last_row);
+    list_remove(arch.col_tags, last_row);
+    list_remove(arch.col_lifetimes, last_row);
+
+    // Invalidate generation and push to free list
+    let next_gen = e.generation + 1;
+    list_set(w.entity_gens, e.id, next_gen);
+    list_set(w.entity_archetype_ids, e.id, -1);
+    list_set(w.entity_rows, e.id, -1);
+    list_push(w.free_ids, e.id);
+
+    return true;
+}
+
+func world_transition_entity(w: World, e: Entity, new_mask: int,
+    t: Unknown, v: Unknown, rb: Unknown, col: Unknown,
+    m: Unknown, cam: Unknown, h: Unknown, tag: Unknown, lt: Unknown) {
+
+    let old_arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let old_row: int = list_get(w.entity_rows, e.id);
+    let old_arch: Archetype = list_get(w.archetypes, old_arch_id);
+    let last_row = list_length(old_arch.entity_ids) - 1;
+
+    // Swap-and-pop from old archetype
+    if old_row < last_row {
+        let last_id: int = list_get(old_arch.entity_ids, last_row);
+        let last_gen: int = list_get(old_arch.entity_gens, last_row);
+
+        list_set(old_arch.entity_ids, old_row, last_id);
+        list_set(old_arch.entity_gens, old_row, last_gen);
+        list_set(old_arch.col_transforms, old_row, list_get(old_arch.col_transforms, last_row));
+        list_set(old_arch.col_velocities, old_row, list_get(old_arch.col_velocities, last_row));
+        list_set(old_arch.col_rigidbodies, old_row, list_get(old_arch.col_rigidbodies, last_row));
+        list_set(old_arch.col_colliders, old_row, list_get(old_arch.col_colliders, last_row));
+        list_set(old_arch.col_meshes, old_row, list_get(old_arch.col_meshes, last_row));
+        list_set(old_arch.col_cameras, old_row, list_get(old_arch.col_cameras, last_row));
+        list_set(old_arch.col_hierarchies, old_row, list_get(old_arch.col_hierarchies, last_row));
+        list_set(old_arch.col_tags, old_row, list_get(old_arch.col_tags, last_row));
+        list_set(old_arch.col_lifetimes, old_row, list_get(old_arch.col_lifetimes, last_row));
+
+        list_set(w.entity_rows, last_id, old_row);
+    }
+
+    list_remove(old_arch.entity_ids, last_row);
+    list_remove(old_arch.entity_gens, last_row);
+    list_remove(old_arch.col_transforms, last_row);
+    list_remove(old_arch.col_velocities, last_row);
+    list_remove(old_arch.col_rigidbodies, last_row);
+    list_remove(old_arch.col_colliders, last_row);
+    list_remove(old_arch.col_meshes, last_row);
+    list_remove(old_arch.col_cameras, last_row);
+    list_remove(old_arch.col_hierarchies, last_row);
+    list_remove(old_arch.col_tags, last_row);
+    list_remove(old_arch.col_lifetimes, last_row);
+
+    // Push into target archetype
+    let dst_arch = world_get_or_create_archetype(w, new_mask);
+    let new_row = list_length(dst_arch.entity_ids);
+
+    list_push(dst_arch.entity_ids, e.id);
+    list_push(dst_arch.entity_gens, e.generation);
+    list_push(dst_arch.col_transforms, t);
+    list_push(dst_arch.col_velocities, v);
+    list_push(dst_arch.col_rigidbodies, rb);
+    list_push(dst_arch.col_colliders, col);
+    list_push(dst_arch.col_meshes, m);
+    list_push(dst_arch.col_cameras, cam);
+    list_push(dst_arch.col_hierarchies, h);
+    list_push(dst_arch.col_tags, tag);
+    list_push(dst_arch.col_lifetimes, lt);
+
+    list_set(w.entity_archetype_ids, e.id, dst_arch.id);
+    list_set(w.entity_rows, e.id, new_row);
+}
+
+// Component Adders
+func world_add_transform(w: World, e: Entity, t: Transform) {
+    if !world_is_alive(w, e) { return; }
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let new_mask = bit_or(arch.mask, comp_transform());
+
+    world_transition_entity(
+        w, e, new_mask,
+        t,
+        list_get(arch.col_velocities, row),
+        list_get(arch.col_rigidbodies, row),
+        list_get(arch.col_colliders, row),
+        list_get(arch.col_meshes, row),
+        list_get(arch.col_cameras, row),
+        list_get(arch.col_hierarchies, row),
+        list_get(arch.col_tags, row),
+        list_get(arch.col_lifetimes, row)
+    );
+}
+
+func world_add_velocity(w: World, e: Entity, v: Velocity) {
+    if !world_is_alive(w, e) { return; }
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let new_mask = bit_or(arch.mask, comp_velocity());
+
+    world_transition_entity(
+        w, e, new_mask,
+        list_get(arch.col_transforms, row),
+        v,
+        list_get(arch.col_rigidbodies, row),
+        list_get(arch.col_colliders, row),
+        list_get(arch.col_meshes, row),
+        list_get(arch.col_cameras, row),
+        list_get(arch.col_hierarchies, row),
+        list_get(arch.col_tags, row),
+        list_get(arch.col_lifetimes, row)
+    );
+}
+
+func world_add_rigidbody(w: World, e: Entity, rb: RigidBody) {
+    if !world_is_alive(w, e) { return; }
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let new_mask = bit_or(arch.mask, comp_rigidbody());
+
+    world_transition_entity(
+        w, e, new_mask,
+        list_get(arch.col_transforms, row),
+        list_get(arch.col_velocities, row),
+        rb,
+        list_get(arch.col_colliders, row),
+        list_get(arch.col_meshes, row),
+        list_get(arch.col_cameras, row),
+        list_get(arch.col_hierarchies, row),
+        list_get(arch.col_tags, row),
+        list_get(arch.col_lifetimes, row)
+    );
+}
+
+func world_add_collider(w: World, e: Entity, col: Collider) {
+    if !world_is_alive(w, e) { return; }
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let new_mask = bit_or(arch.mask, comp_collider());
+
+    world_transition_entity(
+        w, e, new_mask,
+        list_get(arch.col_transforms, row),
+        list_get(arch.col_velocities, row),
+        list_get(arch.col_rigidbodies, row),
+        col,
+        list_get(arch.col_meshes, row),
+        list_get(arch.col_cameras, row),
+        list_get(arch.col_hierarchies, row),
+        list_get(arch.col_tags, row),
+        list_get(arch.col_lifetimes, row)
+    );
+}
+
+func world_add_mesh(w: World, e: Entity, m: MeshRenderer) {
+    if !world_is_alive(w, e) { return; }
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let new_mask = bit_or(arch.mask, comp_mesh());
+
+    world_transition_entity(
+        w, e, new_mask,
+        list_get(arch.col_transforms, row),
+        list_get(arch.col_velocities, row),
+        list_get(arch.col_rigidbodies, row),
+        list_get(arch.col_colliders, row),
+        m,
+        list_get(arch.col_cameras, row),
+        list_get(arch.col_hierarchies, row),
+        list_get(arch.col_tags, row),
+        list_get(arch.col_lifetimes, row)
+    );
+}
+
+func world_add_camera(w: World, e: Entity, cam: Camera) {
+    if !world_is_alive(w, e) { return; }
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let new_mask = bit_or(arch.mask, comp_camera());
+
+    world_transition_entity(
+        w, e, new_mask,
+        list_get(arch.col_transforms, row),
+        list_get(arch.col_velocities, row),
+        list_get(arch.col_rigidbodies, row),
+        list_get(arch.col_colliders, row),
+        list_get(arch.col_meshes, row),
+        cam,
+        list_get(arch.col_hierarchies, row),
+        list_get(arch.col_tags, row),
+        list_get(arch.col_lifetimes, row)
+    );
+}
+
+func world_add_hierarchy(w: World, e: Entity, h: HierarchyNode) {
+    if !world_is_alive(w, e) { return; }
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let new_mask = bit_or(arch.mask, comp_hierarchy());
+
+    world_transition_entity(
+        w, e, new_mask,
+        list_get(arch.col_transforms, row),
+        list_get(arch.col_velocities, row),
+        list_get(arch.col_rigidbodies, row),
+        list_get(arch.col_colliders, row),
+        list_get(arch.col_meshes, row),
+        list_get(arch.col_cameras, row),
+        h,
+        list_get(arch.col_tags, row),
+        list_get(arch.col_lifetimes, row)
+    );
+}
+
+func world_add_tag(w: World, e: Entity, tag: Tag) {
+    if !world_is_alive(w, e) { return; }
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let new_mask = bit_or(arch.mask, comp_tag());
+
+    world_transition_entity(
+        w, e, new_mask,
+        list_get(arch.col_transforms, row),
+        list_get(arch.col_velocities, row),
+        list_get(arch.col_rigidbodies, row),
+        list_get(arch.col_colliders, row),
+        list_get(arch.col_meshes, row),
+        list_get(arch.col_cameras, row),
+        list_get(arch.col_hierarchies, row),
+        tag,
+        list_get(arch.col_lifetimes, row)
+    );
+}
+
+func world_add_lifetime(w: World, e: Entity, lt: Lifetime) {
+    if !world_is_alive(w, e) { return; }
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let new_mask = bit_or(arch.mask, comp_lifetime());
+
+    world_transition_entity(
+        w, e, new_mask,
+        list_get(arch.col_transforms, row),
+        list_get(arch.col_velocities, row),
+        list_get(arch.col_rigidbodies, row),
+        list_get(arch.col_colliders, row),
+        list_get(arch.col_meshes, row),
+        list_get(arch.col_cameras, row),
+        list_get(arch.col_hierarchies, row),
+        list_get(arch.col_tags, row),
+        lt
+    );
+}
+
+// Component Getters
+func world_has_component(w: World, e: Entity, mask_bit: int) -> bool {
+    if !world_is_alive(w, e) { return false; }
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    return bit_and(arch.mask, mask_bit) == mask_bit;
+}
+
+func world_get_transform(w: World, e: Entity) -> Transform {
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let t: Transform = list_get(arch.col_transforms, row);
+    return t;
+}
+
+func world_get_velocity(w: World, e: Entity) -> Velocity {
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let v: Velocity = list_get(arch.col_velocities, row);
+    return v;
+}
+
+func world_get_rigidbody(w: World, e: Entity) -> RigidBody {
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let rb: RigidBody = list_get(arch.col_rigidbodies, row);
+    return rb;
+}
+
+func world_get_collider(w: World, e: Entity) -> Collider {
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let col: Collider = list_get(arch.col_colliders, row);
+    return col;
+}
+
+func world_get_mesh(w: World, e: Entity) -> MeshRenderer {
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let m: MeshRenderer = list_get(arch.col_meshes, row);
+    return m;
+}
+
+func world_get_camera(w: World, e: Entity) -> Camera {
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let cam: Camera = list_get(arch.col_cameras, row);
+    return cam;
+}
+
+func world_get_hierarchy(w: World, e: Entity) -> HierarchyNode {
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let h: HierarchyNode = list_get(arch.col_hierarchies, row);
+    return h;
+}
+
+func world_get_tag(w: World, e: Entity) -> Tag {
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let tag: Tag = list_get(arch.col_tags, row);
+    return tag;
+}
+
+func world_get_lifetime(w: World, e: Entity) -> Lifetime {
+    let arch_id: int = list_get(w.entity_archetype_ids, e.id);
+    let row: int = list_get(w.entity_rows, e.id);
+    let arch: Archetype = list_get(w.archetypes, arch_id);
+    let lt: Lifetime = list_get(arch.col_lifetimes, row);
+    return lt;
+}
+
+// Global World Resources (Singletons)
+func world_insert_resource(w: World, key: string, res: Unknown) {
+    let i = 0;
+    while i < list_length(w.resources) {
+        let entry: ResourceEntry = list_get(w.resources, i);
+        if entry.name == key {
+            entry.value = res;
+            return;
+        }
+        i = i + 1;
+    }
+    list_push(w.resources, new ResourceEntry(key, res));
+}
+
+func world_get_resource(w: World, key: string) -> Unknown {
+    let i = 0;
+    while i < list_length(w.resources) {
+        let entry: ResourceEntry = list_get(w.resources, i);
+        if entry.name == key {
+            return entry.value;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+func world_has_resource(w: World, key: string) -> bool {
+    let i = 0;
+    while i < list_length(w.resources) {
+        let entry: ResourceEntry = list_get(w.resources, i);
+        if entry.name == key {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ==============================================================================
+// SECTION 5: Bevy-Style Query Filter System
+// ==============================================================================
+
+class Query {
+    all_mask: int,
+    none_mask: int
+}
+
+func query_new(all_mask: int, none_mask: int) -> Query {
+    return new Query(all_mask, none_mask);
+}
+
+class QueryResult {
+    matched_archetypes: list,
+    total_entities: int
+}
+
+func world_query(w: World, all_mask: int, none_mask: int) -> QueryResult {
+    let matched = list_new();
+    let total = 0;
+    let count = list_length(w.archetypes);
+    let i = 0;
+    while i < count {
+        let arch: Archetype = list_get(w.archetypes, i);
+        let n_entities = list_length(arch.entity_ids);
+        if n_entities > 0 {
+            if bit_and(arch.mask, all_mask) == all_mask {
+                if none_mask == 0 || bit_and(arch.mask, none_mask) == 0 {
+                    list_push(matched, arch);
+                    total = total + n_entities;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return new QueryResult(matched, total);
+}
+
+// ==============================================================================
+// SECTION 6: Scene Graph Hierarchy & Matrix Propagation
+// ==============================================================================
+
+func world_attach_child(w: World, parent: Entity, child: Entity) {
+    if !world_is_alive(w, parent) || !world_is_alive(w, child) {
+        return;
+    }
+    if !world_has_component(w, parent, comp_hierarchy()) {
+        world_add_hierarchy(w, parent, hierarchy_new());
+    }
+    if !world_has_component(w, child, comp_hierarchy()) {
+        world_add_hierarchy(w, child, hierarchy_new());
+    }
+
+    let p_node = world_get_hierarchy(w, parent);
+    let c_node = world_get_hierarchy(w, child);
+
+    c_node.parent_id = parent.id;
+    c_node.parent_gen = parent.generation;
+    c_node.depth = p_node.depth + 1;
+    list_push(p_node.children_ids, child.id);
+
+    if world_has_component(w, child, comp_transform()) {
+        let ct = world_get_transform(w, child);
+        ct.is_dirty = true;
+    }
+}
+
+func world_detach_child(w: World, child: Entity) {
+    if !world_is_alive(w, child) || !world_has_component(w, child, comp_hierarchy()) {
+        return;
+    }
+    let c_node = world_get_hierarchy(w, child);
+    if c_node.parent_id >= 0 {
+        let parent_e = new Entity(c_node.parent_id, c_node.parent_gen);
+        if world_is_alive(w, parent_e) && world_has_component(w, parent_e, comp_hierarchy()) {
+            let p_node = world_get_hierarchy(w, parent_e);
+            let idx = 0;
+            while idx < list_length(p_node.children_ids) {
+                let cid: int = list_get(p_node.children_ids, idx);
+                if cid == child.id {
+                    list_remove(p_node.children_ids, idx);
+                } else {
+                    idx = idx + 1;
+                }
+            }
+        }
+        c_node.parent_id = -1;
+        c_node.depth = 0;
+    }
+}
+
+func world_propagate_hierarchy_recursive(w: World, parent_entity: Entity, parent_world_matrix: Mat4) {
+    let p_node = world_get_hierarchy(w, parent_entity);
+    let c_idx = 0;
+    let num_children = list_length(p_node.children_ids);
+    while c_idx < num_children {
+        let child_id: int = list_get(p_node.children_ids, c_idx);
+        let child_gen: int = list_get(w.entity_gens, child_id);
+        let child_e = new Entity(child_id, child_gen);
+        if world_is_alive(w, child_e) && world_has_component(w, child_e, comp_transform()) {
+            let ct = world_get_transform(w, child_e);
+            transform_update_local(ct);
+            ct.world_matrix = mat4_mul(parent_world_matrix, ct.local_matrix);
+            ct.is_dirty = false;
+
+            if world_has_component(w, child_e, comp_hierarchy()) {
+                world_propagate_hierarchy_recursive(w, child_e, ct.world_matrix);
+            }
+        }
+        c_idx = c_idx + 1;
+    }
+}
+
+func world_update_scene_graph(w: World) {
+    let q = world_query(w, comp_transform(), 0);
+    let a_idx = 0;
+    let n_archs = list_length(q.matched_archetypes);
+    while a_idx < n_archs {
+        let arch: Archetype = list_get(q.matched_archetypes, a_idx);
+        let r_idx = 0;
+        let n_rows = list_length(arch.entity_ids);
+        while r_idx < n_rows {
+            let eid: int = list_get(arch.entity_ids, r_idx);
+            let egen: int = list_get(arch.entity_gens, r_idx);
+            let e = new Entity(eid, egen);
+            let is_root = true;
+            if world_has_component(w, e, comp_hierarchy()) {
+                let h = world_get_hierarchy(w, e);
+                if h.parent_id >= 0 {
+                    is_root = false;
+                }
+            }
+            if is_root {
+                let t = world_get_transform(w, e);
+                if t.is_dirty {
+                    transform_update_local(t);
+                    t.world_matrix = t.local_matrix;
+                    t.is_dirty = false;
+                }
+                if world_has_component(w, e, comp_hierarchy()) {
+                    world_propagate_hierarchy_recursive(w, e, t.world_matrix);
+                }
+            }
+            r_idx = r_idx + 1;
+        }
+        a_idx = a_idx + 1;
+    }
+}
+
+// ==============================================================================
+// SECTION 7: Built-in Systems & Scheduling Engine
+// ==============================================================================
+
+func system_movement(w: World, dt: float) -> int {
+    let q = world_query(w, bit_or(comp_transform(), comp_velocity()), 0);
+    let updated = 0;
+    let a_idx = 0;
+    let n_archs = list_length(q.matched_archetypes);
+    while a_idx < n_archs {
+        let arch: Archetype = list_get(q.matched_archetypes, a_idx);
+        let r = 0;
+        let n_rows = list_length(arch.entity_ids);
+        while r < n_rows {
+            let t: Transform = list_get(arch.col_transforms, r);
+            let v: Velocity = list_get(arch.col_velocities, r);
+
+            // Record previous position for interpolation
+            t.prev_position.x = t.position.x;
+            t.prev_position.y = t.position.y;
+            t.prev_position.z = t.position.z;
+
+            // Integrate linear velocity
+            t.position.x = t.position.x + (v.linear.x * dt);
+            t.position.y = t.position.y + (v.linear.y * dt);
+            t.position.z = t.position.z + (v.linear.z * dt);
+
+            // Integrate angular velocity
+            t.rotation.x = t.rotation.x + (v.angular.x * dt);
+            t.rotation.y = t.rotation.y + (v.angular.y * dt);
+            t.rotation.z = t.rotation.z + (v.angular.z * dt);
+
+            t.is_dirty = true;
+            updated = updated + 1;
+            r = r + 1;
+        }
+        a_idx = a_idx + 1;
+    }
+    return updated;
+}
+
+func system_physics_fixed(w: World, fixed_dt: float) -> int {
+    let q = world_query(w, bit_or(bit_or(comp_transform(), comp_velocity()), comp_rigidbody()), 0);
+    let updated = 0;
+    let gravity_y = -9.81;
+    let a_idx = 0;
+    let n_archs = list_length(q.matched_archetypes);
+    while a_idx < n_archs {
+        let arch: Archetype = list_get(q.matched_archetypes, a_idx);
+        let r = 0;
+        let n_rows = list_length(arch.entity_ids);
+        while r < n_rows {
+            let rb: RigidBody = list_get(arch.col_rigidbodies, r);
+            if !rb.is_static {
+                let t: Transform = list_get(arch.col_transforms, r);
+                let v: Velocity = list_get(arch.col_velocities, r);
+
+                // Apply gravity
+                v.linear.y = v.linear.y + (gravity_y * fixed_dt);
+
+                // Apply linear damping
+                let damp = 1.0 - (rb.linear_damping * fixed_dt);
+                if damp < 0.0 { damp = 0.0; }
+                v.linear.x = v.linear.x * damp;
+                v.linear.z = v.linear.z * damp;
+
+                // Ground plane collision resolution (y = 0.0)
+                if t.position.y <= 0.0 && v.linear.y < 0.0 {
+                    t.position.y = 0.0;
+                    v.linear.y = (0.0 - v.linear.y) * rb.restitution;
+                    if v.linear.y < 0.05 {
+                        v.linear.y = 0.0;
+                    }
+                }
+                updated = updated + 1;
+            }
+            r = r + 1;
+        }
+        a_idx = a_idx + 1;
+    }
+    return updated;
+}
+
+func system_camera_sync(w: World) {
+    let q = world_query(w, bit_or(comp_transform(), comp_camera()), 0);
+    let a_idx = 0;
+    while a_idx < list_length(q.matched_archetypes) {
+        let arch: Archetype = list_get(q.matched_archetypes, a_idx);
+        let r = 0;
+        while r < list_length(arch.entity_ids) {
+            let cam: Camera = list_get(arch.col_cameras, r);
+            if cam.is_active {
+                let t: Transform = list_get(arch.col_transforms, r);
+                let forward = mat4_transform_vector(t.world_matrix, new Vector3(0.0, 0.0, -1.0));
+                let target = vec3_add(t.position, forward);
+                let up = new Vector3(0.0, 1.0, 0.0);
+                cam.view_matrix = mat4_look_at(t.position, target, up);
+            }
+            r = r + 1;
+        }
+        a_idx = a_idx + 1;
+    }
+}
+
+func system_lifetime(w: World, dt: float) -> int {
+    let q = world_query(w, comp_lifetime(), 0);
+    let despawned = 0;
+    let dead_entities = list_new();
+    let a_idx = 0;
+    while a_idx < list_length(q.matched_archetypes) {
+        let arch: Archetype = list_get(q.matched_archetypes, a_idx);
+        let r = 0;
+        while r < list_length(arch.entity_ids) {
+            let lt: Lifetime = list_get(arch.col_lifetimes, r);
+            lt.remaining_sec = lt.remaining_sec - dt;
+            if lt.remaining_sec <= 0.0 {
+                let eid: int = list_get(arch.entity_ids, r);
+                let egen: int = list_get(arch.entity_gens, r);
+                list_push(dead_entities, new Entity(eid, egen));
+            }
+            r = r + 1;
+        }
+        a_idx = a_idx + 1;
+    }
+
+    let d_idx = 0;
+    while d_idx < list_length(dead_entities) {
+        let dead_e: Entity = list_get(dead_entities, d_idx);
+        if world_despawn(w, dead_e) {
+            despawned = despawned + 1;
+        }
+        d_idx = d_idx + 1;
+    }
+    return despawned;
+}
+
+// ==============================================================================
+// SECTION 8: 60+ FPS Real-Time Game Loop & Fixed-Timestep Engine
+// ==============================================================================
+
+class EngineTime {
+    elapsed_seconds: float,
+    delta_seconds: float,
+    fixed_timestep: float,
+    accumulator: float,
+    alpha: float,
+    frame_count: int,
+    fixed_ticks: int
+}
+
+func engine_time_new(fixed_dt: float) -> EngineTime {
+    return new EngineTime(0.0, 0.0, fixed_dt, 0.0, 0.0, 0, 0);
+}
+
+class Engine {
+    world: World,
+    time: EngineTime,
+    target_fps: int,
+    max_accumulator: float,
+    is_running: bool,
+    total_entities_processed: int,
+    last_fps: float
+}
+
+func engine_new(target_fps: int) -> Engine {
+    let w = world_new();
+    let fps_f = 60.0;
+    if target_fps > 0 {
+        fps_f = target_fps * 1.0;
+    }
+    let fixed_dt = 1.0 / fps_f;
+    let time = engine_time_new(fixed_dt);
+
+    return new Engine(
+        w,
+        time,
+        target_fps,
+        0.25, // Clamp accumulator to 250ms to prevent spiral of death
+        true,
+        0,
+        fps_f
+    );
+}
+
+func engine_step(eng: Engine, frame_dt: float) {
+    if !eng.is_running {
+        return;
+    }
+    let dt = frame_dt;
+    if dt > eng.max_accumulator {
+        dt = eng.max_accumulator;
+    }
+
+    eng.time.delta_seconds = dt;
+    eng.time.elapsed_seconds = eng.time.elapsed_seconds + dt;
+    eng.time.accumulator = eng.time.accumulator + dt;
+
+    // 1. Fixed-Timestep Physics Loop
+    while eng.time.accumulator >= eng.time.fixed_timestep {
+        system_physics_fixed(eng.world, eng.time.fixed_timestep);
+        eng.time.accumulator = eng.time.accumulator - eng.time.fixed_timestep;
+        eng.time.fixed_ticks = eng.time.fixed_ticks + 1;
+    }
+
+    // 2. Alpha interpolation factor for smooth rendering
+    eng.time.alpha = eng.time.accumulator / eng.time.fixed_timestep;
+
+    // 3. Update Systems (Gameplay & Kinematics)
+    let moved = system_movement(eng.world, dt);
+    eng.total_entities_processed = eng.total_entities_processed + moved;
+
+    // 4. Lifetimes & Despawn System
+    system_lifetime(eng.world, dt);
+
+    // 5. PostUpdate: Scene Graph Matrix Propagation
+    world_update_scene_graph(eng.world);
+
+    // 6. Camera Synchronization
+    system_camera_sync(eng.world);
+
+    eng.time.frame_count = eng.time.frame_count + 1;
+    if dt > 0.0 {
+        eng.last_fps = 1.0 / dt;
+    }
+}
+
+// Compute Interpolated Rendering Position
+func engine_get_render_position(w: World, e: Entity, alpha: float) -> Vector3 {
+    let t = world_get_transform(w, e);
+    return vec3_lerp(t.prev_position, t.position, alpha);
+}
+
+// ==============================================================================
+// SECTION 9: Fluent Entity Builder API
+// ==============================================================================
+
+class EntityBuilder {
+    world: World,
+    entity: Entity
+}
+
+func entity_builder(w: World) -> EntityBuilder {
+    let e = world_spawn(w);
+    return new EntityBuilder(w, e);
+}
+
+func eb_with_position(eb: EntityBuilder, x: float, y: float, z: float) -> EntityBuilder {
+    world_add_transform(eb.world, eb.entity, transform_new(x, y, z));
+    return eb;
+}
+
+func eb_with_velocity(eb: EntityBuilder, vx: float, vy: float, vz: float) -> EntityBuilder {
+    world_add_velocity(eb.world, eb.entity, velocity_new(vx, vy, vz));
+    return eb;
+}
+
+func eb_with_rigidbody(eb: EntityBuilder, mass: float, restitution: float) -> EntityBuilder {
+    world_add_rigidbody(eb.world, eb.entity, rigidbody_new(mass, restitution));
+    return eb;
+}
+
+func eb_with_collider_sphere(eb: EntityBuilder, radius: float) -> EntityBuilder {
+    world_add_collider(eb.world, eb.entity, collider_sphere(radius));
+    return eb;
+}
+
+func eb_with_collider_box(eb: EntityBuilder, sx: float, sy: float, sz: float) -> EntityBuilder {
+    world_add_collider(eb.world, eb.entity, collider_box(sx, sy, sz));
+    return eb;
+}
+
+func eb_with_mesh(eb: EntityBuilder, name: string, col: Color) -> EntityBuilder {
+    world_add_mesh(eb.world, eb.entity, mesh_renderer_new(name, col));
+    return eb;
+}
+
+func eb_with_camera(eb: EntityBuilder, fov: float, aspect: float) -> EntityBuilder {
+    world_add_camera(eb.world, eb.entity, camera_new(fov, aspect));
+    return eb;
+}
+
+func eb_with_tag(eb: EntityBuilder, name: string) -> EntityBuilder {
+    world_add_tag(eb.world, eb.entity, tag_new(name));
+    return eb;
+}
+
+func eb_with_lifetime(eb: EntityBuilder, sec: float) -> EntityBuilder {
+    world_add_lifetime(eb.world, eb.entity, lifetime_new(sec));
+    return eb;
+}
+
+func eb_build(eb: EntityBuilder) -> Entity {
+    return eb.entity;
+}

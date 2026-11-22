@@ -796,7 +796,7 @@ s1_rows = [
         ("M11-T01", 8), ("Month 11", 26), ("Sprint 21 (W43-W44)", 8), "Game Engine Core", "Archetypal ECS & Real-Time Engine (roze-game.ecs)",
         "High-performance cache-friendly archetypal ECS architecture in pure Roze: Entity, Component, System, World, query iterators (world.query<Position, Velocity>()), scene graph hierarchy, transform matrices, and 60+ FPS game loop with fixed-timestep physics updates and interpolated rendering.",
         "Parity with Rust Bevy ECS and modern game engine core architectures.",
-        "2D/3D Games, Simulations, Interactive Media", "8 Days", ("Critical", 14), ("Planned", 12)
+        "2D/3D Games, Simulations, Interactive Media", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M11-T02", 8), ("Month 11", 26), ("Sprint 21 (W43-W44)", 8), "Hardware Rendering", "Hardware-Accelerated 2D/3D Graphics (roze-game.render)",

@@ -147,6 +147,9 @@ const ROZEBOOT_ACTUATOR_DISPLAY_NAME: &str = "rozeboot_actuator (built-in)";
 const ROZEBOOT_BANKING_SOURCE: &str = include_str!("../../stdlib/src/rozeboot_banking.roze");
 const ROZEBOOT_BANKING_DISPLAY_NAME: &str = "rozeboot_banking (built-in)";
 
+const GAME_ECS_SOURCE: &str = include_str!("../../stdlib/src/game_ecs.roze");
+const GAME_ECS_DISPLAY_NAME: &str = "game_ecs (built-in)";
+
 const ORM_SOURCE: &str = include_str!("../../stdlib/src/orm.roze");
 const ORM_DISPLAY_NAME: &str = "orm (built-in)";
 
@@ -292,6 +295,9 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         | "torch::models" | "roze::torch::models" | "roze-torch::models" | "models" | "torch_models" => {
             Some("roze-torch/src/lib.roze".to_string())
         }
+        "roze-game.ecs" | "roze-game::ecs" | "roze::game::ecs" | "roze.game.ecs" | "game.ecs" | "game::ecs" | "roze_game_ecs" | "game_ecs" | "ecs" | "bevy" | "bevy_ecs" => {
+            Some("roze-game/src/ecs.roze".to_string())
+        }
         "game" | "roze::game" | "roze-game" | "roze_game" | "raylib_game" | "gamedev" | "engine" => {
             Some("roze-game/src/lib.roze".to_string())
         }
@@ -373,6 +379,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
                 "rozeboot" => Some("rozeboot.roze"),
                 "rozeboot_actuator" => Some("rozeboot_actuator.roze"),
                 "rozeboot_banking" => Some("rozeboot_banking.roze"),
+                "game_ecs" => Some("game_ecs.roze"),
                 "orm" => Some("orm.roze"),
                 "raw_net" => Some("raw_net.roze"),
                 "crypto" => Some("crypto.roze"),
@@ -535,6 +542,10 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "rozeboot.banking" || path == "rozeboot::banking" || path == "roze::boot::banking" || path == "roze.boot.banking"
         || path == "rozeboot_banking" || path == "rozeboot-banking" || path == "banking" || path == "enterprise_banking" {
         return Ok((ROZEBOOT_BANKING_SOURCE.to_string(), ROZEBOOT_BANKING_DISPLAY_NAME.to_string()));
+    }
+    if path == "roze-game.ecs" || path == "roze-game::ecs" || path == "roze::game::ecs" || path == "roze.game.ecs"
+        || path == "game.ecs" || path == "game::ecs" || path == "roze_game_ecs" || path == "game_ecs" || path == "ecs" || path == "bevy" || path == "bevy_ecs" {
+        return Ok((GAME_ECS_SOURCE.to_string(), GAME_ECS_DISPLAY_NAME.to_string()));
     }
     if path == "orm" || path == "roze::orm" || path == "roze.orm" || path == "roze-orm" || path == "roze_orm"
         || path == "sql_orm" || path == "jpa" || path == "diesel" || path == "seaorm" {

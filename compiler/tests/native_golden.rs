@@ -5288,6 +5288,25 @@ fn native_milestone_gate_m10_enterprise_banking_suite() {
     assert!(stdout.contains("MILESTONE GATE M10 COMPLETE: Full-Spectrum Enterprise Banking 100% OPERATIONAL"));
 }
 
+#[test]
+fn native_standard_game_ecs_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_game_ecs.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_game_ecs.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_game_ecs_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Vector3, Mat4 Transform Math & Projections verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: Generational Entity Lifecycle & Recycled IDs verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: Archetypal Columnar Storage & O(1) Transitions verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: Bevy-Style Query Filter System verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: Scene Graph Hierarchy & Matrix Propagation verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: 60+ FPS Real-Time Game Loop & Fixed-Timestep Physics verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: High-Throughput ECS Stress Test Benchmark Gate verified."));
+    assert!(stdout.contains("ALL 7 TEST SUITES COMPLETED: 100% PASSING (Rust Bevy ECS Parity)"));
+}
+
 
 
 

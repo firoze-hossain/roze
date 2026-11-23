@@ -165,6 +165,9 @@ const UI_CANVAS_DISPLAY_NAME: &str = "ui_canvas (built-in)";
 const UI_WIDGETS_SOURCE: &str = include_str!("../../stdlib/src/ui_widgets.roze");
 const UI_WIDGETS_DISPLAY_NAME: &str = "ui_widgets (built-in)";
 
+const OS_KERNEL_SOURCE: &str = include_str!("../../stdlib/src/os_kernel.roze");
+const OS_KERNEL_DISPLAY_NAME: &str = "os_kernel (built-in)";
+
 const ORM_SOURCE: &str = include_str!("../../stdlib/src/orm.roze");
 const ORM_DISPLAY_NAME: &str = "orm (built-in)";
 
@@ -334,6 +337,12 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         "roze-ui.widgets" | "roze-ui::widgets" | "roze::ui::widgets" | "roze.ui.widgets" | "ui.widgets" | "ui::widgets" | "roze_ui_widgets" | "ui_widgets" | "widgets" | "javafx" | "qt" => {
             Some("roze-ui/src/widgets.roze".to_string())
         }
+        "roze-os.kernel" | "roze-os::kernel" | "roze::os::kernel" | "roze.os.kernel" | "os.kernel" | "os::kernel" | "roze_os_kernel" | "os_kernel" => {
+            Some("roze-os/src/kernel.roze".to_string())
+        }
+        "roze-os" | "roze-os::lib" | "roze::os" | "roze.os" | "roze_os" | "rozeos" => {
+            Some("roze-os/src/lib.roze".to_string())
+        }
         _ => None,
     };
 
@@ -415,6 +424,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
                 "game_milestone" => Some("game_milestone.roze"),
                 "ui_canvas" => Some("ui_canvas.roze"),
                 "ui_widgets" => Some("ui_widgets.roze"),
+                "os_kernel" => Some("os_kernel.roze"),
                 "orm" => Some("orm.roze"),
                 "raw_net" => Some("raw_net.roze"),
                 "crypto" => Some("crypto.roze"),
@@ -601,6 +611,10 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "roze-ui.widgets" || path == "roze-ui::widgets" || path == "roze::ui::widgets" || path == "roze.ui.widgets"
         || path == "ui.widgets" || path == "ui::widgets" || path == "roze_ui_widgets" || path == "ui_widgets" || path == "widgets" || path == "javafx" || path == "qt" {
         return Ok((UI_WIDGETS_SOURCE.to_string(), UI_WIDGETS_DISPLAY_NAME.to_string()));
+    }
+    if path == "roze-os" || path == "roze-os.kernel" || path == "roze-os::kernel" || path == "roze::os" || path == "roze::os::kernel"
+        || path == "roze.os" || path == "roze.os.kernel" || path == "os.kernel" || path == "os::kernel" || path == "roze_os" || path == "roze_os_kernel" || path == "os_kernel" || path == "rozeos" {
+        return Ok((OS_KERNEL_SOURCE.to_string(), OS_KERNEL_DISPLAY_NAME.to_string()));
     }
     if path == "orm" || path == "roze::orm" || path == "roze.orm" || path == "roze-orm" || path == "roze_orm"
         || path == "sql_orm" || path == "jpa" || path == "diesel" || path == "seaorm" {

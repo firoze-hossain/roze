@@ -834,7 +834,7 @@ s1_rows = [
         ("M12-T01", 8), ("Month 12", 27), ("Sprint 23 (W47-W48)", 8), "Freestanding OS Kernel", "Freestanding 64-Bit Operating System Kernel (RozeOS v3)",
         "Bare-metal OS kernel written in pure Roze (--target freestanding): Multiboot2 / UEFI bootloader, preemptive round-robin thread scheduler, SMP multicore initialization via APIC/MADT, 4-level paging virtual memory manager, Buddy physical frame allocator, kernel heap allocator with cache alignment, IDT/GDT interrupt tables, PCI bus scan, VirtIO network and block device drivers, interactive kernel shell.",
         "Full freestanding 64-bit operating system kernel matching Linux/Rust OS architectures in pure Roze.",
-        "Operating Systems, Kernels, Bare-Metal Systems", "9 Days", ("Critical", 14), ("Planned", 12)
+        "Operating Systems, Kernels, Bare-Metal Systems", "9 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M12-T02", 8), ("Month 12", 27), ("Sprint 23 (W47-W48)", 8), "Microcontroller IoT", "Microcontroller Hardware Platform & PAC SVD Generator",

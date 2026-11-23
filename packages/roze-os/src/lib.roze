@@ -1,0 +1,4 @@
+// packages/roze-os/src/lib.roze
+// 🌹 RozeOS v3: Freestanding 64-Bit Operating System Kernel Root Library
+
+import "roze-os.kernel";

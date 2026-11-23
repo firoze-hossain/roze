@@ -1,0 +1,13 @@
+# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
+[package]
+name = "roze-os"
+version = "3.0.0"
+edition = "2026"
+authors = ["Mohammad Firoze <firoze@roze.dev>"]
+license = "MIT OR Apache-2.0"
+description = "Freestanding 64-Bit Operating System Kernel (RozeOS v3) in pure Roze: Multiboot2/UEFI, preemptive scheduler, SMP multicore, 4-level paging, Buddy allocator, VirtIO drivers, and interactive shell"
+main = "src/kernel.roze"
+repository = "https://github.com/firoze-hossain/roze"
+keywords = ["os", "kernel", "freestanding", "bare-metal", "smp", "virtio", "paging", "scheduler", "x86_64"]
+
+[dependencies]

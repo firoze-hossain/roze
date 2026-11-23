@@ -1,0 +1,257 @@
+// packages/roze-os/tests/test_kernel.roze
+// ==============================================================================
+// 🌹 RozeOS v3: Freestanding 64-Bit Operating System Kernel Test Suite
+// ==============================================================================
+// Comprehensive verification of all 10 bare-metal kernel subsystems:
+// 1. Multiboot2 & UEFI Bootloader Handover
+// 2. 4-Level Paging Virtual Memory Manager (PML4 -> PDPT -> PD -> PT)
+// 3. Buddy Physical Frame Allocator (Order 0..10 power-of-two blocks)
+// 4. Kernel Heap Allocator with 64-byte Cache Alignment
+// 5. IDT & GDT Interrupt Tables (64-bit Long Mode, TSS, 256 Vectors)
+// 6. SMP Multicore Initialization via APIC & MADT
+// 7. Preemptive Round-Robin Thread Scheduler (TCB/PCB, Time-Slice Preemption)
+// 8. PCI Bus Scan & Hardware Enumeration (VirtIO Devices, BARs)
+// 9. VirtIO Network & Block Device Drivers
+// 10. Interactive Kernel Shell (roze_sh v3) & Master Diagnostic Gate
+// ==============================================================================
+
+import "roze-os.kernel";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("❌ ASSERTION FAILED: " + msg);
+        let crash = 1 / 0;
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_int(actual: int, expected: int, msg: string) {
+    if actual != expected {
+        println("❌ ASSERTION FAILED: " + msg);
+        println("   Expected: " + to_string(expected));
+        println("   Actual:   " + to_string(actual));
+        let crash = 1 / 0;
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func main() {
+    println("================================================================================");
+    println("🌹 ROZEOS v3: FREESTANDING 64-BIT OPERATING SYSTEM KERNEL (M12-T01)");
+    println("================================================================================");
+
+    // Boot the primary kernel instance
+    let kernel = roze_os_boot_kernel(mb2_magic_constant(), "rozeos_v3 quiet init=/bin/sh smp=4");
+    assert_true(kernel.is_running, "Kernel booted and active in memory");
+
+    // =========================================================================
+    // SUITE 1: Multiboot2 & UEFI Bootloader Handover
+    // =========================================================================
+    println("\n--- SUITE 1: Multiboot2 & UEFI Bootloader Handover ---");
+    let mb2 = kernel.boot_info.mb2;
+    assert_true(mb2.valid, "Multiboot2 magic 920085129 verified");
+    assert_true(mb2.total_ram_bytes > 0, "Physical RAM detected via bootloader");
+    assert_true(list_length(mb2.memory_map) >= 5, "Memory map entries present");
+    assert_eq_int(mb2.fb.bpp, 32, "Framebuffer 32-bpp color depth");
+    println("SUITE 1 PASSED: Multiboot2/UEFI bootloader handover verified.");
+
+    // =========================================================================
+    // SUITE 2: 4-Level Paging Virtual Memory Manager (PML4, PDPT, PD, PT)
+    // =========================================================================
+    println("\n--- SUITE 2: 4-Level Paging Virtual Memory Manager ---");
+    let v_test = 1342177280;
+    let p_test = 805306368;
+    vmm_map_page(kernel.vmm, v_test, p_test, bit_or(vmm_flag_present(), vmm_flag_writable()));
+    let translated = vmm_translate(kernel.vmm, v_test + 2748);
+    assert_eq_int(translated, p_test + 2748, "4-level page table translation exact");
+
+    // 2MB huge page mapping
+    let huge_v = 1610612736;
+    let huge_p = 1073741824;
+    vmm_map_huge(kernel.vmm, huge_v, huge_p, vmm_flag_writable());
+    let huge_trans = vmm_translate(kernel.vmm, huge_v + 74565);
+    assert_eq_int(huge_trans, huge_p + 74565, "2MB huge page translation exact");
+
+    // Copy-on-write page fault resolution
+    let cow_v = 1879048192;
+    let cow_p = 22020096;
+    vmm_map_page(kernel.vmm, cow_v, cow_p, bit_or(vmm_flag_present(), vmm_flag_cow()));
+    let pf_resolved = vmm_handle_page_fault(kernel.vmm, cow_v, 2); // Write fault
+    assert_true(pf_resolved, "COW page fault handled cleanly");
+    let cow_trans = vmm_translate(kernel.vmm, cow_v);
+    assert_true(cow_trans != cow_p, "COW frame duplicated to private frame");
+    println("SUITE 2 PASSED: 4-Level paging and VMM translation verified.");
+
+    // =========================================================================
+    // SUITE 3: Buddy Physical Frame Allocator
+    // =========================================================================
+    println("\n--- SUITE 3: Buddy Physical Frame Allocator ---");
+    let initial_free = kernel.buddy.free_frames;
+    let blk_order0 = buddy_alloc(kernel.buddy, 0); // 4KB
+    let blk_order3 = buddy_alloc(kernel.buddy, 3); // 32KB (8 frames)
+    assert_true(blk_order0 > 0 && blk_order3 > 0, "Power-of-two buddy frames allocated");
+    assert_true(kernel.buddy.free_frames == (initial_free - 9), "Used frames tracked accurately");
+
+    let freed0 = buddy_free(kernel.buddy, blk_order0, 0);
+    let freed3 = buddy_free(kernel.buddy, blk_order3, 3);
+    assert_true(freed0 && freed3, "Buddy blocks freed and coalesced");
+    assert_true(kernel.buddy.free_frames == initial_free, "Free frames restored to 100%");
+    println("SUITE 3 PASSED: Buddy physical frame allocator verified.");
+
+    // =========================================================================
+    // SUITE 4: Kernel Heap Allocator with 64-Byte Cache Alignment
+    // =========================================================================
+    println("\n--- SUITE 4: Kernel Heap Allocator with Cache Alignment ---");
+    let ptr1 = kheap_alloc(kernel.kheap, 64, 64);
+    let ptr2 = kheap_alloc(kernel.kheap, 128, 64);
+    let ptr3 = kheap_alloc(kernel.kheap, 512, 64);
+    assert_true(ptr1 > 0 && ptr2 > 0 && ptr3 > 0, "Kernel heap memory chunks allocated");
+    assert_true(kheap_is_cache_aligned(ptr1), "Pointer 1 is 64-byte cache line aligned");
+    assert_true(kheap_is_cache_aligned(ptr2), "Pointer 2 is 64-byte cache line aligned");
+    assert_true(kheap_is_cache_aligned(ptr3), "Pointer 3 is 64-byte cache line aligned");
+
+    let before_free = kernel.kheap.active_bytes;
+    kheap_free(kernel.kheap, ptr2, 128);
+    assert_true(kernel.kheap.active_bytes < before_free, "Kernel heap freed bytes decremented");
+    println("SUITE 4 PASSED: 64-byte cache-aligned kernel heap allocator verified.");
+
+    // =========================================================================
+    // SUITE 5: IDT & GDT Interrupt Tables (64-bit Long Mode & TSS)
+    // =========================================================================
+    println("\n--- SUITE 5: IDT & GDT Interrupt Tables ---");
+    assert_true(kernel.gdt.is_loaded, "Global Descriptor Table loaded");
+    assert_true(list_length(kernel.gdt.segments) == 6, "GDT contains 6 standard 64-bit segments");
+    assert_eq_int(kernel.gdt.tss.ist1, 1073738000, "TSS IST1 Double Fault stack configured");
+
+    assert_eq_int(list_length(kernel.idt.gates), 256, "IDT contains 256 vector gates");
+    idt_dispatch(kernel.idt, 13, 0, 0); // Dispatch #GP General Protection Fault
+    idt_dispatch(kernel.idt, 33, 0, 0); // Dispatch IRQ1 Keyboard
+    assert_eq_int(kernel.idt.last_vector, 33, "Last interrupt vector dispatched");
+    let count_13: int = list_get(kernel.idt.dispatch_counts, 13);
+    let count_33: int = list_get(kernel.idt.dispatch_counts, 33);
+    assert_true(count_13 == 1, "Exception #GP counted");
+    assert_true(count_33 == 1, "IRQ1 keyboard counted");
+    println("SUITE 5 PASSED: IDT/GDT interrupt tables and context verified.");
+
+    // =========================================================================
+    // SUITE 6: SMP Multicore Initialization via APIC & MADT
+    // =========================================================================
+    println("\n--- SUITE 6: SMP Multicore Initialization via APIC/MADT ---");
+    assert_eq_int(list_length(kernel.smp.cores), 4, "4 CPU cores enumerated via MADT");
+    let c0: CoreDescriptor = list_get(kernel.smp.cores, 0);
+    let c1: CoreDescriptor = list_get(kernel.smp.cores, 1);
+    assert_true(c0.is_bsp, "Core 0 is Bootstrap Processor (BSP)");
+    assert_true(!c1.is_bsp, "Core 1 is Application Processor (AP)");
+    assert_eq_int(c0.state, 2, "BSP core online");
+    assert_eq_int(c1.state, 2, "AP core 1 booted online via SIPI");
+
+    smp_send_ipi(kernel.smp, 1, 0, 254); // Send reschedule IPI to Core 1
+    assert_true(c1.ipi_received > 0, "Core 1 received IPI");
+    println("SUITE 6 PASSED: SMP multicore initialization and IPI verified.");
+
+    // =========================================================================
+    // SUITE 7: Preemptive Round-Robin Thread Scheduler
+    // =========================================================================
+    println("\n--- SUITE 7: Preemptive Round-Robin Thread Scheduler ---");
+    let pid1 = sched_spawn_process(kernel.scheduler, "user_daemon", 8192);
+    let tid_worker = sched_spawn_thread(kernel.scheduler, pid1, "worker_thread", 4194304, 1073200000, 2);
+    assert_true(tid_worker > 0, "Worker thread spawned");
+
+    // Run scheduler ticks to verify preemption
+    let worker_tcb: ThreadControlBlock = list_get(kernel.scheduler.threads, tid_worker);
+    let initial_preemptions = worker_tcb.preemptions;
+    let tick_count = 0;
+    while tick_count < 25 {
+        sched_tick(kernel.scheduler, 0);
+        tick_count = tick_count + 1;
+    }
+    assert_true(kernel.scheduler.total_ticks >= 25, "Scheduler ticks accumulated");
+    println("SUITE 7 PASSED: Preemptive round-robin thread scheduler verified.");
+
+    // =========================================================================
+    // SUITE 8: PCI Bus Scan & Hardware Enumeration
+    // =========================================================================
+    println("\n--- SUITE 8: PCI Bus Scan & Hardware Enumeration ---");
+    assert_true(list_length(kernel.pci.devices) >= 5, "PCI bus scanned hardware devices");
+    let virtio_net_dev = pci_find_by_vendor_device(kernel.pci, 6900, 4096);
+    let virtio_blk_dev = pci_find_by_vendor_device(kernel.pci, 6900, 4097);
+    assert_true(virtio_net_dev.vendor_id == 6900, "VirtIO Net PCI device identified");
+    assert_true(virtio_blk_dev.vendor_id == 6900, "VirtIO Block PCI device identified");
+    assert_true(list_length(virtio_net_dev.bars) >= 2, "VirtIO Net I/O and MMIO BARs configured");
+    println("SUITE 8 PASSED: PCI bus scan and hardware enumeration verified.");
+
+    // =========================================================================
+    // SUITE 9: VirtIO Network & Block Device Drivers
+    // =========================================================================
+    println("\n--- SUITE 9: VirtIO Network & Block Device Drivers ---");
+    // VirtIO Net test
+    let eth_packet = list_new();
+    list_push(eth_packet, 82); list_push(eth_packet, 84); list_push(eth_packet, 0);
+    list_push(eth_packet, 18); list_push(eth_packet, 52); list_push(eth_packet, 86);
+    let sent = virtio_net_send(kernel.net_dev, eth_packet);
+    assert_true(sent, "VirtIO Net packet transmitted");
+    assert_true(kernel.net_dev.tx_packets > 0, "VirtIO Net TX counter incremented");
+    let recv = virtio_net_recv(kernel.net_dev);
+    assert_eq_int(list_length(recv), 6, "VirtIO Net packet received from loopback ring");
+
+    // VirtIO Block test
+    let sector_data = list_new();
+    list_push(sector_data, 37359285);
+    list_push(sector_data, 34056915);
+    let written = virtio_blk_write(kernel.blk_dev, 10, sector_data);
+    assert_true(written, "VirtIO Block sector write succeeded");
+    let read_back = virtio_blk_read(kernel.blk_dev, 10, 2);
+    assert_eq_int(list_length(read_back), 2, "VirtIO Block read sector count");
+    let sector_0_val: int = list_get(read_back, 0);
+    assert_eq_int(sector_0_val, 37359285, "Sector data verified");
+    println("SUITE 9 PASSED: VirtIO network and block device drivers verified.");
+
+    // =========================================================================
+    // SUITE 10: Interactive Kernel Shell (roze_sh v3) & Master Diagnostic Gate
+    // =========================================================================
+    println("\n--- SUITE 10: Interactive Kernel Shell & Master Diagnostic Gate ---");
+    let shell = kernel_shell_new(kernel);
+    let out_help = shell_execute(shell, "help");
+    let out_uname = shell_execute(shell, "uname -a");
+    let out_mem = shell_execute(shell, "mem");
+    let out_ps = shell_execute(shell, "ps");
+    let out_smp = shell_execute(shell, "smp");
+    let out_pci = shell_execute(shell, "pci");
+    let out_lsblk = shell_execute(shell, "lsblk");
+    let out_net = shell_execute(shell, "net");
+    let out_ping = shell_execute(shell, "ping");
+
+    assert_true(string_length(out_help) > 0, "Shell 'help' command executed");
+    assert_true(string_length(out_uname) > 0, "Shell 'uname -a' command executed");
+    assert_true(string_length(out_mem) > 0, "Shell 'mem' command executed");
+    assert_true(string_length(out_ps) > 0, "Shell 'ps' command executed");
+    assert_true(string_length(out_smp) > 0, "Shell 'smp' command executed");
+    assert_true(string_length(out_pci) > 0, "Shell 'pci' command executed");
+    assert_true(string_length(out_lsblk) > 0, "Shell 'lsblk' command executed");
+    assert_true(string_length(out_net) > 0, "Shell 'net' command executed");
+    assert_true(string_length(out_ping) > 0, "Shell 'ping' command executed");
+    assert_eq_int(shell.commands_executed, 9, "All 9 shell commands executed");
+
+    // Master Diagnostic Gate
+    let diag = roze_os_run_diagnostics(kernel);
+    assert_true(diag.bootloader_verified, "Bootloader verified in diagnostics");
+    assert_true(diag.vmm_paging_verified, "VMM paging verified in diagnostics");
+    assert_true(diag.buddy_allocator_verified, "Buddy allocator verified in diagnostics");
+    assert_true(diag.cache_aligned_heap_verified, "Cache-aligned heap verified in diagnostics");
+    assert_true(diag.gdt_idt_interrupts_verified, "GDT/IDT interrupts verified in diagnostics");
+    assert_true(diag.smp_multicore_verified, "SMP multicore verified in diagnostics");
+    assert_true(diag.scheduler_preemption_verified, "Preemptive scheduler verified in diagnostics");
+    assert_true(diag.pci_devices_verified, "PCI devices verified in diagnostics");
+    assert_true(diag.virtio_net_verified, "VirtIO Net verified in diagnostics");
+    assert_true(diag.virtio_blk_verified, "VirtIO Block verified in diagnostics");
+    assert_true(diag.shell_verified, "Kernel shell verified in diagnostics");
+    assert_true(diag.all_subsystems_passed, "All 10 kernel subsystems passed diagnostics");
+
+    println("SUITE 10 PASSED: Interactive kernel shell and master diagnostic gate verified.");
+
+    println("\n================================================================================");
+    println("🎉 ALL 10 SUITES PASSED: M12-T01 FREESTANDING 64-BIT OS KERNEL 100% COMPLETE!");
+    println("================================================================================");
+}

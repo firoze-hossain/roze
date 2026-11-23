@@ -2581,6 +2581,23 @@ fn milestone_gate_m11_game_and_gui_suite() {
     assert!(stdout.contains("ALL 7 SUITES PASSED: MILESTONE GATE M11 GAMING & DESKTOP 100% COMPLETE!"));
 }
 
+#[test]
+fn standard_os_kernel_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_os_kernel.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Multiboot2/UEFI bootloader handover verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: 4-Level paging and VMM translation verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: Buddy physical frame allocator verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: 64-byte cache-aligned kernel heap allocator verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: IDT/GDT interrupt tables and context verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: SMP multicore initialization and IPI verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: Preemptive round-robin thread scheduler verified."));
+    assert!(stdout.contains("SUITE 8 PASSED: PCI bus scan and hardware enumeration verified."));
+    assert!(stdout.contains("SUITE 9 PASSED: VirtIO network and block device drivers verified."));
+    assert!(stdout.contains("SUITE 10 PASSED: Interactive kernel shell and master diagnostic gate verified."));
+    assert!(stdout.contains("ALL 10 SUITES PASSED: M12-T01 FREESTANDING 64-BIT OS KERNEL 100% COMPLETE!"));
+}
+
 
 
 

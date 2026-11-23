@@ -159,6 +159,9 @@ const GAME_PHYSICS_DISPLAY_NAME: &str = "game_physics (built-in)";
 const UI_CANVAS_SOURCE: &str = include_str!("../../stdlib/src/ui_canvas.roze");
 const UI_CANVAS_DISPLAY_NAME: &str = "ui_canvas (built-in)";
 
+const UI_WIDGETS_SOURCE: &str = include_str!("../../stdlib/src/ui_widgets.roze");
+const UI_WIDGETS_DISPLAY_NAME: &str = "ui_widgets (built-in)";
+
 const ORM_SOURCE: &str = include_str!("../../stdlib/src/orm.roze");
 const ORM_DISPLAY_NAME: &str = "orm (built-in)";
 
@@ -316,11 +319,14 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         "game" | "roze::game" | "roze-game" | "roze_game" | "raylib_game" | "gamedev" | "engine" => {
             Some("roze-game/src/lib.roze".to_string())
         }
-        "ui" | "roze::ui" | "roze-ui" | "roze_ui" | "gui" | "widgets" | "desktop_ui" => {
+        "ui" | "roze::ui" | "roze-ui" | "roze_ui" | "gui" | "desktop_ui" => {
             Some("roze-ui/src/lib.roze".to_string())
         }
         "roze-ui.canvas" | "roze-ui::canvas" | "roze::ui::canvas" | "roze.ui.canvas" | "ui.canvas" | "ui::canvas" | "roze_ui_canvas" | "ui_canvas" | "canvas" | "skia" => {
             Some("roze-ui/src/canvas.roze".to_string())
+        }
+        "roze-ui.widgets" | "roze-ui::widgets" | "roze::ui::widgets" | "roze.ui.widgets" | "ui.widgets" | "ui::widgets" | "roze_ui_widgets" | "ui_widgets" | "widgets" | "javafx" | "qt" => {
+            Some("roze-ui/src/widgets.roze".to_string())
         }
         _ => None,
     };
@@ -401,6 +407,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
                 "game_render" => Some("game_render.roze"),
                 "game_physics" => Some("game_physics.roze"),
                 "ui_canvas" => Some("ui_canvas.roze"),
+                "ui_widgets" => Some("ui_widgets.roze"),
                 "orm" => Some("orm.roze"),
                 "raw_net" => Some("raw_net.roze"),
                 "crypto" => Some("crypto.roze"),
@@ -579,6 +586,10 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "roze-ui.canvas" || path == "roze-ui::canvas" || path == "roze::ui::canvas" || path == "roze.ui.canvas"
         || path == "ui.canvas" || path == "ui::canvas" || path == "roze_ui_canvas" || path == "ui_canvas" || path == "canvas" || path == "skia" {
         return Ok((UI_CANVAS_SOURCE.to_string(), UI_CANVAS_DISPLAY_NAME.to_string()));
+    }
+    if path == "roze-ui.widgets" || path == "roze-ui::widgets" || path == "roze::ui::widgets" || path == "roze.ui.widgets"
+        || path == "ui.widgets" || path == "ui::widgets" || path == "roze_ui_widgets" || path == "ui_widgets" || path == "widgets" || path == "javafx" || path == "qt" {
+        return Ok((UI_WIDGETS_SOURCE.to_string(), UI_WIDGETS_DISPLAY_NAME.to_string()));
     }
     if path == "orm" || path == "roze::orm" || path == "roze.orm" || path == "roze-orm" || path == "roze_orm"
         || path == "sql_orm" || path == "jpa" || path == "diesel" || path == "seaorm" {

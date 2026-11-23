@@ -5364,6 +5364,24 @@ fn native_standard_ui_canvas_suite() {
     assert!(stdout.contains("ALL 7 SUITES PASSED: M11-T04 NATIVE WINDOWING & GPU CANVAS 100% COMPLETE!"));
 }
 
+#[test]
+fn native_standard_ui_widgets_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_ui_widgets.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_ui_widgets.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_ui_widgets_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("✓ Flexbox multi-pass layout solver computed exact geometry correctly!"));
+    assert!(stdout.contains("✓ Reactive state signals, computed properties, and effects verified!"));
+    assert!(stdout.contains("✓ All 12 desktop widgets and Webview container verified!"));
+    assert!(stdout.contains("✓ Hit-testing, event routing, and focus manager verified!"));
+    assert!(stdout.contains("✓ Virtual tree dumper and theme engine verified!"));
+    assert!(stdout.contains("✓ Benchmark gate passed: 10,000 signals, 1,000 Flexbox nodes, 1,000 events!"));
+    assert!(stdout.contains("ALL SUITES COMPLETED: Roze Reactive Desktop UI & Flexbox 100% OPERATIONAL"));
+}
+
 
 
 

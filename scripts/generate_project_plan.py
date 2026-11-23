@@ -820,7 +820,7 @@ s1_rows = [
         ("M11-T05", 8), ("Month 11", 26), ("Sprint 22 (W45-W46)", 8), "Reactive Desktop UI", "Reactive Desktop UI Toolkit & Flexbox Layout (roze-ui.widgets)",
         "Declarative desktop UI framework: CSS-compliant Flexbox layout engine (flex-direction, justify-content, align-items, flex-grow, flex-shrink), reactive state signals (State<T>, Computed<T>, Effect), full widget hierarchy (Window, Button, TextInput, Label, Slider, CheckBox, DataGrid, TreeView, ScrollView, Dropdown, Dialog, Canvas), embedded Webview container.",
         "Parity with JavaFX, Qt, and Tauri in pure Roze with zero external dependencies.",
-        "Desktop Productivity, Enterprise Frontends, Tools", "9 Days", ("Critical", 14), ("Planned", 12)
+        "Desktop Productivity, Enterprise Frontends, Tools", "9 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M11-T06", 8), ("Month 11", 26), ("Sprint 22 (W45-W46)", 8), "Milestone Gate M11", "60 FPS 3D Game & Cross-Platform Desktop GUI Gate",

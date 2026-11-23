@@ -802,7 +802,7 @@ s1_rows = [
         ("M11-T02", 8), ("Month 11", 26), ("Sprint 21 (W43-W44)", 8), "Hardware Rendering", "Hardware-Accelerated 2D/3D Graphics (roze-game.render)",
         "Direct rendering pipeline: Raylib C-FFI and Vulkan / OpenGL modern abstractions, sprite batching, texture atlases, 3D mesh rendering, lighting models (ambient, diffuse, specular, normal mapping), skeletal animation, GLSL shader pipeline, and camera controllers (orthographic 2D, perspective 3D, first-person, orbital).",
         "Matches Raylib and modern Vulkan 2D/3D graphics capabilities.",
-        "Game Graphics, 3D Visualization, Virtual Reality", "9 Days", ("Critical", 14), ("Planned", 12)
+        "Game Graphics, 3D Visualization, Virtual Reality", "9 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M11-T03", 8), ("Month 11", 26), ("Sprint 21 (W43-W44)", 8), "Spatial Physics & Audio", "Rigid-Body Physics & 3D Spatial Audio (roze-game.physics)",

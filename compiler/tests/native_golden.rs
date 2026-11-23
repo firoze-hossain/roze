@@ -5307,6 +5307,25 @@ fn native_standard_game_ecs_suite() {
     assert!(stdout.contains("ALL 7 TEST SUITES COMPLETED: 100% PASSING (Rust Bevy ECS Parity)"));
 }
 
+#[test]
+fn native_standard_game_render_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_game_render.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_game_render.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_game_render_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: RenderDevice and backend abstractions verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: Texture atlas & sprite batching verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: 3D procedural meshes & AABB bounding calculations verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: Multi-light shading and normal mapping verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: Skeletal animation and forward kinematic skinning verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: GLSL shader pipeline & dynamic uniforms verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: Camera controllers and 10,000 draw call stress gate verified."));
+    assert!(stdout.contains("ALL 7 SUITES PASSED: M11-T02 HARDWARE RENDERING COMPLETE & VERIFIED!"));
+}
+
 
 
 

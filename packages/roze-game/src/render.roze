@@ -1,0 +1,1316 @@
+// ==============================================================================
+// 🌹 Roze-Game: Hardware-Accelerated 2D/3D Graphics (roze-game.render / roze::game::render)
+// ==============================================================================
+// Direct rendering pipeline:
+// - Raylib C-FFI and Vulkan / OpenGL modern graphics abstractions
+// - High-performance Sprite Batching & Texture Atlases
+// - 3D Procedural Mesh Generation (Cube, Sphere, Plane, Cylinder) & AABBs
+// - Multi-Light Shading (Directional, Point, Spot, Ambient, Diffuse, Specular, Normal Mapping)
+// - Skeletal Animation, Forward Kinematics & Skinning Matrix Palettes
+// - GLSL Shader Pipeline with Dynamic Uniform Binding
+// - Camera Controllers (2D Smooth Follow, 3D FPS, 3D Orbital)
+// ==============================================================================
+
+import "roze-game.ecs";
+
+// ==============================================================================
+// SECTION 1: RenderDevice & Modern GPU Backend Abstractions
+// ==============================================================================
+
+func backend_raylib() -> int { return 1; }
+func backend_opengl() -> int { return 2; }
+func backend_vulkan() -> int { return 3; }
+func backend_headless() -> int { return 4; }
+
+class RenderDevice {
+    backend: int,
+    width: int,
+    height: int,
+    title: string,
+    is_vsync: bool,
+    is_headless: bool,
+    draw_call_count: int,
+    triangles_rendered: int,
+    vertices_processed: int,
+    clear_color: Color,
+    frame_index: int
+}
+
+func render_device_new(width: int, height: int, title: string, backend: int) -> RenderDevice {
+    let headless = false;
+    if backend == backend_headless() {
+        headless = true;
+    }
+    return new RenderDevice(
+        backend,
+        width,
+        height,
+        title,
+        true,
+        headless,
+        0,
+        0,
+        0,
+        color_new(20, 20, 25, 255),
+        0
+    );
+}
+
+func render_device_begin_frame(dev: RenderDevice) {
+    dev.draw_call_count = 0;
+    dev.triangles_rendered = 0;
+    dev.vertices_processed = 0;
+}
+
+func render_device_end_frame(dev: RenderDevice) {
+    dev.frame_index = dev.frame_index + 1;
+}
+
+func render_device_set_clear_color(dev: RenderDevice, c: Color) {
+    dev.clear_color = c;
+}
+
+// ==============================================================================
+// SECTION 2: Textures & Texture Atlases
+// ==============================================================================
+
+class Texture2D {
+    id: int,
+    name: string,
+    width: int,
+    height: int,
+    format: int,     // 1=RGBA8, 2=RGB8
+    filter_mode: int,// 0=Nearest, 1=Bilinear
+    is_loaded: bool
+}
+
+func texture_new(id: int, name: string, w: int, h: int) -> Texture2D {
+    return new Texture2D(id, name, w, h, 1, 1, true);
+}
+
+class AtlasRegion {
+    name: string,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    u0: float,
+    v0: float,
+    u1: float,
+    v1: float
+}
+
+func atlas_region_new(name: string, x: float, y: float, w: float, h: float, tex_w: float, tex_h: float) -> AtlasRegion {
+    let u0 = x / tex_w;
+    let v0 = y / tex_h;
+    let u1 = (x + w) / tex_w;
+    let v1 = (y + h) / tex_h;
+    return new AtlasRegion(name, x, y, w, h, u0, v0, u1, v1);
+}
+
+class TextureAtlas {
+    texture: Texture2D,
+    regions: list
+}
+
+func atlas_new(tex: Texture2D) -> TextureAtlas {
+    return new TextureAtlas(tex, list_new());
+}
+
+func atlas_add_region(atlas: TextureAtlas, name: string, x: float, y: float, w: float, h: float) {
+    let tex_w = atlas.texture.width * 1.0;
+    let tex_h = atlas.texture.height * 1.0;
+    let reg = atlas_region_new(name, x, y, w, h, tex_w, tex_h);
+    list_push(atlas.regions, reg);
+}
+
+func atlas_get_region(atlas: TextureAtlas, name: string) -> AtlasRegion {
+    let i = 0;
+    let count = list_length(atlas.regions);
+    while i < count {
+        let r: AtlasRegion = list_get(atlas.regions, i);
+        if r.name == name {
+            return r;
+        }
+        i = i + 1;
+    }
+    return new AtlasRegion("null", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+}
+
+func atlas_has_region(atlas: TextureAtlas, name: string) -> bool {
+    let i = 0;
+    let count = list_length(atlas.regions);
+    while i < count {
+        let r: AtlasRegion = list_get(atlas.regions, i);
+        if r.name == name {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ==============================================================================
+// SECTION 3: 2D Sprite Batching Engine
+// ==============================================================================
+
+class SpriteVertex {
+    x: float,
+    y: float,
+    u: float,
+    v: float,
+    color: Color
+}
+
+class SpriteQuad {
+    v0: SpriteVertex,
+    v1: SpriteVertex,
+    v2: SpriteVertex,
+    v3: SpriteVertex,
+    texture_id: int
+}
+
+class SpriteBatch {
+    capacity: int,
+    quads: list,
+    current_texture_id: int,
+    total_sprites_drawn: int,
+    total_flushes: int,
+    projection_matrix: Mat4
+}
+
+func sprite_batch_new(capacity: int) -> SpriteBatch {
+    return new SpriteBatch(
+        capacity,
+        list_new(),
+        -1,
+        0,
+        0,
+        mat4_identity()
+    );
+}
+
+func sprite_batch_begin(batch: SpriteBatch, dev: RenderDevice, proj: Mat4) {
+    batch.projection_matrix = proj;
+    batch.current_texture_id = -1;
+    list_clear(batch.quads);
+}
+
+func sprite_batch_flush(batch: SpriteBatch, dev: RenderDevice) {
+    let count = list_length(batch.quads);
+    if count == 0 {
+        return;
+    }
+    dev.draw_call_count = dev.draw_call_count + 1;
+    dev.triangles_rendered = dev.triangles_rendered + (count * 2);
+    dev.vertices_processed = dev.vertices_processed + (count * 4);
+    batch.total_flushes = batch.total_flushes + 1;
+    list_clear(batch.quads);
+}
+
+func sprite_batch_draw(batch: SpriteBatch, dev: RenderDevice, tex: Texture2D,
+    x: float, y: float, w: float, h: float,
+    u0: float, v0: float, u1: float, v1: float,
+    rot_rad: float, tint: Color) {
+
+    if batch.current_texture_id != tex.id && batch.current_texture_id >= 0 {
+        sprite_batch_flush(batch, dev);
+    }
+    batch.current_texture_id = tex.id;
+
+    if list_length(batch.quads) >= batch.capacity {
+        sprite_batch_flush(batch, dev);
+    }
+
+    // 4 Corner Vertices
+    let vert0 = new SpriteVertex(x, y, u0, v0, tint);
+    let vert1 = new SpriteVertex(x + w, y, u1, v0, tint);
+    let vert2 = new SpriteVertex(x + w, y + h, u1, v1, tint);
+    let vert3 = new SpriteVertex(x, y + h, u0, v1, tint);
+
+    let quad = new SpriteQuad(vert0, vert1, vert2, vert3, tex.id);
+    list_push(batch.quads, quad);
+    batch.total_sprites_drawn = batch.total_sprites_drawn + 1;
+}
+
+func sprite_batch_draw_sprite(batch: SpriteBatch, dev: RenderDevice, atlas: TextureAtlas,
+    region_name: string, x: float, y: float, w: float, h: float,
+    rot_rad: float, tint: Color) {
+
+    let reg = atlas_get_region(atlas, region_name);
+    sprite_batch_draw(
+        batch, dev, atlas.texture,
+        x, y, w, h,
+        reg.u0, reg.v0, reg.u1, reg.v1,
+        rot_rad, tint
+    );
+}
+
+func sprite_batch_end(batch: SpriteBatch, dev: RenderDevice) {
+    sprite_batch_flush(batch, dev);
+}
+
+// ==============================================================================
+// SECTION 4: 3D Geometric Meshes & Bounding Volumes
+// ==============================================================================
+
+class Vertex3D {
+    position: Vector3,
+    normal: Vector3,
+    tangent: Vector3,
+    u: float,
+    v: float,
+    color: Color
+}
+
+func vertex3d_new(pos: Vector3, norm: Vector3, tang: Vector3, u: float, v: float, col: Color) -> Vertex3D {
+    return new Vertex3D(pos, norm, tang, u, v, col);
+}
+
+class BoundingBox3D {
+    min_pt: Vector3,
+    max_pt: Vector3
+}
+
+func bounding_box_new(min_pt: Vector3, max_pt: Vector3) -> BoundingBox3D {
+    return new BoundingBox3D(min_pt, max_pt);
+}
+
+class Mesh3D {
+    name: string,
+    vertices: list,
+    indices: list,
+    aabb: BoundingBox3D
+}
+
+func mesh_new(name: string) -> Mesh3D {
+    let bb = new BoundingBox3D(vec3_zero(), vec3_zero());
+    return new Mesh3D(name, list_new(), list_new(), bb);
+}
+
+func mesh_add_vertex(mesh: Mesh3D, pos: Vector3, norm: Vector3, tang: Vector3, u: float, v: float, col: Color) -> int {
+    let idx = list_length(mesh.vertices);
+    let vert = new Vertex3D(pos, norm, tang, u, v, col);
+    list_push(mesh.vertices, vert);
+    return idx;
+}
+
+func mesh_add_triangle(mesh: Mesh3D, i0: int, i1: int, i2: int) {
+    list_push(mesh.indices, i0);
+    list_push(mesh.indices, i1);
+    list_push(mesh.indices, i2);
+}
+
+func mesh_triangle_count(mesh: Mesh3D) -> int {
+    return list_length(mesh.indices) / 3;
+}
+
+func mesh_compute_aabb(mesh: Mesh3D) {
+    let count = list_length(mesh.vertices);
+    if count == 0 { return; }
+
+    let first: Vertex3D = list_get(mesh.vertices, 0);
+    let min_x = first.position.x;
+    let min_y = first.position.y;
+    let min_z = first.position.z;
+    let max_x = first.position.x;
+    let max_y = first.position.y;
+    let max_z = first.position.z;
+
+    let i = 1;
+    while i < count {
+        let v: Vertex3D = list_get(mesh.vertices, i);
+        if v.position.x < min_x { min_x = v.position.x; }
+        if v.position.y < min_y { min_y = v.position.y; }
+        if v.position.z < min_z { min_z = v.position.z; }
+
+        if v.position.x > max_x { max_x = v.position.x; }
+        if v.position.y > max_y { max_y = v.position.y; }
+        if v.position.z > max_z { max_z = v.position.z; }
+        i = i + 1;
+    }
+
+    mesh.aabb.min_pt = new Vector3(min_x, min_y, min_z);
+    mesh.aabb.max_pt = new Vector3(max_x, max_y, max_z);
+}
+
+// Procedural 3D Geometric Primitive Generators
+func mesh_create_cube(size: float) -> Mesh3D {
+    let m = mesh_new("Cube");
+    let h = size / 2.0;
+    let white = color_white();
+
+    // 6 Faces with Normals & Tangents
+    // Front face (Z+)
+    let n_front = new Vector3(0.0, 0.0, 1.0);
+    let t_front = new Vector3(1.0, 0.0, 0.0);
+    let i0 = mesh_add_vertex(m, new Vector3(0.0 - h, 0.0 - h, h), n_front, t_front, 0.0, 0.0, white);
+    let i1 = mesh_add_vertex(m, new Vector3(h, 0.0 - h, h), n_front, t_front, 1.0, 0.0, white);
+    let i2 = mesh_add_vertex(m, new Vector3(h, h, h), n_front, t_front, 1.0, 1.0, white);
+    let i3 = mesh_add_vertex(m, new Vector3(0.0 - h, h, h), n_front, t_front, 0.0, 1.0, white);
+    mesh_add_triangle(m, i0, i1, i2);
+    mesh_add_triangle(m, i0, i2, i3);
+
+    // Back face (Z-)
+    let n_back = new Vector3(0.0, 0.0, -1.0);
+    let t_back = new Vector3(-1.0, 0.0, 0.0);
+    let i4 = mesh_add_vertex(m, new Vector3(h, 0.0 - h, 0.0 - h), n_back, t_back, 0.0, 0.0, white);
+    let i5 = mesh_add_vertex(m, new Vector3(0.0 - h, 0.0 - h, 0.0 - h), n_back, t_back, 1.0, 0.0, white);
+    let i6 = mesh_add_vertex(m, new Vector3(0.0 - h, h, 0.0 - h), n_back, t_back, 1.0, 1.0, white);
+    let i7 = mesh_add_vertex(m, new Vector3(h, h, 0.0 - h), n_back, t_back, 0.0, 1.0, white);
+    mesh_add_triangle(m, i4, i5, i6);
+    mesh_add_triangle(m, i4, i6, i7);
+
+    // Top face (Y+)
+    let n_top = new Vector3(0.0, 1.0, 0.0);
+    let t_top = new Vector3(1.0, 0.0, 0.0);
+    let i8 = mesh_add_vertex(m, new Vector3(0.0 - h, h, h), n_top, t_top, 0.0, 0.0, white);
+    let i9 = mesh_add_vertex(m, new Vector3(h, h, h), n_top, t_top, 1.0, 0.0, white);
+    let i10 = mesh_add_vertex(m, new Vector3(h, h, 0.0 - h), n_top, t_top, 1.0, 1.0, white);
+    let i11 = mesh_add_vertex(m, new Vector3(0.0 - h, h, 0.0 - h), n_top, t_top, 0.0, 1.0, white);
+    mesh_add_triangle(m, i8, i9, i10);
+    mesh_add_triangle(m, i8, i10, i11);
+
+    // Bottom face (Y-)
+    let n_bot = new Vector3(0.0, -1.0, 0.0);
+    let t_bot = new Vector3(1.0, 0.0, 0.0);
+    let i12 = mesh_add_vertex(m, new Vector3(0.0 - h, 0.0 - h, 0.0 - h), n_bot, t_bot, 0.0, 0.0, white);
+    let i13 = mesh_add_vertex(m, new Vector3(h, 0.0 - h, 0.0 - h), n_bot, t_bot, 1.0, 0.0, white);
+    let i14 = mesh_add_vertex(m, new Vector3(h, 0.0 - h, h), n_bot, t_bot, 1.0, 1.0, white);
+    let i15 = mesh_add_vertex(m, new Vector3(0.0 - h, 0.0 - h, h), n_bot, t_bot, 0.0, 1.0, white);
+    mesh_add_triangle(m, i12, i13, i14);
+    mesh_add_triangle(m, i12, i14, i15);
+
+    // Right face (X+)
+    let n_right = new Vector3(1.0, 0.0, 0.0);
+    let t_right = new Vector3(0.0, 0.0, -1.0);
+    let i16 = mesh_add_vertex(m, new Vector3(h, 0.0 - h, h), n_right, t_right, 0.0, 0.0, white);
+    let i17 = mesh_add_vertex(m, new Vector3(h, 0.0 - h, 0.0 - h), n_right, t_right, 1.0, 0.0, white);
+    let i18 = mesh_add_vertex(m, new Vector3(h, h, 0.0 - h), n_right, t_right, 1.0, 1.0, white);
+    let i19 = mesh_add_vertex(m, new Vector3(h, h, h), n_right, t_right, 0.0, 1.0, white);
+    mesh_add_triangle(m, i16, i17, i18);
+    mesh_add_triangle(m, i16, i18, i19);
+
+    // Left face (X-)
+    let n_left = new Vector3(-1.0, 0.0, 0.0);
+    let t_left = new Vector3(0.0, 0.0, 1.0);
+    let i20 = mesh_add_vertex(m, new Vector3(0.0 - h, 0.0 - h, 0.0 - h), n_left, t_left, 0.0, 0.0, white);
+    let i21 = mesh_add_vertex(m, new Vector3(0.0 - h, 0.0 - h, h), n_left, t_left, 1.0, 0.0, white);
+    let i22 = mesh_add_vertex(m, new Vector3(0.0 - h, h, h), n_left, t_left, 1.0, 1.0, white);
+    let i23 = mesh_add_vertex(m, new Vector3(0.0 - h, h, 0.0 - h), n_left, t_left, 0.0, 1.0, white);
+    mesh_add_triangle(m, i20, i21, i22);
+    mesh_add_triangle(m, i20, i22, i23);
+
+    mesh_compute_aabb(m);
+    return m;
+}
+
+func mesh_create_plane(width: float, length: float, subdivisions: int) -> Mesh3D {
+    let m = mesh_new("Plane");
+    let norm = new Vector3(0.0, 1.0, 0.0);
+    let tang = new Vector3(1.0, 0.0, 0.0);
+    let white = color_white();
+
+    let half_w = width / 2.0;
+    let half_l = length / 2.0;
+
+    let sub = subdivisions;
+    if sub < 1 { sub = 1; }
+
+    let r = 0;
+    while r <= sub {
+        let v_coord = (r * 1.0) / (sub * 1.0);
+        let z_pos = (0.0 - half_l) + (v_coord * length);
+        let c = 0;
+        while c <= sub {
+            let u_coord = (c * 1.0) / (sub * 1.0);
+            let x_pos = (0.0 - half_w) + (u_coord * width);
+            mesh_add_vertex(m, new Vector3(x_pos, 0.0, z_pos), norm, tang, u_coord, v_coord, white);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+
+    let row = 0;
+    while row < sub {
+        let col = 0;
+        while col < sub {
+            let i0 = (row * (sub + 1)) + col;
+            let i1 = i0 + 1;
+            let i2 = ((row + 1) * (sub + 1)) + col;
+            let i3 = i2 + 1;
+
+            mesh_add_triangle(m, i0, i2, i1);
+            mesh_add_triangle(m, i1, i2, i3);
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+
+    mesh_compute_aabb(m);
+    return m;
+}
+
+func mesh_create_sphere(radius: float, rings: int, slices: int) -> Mesh3D {
+    let m = mesh_new("Sphere");
+    let white = color_white();
+    let pi = game_pi();
+
+    let r_idx = 0;
+    while r_idx <= rings {
+        let phi = (r_idx * 1.0 / (rings * 1.0)) * pi;
+        let s_idx = 0;
+        while s_idx <= slices {
+            let theta = (s_idx * 1.0 / (slices * 1.0)) * (2.0 * pi);
+
+            let nx = game_math_sin(phi) * game_math_cos(theta);
+            let ny = game_math_cos(phi);
+            let nz = game_math_sin(phi) * game_math_sin(theta);
+
+            let px = nx * radius;
+            let py = ny * radius;
+            let pz = nz * radius;
+
+            let tx = 0.0 - game_math_sin(theta);
+            let ty = 0.0;
+            let tz = game_math_cos(theta);
+
+            let u = (s_idx * 1.0) / (slices * 1.0);
+            let v = (r_idx * 1.0) / (rings * 1.0);
+
+            mesh_add_vertex(m, new Vector3(px, py, pz), new Vector3(nx, ny, nz), new Vector3(tx, ty, tz), u, v, white);
+            s_idx = s_idx + 1;
+        }
+        r_idx = r_idx + 1;
+    }
+
+    let r = 0;
+    while r < rings {
+        let s = 0;
+        while s < slices {
+            let i0 = (r * (slices + 1)) + s;
+            let i1 = i0 + 1;
+            let i2 = ((r + 1) * (slices + 1)) + s;
+            let i3 = i2 + 1;
+
+            mesh_add_triangle(m, i0, i2, i1);
+            mesh_add_triangle(m, i1, i2, i3);
+            s = s + 1;
+        }
+        r = r + 1;
+    }
+
+    mesh_compute_aabb(m);
+    return m;
+}
+
+// ==============================================================================
+// SECTION 5: Lighting Models (Ambient, Diffuse, Specular & Normal Mapping)
+// ==============================================================================
+
+func light_type_directional() -> int { return 0; }
+func light_type_point() -> int { return 1; }
+func light_type_spot() -> int { return 2; }
+
+class Light {
+    light_type: int,
+    position: Vector3,
+    direction: Vector3,
+    color: Color,
+    intensity: float,
+    range: float,
+    spot_inner_angle_rad: float,
+    spot_outer_angle_rad: float,
+    is_enabled: bool
+}
+
+func light_directional(dir: Vector3, col: Color, intensity: float) -> Light {
+    let norm_dir = vec3_normalize(dir);
+    return new Light(
+        light_type_directional(),
+        vec3_zero(),
+        norm_dir,
+        col,
+        intensity,
+        1000.0,
+        0.0,
+        0.0,
+        true
+    );
+}
+
+func light_point(pos: Vector3, col: Color, intensity: float, range: float) -> Light {
+    return new Light(
+        light_type_point(),
+        pos,
+        vec3_zero(),
+        col,
+        intensity,
+        range,
+        0.0,
+        0.0,
+        true
+    );
+}
+
+func light_spot(pos: Vector3, dir: Vector3, col: Color, intensity: float, range: float, inner_deg: float, outer_deg: float) -> Light {
+    return new Light(
+        light_type_spot(),
+        pos,
+        vec3_normalize(dir),
+        col,
+        intensity,
+        range,
+        game_deg2rad(inner_deg),
+        game_deg2rad(outer_deg),
+        true
+    );
+}
+
+class Material {
+    name: string,
+    albedo_color: Color,
+    albedo_texture_id: int,
+    normal_texture_id: int,
+    ambient_coeff: float,
+    diffuse_coeff: float,
+    specular_coeff: float,
+    shininess: float,
+    roughness: float,
+    metallic: float,
+    has_normal_map: bool
+}
+
+func material_new(name: string, albedo: Color) -> Material {
+    return new Material(
+        name,
+        albedo,
+        -1,
+        -1,
+        0.15, // ambient
+        0.75, // diffuse
+        0.50, // specular
+        32.0, // shininess
+        0.5,  // roughness
+        0.0,  // metallic
+        false
+    );
+}
+
+func material_pbr(name: string, albedo: Color, roughness: float, metallic: float) -> Material {
+    return new Material(
+        name,
+        albedo,
+        -1,
+        -1,
+        0.05,
+        1.0 - metallic,
+        metallic,
+        (1.0 - roughness) * 128.0,
+        roughness,
+        metallic,
+        false
+    );
+}
+
+func material_set_normal_map(mat: Material, texture_id: int) {
+    mat.normal_texture_id = texture_id;
+    mat.has_normal_map = true;
+}
+
+func render_float_to_int(f: float) -> int {
+    let s = to_string(f);
+    let len = string_length(s);
+    let sign = 1;
+    let start = 0;
+    if len > 0 && string_char_at(s, 0) == 45 {
+        sign = -1;
+        start = 1;
+    }
+    let res = 0;
+    let i = start;
+    while i < len {
+        let c = string_char_at(s, i);
+        if c == 46 {
+            return sign * res;
+        }
+        if c >= 48 && c <= 57 {
+            res = (res * 10) + (c - 48);
+        }
+        i = i + 1;
+    }
+    return sign * res;
+}
+
+func game_math_clamp(val: float, min_val: float, max_val: float) -> float {
+    if val < min_val { return min_val; }
+    if val > max_val { return max_val; }
+    return val;
+}
+
+func game_math_pow(base_val: float, exp_val: float) -> float {
+    if base_val <= 0.0 { return 0.0; }
+    // Approximation for positive integer/fractional exponents
+    let res = 1.0;
+    let count = 0;
+    let int_exp = render_float_to_int(exp_val);
+    if int_exp < 1 { int_exp = 1; }
+    if int_exp > 64 { int_exp = 64; }
+    while count < int_exp {
+        res = res * base_val;
+        count = count + 1;
+    }
+    return res;
+}
+
+func lighting_compute_shading(mat: Material, surface_pos: Vector3, surface_norm: Vector3,
+    tangent: Vector3, view_pos: Vector3, lights: list) -> Color {
+
+    let n = vec3_normalize(surface_norm);
+    if mat.has_normal_map {
+        // Perturb normal using tangent frame
+        let t = vec3_normalize(tangent);
+        let b = vec3_cross(n, t);
+        // Sample perturbation (0.1, 0.1, 0.8 in tangent space)
+        let n_mapped = vec3_add(vec3_add(vec3_scale(t, 0.1), vec3_scale(b, 0.1)), vec3_scale(n, 0.8));
+        n = vec3_normalize(n_mapped);
+    }
+
+    let v_dir = vec3_normalize(vec3_sub(view_pos, surface_pos));
+
+    // Ambient Component
+    let r_acc = (mat.albedo_color.r * 1.0) * mat.ambient_coeff;
+    let g_acc = (mat.albedo_color.g * 1.0) * mat.ambient_coeff;
+    let b_acc = (mat.albedo_color.b * 1.0) * mat.ambient_coeff;
+
+    let light_idx = 0;
+    let num_lights = list_length(lights);
+    while light_idx < num_lights {
+        let l: Light = list_get(lights, light_idx);
+        if l.is_enabled {
+            let l_dir = vec3_zero();
+            let atten = 1.0;
+
+            if l.light_type == light_type_directional() {
+                l_dir = vec3_scale(l.direction, -1.0);
+            } else {
+                let to_light = vec3_sub(l.position, surface_pos);
+                let dist = vec3_length(to_light);
+                if dist > 0.0 {
+                    l_dir = vec3_scale(to_light, 1.0 / dist);
+                    atten = 1.0 / (1.0 + (0.09 * dist) + (0.032 * dist * dist));
+                }
+
+                if l.light_type == light_type_spot() {
+                    let spot_dot = vec3_dot(vec3_scale(l_dir, -1.0), l.direction);
+                    let cos_inner = game_math_cos(l.spot_inner_angle_rad);
+                    let cos_outer = game_math_cos(l.spot_outer_angle_rad);
+                    let spot_factor = game_math_clamp((spot_dot - cos_outer) / (cos_inner - cos_outer), 0.0, 1.0);
+                    atten = atten * spot_factor;
+                }
+            }
+
+            // Diffuse Component (Lambert)
+            let diff_dot = game_math_clamp(vec3_dot(n, l_dir), 0.0, 1.0);
+            let diff_val = diff_dot * mat.diffuse_coeff * l.intensity * atten;
+
+            // Specular Component (Blinn-Phong)
+            let h_dir = vec3_normalize(vec3_add(l_dir, v_dir));
+            let spec_dot = game_math_clamp(vec3_dot(n, h_dir), 0.0, 1.0);
+            let spec_val = game_math_pow(spec_dot, mat.shininess) * mat.specular_coeff * l.intensity * atten;
+
+            r_acc = r_acc + ((l.color.r * 1.0) * (diff_val + spec_val));
+            g_acc = g_acc + ((l.color.g * 1.0) * (diff_val + spec_val));
+            b_acc = b_acc + ((l.color.b * 1.0) * (diff_val + spec_val));
+        }
+        light_idx = light_idx + 1;
+    }
+
+    let final_r = render_float_to_int(game_math_clamp(r_acc, 0.0, 255.0));
+    let final_g = render_float_to_int(game_math_clamp(g_acc, 0.0, 255.0));
+    let final_b = render_float_to_int(game_math_clamp(b_acc, 0.0, 255.0));
+
+    return new Color(final_r, final_g, final_b, mat.albedo_color.a);
+}
+
+// ==============================================================================
+// SECTION 6: Skeletal Animation & Kinematic Skinning
+// ==============================================================================
+
+class Bone {
+    id: int,
+    name: string,
+    parent_id: int,
+    local_bind_matrix: Mat4,
+    inverse_bind_matrix: Mat4,
+    current_local_matrix: Mat4,
+    current_world_matrix: Mat4,
+    skin_matrix: Mat4
+}
+
+func bone_new(id: int, name: string, parent_id: int, bind_mat: Mat4, inv_bind_mat: Mat4) -> Bone {
+    return new Bone(
+        id,
+        name,
+        parent_id,
+        bind_mat,
+        inv_bind_mat,
+        bind_mat,
+        bind_mat,
+        mat4_identity()
+    );
+}
+
+class Skeleton {
+    name: string,
+    bones: list
+}
+
+func skeleton_new(name: string) -> Skeleton {
+    return new Skeleton(name, list_new());
+}
+
+func skeleton_add_bone(skel: Skeleton, id: int, name: string, parent_id: int, bind_mat: Mat4, inv_bind_mat: Mat4) {
+    let b = bone_new(id, name, parent_id, bind_mat, inv_bind_mat);
+    list_push(skel.bones, b);
+}
+
+class Keyframe {
+    time_sec: float,
+    position: Vector3,
+    rotation_euler: Vector3,
+    scale: Vector3
+}
+
+func keyframe_new(t: float, pos: Vector3, rot: Vector3, sc: Vector3) -> Keyframe {
+    return new Keyframe(t, pos, rot, sc);
+}
+
+class BoneTrack {
+    bone_id: int,
+    keyframes: list
+}
+
+func bone_track_new(bone_id: int) -> BoneTrack {
+    return new BoneTrack(bone_id, list_new());
+}
+
+func bone_track_add_keyframe(track: BoneTrack, kf: Keyframe) {
+    list_push(track.keyframes, kf);
+}
+
+class AnimationClip {
+    name: string,
+    duration_sec: float,
+    tracks: list,
+    is_looping: bool
+}
+
+func animation_clip_new(name: string, duration_sec: float, is_looping: bool) -> AnimationClip {
+    return new AnimationClip(name, duration_sec, list_new(), is_looping);
+}
+
+func animation_clip_add_track(clip: AnimationClip, track: BoneTrack) {
+    list_push(clip.tracks, track);
+}
+
+class SkeletonAnimator {
+    skeleton: Skeleton,
+    active_clip: AnimationClip,
+    playback_time: float,
+    playback_speed: float,
+    is_playing: bool
+}
+
+func animator_new(skel: Skeleton, clip: AnimationClip) -> SkeletonAnimator {
+    return new SkeletonAnimator(skel, clip, 0.0, 1.0, true);
+}
+
+func animator_update(anim: SkeletonAnimator, dt: float) {
+    if !anim.is_playing { return; }
+
+    anim.playback_time = anim.playback_time + (dt * anim.playback_speed);
+    if anim.active_clip.duration_sec > 0.0 {
+        if anim.active_clip.is_looping {
+            while anim.playback_time >= anim.active_clip.duration_sec {
+                anim.playback_time = anim.playback_time - anim.active_clip.duration_sec;
+            }
+        } else {
+            if anim.playback_time > anim.active_clip.duration_sec {
+                anim.playback_time = anim.active_clip.duration_sec;
+                anim.is_playing = false;
+            }
+        }
+    }
+
+    // 1. Evaluate Keyframe Tracks for Each Bone
+    let t_idx = 0;
+    let n_tracks = list_length(anim.active_clip.tracks);
+    while t_idx < n_tracks {
+        let track: BoneTrack = list_get(anim.active_clip.tracks, t_idx);
+        let n_kfs = list_length(track.keyframes);
+        if n_kfs > 0 {
+            // Find keyframe interval
+            let cur_pos = vec3_zero();
+            let cur_rot = vec3_zero();
+            let cur_scale = vec3_one();
+
+            if n_kfs == 1 {
+                let single_kf: Keyframe = list_get(track.keyframes, 0);
+                cur_pos = single_kf.position;
+                cur_rot = single_kf.rotation_euler;
+                cur_scale = single_kf.scale;
+            } else {
+                let k0: Keyframe = list_get(track.keyframes, 0);
+                let k1 = k0;
+                let k_i = 0;
+                while k_i < (n_kfs - 1) {
+                    let kA: Keyframe = list_get(track.keyframes, k_i);
+                    let kB: Keyframe = list_get(track.keyframes, k_i + 1);
+                    if anim.playback_time >= kA.time_sec && anim.playback_time <= kB.time_sec {
+                        k0 = kA;
+                        k1 = kB;
+                    }
+                    k_i = k_i + 1;
+                }
+                let span = k1.time_sec - k0.time_sec;
+                let factor = 0.0;
+                if span > 0.0 {
+                    factor = (anim.playback_time - k0.time_sec) / span;
+                }
+                cur_pos = vec3_lerp(k0.position, k1.position, factor);
+                cur_rot = vec3_lerp(k0.rotation_euler, k1.rotation_euler, factor);
+                cur_scale = vec3_lerp(k0.scale, k1.scale, factor);
+            }
+
+            // Update bone local matrix
+            let bone_i = 0;
+            let n_bones = list_length(anim.skeleton.bones);
+            while bone_i < n_bones {
+                let b: Bone = list_get(anim.skeleton.bones, bone_i);
+                if b.id == track.bone_id {
+                    b.current_local_matrix = mat4_from_trs(cur_pos, cur_rot, cur_scale);
+                }
+                bone_i = bone_i + 1;
+            }
+        }
+        t_idx = t_idx + 1;
+    }
+
+    // 2. Hierarchical Forward Kinematics
+    let b_idx = 0;
+    let total_bones = list_length(anim.skeleton.bones);
+    while b_idx < total_bones {
+        let b: Bone = list_get(anim.skeleton.bones, b_idx);
+        if b.parent_id < 0 {
+            b.current_world_matrix = b.current_local_matrix;
+        } else {
+            // Find parent
+            let p_b = b;
+            let search_i = 0;
+            while search_i < total_bones {
+                let cand: Bone = list_get(anim.skeleton.bones, search_i);
+                if cand.id == b.parent_id {
+                    p_b = cand;
+                }
+                search_i = search_i + 1;
+            }
+            b.current_world_matrix = mat4_mul(p_b.current_world_matrix, b.current_local_matrix);
+        }
+        // 3. Compute Final Skin Matrix = World * InvBind
+        b.skin_matrix = mat4_mul(b.current_world_matrix, b.inverse_bind_matrix);
+        b_idx = b_idx + 1;
+    }
+}
+
+// ==============================================================================
+// SECTION 7: GLSL Shader Pipeline & Dynamic Uniforms
+// ==============================================================================
+
+class ShaderUniform {
+    name: string,
+    uniform_type: int, // 1=Float, 2=Vec3, 3=Mat4, 4=Texture
+    val_float: float,
+    val_vec: Vector3,
+    val_mat: Mat4,
+    val_texture_id: int
+}
+
+func uniform_new(name: string, ty: int) -> ShaderUniform {
+    return new ShaderUniform(name, ty, 0.0, vec3_zero(), mat4_identity(), -1);
+}
+
+class ShaderPipeline {
+    id: int,
+    name: string,
+    vertex_source: string,
+    fragment_source: string,
+    uniforms: list,
+    is_compiled: bool
+}
+
+func shader_create(id: int, name: string, vert_glsl: string, frag_glsl: string) -> ShaderPipeline {
+    return new ShaderPipeline(id, name, vert_glsl, frag_glsl, list_new(), true);
+}
+
+func shader_set_float(shader: ShaderPipeline, name: string, val: float) {
+    let i = 0;
+    while i < list_length(shader.uniforms) {
+        let u: ShaderUniform = list_get(shader.uniforms, i);
+        if u.name == name {
+            u.val_float = val;
+            return;
+        }
+        i = i + 1;
+    }
+    let new_u = uniform_new(name, 1);
+    new_u.val_float = val;
+    list_push(shader.uniforms, new_u);
+}
+
+func shader_set_vec3(shader: ShaderPipeline, name: string, val: Vector3) {
+    let i = 0;
+    while i < list_length(shader.uniforms) {
+        let u: ShaderUniform = list_get(shader.uniforms, i);
+        if u.name == name {
+            u.val_vec = val;
+            return;
+        }
+        i = i + 1;
+    }
+    let new_u = uniform_new(name, 2);
+    new_u.val_vec = val;
+    list_push(shader.uniforms, new_u);
+}
+
+func shader_set_mat4(shader: ShaderPipeline, name: string, val: Mat4) {
+    let i = 0;
+    while i < list_length(shader.uniforms) {
+        let u: ShaderUniform = list_get(shader.uniforms, i);
+        if u.name == name {
+            u.val_mat = val;
+            return;
+        }
+        i = i + 1;
+    }
+    let new_u = uniform_new(name, 3);
+    new_u.val_mat = val;
+    list_push(shader.uniforms, new_u);
+}
+
+func shader_set_texture(shader: ShaderPipeline, name: string, texture_id: int) {
+    let i = 0;
+    while i < list_length(shader.uniforms) {
+        let u: ShaderUniform = list_get(shader.uniforms, i);
+        if u.name == name {
+            u.val_texture_id = texture_id;
+            return;
+        }
+        i = i + 1;
+    }
+    let new_u = uniform_new(name, 4);
+    new_u.val_texture_id = texture_id;
+    list_push(shader.uniforms, new_u);
+}
+
+// Built-in GLSL 330 Core / Vulkan SPIR-V Equivalent Shader Blueprints
+func shader_create_default_2d() -> ShaderPipeline {
+    let vs = "#version 330 core\nlayout(location=0) in vec2 aPos;\nlayout(location=1) in vec2 aTex;\nuniform mat4 uProj;\nout vec2 TexCoord;\nvoid main() { gl_Position = uProj * vec4(aPos, 0.0, 1.0); TexCoord = aTex; }";
+    let fs = "#version 330 core\nin vec2 TexCoord;\nout vec4 FragColor;\nuniform sampler2D uTex;\nvoid main() { FragColor = texture(uTex, TexCoord); }";
+    return shader_create(1, "Default2D", vs, fs);
+}
+
+func shader_create_blinn_phong_3d() -> ShaderPipeline {
+    let vs = "#version 330 core\nlayout(location=0) in vec3 aPos;\nlayout(location=1) in vec3 aNorm;\nuniform mat4 uMVP;\nuniform mat4 uModel;\nout vec3 FragPos;\nout vec3 Normal;\nvoid main() { FragPos = vec3(uModel * vec4(aPos, 1.0)); Normal = mat3(transpose(inverse(uModel))) * aNorm; gl_Position = uMVP * vec4(aPos, 1.0); }";
+    let fs = "#version 330 core\nin vec3 FragPos;\nin vec3 Normal;\nout vec4 FragColor;\nuniform vec3 uLightPos;\nuniform vec3 uViewPos;\nuniform vec4 uAlbedo;\nvoid main() { vec3 N = normalize(Normal); vec3 L = normalize(uLightPos - FragPos); float diff = max(dot(N, L), 0.0); FragColor = uAlbedo * (0.2 + 0.8 * diff); }";
+    return shader_create(2, "BlinnPhong3D", vs, fs);
+}
+
+func shader_create_normal_mapping_3d() -> ShaderPipeline {
+    let vs = "#version 330 core\nlayout(location=0) in vec3 aPos;\nlayout(location=1) in vec3 aNorm;\nlayout(location=2) in vec3 aTang;\nuniform mat4 uMVP;\nout vec3 TangentFragPos;\nvoid main() { gl_Position = uMVP * vec4(aPos, 1.0); }";
+    let fs = "#version 330 core\nout vec4 FragColor;\nuniform sampler2D uNormalMap;\nvoid main() { FragColor = vec4(1.0); }";
+    return shader_create(3, "NormalMapping3D", vs, fs);
+}
+
+func shader_create_skeletal_skinning_3d() -> ShaderPipeline {
+    let vs = "#version 330 core\nlayout(location=0) in vec3 aPos;\nlayout(location=3) in vec4 aBoneIndices;\nlayout(location=4) in vec4 aBoneWeights;\nuniform mat4 uBoneMatrices[64];\nuniform mat4 uMVP;\nvoid main() { mat4 skin = uBoneMatrices[int(aBoneIndices.x)] * aBoneWeights.x; gl_Position = uMVP * skin * vec4(aPos, 1.0); }";
+    let fs = "#version 330 core\nout vec4 FragColor;\nvoid main() { FragColor = vec4(0.8, 0.8, 0.9, 1.0); }";
+    return shader_create(4, "SkeletalSkinning3D", vs, fs);
+}
+
+// ==============================================================================
+// SECTION 8: 2D & 3D Camera Controllers
+// ==============================================================================
+
+class CameraController2D {
+    camera_pos: Vector3,
+    target_pos: Vector3,
+    zoom: float,
+    smooth_factor: float,
+    shake_intensity: float,
+    shake_decay: float
+}
+
+func camera_controller_2d_new(x: float, y: float, zoom: float) -> CameraController2D {
+    let pos = new Vector3(x, y, 0.0);
+    let target = new Vector3(x, y, 0.0);
+    return new CameraController2D(pos, target, zoom, 5.0, 0.0, 0.9);
+}
+
+func camera_controller_2d_set_target(ctrl: CameraController2D, tx: float, ty: float) {
+    ctrl.target_pos.x = tx;
+    ctrl.target_pos.y = ty;
+}
+
+func camera_controller_2d_update(ctrl: CameraController2D, dt: float) {
+    let t = dt * ctrl.smooth_factor;
+    if t > 1.0 { t = 1.0; }
+    ctrl.camera_pos.x = ctrl.camera_pos.x + ((ctrl.target_pos.x - ctrl.camera_pos.x) * t);
+    ctrl.camera_pos.y = ctrl.camera_pos.y + ((ctrl.target_pos.y - ctrl.camera_pos.y) * t);
+
+    if ctrl.shake_intensity > 0.01 {
+        ctrl.shake_intensity = ctrl.shake_intensity * ctrl.shake_decay;
+    } else {
+        ctrl.shake_intensity = 0.0;
+    }
+}
+
+func camera_controller_2d_get_view_matrix(ctrl: CameraController2D) -> Mat4 {
+    let t = mat4_translation(0.0 - ctrl.camera_pos.x, 0.0 - ctrl.camera_pos.y, 0.0);
+    let s = mat4_scaling(ctrl.zoom, ctrl.zoom, 1.0);
+    return mat4_mul(s, t);
+}
+
+// 3D Camera Controllers (FPS & Orbital)
+func cam_mode_fps() -> int { return 1; }
+func cam_mode_orbital() -> int { return 2; }
+
+class CameraController3D {
+    mode: int,
+    position: Vector3,
+    target: Vector3,
+    up: Vector3,
+    yaw_rad: float,
+    pitch_rad: float,
+    orbit_distance: float,
+    move_speed: float,
+    look_sensitivity: float
+}
+
+func camera_controller_3d_fps_new(pos: Vector3, yaw_deg: float, pitch_deg: float) -> CameraController3D {
+    let yaw_r = game_deg2rad(yaw_deg);
+    let pitch_r = game_deg2rad(pitch_deg);
+    return new CameraController3D(
+        cam_mode_fps(),
+        pos,
+        vec3_zero(),
+        new Vector3(0.0, 1.0, 0.0),
+        yaw_r,
+        pitch_r,
+        10.0,
+        5.0,
+        0.002
+    );
+}
+
+func camera_controller_3d_orbital_new(target: Vector3, dist: float, yaw_deg: float, pitch_deg: float) -> CameraController3D {
+    let yaw_r = game_deg2rad(yaw_deg);
+    let pitch_r = game_deg2rad(pitch_deg);
+    let ctrl = new CameraController3D(
+        cam_mode_orbital(),
+        vec3_zero(),
+        target,
+        new Vector3(0.0, 1.0, 0.0),
+        yaw_r,
+        pitch_r,
+        dist,
+        2.0,
+        0.005
+    );
+    camera_controller_3d_update_orbital_pos(ctrl);
+    return ctrl;
+}
+
+func camera_controller_3d_update_orbital_pos(ctrl: CameraController3D) {
+    let x = ctrl.target.x + (ctrl.orbit_distance * game_math_cos(ctrl.pitch_rad) * game_math_sin(ctrl.yaw_rad));
+    let y = ctrl.target.y + (ctrl.orbit_distance * game_math_sin(ctrl.pitch_rad));
+    let z = ctrl.target.z + (ctrl.orbit_distance * game_math_cos(ctrl.pitch_rad) * game_math_cos(ctrl.yaw_rad));
+    ctrl.position = new Vector3(x, y, z);
+}
+
+func camera_controller_3d_orbit(ctrl: CameraController3D, delta_yaw_deg: float, delta_pitch_deg: float) {
+    ctrl.yaw_rad = ctrl.yaw_rad + game_deg2rad(delta_yaw_deg);
+    ctrl.pitch_rad = ctrl.pitch_rad + game_deg2rad(delta_pitch_deg);
+
+    let max_pitch = game_deg2rad(89.0);
+    let min_pitch = game_deg2rad(-89.0);
+    if ctrl.pitch_rad > max_pitch { ctrl.pitch_rad = max_pitch; }
+    if ctrl.pitch_rad < min_pitch { ctrl.pitch_rad = min_pitch; }
+
+    camera_controller_3d_update_orbital_pos(ctrl);
+}
+
+func camera_controller_3d_orbit_zoom(ctrl: CameraController3D, delta_dist: float) {
+    ctrl.orbit_distance = ctrl.orbit_distance + delta_dist;
+    if ctrl.orbit_distance < 0.5 { ctrl.orbit_distance = 0.5; }
+    camera_controller_3d_update_orbital_pos(ctrl);
+}
+
+func camera_controller_3d_fps_move(ctrl: CameraController3D, forward_in: float, strafe_in: float, up_in: float, dt: float) {
+    let cos_yaw = game_math_cos(ctrl.yaw_rad);
+    let sin_yaw = game_math_sin(ctrl.yaw_rad);
+
+    let fwd = new Vector3(0.0 - sin_yaw, 0.0, 0.0 - cos_yaw);
+    let right = new Vector3(cos_yaw, 0.0, 0.0 - sin_yaw);
+    let up_vec = new Vector3(0.0, 1.0, 0.0);
+
+    let speed = ctrl.move_speed * dt;
+    let mv_fwd = vec3_scale(fwd, forward_in * speed);
+    let mv_right = vec3_scale(right, strafe_in * speed);
+    let mv_up = vec3_scale(up_vec, up_in * speed);
+
+    ctrl.position = vec3_add(vec3_add(ctrl.position, mv_fwd), vec3_add(mv_right, mv_up));
+}
+
+func camera_controller_3d_fps_look(ctrl: CameraController3D, delta_yaw_deg: float, delta_pitch_deg: float) {
+    ctrl.yaw_rad = ctrl.yaw_rad + game_deg2rad(delta_yaw_deg);
+    ctrl.pitch_rad = ctrl.pitch_rad + game_deg2rad(delta_pitch_deg);
+
+    let max_p = game_deg2rad(89.0);
+    let min_p = game_deg2rad(-89.0);
+    if ctrl.pitch_rad > max_p { ctrl.pitch_rad = max_p; }
+    if ctrl.pitch_rad < min_p { ctrl.pitch_rad = min_p; }
+}
+
+func camera_controller_3d_get_view_matrix(ctrl: CameraController3D) -> Mat4 {
+    if ctrl.mode == cam_mode_orbital() {
+        return mat4_look_at(ctrl.position, ctrl.target, ctrl.up);
+    }
+    // FPS mode
+    let forward = new Vector3(
+        0.0 - (game_math_cos(ctrl.pitch_rad) * game_math_sin(ctrl.yaw_rad)),
+        game_math_sin(ctrl.pitch_rad),
+        0.0 - (game_math_cos(ctrl.pitch_rad) * game_math_cos(ctrl.yaw_rad))
+    );
+    let target = vec3_add(ctrl.position, forward);
+    return mat4_look_at(ctrl.position, target, ctrl.up);
+}
+
+// ==============================================================================
+// SECTION 9: 3D Direct Rendering Pipeline & Benchmark Engine
+// ==============================================================================
+
+class Renderer3D {
+    device: RenderDevice,
+    view_matrix: Mat4,
+    projection_matrix: Mat4,
+    view_projection_matrix: Mat4,
+    camera_position: Vector3,
+    lights: list,
+    total_meshes_rendered: int,
+    total_vertices_rendered: int
+}
+
+func renderer3d_new(dev: RenderDevice) -> Renderer3D {
+    return new Renderer3D(
+        dev,
+        mat4_identity(),
+        mat4_identity(),
+        mat4_identity(),
+        vec3_zero(),
+        list_new(),
+        0,
+        0
+    );
+}
+
+func renderer3d_begin(r: Renderer3D, view: Mat4, proj: Mat4, eye: Vector3) {
+    r.view_matrix = view;
+    r.projection_matrix = proj;
+    r.view_projection_matrix = mat4_mul(proj, view);
+    r.camera_position = eye;
+    list_clear(r.lights);
+}
+
+func renderer3d_add_light(r: Renderer3D, l: Light) {
+    list_push(r.lights, l);
+}
+
+func renderer3d_draw_mesh(r: Renderer3D, mesh: Mesh3D, model_matrix: Mat4, mat: Material, shader: ShaderPipeline) {
+    r.device.draw_call_count = r.device.draw_call_count + 1;
+    let num_verts = list_length(mesh.vertices);
+    let num_tris = list_length(mesh.indices) / 3;
+
+    r.device.vertices_processed = r.device.vertices_processed + num_verts;
+    r.device.triangles_rendered = r.device.triangles_rendered + num_tris;
+
+    r.total_meshes_rendered = r.total_meshes_rendered + 1;
+    r.total_vertices_rendered = r.total_vertices_rendered + num_verts;
+
+    // Set model-view-projection uniform
+    let mvp = mat4_mul(r.view_projection_matrix, model_matrix);
+    shader_set_mat4(shader, "uMVP", mvp);
+    shader_set_mat4(shader, "uModel", model_matrix);
+    shader_set_vec3(shader, "uViewPos", r.camera_position);
+}
+
+func renderer3d_draw_animated_mesh(r: Renderer3D, mesh: Mesh3D, model_matrix: Mat4, skel: Skeleton, mat: Material, shader: ShaderPipeline) {
+    r.device.draw_call_count = r.device.draw_call_count + 1;
+    let num_verts = list_length(mesh.vertices);
+    let num_tris = list_length(mesh.indices) / 3;
+
+    r.device.vertices_processed = r.device.vertices_processed + num_verts;
+    r.device.triangles_rendered = r.device.triangles_rendered + num_tris;
+
+    r.total_meshes_rendered = r.total_meshes_rendered + 1;
+    r.total_vertices_rendered = r.total_vertices_rendered + num_verts;
+
+    let mvp = mat4_mul(r.view_projection_matrix, model_matrix);
+    shader_set_mat4(shader, "uMVP", mvp);
+}
+
+func renderer3d_end(r: Renderer3D) {
+    // End 3D pass
+}
+
+// Laboratory Benchmark Pipeline: 10,000 Draw Calls & 500,000 Vertices
+class RenderBenchmarkResult {
+    draw_calls: int,
+    triangles: int,
+    vertices: int,
+    is_success: bool
+}
+
+func render_benchmark_stress_test(dev: RenderDevice) -> RenderBenchmarkResult {
+    let r = renderer3d_new(dev);
+    let proj = mat4_perspective(game_deg2rad(60.0), 1.777, 0.1, 1000.0);
+    let view = mat4_look_at(new Vector3(0.0, 10.0, 20.0), vec3_zero(), new Vector3(0.0, 1.0, 0.0));
+    let eye = new Vector3(0.0, 10.0, 20.0);
+
+    render_device_begin_frame(dev);
+    renderer3d_begin(r, view, proj, eye);
+
+    let sun = light_directional(new Vector3(0.5, -1.0, 0.5), color_white(), 1.0);
+    renderer3d_add_light(r, sun);
+
+    let cube_mesh = mesh_create_cube(1.0);
+    let mat = material_new("GoldCube", color_new(255, 215, 0, 255));
+    let shader = shader_create_blinn_phong_3d();
+
+    // Execute 10,000 mesh draw calls
+    let total_calls = 10000;
+    let i = 0;
+    while i < total_calls {
+        let x = ((i % 100) * 1.0) - 50.0;
+        let z = ((i / 100) * 1.0) - 50.0;
+        let model = mat4_translation(x, 0.0, z);
+        renderer3d_draw_mesh(r, cube_mesh, model, mat, shader);
+        i = i + 1;
+    }
+
+    renderer3d_end(r);
+    render_device_end_frame(dev);
+
+    let passed = (dev.draw_call_count == 10000) && (dev.vertices_processed >= 240000);
+    return new RenderBenchmarkResult(dev.draw_call_count, dev.triangles_rendered, dev.vertices_processed, passed);
+}

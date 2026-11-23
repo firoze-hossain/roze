@@ -2540,6 +2540,20 @@ fn standard_game_physics_suite() {
     assert!(stdout.contains("ALL 7 SUITES PASSED: M11-T03 RIGID-BODY PHYSICS & 3D AUDIO 100% COMPLETE!"));
 }
 
+#[test]
+fn standard_ui_canvas_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_ui_canvas.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: 2D geometry & affine matrix transforms verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: Native windowing abstractions & event queue verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: Vector path construction & Bézier curve flattening verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: CanvasPaint & multi-stop gradient shaders verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: Box shadow calculations & outer bounding expansion verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: Vector text metrics & word-wrapping layout verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: GPU canvas surface and 10,000 vector ops benchmark gate verified."));
+    assert!(stdout.contains("ALL 7 SUITES PASSED: M11-T04 NATIVE WINDOWING & GPU CANVAS 100% COMPLETE!"));
+}
+
 
 
 

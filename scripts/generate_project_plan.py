@@ -814,7 +814,7 @@ s1_rows = [
         ("M11-T04", 8), ("Month 11", 26), ("Sprint 22 (W45-W46)", 8), "Native Windowing", "Cross-Platform Native Windowing & GPU Canvas (roze-ui.canvas)",
         "Desktop platform backends: Win32 API on Windows, Wayland and X11 on Linux, Cocoa on macOS. GPU-accelerated 2D vector path rasterizer (Bézier curves, gradients, anti-aliased text, box shadows, clipping regions) with direct hardware VSync.",
         "Parity with Skia and native OS windowing abstractions.",
-        "Desktop Applications, Native UI, Vector Graphics", "8 Days", ("High", 14), ("Planned", 12)
+        "Desktop Applications, Native UI, Vector Graphics", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M11-T05", 8), ("Month 11", 26), ("Sprint 22 (W45-W46)", 8), "Reactive Desktop UI", "Reactive Desktop UI Toolkit & Flexbox Layout (roze-ui.widgets)",

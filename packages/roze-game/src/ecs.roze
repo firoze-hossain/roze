@@ -153,6 +153,7 @@ func color_red() -> Color { return new Color(255, 0, 0, 255); }
 func color_green() -> Color { return new Color(0, 255, 0, 255); }
 func color_blue() -> Color { return new Color(0, 0, 255, 255); }
 func color_yellow() -> Color { return new Color(255, 255, 0, 255); }
+func color_black() -> Color { return new Color(0, 0, 0, 255); }
 
 // 4x4 Row-Major Transformation Matrix
 class Mat4 {

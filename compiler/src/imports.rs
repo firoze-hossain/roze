@@ -156,6 +156,9 @@ const GAME_RENDER_DISPLAY_NAME: &str = "game_render (built-in)";
 const GAME_PHYSICS_SOURCE: &str = include_str!("../../stdlib/src/game_physics.roze");
 const GAME_PHYSICS_DISPLAY_NAME: &str = "game_physics (built-in)";
 
+const GAME_MILESTONE_SOURCE: &str = include_str!("../../stdlib/src/game_milestone.roze");
+const GAME_MILESTONE_DISPLAY_NAME: &str = "game_milestone (built-in)";
+
 const UI_CANVAS_SOURCE: &str = include_str!("../../stdlib/src/ui_canvas.roze");
 const UI_CANVAS_DISPLAY_NAME: &str = "ui_canvas (built-in)";
 
@@ -316,6 +319,9 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         "roze-game.physics" | "roze-game::physics" | "roze::game::physics" | "roze.game.physics" | "game.physics" | "game::physics" | "roze_game_physics" | "game_physics" | "physics" | "physx" | "box2d" => {
             Some("roze-game/src/physics.roze".to_string())
         }
+        "roze-game.milestone" | "roze-game::milestone" | "roze::game::milestone" | "roze.game.milestone" | "game.milestone" | "game::milestone" | "roze_game_milestone" | "game_milestone" | "m11" | "m11.gate" | "milestone_m11" => {
+            Some("roze-game/src/milestone.roze".to_string())
+        }
         "game" | "roze::game" | "roze-game" | "roze_game" | "raylib_game" | "gamedev" | "engine" => {
             Some("roze-game/src/lib.roze".to_string())
         }
@@ -406,6 +412,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
                 "game_ecs" => Some("game_ecs.roze"),
                 "game_render" => Some("game_render.roze"),
                 "game_physics" => Some("game_physics.roze"),
+                "game_milestone" => Some("game_milestone.roze"),
                 "ui_canvas" => Some("ui_canvas.roze"),
                 "ui_widgets" => Some("ui_widgets.roze"),
                 "orm" => Some("orm.roze"),
@@ -582,6 +589,10 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "roze-game.physics" || path == "roze-game::physics" || path == "roze::game::physics" || path == "roze.game.physics"
         || path == "game.physics" || path == "game::physics" || path == "roze_game_physics" || path == "game_physics" || path == "physics" || path == "physx" || path == "box2d" {
         return Ok((GAME_PHYSICS_SOURCE.to_string(), GAME_PHYSICS_DISPLAY_NAME.to_string()));
+    }
+    if path == "roze-game.milestone" || path == "roze-game::milestone" || path == "roze::game::milestone" || path == "roze.game.milestone"
+        || path == "game.milestone" || path == "game::milestone" || path == "roze_game_milestone" || path == "game_milestone" || path == "m11" || path == "m11.gate" || path == "milestone_m11" {
+        return Ok((GAME_MILESTONE_SOURCE.to_string(), GAME_MILESTONE_DISPLAY_NAME.to_string()));
     }
     if path == "roze-ui.canvas" || path == "roze-ui::canvas" || path == "roze::ui::canvas" || path == "roze.ui.canvas"
         || path == "ui.canvas" || path == "ui::canvas" || path == "roze_ui_canvas" || path == "ui_canvas" || path == "canvas" || path == "skia" {

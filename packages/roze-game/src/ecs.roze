@@ -682,6 +682,10 @@ func world_is_alive(w: World, e: Entity) -> bool {
     return arch_id >= 0;
 }
 
+func world_entity_count(w: World) -> int {
+    return w.next_entity_id - list_length(w.free_ids);
+}
+
 func world_despawn(w: World, e: Entity) -> bool {
     if !world_is_alive(w, e) {
         return false;

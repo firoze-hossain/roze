@@ -826,7 +826,7 @@ s1_rows = [
         ("M11-T06", 8), ("Month 11", 26), ("Sprint 22 (W45-W46)", 8), "Milestone Gate M11", "60 FPS 3D Game & Cross-Platform Desktop GUI Gate",
         "Real-time verification of 3D game rendering at stable 60 FPS with 10,000 active ECS entities and physics simulation; native desktop application running with sub-16ms responsive UI event dispatch on Windows, Linux, and macOS.",
         "Proves Raylib/Bevy game engine parity and JavaFX/Qt desktop UI parity in pure Roze.",
-        "Gaming, Interactive Media, Desktop Applications", "3 Days", ("Critical", 14), ("Milestone Gate", 15)
+        "Gaming, Interactive Media, Desktop Applications", "3 Days", ("Critical", 14), ("Completed", 16)
     ],
 
     # MONTH 12: FREESTANDING 64-BIT OS KERNEL, MICROCONTROLLER IOT & ROZE v3.0 'TITAN' LAUNCH

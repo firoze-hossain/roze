@@ -2567,6 +2567,20 @@ fn standard_ui_widgets_suite() {
     assert!(stdout.contains("ALL SUITES COMPLETED: Roze Reactive Desktop UI & Flexbox 100% OPERATIONAL"));
 }
 
+#[test]
+fn milestone_gate_m11_game_and_gui_suite() {
+    let (stdout, stderr, ok) = run_fixture("milestone_gate_m11_game_and_gui.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Bevy-class archetypal ECS and generational entities verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: Raylib/Vulkan hardware rendering pipeline verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: PhysX-grade rigid-body dynamics & 3D spatial audio verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: Skia-parity GPU 2D vector canvas & windowing verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: JavaFX/Qt-parity CSS Flexbox and reactive widget tree verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: Integrated 3D game client with reactive desktop UI overlay verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: 10,000 ECS entities simulated at 60 FPS with sub-16ms GUI latency!"));
+    assert!(stdout.contains("ALL 7 SUITES PASSED: MILESTONE GATE M11 GAMING & DESKTOP 100% COMPLETE!"));
+}
+
 
 
 

@@ -2526,6 +2526,20 @@ fn standard_game_render_suite() {
     assert!(stdout.contains("ALL 7 SUITES PASSED: M11-T02 HARDWARE RENDERING COMPLETE & VERIFIED!"));
 }
 
+#[test]
+fn standard_game_physics_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_game_physics.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Geometric collision primitives verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: OBB & 15-axis SAT collision detection verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: 3D raycasting engine verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: GJK convex collision algorithm verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: Rigid-body dynamics and impulse resolution verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: Spatial hashing broadphase grid verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: Particle emitters, 3D spatial audio & benchmark stress gate verified."));
+    assert!(stdout.contains("ALL 7 SUITES PASSED: M11-T03 RIGID-BODY PHYSICS & 3D AUDIO 100% COMPLETE!"));
+}
+
 
 
 

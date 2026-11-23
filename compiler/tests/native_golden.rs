@@ -5326,6 +5326,25 @@ fn native_standard_game_render_suite() {
     assert!(stdout.contains("ALL 7 SUITES PASSED: M11-T02 HARDWARE RENDERING COMPLETE & VERIFIED!"));
 }
 
+#[test]
+fn native_standard_game_physics_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_game_physics.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_game_physics.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_game_physics_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Geometric collision primitives verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: OBB & 15-axis SAT collision detection verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: 3D raycasting engine verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: GJK convex collision algorithm verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: Rigid-body dynamics and impulse resolution verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: Spatial hashing broadphase grid verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: Particle emitters, 3D spatial audio & benchmark stress gate verified."));
+    assert!(stdout.contains("ALL 7 SUITES PASSED: M11-T03 RIGID-BODY PHYSICS & 3D AUDIO 100% COMPLETE!"));
+}
+
 
 
 

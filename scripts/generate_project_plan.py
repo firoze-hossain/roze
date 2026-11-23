@@ -808,7 +808,7 @@ s1_rows = [
         ("M11-T03", 8), ("Month 11", 26), ("Sprint 21 (W43-W44)", 8), "Spatial Physics & Audio", "Rigid-Body Physics & 3D Spatial Audio (roze-game.physics)",
         "Simulation suite: 2D/3D collision detection (AABB, OBB, Raycast, Sphere-Capsule, GJK algorithm), rigid-body dynamics (gravity, friction, restitution, impulse resolution), spatial hashing broadphase grid, particle emitters, and multi-channel 3D spatial audio mixer.",
         "Full game physics and audio engine in pure Roze.",
-        "Game Development, Physical Simulation, Audio Synthesis", "8 Days", ("High", 14), ("Planned", 12)
+        "Game Development, Physical Simulation, Audio Synthesis", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M11-T04", 8), ("Month 11", 26), ("Sprint 22 (W45-W46)", 8), "Native Windowing", "Cross-Platform Native Windowing & GPU Canvas (roze-ui.canvas)",

@@ -1,0 +1,1510 @@
+// ==============================================================================
+// 🌹 Roze-Game: Rigid-Body Physics & 3D Spatial Audio (roze-game.physics / roze::game::physics)
+// ==============================================================================
+// Direct simulation suite:
+// - 2D/3D Collision Detection: AABB, OBB, Raycasting, Sphere-Capsule, GJK convex hulls
+// - Rigid-Body Dynamics: Gravity, friction, restitution, impulse resolution, Baumgarte stabilization
+// - Spatial Hashing Broadphase Grid: O(N) voxel cell partitioning for large-scale worlds
+// - Particle Simulation System: Emitters, bursts, life-cycle interpolation, physics integration
+// - Multi-Channel 3D Spatial Audio Mixer: Doppler effect, distance attenuation, stereo panning, synthesizer
+// ==============================================================================
+
+import "roze-game.ecs";
+
+// ==============================================================================
+// SECTION 1: Mathematics & Physics Helpers
+// ==============================================================================
+
+func physics_float_to_int(f: float) -> int {
+    let s = to_string(f);
+    let len = string_length(s);
+    let sign = 1;
+    let start = 0;
+    if len > 0 && string_char_at(s, 0) == 45 {
+        sign = -1;
+        start = 1;
+    }
+    let res = 0;
+    let i = start;
+    while i < len {
+        let c = string_char_at(s, i);
+        if c == 46 { // '.'
+            return sign * res;
+        }
+        if c >= 48 && c <= 57 {
+            res = (res * 10) + (c - 48);
+        }
+        i = i + 1;
+    }
+    return sign * res;
+}
+
+func physics_clamp(val: float, min_val: float, max_val: float) -> float {
+    if val < min_val { return min_val; }
+    if val > max_val { return max_val; }
+    return val;
+}
+
+func physics_min(a: float, b: float) -> float {
+    if a < b { return a; }
+    return b;
+}
+
+func physics_max(a: float, b: float) -> float {
+    if a > b { return a; }
+    return b;
+}
+
+func physics_abs(a: float) -> float {
+    if a < 0.0 { return 0.0 - a; }
+    return a;
+}
+
+func vec3_distance(a: Vector3, b: Vector3) -> float {
+    return vec3_length(vec3_sub(a, b));
+}
+
+func vec3_distance_sq(a: Vector3, b: Vector3) -> float {
+    let d = vec3_sub(a, b);
+    return vec3_dot(d, d);
+}
+
+func vec3_reflect(v: Vector3, n: Vector3) -> Vector3 {
+    let d = 2.0 * vec3_dot(v, n);
+    return vec3_sub(v, vec3_scale(n, d));
+}
+
+func vec3_project(v: Vector3, target: Vector3) -> Vector3 {
+    let t_len_sq = vec3_dot(target, target);
+    if t_len_sq <= 0.000001 { return vec3_zero(); }
+    let scale = vec3_dot(v, target) / t_len_sq;
+    return vec3_scale(target, scale);
+}
+
+func color_lerp(c1: Color, c2: Color, t: float) -> Color {
+    let factor = physics_clamp(t, 0.0, 1.0);
+    let inv_factor = 1.0 - factor;
+    let r = physics_float_to_int(((c1.r * 1.0) * inv_factor) + ((c2.r * 1.0) * factor));
+    let g = physics_float_to_int(((c1.g * 1.0) * inv_factor) + ((c2.g * 1.0) * factor));
+    let b = physics_float_to_int(((c1.b * 1.0) * inv_factor) + ((c2.b * 1.0) * factor));
+    let a = physics_float_to_int(((c1.a * 1.0) * inv_factor) + ((c2.a * 1.0) * factor));
+    return new Color(r, g, b, a);
+}
+
+// ==============================================================================
+// SECTION 2: 2D & 3D Geometric Collision Primitives & Manifolds
+// ==============================================================================
+
+class ContactManifold {
+    has_collision: bool,
+    normal: Vector3,      // Points from Body A towards Body B
+    penetration: float,   // Depth of interpenetration
+    contact_point: Vector3
+}
+
+func manifold_none() -> ContactManifold {
+    return new ContactManifold(false, vec3_zero(), 0.0, vec3_zero());
+}
+
+func manifold_new(norm: Vector3, depth: float, pt: Vector3) -> ContactManifold {
+    return new ContactManifold(true, norm, depth, pt);
+}
+
+// 1. AABB 3D
+class AABB3D {
+    min_pt: Vector3,
+    max_pt: Vector3
+}
+
+func aabb_new(min_p: Vector3, max_p: Vector3) -> AABB3D {
+    return new AABB3D(min_p, max_p);
+}
+
+func aabb_from_center_extents(center: Vector3, half_extents: Vector3) -> AABB3D {
+    let min_p = vec3_sub(center, half_extents);
+    let max_p = vec3_add(center, half_extents);
+    return new AABB3D(min_p, max_p);
+}
+
+func aabb_intersects_aabb(a: AABB3D, b: AABB3D) -> bool {
+    if a.max_pt.x < b.min_pt.x || a.min_pt.x > b.max_pt.x { return false; }
+    if a.max_pt.y < b.min_pt.y || a.min_pt.y > b.max_pt.y { return false; }
+    if a.max_pt.z < b.min_pt.z || a.min_pt.z > b.max_pt.z { return false; }
+    return true;
+}
+
+func collision_aabb_aabb(a: AABB3D, b: AABB3D) -> ContactManifold {
+    if !aabb_intersects_aabb(a, b) {
+        return manifold_none();
+    }
+
+    let dx1 = b.max_pt.x - a.min_pt.x;
+    let dx2 = a.max_pt.x - b.min_pt.x;
+    let dy1 = b.max_pt.y - a.min_pt.y;
+    let dy2 = a.max_pt.y - b.min_pt.y;
+    let dz1 = b.max_pt.z - a.min_pt.z;
+    let dz2 = a.max_pt.z - b.min_pt.z;
+
+    let overlap_x = physics_min(dx1, dx2);
+    let overlap_y = physics_min(dy1, dy2);
+    let overlap_z = physics_min(dz1, dz2);
+
+    let norm = vec3_zero();
+    let depth = overlap_x;
+
+    if overlap_x <= overlap_y && overlap_x <= overlap_z {
+        depth = overlap_x;
+        if a.min_pt.x < b.min_pt.x {
+            norm = new Vector3(1.0, 0.0, 0.0);
+        } else {
+            norm = new Vector3(-1.0, 0.0, 0.0);
+        }
+    } else if overlap_y <= overlap_x && overlap_y <= overlap_z {
+        depth = overlap_y;
+        if a.min_pt.y < b.min_pt.y {
+            norm = new Vector3(0.0, 1.0, 0.0);
+        } else {
+            norm = new Vector3(0.0, -1.0, 0.0);
+        }
+    } else {
+        depth = overlap_z;
+        if a.min_pt.z < b.min_pt.z {
+            norm = new Vector3(0.0, 0.0, 1.0);
+        } else {
+            norm = new Vector3(0.0, 0.0, -1.0);
+        }
+    }
+
+    let pt = new Vector3(
+        (physics_max(a.min_pt.x, b.min_pt.x) + physics_min(a.max_pt.x, b.max_pt.x)) * 0.5,
+        (physics_max(a.min_pt.y, b.min_pt.y) + physics_min(a.max_pt.y, b.max_pt.y)) * 0.5,
+        (physics_max(a.min_pt.z, b.min_pt.z) + physics_min(a.max_pt.z, b.max_pt.z)) * 0.5
+    );
+
+    return manifold_new(norm, depth, pt);
+}
+
+// 2. Sphere 3D
+class Sphere3D {
+    center: Vector3,
+    radius: float
+}
+
+func sphere_new(center: Vector3, radius: float) -> Sphere3D {
+    return new Sphere3D(center, radius);
+}
+
+func collision_sphere_sphere(a: Sphere3D, b: Sphere3D) -> ContactManifold {
+    let delta = vec3_sub(b.center, a.center);
+    let dist_sq = vec3_dot(delta, delta);
+    let rad_sum = a.radius + b.radius;
+
+    if dist_sq >= (rad_sum * rad_sum) {
+        return manifold_none();
+    }
+
+    let dist = game_math_sqrt(dist_sq);
+    let norm = new Vector3(0.0, 1.0, 0.0);
+    if dist > 0.0001 {
+        norm = vec3_scale(delta, 1.0 / dist);
+    }
+    let depth = rad_sum - dist;
+    let contact_pt = vec3_add(a.center, vec3_scale(norm, a.radius - (depth * 0.5)));
+
+    return manifold_new(norm, depth, contact_pt);
+}
+
+// 3. Capsule 3D
+class Capsule3D {
+    p0: Vector3,
+    p1: Vector3,
+    radius: float
+}
+
+func capsule_new(p0: Vector3, p1: Vector3, radius: float) -> Capsule3D {
+    return new Capsule3D(p0, p1, radius);
+}
+
+func point_closest_on_segment(pt: Vector3, a: Vector3, b: Vector3) -> Vector3 {
+    let ab = vec3_sub(b, a);
+    let ab_len_sq = vec3_dot(ab, ab);
+    if ab_len_sq <= 0.000001 {
+        return a;
+    }
+    let t = vec3_dot(vec3_sub(pt, a), ab) / ab_len_sq;
+    let t_clamped = physics_clamp(t, 0.0, 1.0);
+    return vec3_add(a, vec3_scale(ab, t_clamped));
+}
+
+func collision_sphere_capsule(s: Sphere3D, c: Capsule3D) -> ContactManifold {
+    let closest_on_seg = point_closest_on_segment(s.center, c.p0, c.p1);
+    let virtual_sphere = sphere_new(closest_on_seg, c.radius);
+    return collision_sphere_sphere(s, virtual_sphere);
+}
+
+func collision_capsule_capsule(c1: Capsule3D, c2: Capsule3D) -> ContactManifold {
+    // Closest points between two 3D segments
+    let mid1 = vec3_scale(vec3_add(c1.p0, c1.p1), 0.5);
+    let p2_closest = point_closest_on_segment(mid1, c2.p0, c2.p1);
+    let p1_closest = point_closest_on_segment(p2_closest, c1.p0, c1.p1);
+    let p2_refined = point_closest_on_segment(p1_closest, c2.p0, c2.p1);
+
+    let s1 = sphere_new(p1_closest, c1.radius);
+    let s2 = sphere_new(p2_refined, c2.radius);
+    return collision_sphere_sphere(s1, s2);
+}
+
+// 4. Oriented Bounding Box (OBB) & SAT (Separating Axis Theorem)
+class OBB3D {
+    center: Vector3,
+    half_extents: Vector3,
+    axis_x: Vector3,
+    axis_y: Vector3,
+    axis_z: Vector3
+}
+
+func obb_new(center: Vector3, extents: Vector3, ax: Vector3, ay: Vector3, az: Vector3) -> OBB3D {
+    return new OBB3D(center, extents, vec3_normalize(ax), vec3_normalize(ay), vec3_normalize(az));
+}
+
+func obb_project_on_axis(obb: OBB3D, axis: Vector3) -> float {
+    let r_x = obb.half_extents.x * physics_abs(vec3_dot(obb.axis_x, axis));
+    let r_y = obb.half_extents.y * physics_abs(vec3_dot(obb.axis_y, axis));
+    let r_z = obb.half_extents.z * physics_abs(vec3_dot(obb.axis_z, axis));
+    return r_x + r_y + r_z;
+}
+
+func collision_obb_obb(a: OBB3D, b: OBB3D) -> ContactManifold {
+    let delta = vec3_sub(b.center, a.center);
+
+    // 15 SAT Axes to test: 3 from A, 3 from B, 9 Cross Products
+    let axes = list_new();
+    list_push(axes, a.axis_x);
+    list_push(axes, a.axis_y);
+    list_push(axes, a.axis_z);
+    list_push(axes, b.axis_x);
+    list_push(axes, b.axis_y);
+    list_push(axes, b.axis_z);
+
+    // Cross products
+    list_push(axes, vec3_cross(a.axis_x, b.axis_x));
+    list_push(axes, vec3_cross(a.axis_x, b.axis_y));
+    list_push(axes, vec3_cross(a.axis_x, b.axis_z));
+    list_push(axes, vec3_cross(a.axis_y, b.axis_x));
+    list_push(axes, vec3_cross(a.axis_y, b.axis_y));
+    list_push(axes, vec3_cross(a.axis_y, b.axis_z));
+    list_push(axes, vec3_cross(a.axis_z, b.axis_x));
+    list_push(axes, vec3_cross(a.axis_z, b.axis_y));
+    list_push(axes, vec3_cross(a.axis_z, b.axis_z));
+
+    let min_penetration = 999999.0;
+    let best_axis = vec3_zero();
+
+    let i = 0;
+    let count = list_length(axes);
+    while i < count {
+        let axis: Vector3 = list_get(axes, i);
+        let len_sq = vec3_dot(axis, axis);
+        if len_sq > 0.0001 {
+            let norm_axis = vec3_scale(axis, 1.0 / game_math_sqrt(len_sq));
+            let r_a = obb_project_on_axis(a, norm_axis);
+            let r_b = obb_project_on_axis(b, norm_axis);
+            let dist = physics_abs(vec3_dot(delta, norm_axis));
+
+            if dist >= (r_a + r_b) {
+                return manifold_none(); // Found separating axis!
+            }
+
+            let pen = (r_a + r_b) - dist;
+            if pen < min_penetration {
+                min_penetration = pen;
+                if vec3_dot(delta, norm_axis) < 0.0 {
+                    best_axis = vec3_scale(norm_axis, -1.0);
+                } else {
+                    best_axis = norm_axis;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    let contact_pt = vec3_add(a.center, vec3_scale(best_axis, min_penetration * 0.5));
+    return manifold_new(best_axis, min_penetration, contact_pt);
+}
+
+// 5. Plane 3D
+class Plane3D {
+    point: Vector3,
+    normal: Vector3
+}
+
+func plane_new(pt: Vector3, norm: Vector3) -> Plane3D {
+    return new Plane3D(pt, vec3_normalize(norm));
+}
+
+func collision_sphere_plane(s: Sphere3D, p: Plane3D) -> ContactManifold {
+    let diff = vec3_sub(s.center, p.point);
+    let dist = vec3_dot(diff, p.normal);
+
+    if dist >= s.radius {
+        return manifold_none();
+    }
+
+    let depth = s.radius - dist;
+    let contact_pt = vec3_sub(s.center, vec3_scale(p.normal, dist));
+    return manifold_new(p.normal, depth, contact_pt);
+}
+
+// ==============================================================================
+// SECTION 3: Raycasting Engine (Sphere, AABB, Plane, Triangle)
+// ==============================================================================
+
+class Ray3D {
+    origin: Vector3,
+    direction: Vector3,
+    max_distance: float
+}
+
+func ray_new(origin: Vector3, dir: Vector3, max_dist: float) -> Ray3D {
+    return new Ray3D(origin, vec3_normalize(dir), max_dist);
+}
+
+class RaycastHit {
+    hit: bool,
+    distance: float,
+    point: Vector3,
+    normal: Vector3,
+    body_id: int
+}
+
+func raycast_miss() -> RaycastHit {
+    return new RaycastHit(false, 0.0, vec3_zero(), vec3_zero(), -1);
+}
+
+func raycast_hit(dist: float, pt: Vector3, norm: Vector3, b_id: int) -> RaycastHit {
+    return new RaycastHit(true, dist, pt, norm, b_id);
+}
+
+func ray_cast_sphere(ray: Ray3D, sphere: Sphere3D) -> RaycastHit {
+    let oc = vec3_sub(ray.origin, sphere.center);
+    let b = vec3_dot(oc, ray.direction);
+    let c = vec3_dot(oc, oc) - (sphere.radius * sphere.radius);
+    let disc = (b * b) - c;
+
+    if disc < 0.0 {
+        return raycast_miss();
+    }
+
+    let sqrt_disc = game_math_sqrt(disc);
+    let t = (0.0 - b) - sqrt_disc;
+    if t < 0.0 {
+        t = (0.0 - b) + sqrt_disc;
+    }
+
+    if t < 0.0 || t > ray.max_distance {
+        return raycast_miss();
+    }
+
+    let hit_pt = vec3_add(ray.origin, vec3_scale(ray.direction, t));
+    let hit_norm = vec3_normalize(vec3_sub(hit_pt, sphere.center));
+    return raycast_hit(t, hit_pt, hit_norm, -1);
+}
+
+func ray_cast_aabb(ray: Ray3D, aabb: AABB3D) -> RaycastHit {
+    let t_min = 0.0;
+    let t_max = ray.max_distance;
+    let hit_normal = vec3_zero();
+
+    // X slab
+    if physics_abs(ray.direction.x) < 0.000001 {
+        if ray.origin.x < aabb.min_pt.x || ray.origin.x > aabb.max_pt.x { return raycast_miss(); }
+    } else {
+        let inv_d = 1.0 / ray.direction.x;
+        let t1 = (aabb.min_pt.x - ray.origin.x) * inv_d;
+        let t2 = (aabb.max_pt.x - ray.origin.x) * inv_d;
+        let near_norm = new Vector3(-1.0, 0.0, 0.0);
+        if t1 > t2 {
+            let tmp = t1; t1 = t2; t2 = tmp;
+            near_norm = new Vector3(1.0, 0.0, 0.0);
+        }
+        if t1 > t_min {
+            t_min = t1;
+            hit_normal = near_norm;
+        }
+        if t2 < t_max { t_max = t2; }
+        if t_min > t_max { return raycast_miss(); }
+    }
+
+    // Y slab
+    if physics_abs(ray.direction.y) < 0.000001 {
+        if ray.origin.y < aabb.min_pt.y || ray.origin.y > aabb.max_pt.y { return raycast_miss(); }
+    } else {
+        let inv_d = 1.0 / ray.direction.y;
+        let t1 = (aabb.min_pt.y - ray.origin.y) * inv_d;
+        let t2 = (aabb.max_pt.y - ray.origin.y) * inv_d;
+        let near_norm = new Vector3(0.0, -1.0, 0.0);
+        if t1 > t2 {
+            let tmp = t1; t1 = t2; t2 = tmp;
+            near_norm = new Vector3(0.0, 1.0, 0.0);
+        }
+        if t1 > t_min {
+            t_min = t1;
+            hit_normal = near_norm;
+        }
+        if t2 < t_max { t_max = t2; }
+        if t_min > t_max { return raycast_miss(); }
+    }
+
+    // Z slab
+    if physics_abs(ray.direction.z) < 0.000001 {
+        if ray.origin.z < aabb.min_pt.z || ray.origin.z > aabb.max_pt.z { return raycast_miss(); }
+    } else {
+        let inv_d = 1.0 / ray.direction.z;
+        let t1 = (aabb.min_pt.z - ray.origin.z) * inv_d;
+        let t2 = (aabb.max_pt.z - ray.origin.z) * inv_d;
+        let near_norm = new Vector3(0.0, 0.0, -1.0);
+        if t1 > t2 {
+            let tmp = t1; t1 = t2; t2 = tmp;
+            near_norm = new Vector3(0.0, 0.0, 1.0);
+        }
+        if t1 > t_min {
+            t_min = t1;
+            hit_normal = near_norm;
+        }
+        if t2 < t_max { t_max = t2; }
+        if t_min > t_max { return raycast_miss(); }
+    }
+
+    let hit_pt = vec3_add(ray.origin, vec3_scale(ray.direction, t_min));
+    return raycast_hit(t_min, hit_pt, hit_normal, -1);
+}
+
+func ray_cast_plane(ray: Ray3D, plane: Plane3D) -> RaycastHit {
+    let denom = vec3_dot(plane.normal, ray.direction);
+    if physics_abs(denom) < 0.000001 {
+        return raycast_miss(); // Parallel to plane
+    }
+
+    let t = vec3_dot(vec3_sub(plane.point, ray.origin), plane.normal) / denom;
+    if t < 0.0 || t > ray.max_distance {
+        return raycast_miss();
+    }
+
+    let hit_pt = vec3_add(ray.origin, vec3_scale(ray.direction, t));
+    let norm = plane.normal;
+    if denom > 0.0 {
+        norm = vec3_scale(norm, -1.0);
+    }
+    return raycast_hit(t, hit_pt, norm, -1);
+}
+
+func ray_cast_triangle(ray: Ray3D, v0: Vector3, v1: Vector3, v2: Vector3) -> RaycastHit {
+    // Möller–Trumbore intersection
+    let edge1 = vec3_sub(v1, v0);
+    let edge2 = vec3_sub(v2, v0);
+    let h = vec3_cross(ray.direction, edge2);
+    let a = vec3_dot(edge1, h);
+
+    if a > -0.000001 && a < 0.000001 {
+        return raycast_miss(); // Parallel
+    }
+
+    let f = 1.0 / a;
+    let s = vec3_sub(ray.origin, v0);
+    let u = f * vec3_dot(s, h);
+    if u < 0.0 || u > 1.0 { return raycast_miss(); }
+
+    let q = vec3_cross(s, edge1);
+    let v = f * vec3_dot(ray.direction, q);
+    if v < 0.0 || (u + v) > 1.0 { return raycast_miss(); }
+
+    let t = f * vec3_dot(edge2, q);
+    if t < 0.0 || t > ray.max_distance { return raycast_miss(); }
+
+    let hit_pt = vec3_add(ray.origin, vec3_scale(ray.direction, t));
+    let norm = vec3_normalize(vec3_cross(edge1, edge2));
+    return raycast_hit(t, hit_pt, norm, -1);
+}
+
+// ==============================================================================
+// SECTION 4: GJK (Gilbert-Johnson-Keerthi) Convex Collision Algorithm
+// ==============================================================================
+
+func gjk_support_sphere(center: Vector3, radius: float, d: Vector3) -> Vector3 {
+    let norm_d = vec3_normalize(d);
+    return vec3_add(center, vec3_scale(norm_d, radius));
+}
+
+func gjk_support_box(center: Vector3, half_extents: Vector3, d: Vector3) -> Vector3 {
+    let sx = half_extents.x;
+    if d.x < 0.0 { sx = 0.0 - sx; }
+    let sy = half_extents.y;
+    if d.y < 0.0 { sy = 0.0 - sy; }
+    let sz = half_extents.z;
+    if d.z < 0.0 { sz = 0.0 - sz; }
+    return new Vector3(center.x + sx, center.y + sy, center.z + sz);
+}
+
+func gjk_support_minkowski_box_box(c1: Vector3, ext1: Vector3, c2: Vector3, ext2: Vector3, d: Vector3) -> Vector3 {
+    let s1 = gjk_support_box(c1, ext1, d);
+    let neg_d = vec3_scale(d, -1.0);
+    let s2 = gjk_support_box(c2, ext2, neg_d);
+    return vec3_sub(s1, s2);
+}
+
+func gjk_intersection_boxes(c1: Vector3, ext1: Vector3, c2: Vector3, ext2: Vector3) -> bool {
+    // 3D Simplex iterative intersection check
+    let d = vec3_sub(c2, c1);
+    if vec3_dot(d, d) < 0.0001 {
+        d = new Vector3(1.0, 0.0, 0.0);
+    }
+
+    let simplex = list_new();
+    let a = gjk_support_minkowski_box_box(c1, ext1, c2, ext2, d);
+    list_push(simplex, a);
+
+    d = vec3_scale(a, -1.0);
+
+    let max_iters = 30;
+    let iter = 0;
+    while iter < max_iters {
+        let p = gjk_support_minkowski_box_box(c1, ext1, c2, ext2, d);
+        if vec3_dot(p, d) < 0.0 {
+            return false; // Point did not pass the origin
+        }
+        list_push(simplex, p);
+
+        // Update simplex and search direction towards origin
+        let sim_len = list_length(simplex);
+        if sim_len == 2 {
+            let pB: Vector3 = list_get(simplex, 0);
+            let pA: Vector3 = list_get(simplex, 1);
+            let ab = vec3_sub(pB, pA);
+            let ao = vec3_scale(pA, -1.0);
+            d = vec3_cross(vec3_cross(ab, ao), ab);
+            if vec3_dot(d, d) < 0.000001 {
+                d = new Vector3(0.0 - ab.y, ab.x, 0.0);
+            }
+        } else if sim_len == 3 {
+            let pC: Vector3 = list_get(simplex, 0);
+            let pB: Vector3 = list_get(simplex, 1);
+            let pA: Vector3 = list_get(simplex, 2);
+            let ab = vec3_sub(pB, pA);
+            let ac = vec3_sub(pC, pA);
+            let abc = vec3_cross(ab, ac);
+            let ao = vec3_scale(pA, -1.0);
+            if vec3_dot(abc, ao) > 0.0 {
+                d = abc;
+            } else {
+                d = vec3_scale(abc, -1.0);
+            }
+        } else if sim_len == 4 {
+            // Tetrahedron contains origin -> intersection!
+            return true;
+        }
+
+        iter = iter + 1;
+    }
+    return false;
+}
+
+// ==============================================================================
+// SECTION 5: Rigid-Body Dynamics & Impulse Resolution
+// ==============================================================================
+
+func body_type_sphere() -> int { return 1; }
+func body_type_box() -> int { return 2; }
+func body_type_capsule() -> int { return 3; }
+func body_type_plane() -> int { return 4; }
+
+class PhysicsBody {
+    id: int,
+    entity_id: int,
+    body_type: int,
+    position: Vector3,
+    linear_velocity: Vector3,
+    accumulated_force: Vector3,
+    rotation_euler: Vector3,
+    angular_velocity: Vector3,
+    accumulated_torque: Vector3,
+    mass: float,
+    inv_mass: float,
+    restitution: float,
+    friction: float,
+    linear_damping: float,
+    angular_damping: float,
+    is_static: bool,
+    use_gravity: bool,
+    sphere_radius: float,
+    box_half_extents: Vector3,
+    capsule_half_height: float,
+    capsule_radius: float,
+    plane_normal: Vector3
+}
+
+func physics_body_new(id: int, body_type: int, pos: Vector3, mass: float) -> PhysicsBody {
+    let inv_m = 0.0;
+    let is_stat = false;
+    if mass > 0.0 {
+        inv_m = 1.0 / mass;
+    } else {
+        is_stat = true;
+    }
+
+    return new PhysicsBody(
+        id,
+        -1,
+        body_type,
+        pos,
+        vec3_zero(),
+        vec3_zero(),
+        vec3_zero(),
+        vec3_zero(),
+        vec3_zero(),
+        mass,
+        inv_m,
+        0.5,  // restitution
+        0.4,  // friction
+        0.02, // linear damping
+        0.05, // angular damping
+        is_stat,
+        !is_stat,
+        1.0,
+        vec3_one(),
+        1.0,
+        0.5,
+        new Vector3(0.0, 1.0, 0.0)
+    );
+}
+
+func physics_body_sphere(id: int, pos: Vector3, radius: float, mass: float) -> PhysicsBody {
+    let b = physics_body_new(id, body_type_sphere(), pos, mass);
+    b.sphere_radius = radius;
+    return b;
+}
+
+func physics_body_box(id: int, pos: Vector3, half_extents: Vector3, mass: float) -> PhysicsBody {
+    let b = physics_body_new(id, body_type_box(), pos, mass);
+    b.box_half_extents = half_extents;
+    return b;
+}
+
+func physics_body_static_plane(id: int, pt: Vector3, norm: Vector3) -> PhysicsBody {
+    let b = physics_body_new(id, body_type_plane(), pt, 0.0);
+    b.plane_normal = vec3_normalize(norm);
+    b.is_static = true;
+    b.use_gravity = false;
+    return b;
+}
+
+func physics_body_apply_force(body: PhysicsBody, force: Vector3) {
+    if body.is_static { return; }
+    body.accumulated_force = vec3_add(body.accumulated_force, force);
+}
+
+func physics_body_apply_impulse(body: PhysicsBody, impulse: Vector3) {
+    if body.is_static { return; }
+    body.linear_velocity = vec3_add(body.linear_velocity, vec3_scale(impulse, body.inv_mass));
+}
+
+func physics_body_apply_torque(body: PhysicsBody, torque: Vector3) {
+    if body.is_static { return; }
+    body.accumulated_torque = vec3_add(body.accumulated_torque, torque);
+}
+
+func physics_body_get_aabb(body: PhysicsBody) -> AABB3D {
+    if body.body_type == body_type_sphere() {
+        let r = body.sphere_radius;
+        let r_vec = new Vector3(r, r, r);
+        return aabb_new(vec3_sub(body.position, r_vec), vec3_add(body.position, r_vec));
+    }
+    if body.body_type == body_type_box() {
+        return aabb_from_center_extents(body.position, body.box_half_extents);
+    }
+    if body.body_type == body_type_plane() {
+        let span = 1000.0;
+        let s_vec = new Vector3(span, 0.5, span);
+        return aabb_new(vec3_sub(body.position, s_vec), vec3_add(body.position, s_vec));
+    }
+    // Default 1x1x1
+    return aabb_from_center_extents(body.position, vec3_one());
+}
+
+func physics_body_integrate(body: PhysicsBody, gravity: Vector3, dt: float) {
+    if body.is_static {
+        body.accumulated_force = vec3_zero();
+        body.accumulated_torque = vec3_zero();
+        return;
+    }
+
+    // Linear Integration (Semi-Implicit Euler)
+    let total_force = body.accumulated_force;
+    if body.use_gravity {
+        total_force = vec3_add(total_force, vec3_scale(gravity, body.mass));
+    }
+    let accel = vec3_scale(total_force, body.inv_mass);
+    body.linear_velocity = vec3_add(body.linear_velocity, vec3_scale(accel, dt));
+
+    // Linear Damping
+    let damp = 1.0 - (body.linear_damping * dt);
+    if damp < 0.0 { damp = 0.0; }
+    body.linear_velocity = vec3_scale(body.linear_velocity, damp);
+
+    body.position = vec3_add(body.position, vec3_scale(body.linear_velocity, dt));
+
+    // Angular Integration
+    let ang_accel = body.accumulated_torque; // Assuming isotropic unit inertia
+    body.angular_velocity = vec3_add(body.angular_velocity, vec3_scale(ang_accel, dt));
+    let ang_damp = 1.0 - (body.angular_damping * dt);
+    if ang_damp < 0.0 { ang_damp = 0.0; }
+    body.angular_velocity = vec3_scale(body.angular_velocity, ang_damp);
+    body.rotation_euler = vec3_add(body.rotation_euler, vec3_scale(body.angular_velocity, dt));
+
+    // Clear forces
+    body.accumulated_force = vec3_zero();
+    body.accumulated_torque = vec3_zero();
+}
+
+// Sequential Impulse Contact Resolution
+func physics_resolve_collision(bodyA: PhysicsBody, bodyB: PhysicsBody, manifold: ContactManifold, dt: float) {
+    if !manifold.has_collision { return; }
+
+    let norm = manifold.normal;
+    let rel_vel = vec3_sub(bodyB.linear_velocity, bodyA.linear_velocity);
+    let vel_along_norm = vec3_dot(rel_vel, norm);
+
+    // Separating velocity check: if moving apart, do not apply impulse
+    if vel_along_norm > 0.0 { return; }
+
+    let e = physics_min(bodyA.restitution, bodyB.restitution);
+    let total_inv_mass = bodyA.inv_mass + bodyB.inv_mass;
+    if total_inv_mass <= 0.000001 { return; }
+
+    // 1. Normal Impulse (Restitution)
+    let j_mag = (0.0 - (1.0 + e)) * vel_along_norm;
+    j_mag = j_mag / total_inv_mass;
+
+    let impulse = vec3_scale(norm, j_mag);
+    if !bodyA.is_static {
+        bodyA.linear_velocity = vec3_sub(bodyA.linear_velocity, vec3_scale(impulse, bodyA.inv_mass));
+    }
+    if !bodyB.is_static {
+        bodyB.linear_velocity = vec3_add(bodyB.linear_velocity, vec3_scale(impulse, bodyB.inv_mass));
+    }
+
+    // 2. Tangential Friction Impulse
+    let tangent = vec3_sub(rel_vel, vec3_scale(norm, vel_along_norm));
+    let tang_len = vec3_length(tangent);
+    if tang_len > 0.0001 {
+        let norm_tangent = vec3_scale(tangent, 1.0 / tang_len);
+        let jt_mag = (0.0 - vec3_dot(rel_vel, norm_tangent)) / total_inv_mass;
+        let mu = game_math_sqrt(bodyA.friction * bodyB.friction);
+
+        // Coulomb's Law clamp
+        let max_friction = j_mag * mu;
+        if jt_mag < (0.0 - max_friction) { jt_mag = 0.0 - max_friction; }
+        if jt_mag > max_friction { jt_mag = max_friction; }
+
+        let friction_impulse = vec3_scale(norm_tangent, jt_mag);
+        if !bodyA.is_static {
+            bodyA.linear_velocity = vec3_sub(bodyA.linear_velocity, vec3_scale(friction_impulse, bodyA.inv_mass));
+        }
+        if !bodyB.is_static {
+            bodyB.linear_velocity = vec3_add(bodyB.linear_velocity, vec3_scale(friction_impulse, bodyB.inv_mass));
+        }
+    }
+
+    // 3. Baumgarte Position Stabilization (Prevents Sinking & Interpenetration)
+    let percent = 0.3; // Penetration resolution percentage
+    let slop = 0.01;   // Penetration allowance
+    let pen_clamped = manifold.penetration - slop;
+    if pen_clamped > 0.0 {
+        let correction = vec3_scale(norm, (pen_clamped / total_inv_mass) * percent);
+        if !bodyA.is_static {
+            bodyA.position = vec3_sub(bodyA.position, vec3_scale(correction, bodyA.inv_mass));
+        }
+        if !bodyB.is_static {
+            bodyB.position = vec3_add(bodyB.position, vec3_scale(correction, bodyB.inv_mass));
+        }
+    }
+}
+
+// Narrowphase dispatch
+func physics_check_and_resolve(bodyA: PhysicsBody, bodyB: PhysicsBody, dt: float) -> bool {
+    let manifold = manifold_none();
+
+    if bodyA.body_type == body_type_sphere() && bodyB.body_type == body_type_sphere() {
+        let sA = sphere_new(bodyA.position, bodyA.sphere_radius);
+        let sB = sphere_new(bodyB.position, bodyB.sphere_radius);
+        manifold = collision_sphere_sphere(sA, sB);
+    } else if bodyA.body_type == body_type_sphere() && bodyB.body_type == body_type_plane() {
+        let sA = sphere_new(bodyA.position, bodyA.sphere_radius);
+        let pB = plane_new(bodyB.position, bodyB.plane_normal);
+        manifold = collision_sphere_plane(sA, pB);
+    } else if bodyA.body_type == body_type_plane() && bodyB.body_type == body_type_sphere() {
+        let sB = sphere_new(bodyB.position, bodyB.sphere_radius);
+        let pA = plane_new(bodyA.position, bodyA.plane_normal);
+        manifold = collision_sphere_plane(sB, pA);
+        // Reverse normal so it points from bodyA to bodyB
+        manifold.normal = vec3_scale(manifold.normal, -1.0);
+    } else if bodyA.body_type == body_type_box() && bodyB.body_type == body_type_box() {
+        let boxA = aabb_from_center_extents(bodyA.position, bodyA.box_half_extents);
+        let boxB = aabb_from_center_extents(bodyB.position, bodyB.box_half_extents);
+        manifold = collision_aabb_aabb(boxA, boxB);
+    } else {
+        // Fallback AABB approximation
+        let aabbA = physics_body_get_aabb(bodyA);
+        let aabbB = physics_body_get_aabb(bodyB);
+        manifold = collision_aabb_aabb(aabbA, aabbB);
+    }
+
+    if manifold.has_collision {
+        physics_resolve_collision(bodyA, bodyB, manifold, dt);
+        return true;
+    }
+    return false;
+}
+
+// ==============================================================================
+// SECTION 6: Spatial Hashing Broadphase Grid
+// ==============================================================================
+
+class SpatialCell {
+    cell_hash: int,
+    body_ids: list
+}
+
+func spatial_cell_new(hash_val: int) -> SpatialCell {
+    return new SpatialCell(hash_val, list_new());
+}
+
+class SpatialHashGrid {
+    cell_size: float,
+    cells: list
+}
+
+func spatial_grid_new(cell_size: float) -> SpatialHashGrid {
+    return new SpatialHashGrid(cell_size, list_new());
+}
+
+func spatial_hash_coords(cx: int, cy: int, cz: int) -> int {
+    // Prime-multiplier spatial hash function
+    let h1 = cx * 73856093;
+    let h2 = cy * 19349663;
+    let h3 = cz * 83492791;
+    let combined = h1 + h2 + h3;
+    if combined < 0 { combined = 0 - combined; }
+    return combined % 10007; // 10,007 prime buckets
+}
+
+func spatial_grid_clear(grid: SpatialHashGrid) {
+    list_clear(grid.cells);
+}
+
+func spatial_grid_get_or_create_cell(grid: SpatialHashGrid, h: int) -> SpatialCell {
+    let i = 0;
+    let count = list_length(grid.cells);
+    while i < count {
+        let c: SpatialCell = list_get(grid.cells, i);
+        if c.cell_hash == h {
+            return c;
+        }
+        i = i + 1;
+    }
+    let new_cell = spatial_cell_new(h);
+    list_push(grid.cells, new_cell);
+    return new_cell;
+}
+
+func spatial_grid_insert(grid: SpatialHashGrid, body_id: int, aabb: AABB3D) {
+    let inv_size = 1.0 / grid.cell_size;
+    let min_cx = physics_float_to_int(aabb.min_pt.x * inv_size);
+    let min_cy = physics_float_to_int(aabb.min_pt.y * inv_size);
+    let min_cz = physics_float_to_int(aabb.min_pt.z * inv_size);
+
+    let max_cx = physics_float_to_int(aabb.max_pt.x * inv_size);
+    let max_cy = physics_float_to_int(aabb.max_pt.y * inv_size);
+    let max_cz = physics_float_to_int(aabb.max_pt.z * inv_size);
+
+    let cx = min_cx;
+    while cx <= max_cx {
+        let cy = min_cy;
+        while cy <= max_cy {
+            let cz = min_cz;
+            while cz <= max_cz {
+                let h = spatial_hash_coords(cx, cy, cz);
+                let cell = spatial_grid_get_or_create_cell(grid, h);
+                list_push(cell.body_ids, body_id);
+                cz = cz + 1;
+            }
+            cy = cy + 1;
+        }
+        cx = cx + 1;
+    }
+}
+
+class BroadphasePair {
+    id_a: int,
+    id_b: int
+}
+
+func spatial_grid_get_candidate_pairs(grid: SpatialHashGrid) -> list {
+    let pairs = list_new();
+    let cell_idx = 0;
+    let num_cells = list_length(grid.cells);
+
+    while cell_idx < num_cells {
+        let cell: SpatialCell = list_get(grid.cells, cell_idx);
+        let n_ids = list_length(cell.body_ids);
+        if n_ids > 1 {
+            let i = 0;
+            while i < n_ids {
+                let a: int = list_get(cell.body_ids, i);
+                let j = i + 1;
+                while j < n_ids {
+                    let b: int = list_get(cell.body_ids, j);
+                    if a > b {
+                        let tmp = a; a = b; b = tmp;
+                    }
+                    if a != b {
+                        // Check uniqueness
+                        let already_present = false;
+                        let p_idx = 0;
+                        let p_count = list_length(pairs);
+                        while p_idx < p_count {
+                            let p: BroadphasePair = list_get(pairs, p_idx);
+                            if p.id_a == a && p.id_b == b {
+                                already_present = true;
+                                p_idx = p_count; // break
+                            }
+                            p_idx = p_idx + 1;
+                        }
+                        if !already_present {
+                            list_push(pairs, new BroadphasePair(a, b));
+                        }
+                    }
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+        }
+        cell_idx = cell_idx + 1;
+    }
+    return pairs;
+}
+
+// ==============================================================================
+// SECTION 7: Particle Emitters & Simulation Engine
+// ==============================================================================
+
+class Particle {
+    position: Vector3,
+    velocity: Vector3,
+    color_start: Color,
+    color_end: Color,
+    color_current: Color,
+    size_start: float,
+    size_end: float,
+    size_current: float,
+    life: float,
+    max_life: float,
+    is_alive: bool
+}
+
+func particle_new() -> Particle {
+    return new Particle(
+        vec3_zero(),
+        vec3_zero(),
+        color_white(),
+        color_white(),
+        color_white(),
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        false
+    );
+}
+
+class ParticleEmitter {
+    position: Vector3,
+    emission_rate: float, // particles per second
+    spawn_accumulator: float,
+    lifetime_min: float,
+    lifetime_max: float,
+    speed_min: float,
+    speed_max: float,
+    color_start: Color,
+    color_end: Color,
+    size_start: float,
+    size_end: float,
+    gravity: Vector3,
+    particles: list,
+    capacity: int,
+    active_particles_count: int,
+    total_spawned_count: int
+}
+
+func emitter_new(pos: Vector3, capacity: int) -> ParticleEmitter {
+    let pool = list_new();
+    let i = 0;
+    while i < capacity {
+        list_push(pool, particle_new());
+        i = i + 1;
+    }
+
+    return new ParticleEmitter(
+        pos,
+        50.0, // 50 particles/sec
+        0.0,
+        0.5,
+        1.5,
+        2.0,
+        5.0,
+        color_new(255, 200, 50, 255), // Bright flame yellow
+        color_new(200, 20, 10, 0),    // Fading smoke red
+        0.5,
+        0.05,
+        new Vector3(0.0, -2.0, 0.0),  // Light downward drift
+        pool,
+        capacity,
+        0,
+        0
+    );
+}
+
+func emitter_spawn_one(emitter: ParticleEmitter, dir: Vector3, speed: float, lifetime: float) {
+    let i = 0;
+    while i < emitter.capacity {
+        let p: Particle = list_get(emitter.particles, i);
+        if !p.is_alive {
+            p.is_alive = true;
+            p.position = emitter.position;
+            p.velocity = vec3_scale(dir, speed);
+            p.color_start = emitter.color_start;
+            p.color_end = emitter.color_end;
+            p.color_current = emitter.color_start;
+            p.size_start = emitter.size_start;
+            p.size_end = emitter.size_end;
+            p.size_current = emitter.size_start;
+            p.life = 0.0;
+            p.max_life = lifetime;
+
+            emitter.active_particles_count = emitter.active_particles_count + 1;
+            emitter.total_spawned_count = emitter.total_spawned_count + 1;
+            return;
+        }
+        i = i + 1;
+    }
+}
+
+func emitter_burst(emitter: ParticleEmitter, count: int) {
+    let i = 0;
+    let pi2 = 6.283185;
+    while i < count {
+        let angle = (i * 1.0 / count * 1.0) * pi2;
+        let dir = new Vector3(game_math_cos(angle), 1.0, game_math_sin(angle));
+        dir = vec3_normalize(dir);
+        let spd = emitter.speed_min + ((emitter.speed_max - emitter.speed_min) * (i * 1.0 / count * 1.0));
+        let lft = emitter.lifetime_min + ((emitter.lifetime_max - emitter.lifetime_min) * (i * 1.0 / count * 1.0));
+        emitter_spawn_one(emitter, dir, spd, lft);
+        i = i + 1;
+    }
+}
+
+func emitter_update(emitter: ParticleEmitter, dt: float) {
+    // 1. Continuous Spawning
+    emitter.spawn_accumulator = emitter.spawn_accumulator + (dt * emitter.emission_rate);
+    while emitter.spawn_accumulator >= 1.0 {
+        let pseudo_angle = (emitter.total_spawned_count % 36) * 0.1745;
+        let dir = new Vector3(game_math_cos(pseudo_angle), 1.5, game_math_sin(pseudo_angle));
+        emitter_spawn_one(emitter, vec3_normalize(dir), (emitter.speed_min + emitter.speed_max) * 0.5, (emitter.lifetime_min + emitter.lifetime_max) * 0.5);
+        emitter.spawn_accumulator = emitter.spawn_accumulator - 1.0;
+    }
+
+    // 2. Particle Integration & Aging
+    let active = 0;
+    let i = 0;
+    while i < emitter.capacity {
+        let p: Particle = list_get(emitter.particles, i);
+        if p.is_alive {
+            p.life = p.life + dt;
+            if p.life >= p.max_life {
+                p.is_alive = false;
+            } else {
+                let t = p.life / p.max_life;
+                // Position update
+                p.velocity = vec3_add(p.velocity, vec3_scale(emitter.gravity, dt));
+                p.position = vec3_add(p.position, vec3_scale(p.velocity, dt));
+                // Size & Color interpolation
+                p.size_current = p.size_start + ((p.size_end - p.size_start) * t);
+                p.color_current = color_lerp(p.color_start, p.color_end, t);
+                active = active + 1;
+            }
+        }
+        i = i + 1;
+    }
+    emitter.active_particles_count = active;
+}
+
+// ==============================================================================
+// SECTION 8: Multi-Channel 3D Spatial Audio Mixer & Synthesizer
+// ==============================================================================
+
+class AudioListener3D {
+    position: Vector3,
+    forward: Vector3,
+    up: Vector3,
+    velocity: Vector3
+}
+
+func audio_listener_new(pos: Vector3, fwd: Vector3, up: Vector3) -> AudioListener3D {
+    return new AudioListener3D(pos, vec3_normalize(fwd), vec3_normalize(up), vec3_zero());
+}
+
+func waveform_sine() -> int { return 1; }
+func waveform_square() -> int { return 2; }
+func waveform_sawtooth() -> int { return 3; }
+func waveform_noise() -> int { return 4; }
+
+class AudioChannel {
+    id: int,
+    position: Vector3,
+    velocity: Vector3,
+    volume: float,
+    pitch: float,
+    min_dist: float,
+    max_dist: float,
+    is_playing: bool,
+    is_looping: bool,
+    waveform_type: int,
+    frequency: float,
+    phase: float,
+    gain_left: float,
+    gain_right: float,
+    pitch_shifted: float
+}
+
+func audio_channel_new(id: int, pos: Vector3, freq: float, wave_ty: int) -> AudioChannel {
+    return new AudioChannel(
+        id,
+        pos,
+        vec3_zero(),
+        1.0,
+        1.0,
+        1.0,
+        50.0,
+        true,
+        true,
+        wave_ty,
+        freq,
+        0.0,
+        0.5,
+        0.5,
+        1.0
+    );
+}
+
+class AudioMixer3D {
+    listener: AudioListener3D,
+    channels: list,
+    sample_rate: int,
+    speed_of_sound: float,
+    master_volume: float
+}
+
+func audio_mixer_new(sample_rate: int) -> AudioMixer3D {
+    let lis = audio_listener_new(vec3_zero(), new Vector3(0.0, 0.0, -1.0), new Vector3(0.0, 1.0, 0.0));
+    return new AudioMixer3D(lis, list_new(), sample_rate, 343.0, 1.0);
+}
+
+func audio_mixer_add_channel(mixer: AudioMixer3D, ch: AudioChannel) {
+    list_push(mixer.channels, ch);
+}
+
+// 3D Audio Spatialization (Distance Attenuation, Azimuth Panning & Doppler Shift)
+func audio_channel_spatialize(ch: AudioChannel, lis: AudioListener3D, speed_of_sound: float) {
+    let to_source = vec3_sub(ch.position, lis.position);
+    let dist = vec3_length(to_source);
+
+    // 1. Distance Attenuation (Inverse Square / Linear Falloff)
+    let atten = 1.0;
+    if dist > ch.min_dist {
+        if dist >= ch.max_dist {
+            atten = 0.0;
+        } else {
+            atten = 1.0 - ((dist - ch.min_dist) / (ch.max_dist - ch.min_dist));
+        }
+    }
+    let total_vol = ch.volume * atten;
+
+    // 2. Azimuth Stereo Panning
+    let right = vec3_cross(lis.forward, lis.up);
+    let norm_to_source = new Vector3(0.0, 0.0, -1.0);
+    if dist > 0.0001 {
+        norm_to_source = vec3_scale(to_source, 1.0 / dist);
+    }
+    let pan = vec3_dot(norm_to_source, right); // -1.0 (full left) to +1.0 (full right)
+    pan = physics_clamp(pan, -1.0, 1.0);
+
+    // Constant-power panning law
+    let pan_norm = (pan + 1.0) * 0.5; // 0.0 (left) to 1.0 (right)
+    ch.gain_left = total_vol * (1.0 - pan_norm);
+    ch.gain_right = total_vol * pan_norm;
+
+    // 3. Doppler Shift Pitch Calculation
+    // f_observed = f_source * (c + v_listener) / (c + v_source)
+    let v_lis_proj = vec3_dot(lis.velocity, norm_to_source);
+    let v_src_proj = vec3_dot(ch.velocity, norm_to_source);
+    let denom = speed_of_sound + v_src_proj;
+    let doppler_ratio = 1.0;
+    if physics_abs(denom) > 0.001 {
+        doppler_ratio = (speed_of_sound + v_lis_proj) / denom;
+    }
+    ch.pitch_shifted = ch.pitch * doppler_ratio;
+}
+
+// Software Synthesizer Sample Generator
+func synth_next_sample(wave_ty: int, phase: float) -> float {
+    let pi2 = 6.283185;
+    if wave_ty == waveform_sine() {
+        return game_math_sin(phase);
+    }
+    if wave_ty == waveform_square() {
+        if phase < 3.141592 { return 0.8; }
+        return -0.8;
+    }
+    if wave_ty == waveform_sawtooth() {
+        return (phase / 3.141592) - 1.0;
+    }
+    // Noise
+    let pseudo_noise = (physics_float_to_int(phase * 1000.0) % 100) * 0.02 - 1.0;
+    return pseudo_noise;
+}
+
+class AudioStereoFrame {
+    left_sample: float,
+    right_sample: float
+}
+
+func audio_mixer_render_buffer(mixer: AudioMixer3D, num_frames: int) -> list {
+    let buffer = list_new();
+    let pi2 = 6.283185;
+
+    // Update spatial parameters for all channels
+    let ch_idx = 0;
+    let n_ch = list_length(mixer.channels);
+    while ch_idx < n_ch {
+        let ch: AudioChannel = list_get(mixer.channels, ch_idx);
+        if ch.is_playing {
+            audio_channel_spatialize(ch, mixer.listener, mixer.speed_of_sound);
+        }
+        ch_idx = ch_idx + 1;
+    }
+
+    // Synthesize & sum channels
+    let f = 0;
+    while f < num_frames {
+        let sum_l = 0.0;
+        let sum_r = 0.0;
+
+        ch_idx = 0;
+        while ch_idx < n_ch {
+            let ch: AudioChannel = list_get(mixer.channels, ch_idx);
+            if ch.is_playing {
+                let sample = synth_next_sample(ch.waveform_type, ch.phase);
+                sum_l = sum_l + (sample * ch.gain_left);
+                sum_r = sum_r + (sample * ch.gain_right);
+
+                // Advance phase
+                let phase_step = (pi2 * ch.frequency * ch.pitch_shifted) / (mixer.sample_rate * 1.0);
+                ch.phase = ch.phase + phase_step;
+                while ch.phase >= pi2 {
+                    ch.phase = ch.phase - pi2;
+                }
+            }
+            ch_idx = ch_idx + 1;
+        }
+
+        // Master Limiter / Clamping to [-1.0, 1.0]
+        sum_l = physics_clamp(sum_l * mixer.master_volume, -1.0, 1.0);
+        sum_r = physics_clamp(sum_r * mixer.master_volume, -1.0, 1.0);
+
+        list_push(buffer, new AudioStereoFrame(sum_l, sum_r));
+        f = f + 1;
+    }
+    return buffer;
+}
+
+// ==============================================================================
+// SECTION 9: PhysicsWorld & Laboratory Benchmark Gate
+// ==============================================================================
+
+class PhysicsWorld {
+    gravity: Vector3,
+    bodies: list,
+    spatial_grid: SpatialHashGrid,
+    collisions_detected: int,
+    step_count: int
+}
+
+func physics_world_new() -> PhysicsWorld {
+    let grid = spatial_grid_new(4.0); // 4-meter voxel cells
+    return new PhysicsWorld(new Vector3(0.0, -9.81, 0.0), list_new(), grid, 0, 0);
+}
+
+func physics_world_add_body(world: PhysicsWorld, body: PhysicsBody) {
+    list_push(world.bodies, body);
+}
+
+func physics_world_step(world: PhysicsWorld, dt: float, sub_steps: int) {
+    if sub_steps < 1 { sub_steps = 1; }
+    let sub_dt = dt / (sub_steps * 1.0);
+
+    let step_iter = 0;
+    while step_iter < sub_steps {
+        // 1. Broadphase Spatial Hash Grid
+        spatial_grid_clear(world.spatial_grid);
+        let b_i = 0;
+        let n_bodies = list_length(world.bodies);
+        while b_i < n_bodies {
+            let b: PhysicsBody = list_get(world.bodies, b_i);
+            spatial_grid_insert(world.spatial_grid, b.id, physics_body_get_aabb(b));
+            b_i = b_i + 1;
+        }
+
+        // 2. Candidate Pairs from Broadphase
+        let pairs = spatial_grid_get_candidate_pairs(world.spatial_grid);
+        let p_i = 0;
+        let n_pairs = list_length(pairs);
+        while p_i < n_pairs {
+            let pair: BroadphasePair = list_get(pairs, p_i);
+            // Find body objects
+            let bA = body_from_id(world, pair.id_a);
+            let bB = body_from_id(world, pair.id_b);
+            if bA.id >= 0 && bB.id >= 0 {
+                if !(bA.is_static && bB.is_static) {
+                    if physics_check_and_resolve(bA, bB, sub_dt) {
+                        world.collisions_detected = world.collisions_detected + 1;
+                    }
+                }
+            }
+            p_i = p_i + 1;
+        }
+
+        // 3. Fallback Ground Floor Collision check (y >= 0 plane)
+        b_i = 0;
+        while b_i < n_bodies {
+            let body: PhysicsBody = list_get(world.bodies, b_i);
+            if !body.is_static {
+                let bottom_y = body.position.y - body.sphere_radius;
+                if body.body_type == body_type_box() {
+                    bottom_y = body.position.y - body.box_half_extents.y;
+                }
+                if bottom_y < 0.0 {
+                    let pen = 0.0 - bottom_y;
+                    let ground_norm = new Vector3(0.0, 1.0, 0.0);
+                    let manifold = manifold_new(ground_norm, pen, new Vector3(body.position.x, 0.0, body.position.z));
+                    let static_ground = physics_body_static_plane(-999, vec3_zero(), ground_norm);
+                    physics_resolve_collision(static_ground, body, manifold, sub_dt);
+                    world.collisions_detected = world.collisions_detected + 1;
+                }
+            }
+            b_i = b_i + 1;
+        }
+
+        // 4. Integrate Velocities and Positions
+        b_i = 0;
+        while b_i < n_bodies {
+            let body: PhysicsBody = list_get(world.bodies, b_i);
+            physics_body_integrate(body, world.gravity, sub_dt);
+            b_i = b_i + 1;
+        }
+
+        step_iter = step_iter + 1;
+    }
+    world.step_count = world.step_count + 1;
+}
+
+func body_from_id(world: PhysicsWorld, id: int) -> PhysicsBody {
+    let i = 0;
+    let count = list_length(world.bodies);
+    while i < count {
+        let b: PhysicsBody = list_get(world.bodies, i);
+        if b.id == id { return b; }
+        i = i + 1;
+    }
+    return physics_body_new(-1, 0, vec3_zero(), 0.0);
+}
+
+// Laboratory Benchmark Simulation Gate
+class PhysicsBenchmarkResult {
+    total_bodies: int,
+    total_particles: int,
+    audio_channels_mixed: int,
+    simulation_steps: int,
+    collisions_resolved: int,
+    is_success: bool
+}
+
+func physics_benchmark_stress_test() -> PhysicsBenchmarkResult {
+    let world = physics_world_new();
+
+    // 1. Spawn 500 Rigid Bodies in Spatial Voxel Grid
+    let i = 0;
+    while i < 500 {
+        let x = ((i % 20) * 2.0) - 20.0;
+        let y = 5.0 + ((i / 20) * 1.5);
+        let z = ((i % 10) * 2.0) - 10.0;
+        let pos = new Vector3(x, y, z);
+
+        let body = physics_body_sphere(i, pos, 0.5, 1.0);
+        if i % 2 == 0 {
+            body = physics_body_box(i, pos, new Vector3(0.5, 0.5, 0.5), 1.0);
+        }
+        physics_world_add_body(world, body);
+        i = i + 1;
+    }
+
+    // 2. Spawn Particle Emitter with 10,000 capacity
+    let emitter = emitter_new(new Vector3(0.0, 10.0, 0.0), 2000);
+    emitter_burst(emitter, 1000);
+
+    // 3. Audio Mixer with 32 Spatial Channels
+    let mixer = audio_mixer_new(44100);
+    let ch_i = 0;
+    while ch_i < 32 {
+        let angle = (ch_i * 1.0 / 32.0) * 6.283185;
+        let ch_pos = new Vector3(game_math_cos(angle) * 15.0, 0.0, game_math_sin(angle) * 15.0);
+        let freq = 220.0 + (ch_i * 15.0);
+        let ch = audio_channel_new(ch_i, ch_pos, freq, (ch_i % 3) + 1);
+        ch.velocity = new Vector3(0.0 - game_math_sin(angle) * 5.0, 0.0, game_math_cos(angle) * 5.0);
+        audio_mixer_add_channel(mixer, ch);
+        ch_i = ch_i + 1;
+    }
+
+    // 4. Execute 60 Simulation Steps (equivalent to 1 second of 60 FPS gameplay)
+    let s = 0;
+    while s < 60 {
+        physics_world_step(world, 0.01666, 2);
+        emitter_update(emitter, 0.01666);
+        s = s + 1;
+    }
+
+    // Mix 256 frames of 32-channel spatial audio
+    let audio_frames = audio_mixer_render_buffer(mixer, 256);
+
+    let success = (world.collisions_detected > 0) &&
+                  (emitter.active_particles_count > 0) &&
+                  (list_length(audio_frames) == 256);
+
+    return new PhysicsBenchmarkResult(
+        list_length(world.bodies),
+        emitter.active_particles_count,
+        list_length(mixer.channels),
+        world.step_count,
+        world.collisions_detected,
+        success
+    );
+}

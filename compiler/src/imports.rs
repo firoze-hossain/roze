@@ -153,6 +153,9 @@ const GAME_ECS_DISPLAY_NAME: &str = "game_ecs (built-in)";
 const GAME_RENDER_SOURCE: &str = include_str!("../../stdlib/src/game_render.roze");
 const GAME_RENDER_DISPLAY_NAME: &str = "game_render (built-in)";
 
+const GAME_PHYSICS_SOURCE: &str = include_str!("../../stdlib/src/game_physics.roze");
+const GAME_PHYSICS_DISPLAY_NAME: &str = "game_physics (built-in)";
+
 const ORM_SOURCE: &str = include_str!("../../stdlib/src/orm.roze");
 const ORM_DISPLAY_NAME: &str = "orm (built-in)";
 
@@ -304,6 +307,9 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         "roze-game.render" | "roze-game::render" | "roze::game::render" | "roze.game.render" | "game.render" | "game::render" | "roze_game_render" | "game_render" | "render" | "graphics" => {
             Some("roze-game/src/render.roze".to_string())
         }
+        "roze-game.physics" | "roze-game::physics" | "roze::game::physics" | "roze.game.physics" | "game.physics" | "game::physics" | "roze_game_physics" | "game_physics" | "physics" | "physx" | "box2d" => {
+            Some("roze-game/src/physics.roze".to_string())
+        }
         "game" | "roze::game" | "roze-game" | "roze_game" | "raylib_game" | "gamedev" | "engine" => {
             Some("roze-game/src/lib.roze".to_string())
         }
@@ -387,6 +393,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
                 "rozeboot_banking" => Some("rozeboot_banking.roze"),
                 "game_ecs" => Some("game_ecs.roze"),
                 "game_render" => Some("game_render.roze"),
+                "game_physics" => Some("game_physics.roze"),
                 "orm" => Some("orm.roze"),
                 "raw_net" => Some("raw_net.roze"),
                 "crypto" => Some("crypto.roze"),
@@ -557,6 +564,10 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "roze-game.render" || path == "roze-game::render" || path == "roze::game::render" || path == "roze.game.render"
         || path == "game.render" || path == "game::render" || path == "roze_game_render" || path == "game_render" || path == "render" || path == "graphics" {
         return Ok((GAME_RENDER_SOURCE.to_string(), GAME_RENDER_DISPLAY_NAME.to_string()));
+    }
+    if path == "roze-game.physics" || path == "roze-game::physics" || path == "roze::game::physics" || path == "roze.game.physics"
+        || path == "game.physics" || path == "game::physics" || path == "roze_game_physics" || path == "game_physics" || path == "physics" || path == "physx" || path == "box2d" {
+        return Ok((GAME_PHYSICS_SOURCE.to_string(), GAME_PHYSICS_DISPLAY_NAME.to_string()));
     }
     if path == "orm" || path == "roze::orm" || path == "roze.orm" || path == "roze-orm" || path == "roze_orm"
         || path == "sql_orm" || path == "jpa" || path == "diesel" || path == "seaorm" {

@@ -2639,6 +2639,17 @@ fn standard_pkg_suite() {
     assert!(stdout.contains("ALL 7 SUITES PASSED: M12-T04 BASIR GLOBAL REGISTRY & MONOLITHIC DRIVER 100% COMPLETE!"));
 }
 
+#[test]
+fn milestone_gate_m12_titan_release_suite() {
+    let (stdout, stderr, ok) = run_fixture("milestone_gate_m12_titan_release.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("ROZE v3.0 'TITAN' IS OFFICIALLY LAUNCHED ACROSS ALL COMPUTING DOMAINS!"));
+    assert!(stdout.contains("All 10 Domains Status:  ✅ 100% PASSED (PRODUCTION READY)"));
+    assert!(stdout.contains("Language Autonomy:      ✅ 100% Pure Roze (0 External Language Dependency)"));
+    assert!(stdout.contains("Ecosystem Parity:       Java 25 | Rust 1.99.1 | Python 3.15.2"));
+    assert!(stdout.contains("MILESTONE GATE M12 VERIFICATION COMPLETE: ROZE v3.0 'TITAN' PRODUCTION READY!"));
+}
+
 
 
 

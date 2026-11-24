@@ -1,7 +1,7 @@
 Name:           roze
-Version:        2.0.0
+Version:        3.0.0
 Release:        1%{?dist}
-Summary:        The Roze Programming Language Toolchain (v2.0.0 'Prometheus')
+Summary:        The Roze Programming Language Toolchain (v3.0.0 'Titan')
 
 License:        MIT
 URL:            https://roze-lang.org

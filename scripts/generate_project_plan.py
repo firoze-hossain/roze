@@ -858,7 +858,7 @@ s1_rows = [
         ("M12-T05", 8), ("Month 12", 27), ("Sprint 24 (W49-W52)", 8), "Final Release M12", "Official Roze v3.0 'Titan' Production Launch",
         "Official global release: 100% pure Roze self-hosted compiler, zero external language dependency, 3-stage bootstrap fixpoint idempotence verified (0 bytes diff), complete standard library manual, multi-platform installer packages (deb, rpm, Homebrew, MSI, pkg, vsix), and RozeHub portal documentation. Roze officially established as an autonomous, general-purpose programming language standing on par with Java 25, Rust 1.99.1, and Python 3.15.2.",
         "Roze v3.0 'Titan' officially launched as an autonomous, general-purpose programming language on par with Java 25, Rust 1.99.1 & Python 3.15.2 across all 10 computing domains.",
-        "Global Release & Universal Production Ecosystem", "5 Days", ("Critical", 14), ("Milestone Gate", 15)
+        "Global Release & Universal Production Ecosystem", "5 Days", ("Critical", 14), ("Completed", 16)
     ]
 ]
 

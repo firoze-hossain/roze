@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Build RPM package for Roze v2.0.0 'Prometheus'
+# Build RPM package for Roze v3.0.0 'Titan'
 # ==============================================================================
 
 set -euo pipefail
 
-VERSION="2.0.0"
+VERSION="3.0.0"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DIST_DIR="${ROOT_DIR}/dist"
 RPMBUILD_DIR="${DIST_DIR}/rpmbuild"
 
-echo "📦 Preparing RPM package for Roze v${VERSION} 'Prometheus'..."
+echo "📦 Preparing RPM package for Roze v${VERSION} 'Titan'..."
 
 mkdir -p "${RPMBUILD_DIR}"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 cp "${ROOT_DIR}/packaging/linux/roze.spec" "${RPMBUILD_DIR}/SPECS/"

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# 🌹 Official Roze Programming Language Installer (v2.0.0 'Prometheus')
+# 🌹 Official Roze Programming Language Installer (v3.0.0 'Titan')
 # Usage: curl -fsSL https://roze-lang.org/install.sh | bash
 # ==============================================================================
 
 set -euo pipefail
 
-ROZE_VERSION="2.0.0"
+ROZE_VERSION="3.0.0"
 INSTALL_DIR="${HOME}/.roze"
 BIN_DIR="${INSTALL_DIR}/bin"
 STDLIB_DIR="${INSTALL_DIR}/stdlib"
 
 echo "=============================================================================="
-echo "🌹 Installing Roze Programming Language v${ROZE_VERSION} 'Prometheus'"
+echo "🌹 Installing Roze Programming Language v${ROZE_VERSION} 'Titan'"
 echo "=============================================================================="
 
 # Detect OS and architecture
@@ -91,7 +91,7 @@ add_to_path "${HOME}/.profile"
 
 echo ""
 echo "=============================================================================="
-echo "🎉 Roze v${ROZE_VERSION} 'Prometheus' installed successfully to ${INSTALL_DIR}!"
+echo "🎉 Roze v${ROZE_VERSION} 'Titan' installed successfully to ${INSTALL_DIR}!"
 echo "=============================================================================="
 echo ""
 echo "To activate Roze in your current shell session, run:"

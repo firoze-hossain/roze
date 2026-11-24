@@ -32,8 +32,8 @@ pub use target::Target;
 
 #[derive(ClapParser)]
 #[command(name = "roze")]
-#[command(version = "1.0.0")]
-#[command(about = "🌹 Roze Monolithic Developer Toolchain & Compiler Suite")]
+#[command(version = "3.0.0")]
+#[command(about = "🌹 Roze Monolithic Developer Toolchain & Compiler Suite (v3.0.0 'Titan')")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

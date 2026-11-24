@@ -5479,6 +5479,22 @@ fn native_standard_pkg_suite() {
     assert!(stdout.contains("ALL 7 SUITES PASSED: M12-T04 BASIR GLOBAL REGISTRY & MONOLITHIC DRIVER 100% COMPLETE!"));
 }
 
+#[test]
+fn native_milestone_gate_m12_titan_release_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("milestone_gate_m12_titan_release.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read milestone_gate_m12_titan_release.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("m12_titan_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("ROZE v3.0 'TITAN' IS OFFICIALLY LAUNCHED ACROSS ALL COMPUTING DOMAINS!"));
+    assert!(stdout.contains("All 10 Domains Status:  ✅ 100% PASSED (PRODUCTION READY)"));
+    assert!(stdout.contains("Language Autonomy:      ✅ 100% Pure Roze (0 External Language Dependency)"));
+    assert!(stdout.contains("Ecosystem Parity:       Java 25 | Rust 1.99.1 | Python 3.15.2"));
+    assert!(stdout.contains("MILESTONE GATE M12 VERIFICATION COMPLETE: ROZE v3.0 'TITAN' PRODUCTION READY!"));
+}
+
 
 
 

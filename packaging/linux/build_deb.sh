@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Build Debian/Ubuntu .deb package for Roze v2.0.0 'Prometheus'
+# Build Debian/Ubuntu .deb package for Roze v3.0.0 'Titan'
 # ==============================================================================
 
 set -euo pipefail
 
-VERSION="2.0.0"
+VERSION="3.0.0"
 ARCH="amd64"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/dist/deb/roze_${VERSION}_${ARCH}"

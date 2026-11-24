@@ -1,0 +1,23 @@
+# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
+
+[package]
+name = "roze-release"
+version = "3.0.0"
+description = "Official Roze v3.0 'Titan' Production Launch Suite - Full Verification across All 10 Computing Domains"
+authors = ["Mohammad Firoze <firoze@roze.dev>"]
+license = "MIT OR Apache-2.0"
+edition = "2026"
+main = "src/lib.roze"
+
+[features]
+default = ["enterprise", "os", "security", "ai", "game", "gui", "embedded", "wasm", "datascience", "toolchain"]
+enterprise = []
+os = []
+security = []
+ai = []
+game = []
+gui = []
+embedded = []
+wasm = []
+datascience = []
+toolchain = []

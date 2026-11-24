@@ -2,9 +2,9 @@
 # frozen_string_literal: true
 
 class Roze < Formula
-  desc "The Roze Programming Language Toolchain (v2.0.0 'Prometheus')"
+  desc "The Roze Programming Language Toolchain (v3.0.0 'Titan')"
   homepage "https://roze-lang.org"
-  url "https://github.com/firoze-hossain/roze/archive/refs/tags/v2.0.0.tar.gz"
+  url "https://github.com/firoze-hossain/roze/archive/refs/tags/v3.0.0.tar.gz"
   sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   license "MIT"
   head "https://github.com/firoze-hossain/roze.git", branch: "master"
@@ -40,11 +40,11 @@ class Roze < Formula
   test do
     (testpath/"hello.roze").write <<~EOS
       func main() {
-          println("Hello from Roze v2.0 'Prometheus' Homebrew!");
+          println("Hello from Roze v3.0 'Titan' Homebrew!");
       }
     EOS
 
     system "#{bin}/roze", "build", "hello.roze", "--target", "native"
-    assert_equal "Hello from Roze v2.0 'Prometheus' Homebrew!\n", shell_output("./hello")
+    assert_equal "Hello from Roze v3.0 'Titan' Homebrew!\n", shell_output("./hello")
   end
 end

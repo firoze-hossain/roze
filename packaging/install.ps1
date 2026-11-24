@@ -1,18 +1,18 @@
 ﻿# ==============================================================================
-# 🌹 Official Roze Programming Language Installer for Windows (v2.0.0 'Prometheus')
+# 🌹 Official Roze Programming Language Installer for Windows (v3.0.0 'Titan')
 # Usage in PowerShell:
 #     iwr -useb https://roze-lang.org/install.ps1 | iex
 # ==============================================================================
 
 $ErrorActionPreference = "Stop"
 
-$RozeVersion = "2.0.0"
+$RozeVersion = "3.0.0"
 $InstallDir = Join-Path $env:LOCALAPPDATA "Roze"
 $BinDir = Join-Path $InstallDir "bin"
 $StdlibDir = Join-Path $InstallDir "stdlib"
 
 Write-Host "==============================================================================" -ForegroundColor Magenta
-Write-Host "🌹 Installing Roze Programming Language v$RozeVersion 'Prometheus' for Windows" -ForegroundColor Magenta
+Write-Host "🌹 Installing Roze Programming Language v$RozeVersion 'Titan' for Windows" -ForegroundColor Magenta
 Write-Host "==============================================================================" -ForegroundColor Magenta
 
 # Create target directories
@@ -63,7 +63,7 @@ if ($UserPath -notlike "*$BinDir*") {
 
 Write-Host ""
 Write-Host "==============================================================================" -ForegroundColor Green
-Write-Host "🎉 Roze v$RozeVersion 'Prometheus' installed successfully!" -ForegroundColor Green
+Write-Host "🎉 Roze v$RozeVersion 'Titan' installed successfully!" -ForegroundColor Green
 Write-Host "Location: $InstallDir" -ForegroundColor Green
 Write-Host "==============================================================================" -ForegroundColor Green
 Write-Host ""

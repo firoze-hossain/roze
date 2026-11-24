@@ -174,6 +174,9 @@ const WASM_DISPLAY_NAME: &str = "wasm (built-in)";
 const PKG_SOURCE: &str = include_str!("../../stdlib/src/pkg.roze");
 const PKG_DISPLAY_NAME: &str = "pkg (built-in)";
 
+const TITAN_RELEASE_SOURCE: &str = include_str!("../../stdlib/src/titan_release.roze");
+const TITAN_RELEASE_DISPLAY_NAME: &str = "titan_release (built-in)";
+
 const ORM_SOURCE: &str = include_str!("../../stdlib/src/orm.roze");
 const ORM_DISPLAY_NAME: &str = "orm (built-in)";
 
@@ -368,6 +371,13 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         "roze-pkg" | "roze-pkg::lib" | "roze::pkg" | "roze.pkg" | "roze_pkg" | "bsr" | "roze-bsr" | "roze::bsr" => {
             Some("roze-pkg/src/lib.roze".to_string())
         }
+        "roze-release.core" | "roze-release::core" | "roze::release::core" | "roze.release.core" | "titan.core" | "titan::core"
+        | "roze_release_core" | "titan_release" | "titan_release_core" | "m12.gate" | "milestone_m12" => {
+            Some("roze-release/src/core.roze".to_string())
+        }
+        "roze-release" | "roze-release::lib" | "roze::release" | "roze.release" | "roze_release" | "titan" | "roze-titan" | "roze::titan" | "release" => {
+            Some("roze-release/src/lib.roze".to_string())
+        }
         _ => None,
     };
 
@@ -453,6 +463,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
                 "embedded_hal" => Some("embedded_hal.roze"),
                 "wasm" => Some("wasm.roze"),
                 "pkg" | "bsr" => Some("pkg.roze"),
+                "titan_release" | "roze-release" | "titan" => Some("titan_release.roze"),
                 "orm" => Some("orm.roze"),
                 "raw_net" => Some("raw_net.roze"),
                 "crypto" => Some("crypto.roze"),
@@ -533,6 +544,11 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
         || path == "roze.pkg" || path == "roze.pkg.core" || path == "pkg.core" || path == "pkg::core" || path == "roze_pkg" || path == "roze_pkg_core" || path == "pkg_core" || path == "pkg"
         || path == "bsr" || path == "bsr.core" || path == "bsr::core" || path == "roze-bsr" || path == "roze::bsr" {
         return Ok((PKG_SOURCE.to_string(), PKG_DISPLAY_NAME.to_string()));
+    }
+    if path == "roze-release" || path == "roze-release.core" || path == "roze-release::core" || path == "roze::release" || path == "roze::release::core"
+        || path == "roze.release" || path == "roze.release.core" || path == "titan" || path == "roze-titan" || path == "roze::titan" || path == "titan_release"
+        || path == "release" || path == "m12.gate" || path == "milestone_m12" || path == "roze_release" {
+        return Ok((TITAN_RELEASE_SOURCE.to_string(), TITAN_RELEASE_DISPLAY_NAME.to_string()));
     }
     if path == "binary" || path == "roze::binary" || path == "disasm" || path == "roze::disasm" || path == "elf" || path == "pe" || path == "macho"
         || path == "roze.sec.disasm" || path == "roze::sec::disasm" || path == "roze-sec::disasm" || path == "roze_sec_disasm" || path == "sec.disasm" || path == "sec::disasm" || path == "sec_disasm" || path == "riscv" {

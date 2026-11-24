@@ -1,0 +1,8 @@
+// packages/roze-release/src/lib.roze
+// ==============================================================================
+// 🌹 Official Roze v3.0 'Titan' Production Launch Suite - Package Entry Point
+// ==============================================================================
+// Re-exports the complete master verification suite and domain gates across
+// all 10 computing domains.
+
+import "roze-release.core";

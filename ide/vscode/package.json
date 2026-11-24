@@ -1,8 +1,8 @@
 {
   "name": "roze-language",
   "displayName": "Roze Language",
-  "description": "Official Roze programming language support with LSP, syntax highlighting, and build automation",
-  "version": "1.0.0",
+  "description": "Official Roze programming language support with LSP, syntax highlighting, and build automation (v3.0.0 'Titan')",
+  "version": "3.0.0",
   "publisher": "roze-lang",
   "repository": {
     "type": "git",

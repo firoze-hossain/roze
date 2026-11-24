@@ -1,0 +1,4 @@
+// packages/roze-embedded/src/lib.roze
+// 🌹 Roze-Embedded Root Library: Microcontroller Hardware Platform & embedded-hal Driver Suite
+
+import "roze-embedded.hal";

@@ -5423,6 +5423,25 @@ fn native_standard_os_kernel_suite() {
     assert!(stdout.contains("ALL 10 SUITES PASSED: M12-T01 FREESTANDING 64-BIT OS KERNEL 100% COMPLETE!"));
 }
 
+#[test]
+fn native_standard_embedded_hal_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_embedded_hal.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_embedded_hal.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_embedded_hal_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Embedded cross-compilation targets and linker scripts verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: Interrupt vector tables verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: MMIO register engine and bitwise operations verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: Digital GPIO driver verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: I2C and SPI serial bus protocols verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: UART serial, PWM timer and 12-bit ADC sensor verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: CMSIS-SVD PAC generator and flasher pipeline verified."));
+    assert!(stdout.contains("ALL 7 SUITES PASSED: M12-T02 MICROCONTROLLER PLATFORM & PAC SVD 100% COMPLETE!"));
+}
+
 
 
 

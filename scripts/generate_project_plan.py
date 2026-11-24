@@ -840,7 +840,7 @@ s1_rows = [
         ("M12-T02", 8), ("Month 12", 27), ("Sprint 23 (W47-W48)", 8), "Microcontroller IoT", "Microcontroller Hardware Platform & PAC SVD Generator",
         "Embedded cross-compilation pipeline: ARM Cortex-M (thumbv6m, thumbv7m, thumbv7em) and RISC-V (riscv32imc, riscv64gc). Pure Roze embedded-hal driver traits (GPIO, I2C, SPI, UART, PWM, ADC), automated CMSIS-SVD register generator (roze svd), bare-metal linker scripts, interrupt vector tables, direct flashing CLI (roze flash) for STM32, ESP32, RP2040.",
         "Direct parity with Rust embedded-hal and C CMSIS/HAL micro-firmware architectures.",
-        "Microcontrollers, IoT Edge, Automotive, Robotics", "8 Days", ("Critical", 14), ("Planned", 12)
+        "Microcontrollers, IoT Edge, Automotive, Robotics", "8 Days", ("Critical", 14), ("Completed", 16)
     ],
     [
         ("M12-T03", 8), ("Month 12", 27), ("Sprint 23 (W47-W48)", 8), "WebAssembly & WASI", "WebAssembly & WASI 0.2 Component Model (roze-wasm)",

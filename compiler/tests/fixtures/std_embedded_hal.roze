@@ -1,0 +1,240 @@
+// packages/roze-embedded/tests/test_embedded.roze
+// ==============================================================================
+// 🌹 Roze-Embedded: Microcontroller Hardware Platform & PAC SVD Generator Test Suite
+// ==============================================================================
+// Comprehensive verification of all 7 embedded subsystems:
+// 1. Embedded Cross-Compilation Target Architectures & Memory Profiles
+// 2. Interrupt Vector Tables (ARM Cortex-M NVIC & RISC-V MTVEC)
+// 3. Volatile MMIO Register Engine & Atomic Bitwise Operations
+// 4. Digital GPIO Pin Driver (embedded-hal OutputPin & InputPin)
+// 5. I2C & SPI Serial Bus Protocols (Master Transmit/Receive, SPI Modes)
+// 6. High-Speed UART Serial, PWM Timer Channels & 12-Bit ADC Voltage Sensing
+// 7. CMSIS-SVD PAC Code Generator, Direct Flasher Pipeline & Diagnostics Gate
+// ==============================================================================
+
+import "roze-embedded.hal";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("❌ ASSERTION FAILED: " + msg);
+        let crash = 1 / 0;
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_int(actual: int, expected: int, msg: string) {
+    if actual != expected {
+        println("❌ ASSERTION FAILED: " + msg);
+        println("   Expected: " + to_string(expected));
+        println("   Actual:   " + to_string(actual));
+        let crash = 1 / 0;
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func main() {
+    println("================================================================================");
+    println("🌹 ROZE-EMBEDDED: MICROCONTROLLER HARDWARE PLATFORM & PAC SVD (M12-T02)");
+    println("================================================================================");
+
+    // =========================================================================
+    // SUITE 1: Embedded Cross-Compilation Target Architectures & Linker Scripts
+    // =========================================================================
+    println("\n--- SUITE 1: Embedded Cross-Compilation Targets & Linker Scripts ---");
+    let stm32 = target_stm32f103();
+    assert_eq_int(stm32.flash_size_kb, 64, "STM32F103 Flash size 64 KB");
+    assert_eq_int(stm32.ram_size_kb, 20, "STM32F103 RAM size 20 KB");
+    assert_true(!stm32.has_fpu, "STM32F103 Cortex-M3 lacks hardware FPU");
+
+    let stm4 = target_stm32f401();
+    assert_eq_int(stm4.flash_size_kb, 512, "STM32F401 Flash size 512 KB");
+    assert_eq_int(stm4.ram_size_kb, 96, "STM32F401 RAM size 96 KB");
+    assert_true(stm4.has_fpu, "STM32F401 Cortex-M4F has hardware FPU");
+
+    let rp = target_rp2040();
+    assert_eq_int(rp.flash_size_kb, 2048, "RP2040 Flash size 2048 KB");
+    assert_eq_int(rp.ram_size_kb, 264, "RP2040 RAM size 264 KB");
+
+    let esp = target_esp32c3();
+    assert_eq_int(esp.flash_size_kb, 4096, "ESP32-C3 Flash size 4096 KB");
+    assert_eq_int(esp.ram_size_kb, 384, "ESP32-C3 RAM size 384 KB");
+
+    let rv64 = target_riscv64gc();
+    assert_eq_int(rv64.flash_size_kb, 8192, "RV64GC Flash size 8192 KB");
+    assert_true(rv64.has_fpu, "RV64GC has hardware double-precision FPU");
+
+    let lds = embedded_generate_linker_script(stm32);
+    assert_true(string_length(lds) > 100, "Linker script generated successfully");
+    println("SUITE 1 PASSED: Embedded cross-compilation targets and linker scripts verified.");
+
+    // =========================================================================
+    // SUITE 2: Interrupt Vector Tables (ARM Cortex-M NVIC & RISC-V MTVEC)
+    // =========================================================================
+    println("\n--- SUITE 2: Interrupt Vector Tables ---");
+    let cortex_vectors = cortex_m_build_vector_table();
+    assert_true(list_length(cortex_vectors.entries) >= 15, "Cortex-M vector table populated");
+    let v0: CortexMVectorEntry = list_get(cortex_vectors.entries, 0);
+    assert_eq_int(v0.vector_num, 0, "Vector 0 initial stack pointer");
+    let v1: CortexMVectorEntry = list_get(cortex_vectors.entries, 1);
+    assert_eq_int(v1.vector_num, 1, "Vector 1 Reset handler");
+
+    let riscv_traps = riscv_build_trap_table();
+    assert_eq_int(riscv_traps.mtvec_mode, 1, "RISC-V MTVEC set to Vectored mode (1)");
+    assert_true(list_length(riscv_traps.entries) >= 6, "RISC-V trap handlers populated");
+    println("SUITE 2 PASSED: Interrupt vector tables verified.");
+
+    // =========================================================================
+    // SUITE 3: Volatile MMIO Register Engine & Atomic Bitwise Operations
+    // =========================================================================
+    println("\n--- SUITE 3: Volatile MMIO Register Engine ---");
+    let mmio = mmio_memory_new();
+    let gpioa_odr = 1073809420; // 0x4001080C (GPIOA_ODR)
+    mmio_mem_write(mmio, gpioa_odr, 255);
+    assert_eq_int(mmio_mem_read(mmio, gpioa_odr), 255, "MMIO register 32-bit read matches written value");
+
+    assert_true(mmio_mem_test_bit(mmio, gpioa_odr, 0), "Bit 0 is high");
+    assert_true(!mmio_mem_test_bit(mmio, gpioa_odr, 8), "Bit 8 is low");
+
+    mmio_mem_set_bit(mmio, gpioa_odr, 8);
+    assert_eq_int(mmio_mem_read(mmio, gpioa_odr), 511, "MMIO set_bit 8 correct");
+
+    mmio_mem_clear_bit(mmio, gpioa_odr, 0);
+    assert_eq_int(mmio_mem_read(mmio, gpioa_odr), 510, "MMIO clear_bit 0 correct");
+
+    mmio_mem_modify(mmio, gpioa_odr, 254, 1);
+    assert_eq_int(mmio_mem_read(mmio, gpioa_odr), 257, "MMIO modify clear_mask/set_mask correct");
+    println("SUITE 3 PASSED: MMIO register engine and bitwise operations verified.");
+
+    // =========================================================================
+    // SUITE 4: Digital GPIO Pin Driver (embedded-hal OutputPin & InputPin)
+    // =========================================================================
+    println("\n--- SUITE 4: Digital GPIO Pin Driver ---");
+    let pin13 = gpio_pin_new("GPIOC", 13, 1);
+    assert_true(gpio_is_low(pin13), "Default GPIO state is LOW");
+
+    gpio_set_high(pin13);
+    assert_true(gpio_is_high(pin13), "GPIO state is HIGH after set_high");
+    assert_true(!gpio_is_low(pin13), "GPIO is not low");
+
+    gpio_toggle(pin13);
+    assert_true(gpio_is_low(pin13), "GPIO state is LOW after toggle");
+
+    gpio_toggle(pin13);
+    assert_true(gpio_is_high(pin13), "GPIO state is HIGH after second toggle");
+
+    gpio_set_low(pin13);
+    assert_true(gpio_is_low(pin13), "GPIO state is LOW after set_low");
+    println("SUITE 4 PASSED: Digital GPIO driver verified.");
+
+    // =========================================================================
+    // SUITE 5: I2C & SPI Serial Bus Protocols
+    // =========================================================================
+    println("\n--- SUITE 5: I2C & SPI Serial Bus Protocols ---");
+    let i2c = i2c_new(400000);
+    let i2c_tx = list_new();
+    list_push(i2c_tx, 107); // PWR_MGMT_1
+    list_push(i2c_tx, 0);   // Wake up
+    let write_ok = i2c_write(i2c, 104, i2c_tx);
+    assert_true(write_ok, "I2C master transmit succeeded");
+    assert_true(i2c.ack_received, "I2C slave ACK received");
+    assert_eq_int(i2c.last_addr, 104, "I2C target slave address registered");
+
+    let i2c_rx = i2c_read(i2c, 104, 6);
+    assert_eq_int(list_length(i2c_rx), 6, "I2C read 6 accelerometer registers");
+
+    let spi = spi_new(0, 4);
+    assert_true(!spi.cs_asserted, "SPI Chip Select initially deasserted");
+    spi_select(spi);
+    assert_true(spi.cs_asserted, "SPI Chip Select asserted");
+    let reply = spi_transfer_byte(spi, 170);
+    assert_eq_int(reply, 171, "SPI full-duplex transfer byte returned expected response");
+    assert_eq_int(spi.bytes_transferred, 1, "SPI byte transfer counter updated");
+
+    let spi_block = list_new();
+    list_push(spi_block, 1);
+    list_push(spi_block, 2);
+    list_push(spi_block, 3);
+    spi_write_bytes(spi, spi_block);
+    assert_eq_int(spi.bytes_transferred, 4, "SPI block transfer sent 3 additional bytes");
+    spi_deselect(spi);
+    assert_true(!spi.cs_asserted, "SPI Chip Select deasserted after transfer");
+    println("SUITE 5 PASSED: I2C and SPI serial bus protocols verified.");
+
+    // =========================================================================
+    // SUITE 6: UART Serial, PWM Timer & 12-Bit ADC Sensor
+    // =========================================================================
+    println("\n--- SUITE 6: UART Serial, PWM Timer & 12-Bit ADC Sensor ---");
+    let div_115200 = calc_baud_divisor(72000000, 115200);
+    assert_eq_int(div_115200, 39, "UART baud divisor for 72MHz @ 115200 baud is 39");
+    let div_9600 = calc_baud_divisor(72000000, 9600);
+    assert_eq_int(div_9600, 468, "UART baud divisor for 72MHz @ 9600 baud is 468");
+
+    let uart = uart_new(72000000, 115200);
+    assert_eq_int(uart.divisor, 39, "UART configured with calculated divisor");
+
+    uart_write_byte(uart, 82); // 'R'
+    uart_write_byte(uart, 79); // 'O'
+    uart_write_byte(uart, 90); // 'Z'
+    uart_write_byte(uart, 69); // 'E'
+    assert_eq_int(uart_read_byte(uart), 82, "UART RX byte 0 is 'R'");
+    assert_eq_int(uart_read_byte(uart), 79, "UART RX byte 1 is 'O'");
+    assert_eq_int(uart_read_byte(uart), 90, "UART RX byte 2 is 'Z'");
+    assert_eq_int(uart_read_byte(uart), 69, "UART RX byte 3 is 'E'");
+
+    let pwm = pwm_new(20000, 1000);
+    pwm_set_duty_percent(pwm, 50);
+    assert_eq_int(pwm_get_duty(pwm), 500, "PWM duty cycle set to 50% (500/1000)");
+    pwm_set_duty_percent(pwm, 80);
+    assert_eq_int(pwm_get_duty(pwm), 800, "PWM duty cycle set to 80% (800/1000)");
+    pwm_enable(pwm);
+    assert_true(pwm.is_enabled, "PWM channel enabled");
+    pwm_disable(pwm);
+    assert_true(!pwm.is_enabled, "PWM channel disabled");
+
+    let adc = adc_new(12, 3300);
+    adc.raw_value = 0;
+    assert_eq_int(adc_sample_mv(adc), 0, "ADC 0 counts corresponds to 0 mV");
+    adc.raw_value = 2047;
+    let mv_half = adc_sample_mv(adc);
+    assert_true(mv_half >= 1640 && mv_half <= 1660, "ADC 2047 counts corresponds to ~1650 mV");
+    adc.raw_value = 4095;
+    assert_eq_int(adc_sample_mv(adc), 3300, "ADC 4095 full scale corresponds to 3300 mV (Vref)");
+    println("SUITE 6 PASSED: UART serial, PWM timer and 12-bit ADC sensor verified.");
+
+    // =========================================================================
+    // SUITE 7: CMSIS-SVD PAC Generator, Flasher & Diagnostics Gate
+    // =========================================================================
+    println("\n--- SUITE 7: CMSIS-SVD PAC Generator & Direct Flasher Pipeline ---");
+    let dev = svd_device_stm32f103();
+    assert_eq_int(list_length(dev.peripherals), 2, "SVD model contains GPIOA and USART1 peripherals");
+    let pac = svd_generate_pac_module(dev);
+    assert_true(string_length(pac) > 100, "PAC code generated from SVD model");
+
+    let f_stlink = flash_program_chip(1, "STM32F103C8T6", 32768, 115200);
+    assert_true(f_stlink.is_success, "ST-Link flash programming succeeded");
+    assert_true(f_stlink.verified, "ST-Link flash verification succeeded");
+    assert_eq_int(f_stlink.bytes_written, 32768, "ST-Link 32768 bytes written");
+
+    let f_pico = flash_program_chip(2, "RP2040", 65536, 115200);
+    assert_true(f_pico.is_success, "Picotool flash programming succeeded");
+
+    let f_esp = flash_program_chip(3, "ESP32-C3", 131072, 921600);
+    assert_true(f_esp.is_success, "Esptool flash programming succeeded");
+
+    let diag = embedded_run_full_verification();
+    assert_true(diag.cross_compilation_verified, "Diagnostics: cross-compilation target configs");
+    assert_true(diag.gpio_hal_verified, "Diagnostics: GPIO HAL");
+    assert_true(diag.i2c_spi_buses_verified, "Diagnostics: I2C and SPI buses");
+    assert_true(diag.uart_serial_verified, "Diagnostics: UART serial");
+    assert_true(diag.pwm_timer_verified, "Diagnostics: PWM timer");
+    assert_true(diag.adc_analog_verified, "Diagnostics: ADC analog converter");
+    assert_true(diag.svd_pac_flash_verified, "Diagnostics: SVD PAC generator and flasher");
+    assert_true(diag.all_suites_passed, "Diagnostics: master diagnostics gate");
+    println("SUITE 7 PASSED: CMSIS-SVD PAC generator and flasher pipeline verified.");
+
+    println("\n================================================================================");
+    println("ALL 7 SUITES PASSED: M12-T02 MICROCONTROLLER PLATFORM & PAC SVD 100% COMPLETE!");
+    println("================================================================================");
+}

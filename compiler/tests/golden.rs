@@ -2598,6 +2598,20 @@ fn standard_os_kernel_suite() {
     assert!(stdout.contains("ALL 10 SUITES PASSED: M12-T01 FREESTANDING 64-BIT OS KERNEL 100% COMPLETE!"));
 }
 
+#[test]
+fn standard_embedded_hal_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_embedded_hal.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Embedded cross-compilation targets and linker scripts verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: Interrupt vector tables verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: MMIO register engine and bitwise operations verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: Digital GPIO driver verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: I2C and SPI serial bus protocols verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: UART serial, PWM timer and 12-bit ADC sensor verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: CMSIS-SVD PAC generator and flasher pipeline verified."));
+    assert!(stdout.contains("ALL 7 SUITES PASSED: M12-T02 MICROCONTROLLER PLATFORM & PAC SVD 100% COMPLETE!"));
+}
+
 
 
 

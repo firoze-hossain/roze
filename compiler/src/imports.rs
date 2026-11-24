@@ -343,6 +343,12 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         "roze-os" | "roze-os::lib" | "roze::os" | "roze.os" | "roze_os" | "rozeos" => {
             Some("roze-os/src/lib.roze".to_string())
         }
+        "roze-embedded.hal" | "roze-embedded::hal" | "roze::embedded::hal" | "roze.embedded.hal" | "embedded.hal" | "embedded::hal" | "roze_embedded_hal" | "embedded_hal" | "hal" | "embedded-hal" => {
+            Some("roze-embedded/src/hal.roze".to_string())
+        }
+        "roze-embedded" | "roze-embedded::lib" | "roze::embedded" | "roze.embedded" | "roze_embedded" => {
+            Some("roze-embedded/src/lib.roze".to_string())
+        }
         _ => None,
     };
 
@@ -425,6 +431,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
                 "ui_canvas" => Some("ui_canvas.roze"),
                 "ui_widgets" => Some("ui_widgets.roze"),
                 "os_kernel" => Some("os_kernel.roze"),
+                "embedded_hal" => Some("embedded_hal.roze"),
                 "orm" => Some("orm.roze"),
                 "raw_net" => Some("raw_net.roze"),
                 "crypto" => Some("crypto.roze"),
@@ -541,7 +548,9 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "libc" || path == "posix" || path == "std::libc" || path == "std::posix" || path == "roze::libc" {
         return Ok((LIBC_SOURCE.to_string(), LIBC_DISPLAY_NAME.to_string()));
     }
-    if path == "embedded_hal" || path == "embedded-hal" || path == "embedded" || path == "hal" || path == "roze::embedded_hal" {
+    if path == "embedded_hal" || path == "embedded-hal" || path == "embedded" || path == "hal" || path == "roze::embedded_hal"
+        || path == "roze-embedded" || path == "roze-embedded.hal" || path == "roze-embedded::hal" || path == "roze::embedded" || path == "roze::embedded::hal"
+        || path == "roze.embedded" || path == "roze.embedded.hal" || path == "embedded.hal" || path == "embedded::hal" || path == "roze_embedded" || path == "roze_embedded_hal" {
         return Ok((EMBEDDED_HAL_SOURCE.to_string(), EMBEDDED_HAL_DISPLAY_NAME.to_string()));
     }
     if path == "math" || path == "std::math" || path == "roze::math" || path == "roze.math" || path == "bigint" || path == "bigdecimal" {

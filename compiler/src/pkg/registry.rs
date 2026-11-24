@@ -456,6 +456,74 @@ impl RegistryClient {
                 },
             ],
         );
+
+        // 13. roze-os
+        self.register_builtin_package(
+            "roze-os",
+            "Bare-metal 64-bit operating system kernel (RozeOS v3) in pure Roze with Multiboot2, 4-level paging VMM, Buddy allocator, scheduler, and VirtIO",
+            vec![
+                PackageVersionInfo {
+                    version: Version::parse("1.0.0").unwrap(),
+                    dependencies: HashMap::new(),
+                    description: "Freestanding 64-bit OS kernel and bare-metal runtime".to_string(),
+                    checksum: None,
+                    signature: None,
+                    public_key: None,
+                    yanked: false,
+                },
+            ],
+        );
+
+        // 14. roze-embedded
+        self.register_builtin_package(
+            "roze-embedded",
+            "Embedded-hal driver traits, CMSIS-SVD PAC generator, and firmware flashing for ARM Cortex-M and RISC-V",
+            vec![
+                PackageVersionInfo {
+                    version: Version::parse("1.0.0").unwrap(),
+                    dependencies: HashMap::new(),
+                    description: "Embedded hardware abstraction layer and microcontroller HAL".to_string(),
+                    checksum: None,
+                    signature: None,
+                    public_key: None,
+                    yanked: false,
+                },
+            ],
+        );
+
+        // 15. roze-wasm
+        self.register_builtin_package(
+            "roze-wasm",
+            "Direct WebAssembly 1.0 (MVP) and WASI 0.2 Component Model binary code generator, DOM, and WebGL bindings",
+            vec![
+                PackageVersionInfo {
+                    version: Version::parse("1.0.0").unwrap(),
+                    dependencies: HashMap::new(),
+                    description: "WebAssembly, WASI 0.2 Component Model, and roze-bindgen bridge".to_string(),
+                    checksum: None,
+                    signature: None,
+                    public_key: None,
+                    yanked: false,
+                },
+            ],
+        );
+
+        // 16. roze-pkg
+        self.register_builtin_package(
+            "roze-pkg",
+            "Basir ('bsr') global package registry client, Go module proxy protocol, Ed25519 envelope signing, SemVer SAT solver, and vendoring engine",
+            vec![
+                PackageVersionInfo {
+                    version: Version::parse("1.0.0").unwrap(),
+                    dependencies: HashMap::new(),
+                    description: "Unified package manager and global registry toolchain for Roze".to_string(),
+                    checksum: None,
+                    signature: None,
+                    public_key: None,
+                    yanked: false,
+                },
+            ],
+        );
     }
 
     fn register_builtin_package(&mut self, name: &str, desc: &str, versions: Vec<PackageVersionInfo>) {

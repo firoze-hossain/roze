@@ -1,0 +1,14 @@
+// packages/roze-pkg/tests/test_pkg.roze
+//
+// Comprehensive Test Suite for M12-T04: Basir ('bsr') Global Registry & Monolithic Driver
+
+import "roze-pkg.core";
+
+func main() {
+    let diag = pkg_run_full_verification();
+    if !diag.all_passed {
+        println("❌ M12-T04 VERIFICATION FAILED!");
+        return;
+    }
+    println("✅ M12-T04 VERIFICATION SUCCEEDED!");
+}

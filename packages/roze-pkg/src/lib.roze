@@ -1,0 +1,7 @@
+// packages/roze-pkg/src/lib.roze
+//
+// 🌹 Basir ('bsr') Global Registry & Monolithic Driver Package Root
+// Re-exports all core package manager, Go proxy, Ed25519 signing,
+// SemVer SAT solver, vendoring, and monolithic CLI driver APIs.
+
+import "roze-pkg.core";

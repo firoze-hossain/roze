@@ -5461,6 +5461,24 @@ fn native_standard_wasm_suite() {
     assert!(stdout.contains("ALL 7 SUITES PASSED: M12-T03 WEBASSEMBLY & WASI 0.2 COMPONENT MODEL 100% COMPLETE!"));
 }
 
+#[test]
+fn native_standard_pkg_suite() {
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("std_pkg.roze");
+    let source = std::fs::read_to_string(fixture_path).expect("read std_pkg.roze fixture");
+    let (stdout, stderr, ok) = run_native_source("std_pkg_native", &source);
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: Go Module Proxy protocol endpoints verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: RFC 8032 Ed25519 package envelope signing and verification verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: SemVer 2.0.0 and SAT-based dependency resolution engine verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: Dependency vendoring engine verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: Package registry client and publishing lifecycle verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: Monolithic CLI driver commands verified."));
+    assert!(stdout.contains("ALL 7 SUITES PASSED: M12-T04 BASIR GLOBAL REGISTRY & MONOLITHIC DRIVER 100% COMPLETE!"));
+}
+
 
 
 

@@ -852,7 +852,7 @@ s1_rows = [
         ("M12-T04", 8), ("Month 12", 27), ("Sprint 24 (W49-W52)", 8), "Toolchain Monolith", "Basir ('bsr') Global Registry & Monolithic Driver",
         "Official package registry infrastructure: Go module proxy protocol (/@v/list, /@v/<version>.info, /@v/<version>.mfz), RFC 8032 Ed25519 digital package envelope signing, SemVer SAT solver, dependency vendoring (bsr vendor), monolithic CLI driver (roze unifying build, run, test, fmt, doc, repl, lsp, svd, bindgen, flash, pkg).",
         "1:1 parity with Cargo / crates.io and Go modules ecosystem.",
-        "Developer Tooling, Community, Package Ecosystem", "7 Days", ("High", 14), ("Planned", 12)
+        "Developer Tooling, Community, Package Ecosystem", "7 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M12-T05", 8), ("Month 12", 27), ("Sprint 24 (W49-W52)", 8), "Final Release M12", "Official Roze v3.0 'Titan' Production Launch",

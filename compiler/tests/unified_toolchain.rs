@@ -232,3 +232,37 @@ fn test_roze_new_and_test_project_lifecycle() {
         .expect("Failed to execute roze clean");
     assert!(status_clean.success());
 }
+
+#[test]
+fn test_roze_monolithic_driver_commands_help() {
+    let bin = roze_bin();
+
+    // 1. Verify roze lsp --help
+    let output_lsp = Command::new(&bin)
+        .arg("lsp")
+        .arg("--help")
+        .output()
+        .expect("Failed to execute roze lsp --help");
+    assert!(output_lsp.status.success());
+    let stdout_lsp = String::from_utf8_lossy(&output_lsp.stdout);
+    assert!(stdout_lsp.contains("Language Server Protocol"));
+
+    // 2. Verify roze --help contains all 11 core subcommands
+    let output_help = Command::new(&bin)
+        .arg("--help")
+        .output()
+        .expect("Failed to execute roze --help");
+    assert!(output_help.status.success());
+    let stdout_help = String::from_utf8_lossy(&output_help.stdout);
+    assert!(stdout_help.contains("build"));
+    assert!(stdout_help.contains("run"));
+    assert!(stdout_help.contains("test"));
+    assert!(stdout_help.contains("fmt"));
+    assert!(stdout_help.contains("doc"));
+    assert!(stdout_help.contains("repl"));
+    assert!(stdout_help.contains("lsp"));
+    assert!(stdout_help.contains("svd"));
+    assert!(stdout_help.contains("bindgen"));
+    assert!(stdout_help.contains("flash"));
+    assert!(stdout_help.contains("pkg"));
+}

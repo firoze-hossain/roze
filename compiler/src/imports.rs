@@ -171,6 +171,9 @@ const OS_KERNEL_DISPLAY_NAME: &str = "os_kernel (built-in)";
 const WASM_SOURCE: &str = include_str!("../../stdlib/src/wasm.roze");
 const WASM_DISPLAY_NAME: &str = "wasm (built-in)";
 
+const PKG_SOURCE: &str = include_str!("../../stdlib/src/pkg.roze");
+const PKG_DISPLAY_NAME: &str = "pkg (built-in)";
+
 const ORM_SOURCE: &str = include_str!("../../stdlib/src/orm.roze");
 const ORM_DISPLAY_NAME: &str = "orm (built-in)";
 
@@ -358,6 +361,13 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
         "roze-wasm" | "roze-wasm::lib" | "roze::wasm" | "roze.wasm" | "roze_wasm" => {
             Some("roze-wasm/src/lib.roze".to_string())
         }
+        "roze-pkg.core" | "roze-pkg::core" | "roze::pkg::core" | "roze.pkg.core" | "pkg.core" | "pkg::core" | "roze_pkg_core" | "pkg_core"
+        | "bsr.core" | "bsr::core" | "roze-bsr.core" | "roze-bsr::core" => {
+            Some("roze-pkg/src/core.roze".to_string())
+        }
+        "roze-pkg" | "roze-pkg::lib" | "roze::pkg" | "roze.pkg" | "roze_pkg" | "bsr" | "roze-bsr" | "roze::bsr" => {
+            Some("roze-pkg/src/lib.roze".to_string())
+        }
         _ => None,
     };
 
@@ -442,6 +452,7 @@ pub fn resolve_modular_package(path: &str, base_dir: &Path) -> Option<(String, S
                 "os_kernel" => Some("os_kernel.roze"),
                 "embedded_hal" => Some("embedded_hal.roze"),
                 "wasm" => Some("wasm.roze"),
+                "pkg" | "bsr" => Some("pkg.roze"),
                 "orm" => Some("orm.roze"),
                 "raw_net" => Some("raw_net.roze"),
                 "crypto" => Some("crypto.roze"),
@@ -517,6 +528,11 @@ fn load_module_source(path: &str, base_dir: &Path, location: &Location) -> Resul
     if path == "roze-wasm" || path == "roze-wasm.core" || path == "roze-wasm::core" || path == "roze::wasm" || path == "roze::wasm::core"
         || path == "roze.wasm" || path == "roze.wasm.core" || path == "wasm.core" || path == "wasm::core" || path == "roze_wasm" || path == "roze_wasm_core" || path == "wasm_core" || path == "wasm" {
         return Ok((WASM_SOURCE.to_string(), WASM_DISPLAY_NAME.to_string()));
+    }
+    if path == "roze-pkg" || path == "roze-pkg.core" || path == "roze-pkg::core" || path == "roze::pkg" || path == "roze::pkg::core"
+        || path == "roze.pkg" || path == "roze.pkg.core" || path == "pkg.core" || path == "pkg::core" || path == "roze_pkg" || path == "roze_pkg_core" || path == "pkg_core" || path == "pkg"
+        || path == "bsr" || path == "bsr.core" || path == "bsr::core" || path == "roze-bsr" || path == "roze::bsr" {
+        return Ok((PKG_SOURCE.to_string(), PKG_DISPLAY_NAME.to_string()));
     }
     if path == "binary" || path == "roze::binary" || path == "disasm" || path == "roze::disasm" || path == "elf" || path == "pe" || path == "macho"
         || path == "roze.sec.disasm" || path == "roze::sec::disasm" || path == "roze-sec::disasm" || path == "roze_sec_disasm" || path == "sec.disasm" || path == "sec::disasm" || path == "sec_disasm" || path == "riscv" {

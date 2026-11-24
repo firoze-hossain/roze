@@ -1,0 +1,18 @@
+# bsr.mfz - Basir Project Manifest (Mohammad Firoze)
+
+[package]
+name = "roze-pkg"
+version = "1.0.0"
+description = "Official package registry infrastructure: Go module proxy protocol, RFC 8032 Ed25519 envelope signing, SemVer SAT solver, dependency vendoring, and monolithic CLI driver"
+authors = ["Mohammad Firoze <firoze@roze.dev>"]
+license = "MIT OR Apache-2.0"
+edition = "2026"
+main = "src/lib.roze"
+
+[features]
+default = ["proxy", "ed25519", "solver", "vendor", "monolith"]
+proxy = []
+ed25519 = []
+solver = []
+vendor = []
+monolith = []

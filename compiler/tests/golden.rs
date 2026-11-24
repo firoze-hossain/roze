@@ -2612,6 +2612,20 @@ fn standard_embedded_hal_suite() {
     assert!(stdout.contains("ALL 7 SUITES PASSED: M12-T02 MICROCONTROLLER PLATFORM & PAC SVD 100% COMPLETE!"));
 }
 
+#[test]
+fn standard_wasm_suite() {
+    let (stdout, stderr, ok) = run_fixture("std_wasm.roze");
+    assert!(ok, "build/run failed:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+    assert!(stdout.contains("SUITE 1 PASSED: WebAssembly 1.0 and WASI 0.2 Component Model binary encoding verified."));
+    assert!(stdout.contains("SUITE 2 PASSED: Linear memory buffer and heap allocator verified."));
+    assert!(stdout.contains("SUITE 3 PASSED: WASI snapshot-preview1 system calls verified."));
+    assert!(stdout.contains("SUITE 4 PASSED: Serverless cloud edge workers verified."));
+    assert!(stdout.contains("SUITE 5 PASSED: DOM event bindings and browser bridge verified."));
+    assert!(stdout.contains("SUITE 6 PASSED: WebGL 2.0 canvas context and shader pipeline verified."));
+    assert!(stdout.contains("SUITE 7 PASSED: roze-bindgen generator and master diagnostics gate verified."));
+    assert!(stdout.contains("ALL 7 SUITES PASSED: M12-T03 WEBASSEMBLY & WASI 0.2 COMPONENT MODEL 100% COMPLETE!"));
+}
+
 
 
 

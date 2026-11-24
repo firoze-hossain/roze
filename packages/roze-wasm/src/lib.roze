@@ -1,0 +1,4 @@
+// packages/roze-wasm/src/lib.roze
+// 🌹 Roze-Wasm Root Library: WebAssembly & WASI 0.2 Component Model Suite
+
+import "roze-wasm.core";

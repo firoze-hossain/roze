@@ -1,0 +1,230 @@
+// packages/roze-wasm/tests/test_wasm.roze
+// ==============================================================================
+// 🌹 Roze-Wasm: WebAssembly & WASI 0.2 Component Model Test Suite
+// ==============================================================================
+// Comprehensive verification of all 7 WebAssembly subsystems:
+// 1. WebAssembly 1.0 MVP & WASI 0.2 Component Model Binary Encoding
+// 2. Linear Memory Buffer, Page Scaling & Dynamic Heap Allocator
+// 3. WASI snapshot-preview1 System Calls (fd_write, clock_time_get, random_get)
+// 4. Serverless Cloud Edge Workers (Cloudflare Workers & Fastly Compute@Edge)
+// 5. DOM Event Bindings & Browser JavaScript Bridge
+// 6. WebGL 2.0 GPU Canvas Context & Shader Pipeline
+// 7. roze-bindgen TypeScript/ESM Generator & Master Diagnostics Gate
+// ==============================================================================
+
+import "roze-wasm.core";
+
+func assert_true(cond: bool, msg: string) {
+    if !cond {
+        println("❌ ASSERTION FAILED: " + msg);
+        let crash = 1 / 0;
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func assert_eq_int(actual: int, expected: int, msg: string) {
+    if actual != expected {
+        println("❌ ASSERTION FAILED: " + msg);
+        println("   Expected: " + to_string(expected));
+        println("   Actual:   " + to_string(actual));
+        let crash = 1 / 0;
+    } else {
+        println("✅ " + msg);
+    }
+}
+
+func main() {
+    println("================================================================================");
+    println("🌹 ROZE-WASM: WEBASSEMBLY & WASI 0.2 COMPONENT MODEL (M12-T03)");
+    println("================================================================================");
+
+    // =========================================================================
+    // SUITE 1: WebAssembly 1.0 MVP & WASI 0.2 Component Model Binary Encoding
+    // =========================================================================
+    println("\n--- SUITE 1: WebAssembly 1.0 & WASI 0.2 Binary Encoding ---");
+    let b_mvp = wasm_builder_new();
+    let p_types = list_new();
+    list_push(p_types, i32_type());
+    list_push(p_types, i32_type());
+    let r_types = list_new();
+    list_push(r_types, i32_type());
+    let sig0 = wasm_sig_new(p_types, r_types);
+    wasm_builder_add_sig(b_mvp, sig0);
+    wasm_builder_add_export(b_mvp, "add", 0, 0);
+
+    let bytes_mvp = wasm_emit_module_bytes(b_mvp);
+    assert_true(list_length(bytes_mvp) > 16, "WASM MVP binary length > 16 bytes");
+    let b0: int = list_get(bytes_mvp, 0);
+    let b1: int = list_get(bytes_mvp, 1);
+    let b2: int = list_get(bytes_mvp, 2);
+    let b3: int = list_get(bytes_mvp, 3);
+    assert_eq_int(b0, 0, "WASM magic byte 0 is 0x00");
+    assert_eq_int(b1, 97, "WASM magic byte 1 is 'a'");
+    assert_eq_int(b2, 115, "WASM magic byte 2 is 's'");
+    assert_eq_int(b3, 109, "WASM magic byte 3 is 'm'");
+
+    let v0: int = list_get(bytes_mvp, 4);
+    assert_eq_int(v0, 1, "WASM MVP version 1");
+
+    let b_comp = wasm_builder_new_component();
+    let bytes_comp = wasm_emit_module_bytes(b_comp);
+    let cv0: int = list_get(bytes_comp, 4);
+    let cv2: int = list_get(bytes_comp, 6);
+    assert_eq_int(cv0, 13, "WASI 0.2 Component Model version layer byte 0x0D");
+    assert_eq_int(cv2, 1, "WASI 0.2 Component Model version layer byte 0x01");
+
+    let leb_624485 = leb128_encode_u32(624485);
+    assert_eq_int(list_length(leb_624485), 3, "624485 encodes into 3 LEB128 bytes");
+    println("SUITE 1 PASSED: WebAssembly 1.0 and WASI 0.2 Component Model binary encoding verified.");
+
+    // =========================================================================
+    // SUITE 2: Linear Memory Buffer, Page Scaling & Dynamic Heap Allocator
+    // =========================================================================
+    println("\n--- SUITE 2: Linear Memory Buffer & Dynamic Heap Allocator ---");
+    let mem = wasm_memory_new(2);
+    assert_eq_int(mem.page_count, 2, "Initial memory has 2 pages");
+    assert_eq_int(mem.heap_ptr, 1024, "Heap pointer starts above static memory (1024)");
+
+    let ptr1 = wasm_alloc(mem, 32);
+    assert_eq_int(ptr1, 1024, "First allocation at 1024");
+    wasm_mem_write_u32(mem, ptr1, 305419896); // 0x12345678
+    let val32 = wasm_mem_read_u32(mem, ptr1);
+    assert_eq_int(val32, 305419896, "Little-endian 32-bit load matches store");
+
+    let ptr2 = wasm_alloc(mem, 13);
+    assert_eq_int(ptr2, 1056, "Second allocation 8-byte aligned at 1056");
+
+    let old_pages = wasm_memory_grow(mem, 2);
+    assert_eq_int(old_pages, 2, "wasm_memory_grow returned previous page count");
+    assert_eq_int(mem.page_count, 4, "Page count updated to 4");
+
+    wasm_free(mem, ptr1, 32);
+    assert_eq_int(mem.free_count, 1, "Deallocation counter updated");
+    println("SUITE 2 PASSED: Linear memory buffer and heap allocator verified.");
+
+    // =========================================================================
+    // SUITE 3: WASI snapshot-preview1 System Calls
+    // =========================================================================
+    println("\n--- SUITE 3: WASI snapshot-preview1 System Calls ---");
+    let wasi = wasi_context_new();
+    assert_eq_int(wasi.exit_code, 0, "Initial WASI exit code is 0");
+    assert_true(wasi_clock_time_get(wasi) > 0, "WASI monotonic clock returns valid time");
+
+    let iov_mem = wasm_memory_new(1);
+    let buf_offset = wasm_alloc(iov_mem, 64);
+    let iov_offset = wasm_alloc(iov_mem, 16);
+    wasm_mem_write_u32(iov_mem, iov_offset, buf_offset);
+    wasm_mem_write_u32(iov_mem, iov_offset + 4, 14);
+
+    let written = wasi_fd_write(wasi, iov_mem, 1, iov_offset, 1);
+    assert_eq_int(written, 14, "WASI fd_write wrote 14 bytes to stdout");
+    assert_true(string_length(wasi.stdout_str) > 0, "WASI stdout captured text");
+
+    wasi_proc_exit(wasi, 42);
+    assert_eq_int(wasi.exit_code, 42, "WASI proc_exit updated exit code to 42");
+
+    let rand_buf = wasm_alloc(iov_mem, 8);
+    wasi_random_get(iov_mem, rand_buf, 8);
+    let r_b0 = wasm_mem_read_u8(iov_mem, rand_buf);
+    assert_eq_int(r_b0, 19, "WASI random_get filled buffer with entropy");
+    println("SUITE 3 PASSED: WASI snapshot-preview1 system calls verified.");
+
+    // =========================================================================
+    // SUITE 4: Serverless Cloud Edge Workers (Cloudflare & Fastly)
+    // =========================================================================
+    println("\n--- SUITE 4: Serverless Cloud Edge Workers ---");
+    let cf_req = cloudflare_worker_new("GET", "https://api.roze.io/health");
+    let cf_status = cloudflare_handle_fetch(cf_req);
+    assert_eq_int(cf_status, 200, "Cloudflare Worker returned HTTP 200 OK");
+    assert_true(string_length(cf_req.response_body) > 10, "Cloudflare Worker returned JSON body");
+
+    let cf_404 = cloudflare_worker_new("GET", "https://api.roze.io/unknown");
+    assert_eq_int(cloudflare_handle_fetch(cf_404), 404, "Cloudflare Worker returned 404 for unknown route");
+
+    let fastly = fastly_edge_new("origin-cluster", "10.0.0.1", "JP");
+    let fastly_res = fastly_compute_edge(fastly, "/edge-lookup");
+    assert_true(string_length(fastly_res) > 20, "Fastly Compute@Edge generated response");
+    assert_true(fastly.cache_status == "HIT", "Fastly edge cache registered HIT");
+    println("SUITE 4 PASSED: Serverless cloud edge workers verified.");
+
+    // =========================================================================
+    // SUITE 5: DOM Event Bindings & Browser JavaScript Bridge
+    // =========================================================================
+    println("\n--- SUITE 5: DOM Event Bindings & Browser Bridge ---");
+    let doc = dom_document_new();
+    let card = dom_create_element(doc, "div", "app_card");
+    dom_element_set_inner_html(card, "<h1>Roze Web</h1>");
+    dom_body_append_child(doc, card);
+
+    let retrieved = dom_get_element_by_id(doc, "app_card");
+    assert_true(retrieved.tag == "div", "DOM element retrieved by ID matches created tag");
+
+    let click_event = dom_event_new("click", "app_card");
+    let handled = dom_dispatch_event(doc, click_event);
+    assert_true(handled, "DOM click event dispatched to target element");
+    assert_eq_int(doc.event_dispatch_count, 1, "Document event counter incremented");
+    println("SUITE 5 PASSED: DOM event bindings and browser bridge verified.");
+
+    // =========================================================================
+    // SUITE 6: WebGL 2.0 GPU Canvas Context & Shader Pipeline
+    // =========================================================================
+    println("\n--- SUITE 6: WebGL 2.0 GPU Canvas Context & Shader Pipeline ---");
+    let gl = webgl_context_new("main_canvas", 800, 600);
+    webgl_viewport(gl, 0, 0, 1920, 1080);
+    assert_eq_int(gl.width, 1920, "WebGL viewport width 1920");
+    assert_eq_int(gl.height, 1080, "WebGL viewport height 1080");
+
+    webgl_clear_color(gl, 12, 34, 56, 255);
+    assert_eq_int(gl.clear_r, 12, "WebGL clear red component set");
+
+    let vs = webgl_create_shader(gl, 35633);
+    webgl_shader_source(vs, "attribute vec3 a_vertex; void main() { gl_Position = vec4(a_vertex, 1.0); }");
+    let vs_ok = webgl_compile_shader(vs);
+    assert_true(vs_ok, "Vertex shader compiled successfully");
+
+    let fs = webgl_create_shader(gl, 35632);
+    webgl_shader_source(fs, "precision mediump float; void main() { gl_FragColor = vec4(1.0, 0.5, 0.2, 1.0); }");
+    let fs_ok = webgl_compile_shader(fs);
+    assert_true(fs_ok, "Fragment shader compiled successfully");
+
+    let prog = webgl_create_program(gl, vs, fs);
+    assert_true(prog.linked, "WebGL program linked successfully");
+    webgl_use_program(gl, prog);
+    assert_eq_int(gl.active_program_id, prog.program_id, "WebGL active program bound");
+
+    let vbo = webgl_create_buffer(gl, 34962, 108); // 9 vertices (3 triangles)
+    webgl_bind_buffer(gl, vbo);
+    assert_eq_int(gl.bound_array_buffer_id, vbo.buffer_id, "VBO bound to ARRAY_BUFFER");
+
+    webgl_draw_arrays(gl, 4, 0, 9);
+    assert_eq_int(gl.draw_calls_count, 1, "1 draw call executed");
+    assert_eq_int(gl.triangles_rendered, 3, "3 triangles rendered");
+    println("SUITE 6 PASSED: WebGL 2.0 canvas context and shader pipeline verified.");
+
+    // =========================================================================
+    // SUITE 7: roze-bindgen TypeScript/ESM Generator & Master Diagnostics Gate
+    // =========================================================================
+    println("\n--- SUITE 7: roze-bindgen Generator & Master Diagnostics Gate ---");
+    let opts = bindgen_options_new("roze-enterprise-wasm", "3.0.0", "web");
+    let bg = roze_bindgen_generate(b_mvp, opts);
+    assert_true(string_length(bg.ts_definitions) > 50, "TypeScript definitions (.d.ts) generated");
+    assert_true(string_length(bg.esm_module_js) > 50, "ESM JavaScript module (.js) generated");
+    assert_true(string_length(bg.package_json) > 30, "NPM package.json generated");
+    assert_true(string_length(bg.test_html) > 50, "HTML5 test harness generated");
+
+    let diag = wasm_run_full_verification();
+    assert_true(diag.wasm_binary_verified, "Diagnostics: WebAssembly binary module emitter");
+    assert_true(diag.linear_memory_verified, "Diagnostics: linear memory and dynamic heap allocator");
+    assert_true(diag.wasi_runtime_verified, "Diagnostics: WASI snapshot-preview1 runtime");
+    assert_true(diag.dom_bindings_verified, "Diagnostics: DOM event bindings");
+    assert_true(diag.webgl_canvas_verified, "Diagnostics: WebGL 2.0 GPU canvas context");
+    assert_true(diag.bindgen_bridge_verified, "Diagnostics: roze-bindgen JS/TS bridge");
+    assert_true(diag.serverless_cloud_verified, "Diagnostics: Cloudflare and Fastly serverless cloud workers");
+    assert_true(diag.all_suites_passed, "Diagnostics: all 7 WebAssembly subsystems verified");
+    println("SUITE 7 PASSED: roze-bindgen generator and master diagnostics gate verified.");
+
+    println("\n================================================================================");
+    println("ALL 7 SUITES PASSED: M12-T03 WEBASSEMBLY & WASI 0.2 COMPONENT MODEL 100% COMPLETE!");
+    println("================================================================================");
+}

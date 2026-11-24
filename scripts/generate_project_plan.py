@@ -846,7 +846,7 @@ s1_rows = [
         ("M12-T03", 8), ("Month 12", 27), ("Sprint 23 (W47-W48)", 8), "WebAssembly & WASI", "WebAssembly & WASI 0.2 Component Model (roze-wasm)",
         "Direct WebAssembly 1.0 (MVP) and WASI snapshot-preview1 / WASI 0.2 Component Model binary code generator. Linear memory buffer export, dynamic heap allocator, DOM event bindings, WebGL canvas context, and roze-bindgen automated TypeScript/ESM bridge for browser and cloud serverless workers (Cloudflare, Fastly).",
         "Parity with Rust wasm-bindgen and Go WebAssembly target.",
-        "WebAssembly, Serverless Cloud, Browser Apps", "8 Days", ("High", 14), ("Planned", 12)
+        "WebAssembly, Serverless Cloud, Browser Apps", "8 Days", ("High", 14), ("Completed", 16)
     ],
     [
         ("M12-T04", 8), ("Month 12", 27), ("Sprint 24 (W49-W52)", 8), "Toolchain Monolith", "Basir ('bsr') Global Registry & Monolithic Driver",

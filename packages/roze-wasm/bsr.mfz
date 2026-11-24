@@ -1,0 +1,17 @@
+[package]
+name = "roze-wasm"
+version = "1.0.0"
+authors = ["The Roze Project Authors"]
+license = "MIT"
+description = "WebAssembly & WASI 0.2 Component Model Suite for Roze: Direct WASM binary generator, linear memory buffer, DOM bindings, WebGL canvas context, and roze-bindgen bridge."
+repository = "https://github.com/firoze/roze"
+
+[dependencies]
+
+[features]
+default = ["wasi", "bindgen", "webgl", "dom"]
+wasi = []
+bindgen = []
+webgl = []
+dom = []
+serverless = []
